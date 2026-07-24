@@ -1,0 +1,1001 @@
+from __future__ import annotations
+
+import ast
+import re
+import threading
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from autofusedebugger.npu_examples import _desc
+
+
+_FUSION_OUTPUT_MARKER = "::autofusedebugger_output::"
+_CAPTURE_LOCK = threading.Lock()
+_CAPTURE_STATE = threading.local()
+_FUSION_DECISION_GROUPS: list[list[dict[str, Any]]] = []
+_LOWERING_FALLBACKS: list[dict[str, Any]] = []
+_IMPLICIT_FALLBACK_TARGETS: set[Any] = set()
+_DTYPE_NAMES = {
+    "b1": "bool",
+    "bf16": "bfloat16",
+    "f16": "float16",
+    "f32": "float32",
+    "f64": "float64",
+    "i8": "int8",
+    "i16": "int16",
+    "i32": "int32",
+    "i64": "int64",
+    "u8": "uint8",
+}
+
+
+def reset_autofuse_diagnostics() -> None:
+    with _CAPTURE_LOCK:
+        _FUSION_DECISION_GROUPS.clear()
+        _LOWERING_FALLBACKS.clear()
+        _IMPLICIT_FALLBACK_TARGETS.clear()
+    _CAPTURE_STATE.fusion_group = None
+
+
+def autofuse_diagnostics() -> dict[str, Any]:
+    with _CAPTURE_LOCK:
+        return {
+            "fusion_decision_groups": [[dict(item) for item in group] for group in _FUSION_DECISION_GROUPS],
+            "lowering_fallbacks": [dict(item) for item in _LOWERING_FALLBACKS],
+        }
+
+
+def install_autofuse_intermediate_hooks() -> None:
+    """Capture native Autofuse outputs and node-level non-fusion diagnostics."""
+    from inductor_npu_ext.npu import NPUKernel, NPUScheduling
+
+    if getattr(NPUScheduling, "_autofusedebugger_hooks_installed", False):
+        return
+
+    from torch._inductor.virtualized import V
+
+    from inductor_npu_ext.lowering.common import _summary as lowering_summary
+    from torch._inductor.graph import GraphLowering
+    from torch._inductor.lowering import lowerings
+
+    state = threading.local()
+    original_trace = NPUKernel.tracing_asc
+    original_codegen = NPUScheduling.codegen_nodes
+    original_scheduling_init = NPUScheduling.__init__
+    original_log_can_fuse = NPUScheduling.__dict__["_log_can_fuse_result"].__func__
+    original_lowering_fallback = lowering_summary.fallback
+    original_graph_call_function = GraphLowering.call_function
+
+    def scheduling_init(scheduling, scheduler):  # type: ignore[no-untyped-def]
+        original_scheduling_init(scheduling, scheduler)
+        with _CAPTURE_LOCK:
+            group = len(_FUSION_DECISION_GROUPS)
+            _FUSION_DECISION_GROUPS.append([])
+        _CAPTURE_STATE.fusion_group = group
+
+    def log_can_fuse_result(  # type: ignore[no-untyped-def]
+        cls, kind, node1, node2, result, reason, triton_can_fuse
+    ):
+        group = getattr(_CAPTURE_STATE, "fusion_group", None)
+        if group is not None:
+            record = {
+                "kind": str(kind),
+                "node1": [sub.get_name() for sub in node1.get_nodes()],
+                "node2": [sub.get_name() for sub in node2.get_nodes()],
+                "result": bool(result),
+                "reason": str(reason),
+                "triton_can_fuse": triton_can_fuse,
+            }
+            with _CAPTURE_LOCK:
+                if group < len(_FUSION_DECISION_GROUPS):
+                    _FUSION_DECISION_GROUPS[group].append(record)
+        return original_log_can_fuse(cls, kind, node1, node2, result, reason, triton_can_fuse)
+
+    def lowering_fallback(node, reason):  # type: ignore[no-untyped-def]
+        record = {
+            "category": "lowering_fallback",
+            "node": str(node.name),
+            "target": str(node.target),
+            "reason": str(reason),
+        }
+        with _CAPTURE_LOCK:
+            if record not in _LOWERING_FALLBACKS:
+                _LOWERING_FALLBACKS.append(record)
+        return original_lowering_fallback(node, reason)
+
+    def graph_call_function(graph, target, args, kwargs):  # type: ignore[no-untyped-def]
+        missing_lowering = target not in lowerings
+        result = original_graph_call_function(graph, target, args, kwargs)
+        if missing_lowering:
+            _IMPLICIT_FALLBACK_TARGETS.add(target)
+        if target in _IMPLICIT_FALLBACK_TARGETS:
+            node = getattr(graph, "current_node", None)
+            record = {
+                "category": "implicit_fallback",
+                "node": str(getattr(node, "name", target)),
+                "target": str(target),
+                "reason": "TorchInductor created an implicit fallback because no lowering was registered",
+            }
+            with _CAPTURE_LOCK:
+                if record not in _LOWERING_FALLBACKS:
+                    _LOWERING_FALLBACKS.append(record)
+        return result
+
+    def tracing_asc(kernel):  # type: ignore[no-untyped-def]
+        result = original_trace(kernel)
+        pending = getattr(state, "pending", None)
+        if pending is None:
+            pending = []
+            state.pending = pending
+        pending.append(result)
+        return result
+
+    def codegen_nodes(scheduling, nodes):  # type: ignore[no-untyped-def]
+        pending = getattr(state, "pending", None)
+        if pending is None:
+            pending = []
+            state.pending = pending
+        start = len(pending)
+        original_codegen(scheduling, nodes)
+        if len(pending) == start:
+            return
+        kernel = pending[start]
+        live_outputs = set(kernel.args.live_output_buffers())
+        output_index = 0
+        for node in nodes:
+            if node.node is None:
+                continue
+            buffer_name = node.node.get_name()
+            if buffer_name not in live_outputs:
+                continue
+            origin = node.node.get_origin_node()
+            if origin is None:
+                continue
+            capture_name = f"{kernel.kernel_name}__{origin.name}"
+            hook_name = f"{capture_name}{_FUSION_OUTPUT_MARKER}{output_index}"
+            V.graph.wrapper_code.writeline(f"run_intermediate_hooks({hook_name!r}, {buffer_name})")
+            output_index += 1
+
+    NPUKernel.tracing_asc = tracing_asc
+    NPUScheduling.codegen_nodes = codegen_nodes
+    NPUScheduling.__init__ = scheduling_init
+    NPUScheduling._log_can_fuse_result = classmethod(log_can_fuse_result)
+    lowering_summary.fallback = lowering_fallback
+    GraphLowering.call_function = graph_call_function
+    NPUScheduling._autofusedebugger_hooks_installed = True
+
+
+def _tensor_leaves(value: Any, torch: Any) -> list[Any]:
+    if isinstance(value, torch.Tensor):
+        return [value]
+    if isinstance(value, (tuple, list)):
+        result = []
+        for item in value:
+            result.extend(_tensor_leaves(item, torch))
+        return result
+    if isinstance(value, dict):
+        result = []
+        for item in value.values():
+            result.extend(_tensor_leaves(item, torch))
+        return result
+    return []
+
+
+def _capture_name(raw_name: str) -> tuple[str, int]:
+    if _FUSION_OUTPUT_MARKER not in raw_name:
+        return raw_name, 0
+    name, raw_index = raw_name.rsplit(_FUSION_OUTPUT_MARKER, 1)
+    return name, int(raw_index)
+
+
+def capture_inductor_outputs(dump_dir: Path):
+    import torch
+
+    records: dict[str, dict[str, Any]] = {}
+
+    def save(raw_name: str, value: Any) -> None:
+        name, base_index = _capture_name(raw_name)
+        tensors = _tensor_leaves(value, torch)
+        if not tensors:
+            return
+        if any(int(item["index"]) == base_index for item in records.get(name, {}).get("outputs", [])):
+            call_index = 1
+            while f"{name}__call{call_index}" in records:
+                call_index += 1
+            name = f"{name}__call{call_index}"
+        record = records.setdefault(name, {"name": name, "outputs": []})
+        for offset, tensor in enumerate(tensors):
+            index = base_index + offset
+            array = tensor.detach().cpu().numpy().copy()
+            path = dump_dir / f"{name}.output.{index}.npy"
+            np.save(path, array)
+            record["outputs"].append(
+                {
+                    "index": index,
+                    "path": path,
+                    "dtype": str(array.dtype),
+                    "shape": tuple(int(dim) for dim in array.shape),
+                    "size": int(array.size),
+                }
+            )
+
+    return records, save
+
+
+def _values(text: str) -> list[Any]:
+    result = []
+    for value in (item.strip() for item in text.split(",")):
+        if not value:
+            continue
+        try:
+            result.append(int(value))
+        except ValueError:
+            result.append(value)
+    return result
+
+
+def _tensor_meta(text: str) -> tuple[str, list[Any]]:
+    match = re.match(r"([A-Za-z0-9_]+)\[([^\]]*)\]", text)
+    if not match:
+        return "unknown", []
+    return _DTYPE_NAMES.get(match.group(1), match.group(1)), _values(match.group(2))
+
+
+def _parse_fx_fragment(text: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    nodes = []
+    edges = []
+    known: set[str] = set()
+    exit_name = ""
+    call_re = re.compile(
+        r'^\s*#\s+%([A-Za-z0-9_]+)\s+:\s+Tensor\s+"([^"]+)".*?'
+        r"call_function\[target=torch\.ops\.aten\.([^\]]+)\]\(args = \((.*?)\), kwargs"
+    )
+    for line in text.splitlines():
+        match = call_re.match(line)
+        if match:
+            name, tensor_text, target, args = match.groups()
+            dtype, shape = _tensor_meta(tensor_text)
+            node = {
+                "name": name,
+                "type": target.split(".", 1)[0],
+                "inputs": [],
+                "outputs": [{"index": 0, "dtype": dtype, "shape": shape, "format": "ND"}],
+                "origin": True,
+            }
+            for index, source in enumerate(re.findall(r"%([A-Za-z0-9_]+)", args)):
+                node["inputs"].append({"src": source, "index": index})
+                if source in known:
+                    edges.append({"src": source, "dst": name, "dst_input": index})
+            nodes.append(node)
+            known.add(name)
+            continue
+        return_match = re.match(r"^\s*#\s+return\s+%([A-Za-z0-9_]+)", line)
+        if return_match:
+            exit_name = return_match.group(1)
+    return nodes, edges, exit_name
+
+
+def _canonical_type(value: str) -> str:
+    text = value.lower()
+    if text.startswith("aten."):
+        text = text[len("aten."):]
+    text = text.split(".", 1)[0]
+    aliases = {
+        "_softmax": "softmax",
+        "_unsafe_view": "reshape",
+        "cat": "stack",
+        "clone": "contiguous",
+        "permute": "transpose",
+        "reducesum": "sum",
+        "reduce_sum": "sum",
+        "reducemean": "mean",
+        "reduce_mean": "mean",
+        "realdiv": "div",
+        "reshape": "reshape",
+        "t": "transpose",
+        "view": "reshape",
+    }
+    return aliases.get(text, text)
+
+
+def _parse_ascir_hint(text: str, fx_nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    start = text.find("graph_hint = ascir.HintGraph")
+    end = text.find("graph_hint.infer_dtypes()", start)
+    if start < 0 or end < 0:
+        return None
+    section = text[start:end]
+    node_re = re.compile(
+        r"^\s*([A-Za-z0-9_]+)\s*=\s*ascir\.ops\.([A-Za-z0-9_]+)\('([^']+)',\s*graph_hint\)",
+        re.MULTILINE,
+    )
+    variables: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for variable, node_type, name in node_re.findall(section):
+        variables[variable] = {
+            "name": name,
+            "type": node_type,
+            "inputs": [],
+            "outputs": [{"index": 0, "dtype": "unknown", "shape": [], "format": "ND"}],
+            "origin": False,
+        }
+        order.append(variable)
+    if not variables:
+        return None
+
+    placeholders = []
+    for tensor_text in re.findall(
+        r'^\s*#\s+%[A-Za-z0-9_]+\s+:\s+Tensor\s+"([^"]+)"\s*=\s*PlaceHolder', text, re.MULTILINE
+    ):
+        dtype, shape = _tensor_meta(tensor_text)
+        placeholders.append({"dtype": dtype, "shape": shape})
+    for variable, raw_index in re.findall(
+        r"^\s*([A-Za-z0-9_]+)\.attr\.ir_attr\.index\s*=\s*(\d+)", section, re.MULTILINE
+    ):
+        if variable not in variables or variables[variable]["type"] != "Data":
+            continue
+        index = int(raw_index)
+        if index < len(placeholders):
+            variables[variable]["outputs"][0].update(placeholders[index])
+
+    for variable, raw_shape in re.findall(r"^\s*([A-Za-z0-9_]+)\.y\.size\s*=\s*\[([^\]]*)\]", section, re.MULTILINE):
+        if variable in variables:
+            variables[variable]["outputs"][0]["shape"] = _values(raw_shape)
+    for variable, dtype in re.findall(
+        r"^\s*([A-Za-z0-9_]+)\.y\.dtype\s*=\s*ascir\.dtypes\.([A-Za-z0-9_]+)", section, re.MULTILINE
+    ):
+        if variable in variables:
+            variables[variable]["outputs"][0]["dtype"] = dtype
+
+    edges = []
+    for line in section.splitlines():
+        match = re.match(r"^\s*([A-Za-z0-9_]+)\.(x\d*|x)\s*=\s*(?:\[)?([A-Za-z0-9_]+)\.y", line)
+        if not match:
+            continue
+        destination, input_name, source = match.groups()
+        if source not in variables or destination not in variables:
+            continue
+        index_match = re.search(r"(\d+)$", input_name)
+        index = max(0, int(index_match.group(1)) - 1) if index_match else len(variables[destination]["inputs"])
+        variables[destination]["inputs"].append({"src": variables[source]["name"], "index": index})
+        edges.append({"src": variables[source]["name"], "dst": variables[destination]["name"], "dst_input": index})
+
+    origin_counts: dict[str, int] = {}
+    for node in fx_nodes:
+        kind = _canonical_type(node["type"])
+        origin_counts[kind] = origin_counts.get(kind, 0) + 1
+    for variable in order:
+        node = variables[variable]
+        kind = _canonical_type(node["type"])
+        if origin_counts.get(kind, 0) > 0:
+            node["origin"] = True
+            origin_counts[kind] -= 1
+
+    changed = True
+    while changed:
+        changed = False
+        by_name = {node["name"]: node for node in variables.values()}
+        for variable in order:
+            node = variables[variable]
+            output = node["outputs"][0]
+            for item in node["inputs"]:
+                source = by_name.get(item["src"])
+                if source is None:
+                    continue
+                source_output = source["outputs"][0]
+                if output["dtype"] == "unknown" and source_output["dtype"] != "unknown":
+                    output["dtype"] = source_output["dtype"]
+                    changed = True
+                if not output["shape"] and source_output["shape"]:
+                    output["shape"] = source_output["shape"]
+                    changed = True
+    return {
+        "source": "inductor_npu_ext ASCIR graph_hint",
+        "nodes": [variables[variable] for variable in order],
+        "edges": edges,
+        "missing": [],
+    }
+
+
+def _benchmark_metadata(path: Path) -> dict[str, Any] | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    fx_nodes, fx_edges, exit_name = _parse_fx_fragment(text)
+    scheduler_ids = re.findall(
+        r"^\s*(op\d+(?:_op\d+)*):\s+(?:SchedulerNode|FusedSchedulerNode)", text, re.MULTILINE
+    )
+    if not scheduler_ids or not exit_name:
+        return None
+    kernel_name = path.parent.name
+    subgraph = _parse_ascir_hint(text, fx_nodes) or {
+        "source": "TorchInductor fused FX fragment",
+        "nodes": fx_nodes,
+        "edges": fx_edges,
+        "missing": [],
+    }
+    exit_type = next((node["type"] for node in fx_nodes if node["name"] == exit_name), exit_name)
+    return {
+        "kernel_name": kernel_name,
+        "capture_name": f"{kernel_name}__{exit_name}",
+        "scheduler_ids": scheduler_ids,
+        "origin_ops": [node["name"] for node in fx_nodes],
+        "exit_name": exit_name,
+        "exit_type": exit_type,
+        "origin_subgraph": subgraph,
+    }
+
+
+def _dependency_names(text: str) -> list[str]:
+    return re.findall(r"(?:MemoryDep|StarDep)\((?:name=)?'([^']+)'", text)
+
+
+def _statement(block: str, field: str) -> str:
+    match = re.search(rf"^[A-Za-z0-9_]+\.{field}\s*=\s*\[(.*?)\]\s*$", block, re.MULTILINE | re.DOTALL)
+    return match.group(1) if match else ""
+
+
+def _layout_map(text: str) -> dict[str, dict[str, Any]]:
+    layouts: dict[str, dict[str, Any]] = {}
+    pattern = re.compile(
+        r"^([A-Za-z0-9_]+)_layout\s*=\s*FixedLayout\([^\n]*?torch\.([A-Za-z0-9_]+),\s*"
+        r"size=\[([^\]]*)\]",
+        re.MULTILINE,
+    )
+    for name, dtype, raw_shape in pattern.findall(text):
+        layouts[name] = {"dtype": dtype, "shape": _values(raw_shape)}
+    pattern = re.compile(
+        r"^\s*([A-Za-z0-9_]+)\.layout\s*=\s*FixedLayout\([^\n]*?torch\.([A-Za-z0-9_]+),\s*"
+        r"size=\[([^\]]*)\]",
+        re.MULTILINE,
+    )
+    for name, dtype, raw_shape in pattern.findall(text):
+        layouts[name] = {"dtype": dtype, "shape": _values(raw_shape)}
+    return layouts
+
+
+def _fx_layout_map(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    layouts = {}
+    for name, tensor_text in re.findall(r'\b([A-Za-z0-9_]+):\s+"([A-Za-z0-9_]+\[[^"]*)"', text):
+        dtype, shape = _tensor_meta(tensor_text)
+        layouts[name] = {"dtype": dtype, "shape": shape}
+    return layouts
+
+
+def _fx_input_layout_map(path: Path, layouts: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    try:
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"^class <lambda>", "class LambdaModule", text, count=1, flags=re.MULTILINE)
+        tree = ast.parse(text)
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return {}
+
+    def referenced_names(value: ast.AST) -> list[str]:
+        if isinstance(value, ast.Name):
+            return [value.id] if value.id in layouts else []
+        if isinstance(value, (ast.List, ast.Tuple)):
+            return [name for item in value.elts for name in referenced_names(item)]
+        return []
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
+            continue
+        if not isinstance(node.value, ast.Call):
+            continue
+        names = [name for arg in node.value.args for name in referenced_names(arg)]
+        names.extend(name for keyword in node.value.keywords for name in referenced_names(keyword.value))
+        result[node.target.id] = [dict(layouts[name]) for name in names]
+    return result
+
+
+def _ir_blocks(text: str) -> list[dict[str, Any]]:
+    starts = list(re.finditer(r"^(op\d+(?:_op\d+)*):\s+([^\n]+)$", text, re.MULTILINE))
+    blocks = []
+    for index, match in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        block = text[match.start():end]
+        writes = _dependency_names(_statement(block, "writes"))
+        dependencies = _dependency_names(_statement(block, "unmet_dependencies"))
+        dependencies.extend(_dependency_names(_statement(block, "met_dependencies")))
+        kernel_match = re.search(r"\.node\.kernel\s*=\s*torch\.ops\.aten\.([^\s]+)", block)
+        blocks.append(
+            {
+                "id": match.group(1),
+                "kind": match.group(2),
+                "writes": writes,
+                "dependencies": list(dict.fromkeys(dependencies)),
+                "kernel": kernel_match.group(1) if kernel_match else "",
+            }
+        )
+    return blocks
+
+
+def _hook_capture_map(path: Path) -> dict[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    captures = {}
+    pattern = re.compile(
+        r"run_intermediate_hooks\(((?:'(?:\\.|[^'])*')|(?:\"(?:\\.|[^\"])*\")),\s*([A-Za-z0-9_]+)\)"
+    )
+    for raw_name, buffer_name in pattern.findall(text):
+        try:
+            name = ast.literal_eval(raw_name)
+        except (SyntaxError, ValueError):
+            continue
+        captures[buffer_name] = _capture_name(name)[0]
+    return captures
+
+
+def _fused_component_ids(blocks: list[dict[str, Any]]) -> set[str]:
+    components = set()
+    for block in blocks:
+        if not block["kind"].startswith("FusedSchedulerNode"):
+            continue
+        ids = re.findall(r"op\d+", block["id"])
+        if len(ids) > 1:
+            components.update(ids)
+    return components
+
+
+def _record_output(records: dict[str, dict[str, Any]], name: str, index: int = 0) -> dict[str, Any] | None:
+    for output in records.get(name, {}).get("outputs", []):
+        if int(output["index"]) == index:
+            return output
+    return None
+
+
+def _fusion_capture_name(base: str, records: dict[str, dict[str, Any]], used: set[str]) -> str:
+    for name in records:
+        if name not in used and (name == base or re.fullmatch(re.escape(base) + r"__call\d+", name)):
+            used.add(name)
+            return name
+    return base
+
+
+def _fallback_capture_name(kernel: str, records: dict[str, dict[str, Any]], used: set[str]) -> str:
+    base = kernel.split(".", 1)[0]
+    aliases = {"mm": {"mm", "matmul"}, "bmm": {"bmm", "matmul"}}
+    candidates = aliases.get(base, {base})
+    for name in records:
+        if name in used or name.startswith("autofused_"):
+            continue
+        canonical = re.sub(r"__call\d+$", "", name)
+        canonical = re.sub(r"_\d+$", "", canonical)
+        if canonical in candidates:
+            used.add(name)
+            return name
+    return base
+
+
+def _capture_for_buffers(
+    buffers: list[str], hook_captures: dict[str, str], records: dict[str, dict[str, Any]], used: set[str]
+) -> str | None:
+    for buffer_name in buffers:
+        base = hook_captures.get(buffer_name)
+        if base is None:
+            continue
+        for name in records:
+            if name in used or (name != base and not re.fullmatch(re.escape(base) + r"__call\d+", name)):
+                continue
+            used.add(name)
+            return name
+    return None
+
+
+def _fusion_rejections(
+    scheduler_id: str,
+    decisions: list[dict[str, Any]],
+    node_by_component: dict[str, str],
+) -> list[dict[str, Any]]:
+    selected = set(re.findall(r"op\d+", scheduler_id))
+    aggregated: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for decision in decisions:
+        if decision.get("result") is not False:
+            continue
+        left = set(decision.get("node1", []))
+        right = set(decision.get("node2", []))
+        if selected & left:
+            peer_ids = right
+            direction = "output" if decision.get("kind", "").startswith("vertical") else "sibling"
+        elif selected & right:
+            peer_ids = left
+            direction = "input" if decision.get("kind", "").startswith("vertical") else "sibling"
+        else:
+            continue
+        peers = sorted({node_by_component.get(item, item) for item in peer_ids})
+        peers = [peer for peer in peers if peer not in {node_by_component.get(item, item) for item in selected}]
+        if not peers:
+            continue
+        kind = str(decision.get("kind", "unknown"))
+        reason = str(decision.get("reason", "unknown"))
+        peer = ", ".join(peers)
+        key = (kind, direction, peer, reason)
+        if key not in aggregated:
+            aggregated[key] = {
+                "category": "fusion_rejection",
+                "kind": kind,
+                "direction": direction,
+                "peer": peer,
+                "reason": reason,
+                "attempts": 0,
+            }
+        aggregated[key]["attempts"] += 1
+    return list(aggregated.values())
+
+
+def _attach_lowering_fallbacks(ops: list[dict[str, Any]], diagnostics: list[dict[str, Any]]) -> None:
+    used: set[int] = set()
+    op_names = {op["name"] for op in ops}
+    reserved = {index for index, item in enumerate(diagnostics) if item.get("node") in op_names}
+
+    def reason(item: dict[str, Any], display_name: str) -> dict[str, Any]:
+        result = {
+            "category": item.get("category", "lowering_fallback"),
+            "target": item.get("target", ""),
+            "reason": item.get("reason", "unknown"),
+        }
+        if item.get("node") and item.get("node") != display_name:
+            result["source_node"] = item["node"]
+        return result
+
+    for op in ops:
+        exact = [
+            (index, item)
+            for index, item in enumerate(diagnostics)
+            if index not in used and item.get("node") == op["name"]
+        ]
+        if exact:
+            op["unfused_reasons"] = [reason(item, op["name"]) for _, item in exact]
+            used.update(index for index, _ in exact)
+
+    for op in ops:
+        if op.get("unfused_reasons") or not op.get("_fallback_kernel"):
+            continue
+        target = op.get("_kernel_target", "")
+        candidate = next(
+            (
+                (index, item)
+                for index, item in enumerate(diagnostics)
+                if index not in used and index not in reserved and item.get("target") == target
+            ),
+            None,
+        )
+        if candidate is None:
+            continue
+        _, first = candidate
+        source_node = first.get("node")
+        aliases = [
+            (index, item)
+            for index, item in enumerate(diagnostics)
+            if index not in used
+            and index not in reserved
+            and item.get("target") == target
+            and item.get("node") == source_node
+        ]
+        op["unfused_reasons"] = [reason(item, op["name"]) for _, item in aliases]
+        used.update(index for index, _ in aliases)
+
+
+def _trace_graph(
+    trace_dir: Path,
+    records: dict[str, dict[str, Any]],
+    used_captures: set[str],
+    fusion_decisions: list[dict[str, Any]],
+    lowering_fallbacks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    ir_path = trace_dir / "ir_post_fusion.txt"
+    text = ir_path.read_text(encoding="utf-8")
+    layouts = _layout_map(text)
+    fx_layouts = _fx_layout_map(trace_dir / "fx_graph_readable.py")
+    fx_input_layouts = _fx_input_layout_map(trace_dir / "fx_graph_readable.py", fx_layouts)
+    for name, layout in fx_layouts.items():
+        layouts.setdefault(name, layout)
+    blocks = _ir_blocks(text)
+    fused_components = _fused_component_ids(blocks)
+    hook_captures = _hook_capture_map(trace_dir / "output_code.py")
+    fusion_by_scheduler: dict[str, dict[str, Any]] = {}
+    fusion_by_kernel: dict[str, dict[str, Any]] = {}
+    for benchmark in sorted(trace_dir.glob("autofused_*/benchmark.py")):
+        metadata = _benchmark_metadata(benchmark)
+        if metadata is None:
+            continue
+        fusion_by_kernel[metadata["kernel_name"]] = metadata
+        for scheduler_id in metadata["scheduler_ids"]:
+            fusion_by_scheduler[scheduler_id] = metadata
+    for block in blocks:
+        if not block["kind"].startswith("FusedSchedulerNode"):
+            continue
+        component_metadata = [
+            fusion_by_scheduler.get(item) for item in re.findall(r"op\d+", block["id"])
+        ]
+        component_metadata = [item for item in component_metadata if item is not None]
+        if component_metadata and all(
+            item["kernel_name"] == component_metadata[0]["kernel_name"] for item in component_metadata
+        ):
+            fusion_by_scheduler[block["id"]] = component_metadata[0]
+
+    aliases: dict[str, str] = {}
+    producer: dict[str, str] = {}
+    for block in blocks:
+        if "MultiOutput" in block["kind"] and block["writes"] and block["dependencies"]:
+            aliases[block["writes"][0]] = block["dependencies"][0]
+        elif "NopKernelSchedulerNode" not in block["kind"]:
+            for name in block["writes"]:
+                producer[name] = block["id"]
+
+    def resolve_buffer(name: str) -> str:
+        seen = set()
+        while name in aliases and name not in seen:
+            seen.add(name)
+            name = aliases[name]
+        return name
+
+    node_by_scheduler: dict[str, str] = {}
+    used_node_names: set[str] = set()
+    ops: list[dict[str, Any]] = []
+    block_by_id = {block["id"]: block for block in blocks}
+    for block in blocks:
+        if block["id"] in fused_components:
+            continue
+        if "MultiOutput" in block["kind"] or "NopKernelSchedulerNode" in block["kind"]:
+            continue
+        fusion = fusion_by_scheduler.get(block["id"])
+        captured_name = _capture_for_buffers(block["writes"], hook_captures, records, used_captures)
+        if fusion is None and captured_name is not None:
+            fusion = next(
+                (
+                    metadata
+                    for kernel_name, metadata in fusion_by_kernel.items()
+                    if captured_name.startswith(kernel_name + "__")
+                ),
+                None,
+            )
+        if fusion is not None:
+            name = captured_name
+            if name is None:
+                name = _fusion_capture_name(fusion["capture_name"], records, used_captures)
+            node_type = "AutofuseFusion"
+            origin_ops = fusion["origin_ops"]
+            origin_subgraph = fusion["origin_subgraph"]
+            prefix = fusion["kernel_name"] + "__"
+            exit_name = name[len(prefix):] if name.startswith(prefix) else fusion["exit_name"]
+            exit_type = exit_name
+        else:
+            name = captured_name
+            if name is None:
+                name = _fallback_capture_name(block["kernel"], records, used_captures)
+            node_type = f"aten.{block['kernel'].split('.', 1)[0]}" if block["kernel"] else block["kind"]
+            origin_ops = [name]
+            origin_subgraph = None
+            exit_name = name
+            exit_type = block["kernel"].split(".", 1)[0] if block["kernel"] else name
+        if not name:
+            name = f"inductor_{block['id']}"
+        if name in used_node_names:
+            base_name = name
+            name = f"{base_name}__{block['id']}"
+            suffix = 1
+            while name in used_node_names:
+                name = f"{base_name}__{block['id']}_{suffix}"
+                suffix += 1
+        used_node_names.add(name)
+        if not exit_name:
+            exit_name = name
+        if not exit_type:
+            exit_type = node_type
+        if not any(origin_ops):
+            origin_ops = [name]
+        node_by_scheduler[block["id"]] = name
+        outputs = []
+        captured_outputs = records.get(name, {}).get("outputs", []) if fusion is not None else []
+        if captured_outputs:
+            for captured in sorted(captured_outputs, key=lambda item: int(item["index"])):
+                outputs.append(_desc(captured["dtype"], tuple(captured["shape"])))
+        else:
+            for output_index, buffer_name in enumerate(block["writes"] or [""]):
+                captured = _record_output(records, name, output_index)
+                layout = layouts.get(buffer_name, {})
+                dtype = captured["dtype"] if captured else layout.get("dtype", "unknown")
+                shape = captured["shape"] if captured else layout.get("shape", [])
+                outputs.append(_desc(dtype, tuple(shape)))
+        op = {
+            "name": name,
+            "type": node_type,
+            "input": [],
+            "output_desc": outputs,
+            "origin_ops": origin_ops,
+            "_exit_name": exit_name,
+            "_exit_type": exit_type,
+            "_dependencies": block["dependencies"],
+            "_scheduler_id": block["id"],
+            "_fallback_kernel": "FallbackKernel" in block["kind"],
+            "_kernel_target": f"aten.{block['kernel']}" if block["kernel"] else "",
+        }
+        if name in fx_input_layouts:
+            op["input_desc"] = [
+                _desc(item.get("dtype", "unknown"), tuple(item.get("shape", [])))
+                for item in fx_input_layouts[name]
+            ]
+        if origin_subgraph is not None:
+            op["origin_subgraph"] = origin_subgraph
+        ops.append(op)
+
+    _attach_lowering_fallbacks(ops, lowering_fallbacks)
+    node_by_component = {
+        component: op["name"]
+        for op in ops
+        for component in re.findall(r"op\d+", op["_scheduler_id"])
+    }
+    for op in ops:
+        if op["type"] == "AutofuseFusion":
+            op.pop("_scheduler_id", None)
+            op.pop("_fallback_kernel", None)
+            op.pop("_kernel_target", None)
+            continue
+        rejections = _fusion_rejections(op["_scheduler_id"], fusion_decisions, node_by_component)
+        if rejections:
+            op.setdefault("unfused_reasons", []).extend(rejections)
+        op.pop("_scheduler_id", None)
+        op.pop("_fallback_kernel", None)
+        op.pop("_kernel_target", None)
+
+    data_names = []
+    for op in ops:
+        for dependency in op.pop("_dependencies"):
+            resolved = resolve_buffer(dependency)
+            source_scheduler = producer.get(resolved)
+            source_name = node_by_scheduler.get(source_scheduler, "") if source_scheduler else ""
+            if source_name:
+                op["input"].append(f"{source_name}:0")
+                continue
+            data_name = f"Data.{resolved}"
+            op["input"].append(f"{data_name}:0")
+            if resolved not in data_names:
+                data_names.append(resolved)
+
+    data_ops = []
+    for name in data_names:
+        layout = layouts.get(name, {})
+        data_ops.append(
+            {
+                "name": f"Data.{name}",
+                "type": "Data",
+                "output_desc": [_desc(layout.get("dtype", "unknown"), tuple(layout.get("shape", [])))],
+            }
+        )
+    return {"ops": [*data_ops, *ops], "source": str(ir_path)}
+
+
+def _canonical_match(value: str) -> str:
+    text = _canonical_type(value)
+    text = re.sub(r"_\d+$", "", text)
+    aliases = {"mm": "matmul", "bmm": "matmul", "addmm": "linear"}
+    return aliases.get(text, text)
+
+
+def _array_distance(golden: np.ndarray, actual: np.ndarray) -> tuple[int, float]:
+    golden = golden.astype(np.float64).reshape(-1)
+    actual = actual.astype(np.float64).reshape(-1)
+    finite = np.isfinite(golden) & np.isfinite(actual)
+    same_nonfinite = (
+        (np.isnan(golden) & np.isnan(actual))
+        | (np.isposinf(golden) & np.isposinf(actual))
+        | (np.isneginf(golden) & np.isneginf(actual))
+    )
+    nonfinite_mismatches = int((~finite & ~same_nonfinite).sum())
+    error = float(np.max(np.abs(golden[finite] - actual[finite]))) if finite.any() else 0.0
+    return nonfinite_mismatches, error
+
+
+def _match_cpu_output(
+    op: dict[str, Any], records: dict[str, dict[str, Any]], cpu_outputs: dict[str, dict[str, Any]], used: set[str]
+) -> str | None:
+    actual_info = _record_output(records, op["name"], 0)
+    if actual_info is None:
+        return None
+    expected_name = op.get("_exit_name", op["name"])
+    expected_type = _canonical_match(op.get("_exit_type", expected_name))
+    candidates = []
+    for name, info in cpu_outputs.items():
+        if name in used or int(info["size"]) != int(actual_info["size"]):
+            continue
+        exact_name = name == expected_name
+        name_match = _canonical_match(name) == _canonical_match(expected_name)
+        type_match = _canonical_match(str(info.get("type", ""))) == expected_type
+        if name_match or type_match:
+            candidates.append((name, info, exact_name, name_match, type_match))
+    if not candidates:
+        return None
+    actual = np.load(actual_info["path"], mmap_mode="r").astype(np.float64).reshape(-1)
+    best = None
+    actual_shape = tuple(int(dim) for dim in actual_info.get("shape", ()))
+    for name, info, exact_name, name_match, type_match in candidates:
+        golden = np.load(info["path"], mmap_mode="r").astype(np.float64).reshape(-1)
+        nonfinite_mismatches, error = _array_distance(golden, actual)
+        exact_shape = tuple(int(dim) for dim in info.get("shape", ())) == actual_shape
+        score = (
+            0 if exact_shape else 1,
+            0 if exact_name else 1,
+            0 if name_match else 1,
+            0 if type_match else 1,
+            nonfinite_mismatches,
+            error,
+            name,
+        )
+        if best is None or score < best[0]:
+            best = (score, name)
+    if best is None:
+        return None
+    used.add(best[1])
+    return best[1]
+
+
+def build_inductor_autofuse_graph(
+    compile_root: str | Path,
+    records: dict[str, dict[str, Any]],
+    cpu_outputs: dict[str, dict[str, Any]],
+    diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    root = Path(compile_root).resolve()
+    traces = sorted({path.parent for path in root.rglob("ir_post_fusion.txt")})
+    if not traces:
+        raise RuntimeError(f"TorchInductor post-fusion IR was not generated under {root}")
+    all_ops = []
+    sources = []
+    used_captures: set[str] = set()
+    diagnostics = diagnostics or {}
+    decision_groups = diagnostics.get("fusion_decision_groups", [])
+    decision_offset = max(0, len(decision_groups) - len(traces))
+    lowering_fallbacks = diagnostics.get("lowering_fallbacks", [])
+    for graph_index, trace in enumerate(traces):
+        decision_index = decision_offset + graph_index
+        decisions = decision_groups[decision_index] if decision_index < len(decision_groups) else []
+        parsed = _trace_graph(trace, records, used_captures, decisions, lowering_fallbacks)
+        sources.append(parsed["source"])
+        existing_names = {item["name"] for item in all_ops}
+        rename = {
+            op["name"]: f"graph{graph_index}.{op['name']}"
+            for op in parsed["ops"]
+            if op["name"] in existing_names
+        }
+        for op in parsed["ops"]:
+            op["name"] = rename.get(op["name"], op["name"])
+            rewritten_inputs = []
+            for value in op.get("input", []):
+                source, separator, suffix = value.partition(":")
+                rewritten_inputs.append(f"{rename.get(source, source)}{separator}{suffix}")
+            op["input"] = rewritten_inputs
+            all_ops.append(op)
+
+    used_cpu: set[str] = set()
+    for op in all_ops:
+        if op["type"] == "Data":
+            continue
+        origin = _match_cpu_output(op, records, cpu_outputs, used_cpu)
+        if origin is not None and op.get("output_desc"):
+            op["output_desc"][0].setdefault("attr", []).extend(
+                [
+                    {"key": "_autofusedebugger_cpu_origin_name", "value": {"s": origin}},
+                    {"key": "_autofusedebugger_cpu_origin_output_index", "value": {"i": 0}},
+                ]
+            )
+        op.pop("_exit_name", None)
+        op.pop("_exit_type", None)
+    return {
+        "graph": [{"op": all_ops}],
+        "metadata": {
+            "topology": "TorchInductor post-fusion / inductor_npu_ext Autofuse",
+            "inductor_traces": sources,
+            "lowering_fallbacks": len(diagnostics.get("lowering_fallbacks", [])),
+            "fusion_decisions": sum(len(group) for group in decision_groups),
+        },
+    }

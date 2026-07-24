@@ -1,0 +1,19 @@
+{
+  "schema": "autofusedebugger-manifest/1",
+  "side": "cpu",
+  "model": {"name": "sample", "graph": "sample_cpu_graph.json"},
+  "artifacts": {"root": "."},
+  "nodes": [
+    {
+      "name": "Add_0",
+      "type": "Add",
+      "outputs": [{"index": 0, "path": "cpu_Add_0.output.0.npy", "format": "ND"}]
+    },
+    {
+      "name": "Relu_1",
+      "type": "Relu",
+      "outputs": [{"index": 0, "path": "cpu_Relu_1.output.0.npy", "format": "ND"}]
+    }
+  ],
+  "fusions": []
+}

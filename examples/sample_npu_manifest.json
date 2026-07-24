@@ -1,0 +1,21 @@
+{
+  "schema": "autofusedebugger-manifest/1",
+  "side": "npu",
+  "model": {"name": "sample", "graph": "sample_npu_graph.json"},
+  "artifacts": {"root": "."},
+  "nodes": [
+    {
+      "name": "autofuse_0_Add_Relu",
+      "type": "AscBackend",
+      "outputs": [{"index": 0, "path": "npu_autofuse_0_Add_Relu.output.0.npy", "format": "ND"}]
+    }
+  ],
+  "fusions": [
+    {
+      "fused_op": "autofuse_0_Add_Relu",
+      "fused_index": 0,
+      "origin_op": "Relu_1",
+      "origin_index": 0
+    }
+  ]
+}
