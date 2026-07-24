@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import re
 import threading
 from pathlib import Path
@@ -17,6 +18,7 @@ _CAPTURE_STATE = threading.local()
 _FUSION_DECISION_GROUPS: list[list[dict[str, Any]]] = []
 _LOWERING_FALLBACKS: list[dict[str, Any]] = []
 _IMPLICIT_FALLBACK_TARGETS: set[Any] = set()
+_ASCENDC_PACKAGE_ROOTS = ("torch_npu._inductor.ascendc", "inductor_npu_ext")
 _DTYPE_NAMES = {
     "b1": "bool",
     "bf16": "bfloat16",
@@ -47,16 +49,33 @@ def autofuse_diagnostics() -> dict[str, Any]:
         }
 
 
-def install_autofuse_intermediate_hooks() -> None:
+def activate_autofuse_backend() -> str:
+    errors = []
+    for package_root in _ASCENDC_PACKAGE_ROOTS:
+        try:
+            importlib.import_module(package_root)
+            return package_root
+        except Exception as exc:
+            errors.append(f"{package_root}: {type(exc).__name__}: {exc}")
+    raise RuntimeError(
+        "failed to load the torch_npu bundled AscendC backend or the legacy standalone inductor_npu_ext. "
+        + " | ".join(errors)
+    )
+
+
+def install_autofuse_intermediate_hooks(package_root: str | None = None) -> None:
     """Capture native Autofuse outputs and node-level non-fusion diagnostics."""
-    from inductor_npu_ext.npu import NPUKernel, NPUScheduling
+    package_root = package_root or activate_autofuse_backend()
+    npu_module = importlib.import_module(f"{package_root}.npu")
+    NPUKernel = npu_module.NPUKernel
+    NPUScheduling = npu_module.NPUScheduling
 
     if getattr(NPUScheduling, "_autofusedebugger_hooks_installed", False):
         return
 
     from torch._inductor.virtualized import V
 
-    from inductor_npu_ext.lowering.common import _summary as lowering_summary
+    lowering_summary = importlib.import_module(f"{package_root}.lowering.common")._summary
     from torch._inductor.graph import GraphLowering
     from torch._inductor.lowering import lowerings
 

@@ -15,6 +15,7 @@ from autofusedebugger.compare import compare_manifests, save_report
 from autofusedebugger.graph import build_manifest
 from autofusedebugger.html import write_report_html
 from autofusedebugger.inductor_autofuse import (
+    activate_autofuse_backend,
     autofuse_diagnostics,
     build_inductor_autofuse_graph,
     capture_inductor_outputs,
@@ -401,22 +402,16 @@ def run_npu_model(
     if hasattr(torch.compiler, "config"):
         torch.compiler.config.force_disable_caches = True
 
-    try:
-        import inductor_npu_ext  # noqa: F401
-    except Exception as exc:
-        raise RuntimeError("failed to import inductor_npu_ext; native Autofuse execution is required") from exc
     import torch_npu  # noqa: F401
     from torch._inductor.hooks import intermediate_hook
 
-    install_autofuse_intermediate_hooks()
+    package_root = activate_autofuse_backend()
+    install_autofuse_intermediate_hooks(package_root)
     reset_autofuse_diagnostics()
     torch.npu.set_device(device)
     model = case.model.eval().to(device)
-    compiled = torch.compile(
-        model,
-        dynamic=case.dynamic,
-        fullgraph=case.fullgraph,
-    )
+    compile_options = {"npu_backend": "ascendc"} if package_root.startswith("torch_npu.") else None
+    compiled = torch.compile(model, dynamic=case.dynamic, fullgraph=case.fullgraph, options=compile_options)
     device_inputs = _to_device(case.inputs, device)
     device_kwargs = _to_device(case.kwargs, device)
     records, save_intermediate = capture_inductor_outputs(npu_dump_dir)
@@ -427,6 +422,7 @@ def run_npu_model(
     diagnostics = autofuse_diagnostics()
     return _to_cpu(out), records, {
         "mode": "torch_inductor_npu_ext_autofuse",
+        "backend_package": package_root,
         "compile_dir": str(compile_dir),
         "autofuse_dump_dir": str(autofuse_dump_dir),
         "captured_nodes": list(records),

@@ -5,18 +5,26 @@
 自动化模型命令只使用以下两条数据链路：
 
 - CPU：`torch.export` 后执行默认 Core ATen decomposition，与 Inductor 图对齐，并用 FX Interpreter 保存每个 `call_function` 节点输出。
-- NPU：加载 `inductor_npu_ext` 后调用默认 `torch.compile(model)`，执行 PyTorch Inductor -> AscendC/Autofuse 路径。工具不会调用 `torchair.get_npu_backend()`，也不会使用 GE 图作为 NPU 主图。
+- NPU：加载 `torch_npu` 内置的 `torch_npu._inductor.ascendc` 后端，并调用 `torch.compile(model, options={"npu_backend": "ascendc"})`，执行 PyTorch Inductor -> AscendC/Autofuse 路径。工具不会调用 `torchair.get_npu_backend()`，也不会使用 GE 图作为 NPU 主图。
 
-NPU 中间输出由 PyTorch Inductor intermediate hook 采集。工具为 `inductor_npu_ext` 的 `autofused_*` 调用补充相同 hook，只保存融合 kernel 的出口；`mm`、`tanh` 等 fallback kernel 使用 Inductor 原生 hook。主图拓扑来自 `ir_post_fusion.txt`，融合子图来自对应 kernel `benchmark.py` 中的 ASCIR `graph_hint`。
+NPU 中间输出由 PyTorch Inductor intermediate hook 采集。工具为 AscendC 后端的 `autofused_*` 调用补充相同 hook，只保存融合 kernel 的出口；`mm`、`tanh` 等 fallback kernel 使用 Inductor 原生 hook。主图拓扑来自 `ir_post_fusion.txt`，融合子图来自对应 kernel `benchmark.py` 中的 ASCIR `graph_hint`。
 
 ## 安装
 
-在已安装 PyTorch 2.9、torch_npu 2.9、CANN 和 `inductor_npu_ext` 的 NPU 环境执行：
+在已安装 PyTorch 2.9、torch_npu 2.9 和 CANN 的 NPU 环境执行：
 
 ```bash
 cd /home/xingzhixiong/dfx_dir/autofusedebugger
 python3 -m pip install -e .
 ```
+
+当前 `inductor-npu-ext` 已随 `torch_npu` 打包在 `torch_npu/_inductor/ascendc`，无需单独安装。执行工具前可确认内置后端能够导入：
+
+```bash
+python3 -c "import torch_npu; import torch_npu._inductor.ascendc; print(torch_npu._inductor.ascendc.__file__)"
+```
+
+工具同时兼容仍使用独立 `inductor_npu_ext` 包的旧环境，但优先使用 `torch_npu` 内置后端。
 
 也可以不安装：
 
@@ -116,7 +124,7 @@ autofusedbg run-torch-model \
 命令只执行一次 NPU 模型，会自动完成：
 
 1. 采集 CPU ATen FX 每个节点输出。
-2. 通过默认 `torch.compile` 执行原生 Inductor + `inductor_npu_ext` + Autofuse。
+2. 通过 `torch.compile(options={"npu_backend": "ascendc"})` 执行原生 Inductor + AscendC/Autofuse。
 3. 采集每个 NPU 调度 kernel 输出；融合 kernel 只采集出口。
 4. 解析真实 Inductor post-fusion 拓扑、compiler provenance 和 ASCIR 融合子图。
 5. 收集同次编译生成的所有 `AutoFuseAfterOptimize` 图。

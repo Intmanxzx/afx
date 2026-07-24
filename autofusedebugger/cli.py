@@ -194,7 +194,7 @@ def build_parser() -> argparse.ArgumentParser:
     html.set_defaults(func=cmd_report_html)
 
     torch_model = sub.add_parser(
-        "run-torch-model", help="compare CPU export with native Inductor+inductor_npu_ext Autofuse execution"
+        "run-torch-model", help="compare CPU export with native Inductor+AscendC Autofuse execution"
     )
     torch_model.add_argument("--script", required=True, help="python script defining create_case()")
     torch_model.add_argument("--entry", default="create_case", help="case factory function name")

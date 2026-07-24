@@ -5,8 +5,41 @@ from pathlib import Path
 
 import numpy as np
 
+import autofusedebugger.inductor_autofuse as inductor_autofuse
 from autofusedebugger.graph import extract_edges
-from autofusedebugger.inductor_autofuse import _match_cpu_output, build_inductor_autofuse_graph
+from autofusedebugger.inductor_autofuse import (
+    _match_cpu_output,
+    activate_autofuse_backend,
+    build_inductor_autofuse_graph,
+)
+
+
+def test_activate_autofuse_backend_prefers_torch_npu_bundle(monkeypatch) -> None:
+    calls = []
+
+    def import_module(name):
+        calls.append(name)
+        return object()
+
+    monkeypatch.setattr(inductor_autofuse.importlib, "import_module", import_module)
+
+    assert activate_autofuse_backend() == "torch_npu._inductor.ascendc"
+    assert calls == ["torch_npu._inductor.ascendc"]
+
+
+def test_activate_autofuse_backend_falls_back_to_standalone(monkeypatch) -> None:
+    calls = []
+
+    def import_module(name):
+        calls.append(name)
+        if name == "torch_npu._inductor.ascendc":
+            raise ModuleNotFoundError(name)
+        return object()
+
+    monkeypatch.setattr(inductor_autofuse.importlib, "import_module", import_module)
+
+    assert activate_autofuse_backend() == "inductor_npu_ext"
+    assert calls == ["torch_npu._inductor.ascendc", "inductor_npu_ext"]
 
 
 def test_build_inductor_autofuse_graph_uses_real_ir_and_fusion_exit(tmp_path: Path) -> None:
