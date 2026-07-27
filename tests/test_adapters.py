@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -123,11 +125,16 @@ def test_run_script_keeps_script_directory_importable_during_backend_execution(
 
         def run(self, invocation, **kwargs):
             del kwargs
-            return {"output": invocation.model(*invocation.args)}
+            local_output = invocation.model(*invocation.args)
+            child_output = subprocess.check_output(
+                [sys.executable, "-c", "from libs import add_one; print(add_one(1))"],
+                text=True,
+            )
+            return {"local_output": local_output, "child_output": int(child_output)}
 
     monkeypatch.setattr(script_runner, "get_framework_adapter", lambda name: FakeFrontend())
     monkeypatch.setattr(script_runner, "get_backend_adapter", lambda name: FakeBackend())
 
     result = script_runner.run_framework_script(script=script, out_dir=tmp_path / "out")
 
-    assert result == {"output": 1}
+    assert result == {"local_output": 1, "child_output": 2}

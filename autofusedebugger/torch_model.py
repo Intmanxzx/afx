@@ -4,6 +4,7 @@ import importlib.util
 import os
 import re
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -147,21 +148,26 @@ def load_torch_case(script: str | Path, entry: str = "create_case") -> TorchCase
 
 
 def _tree_map(value: Any, fn: Any) -> Any:
-    if isinstance(value, tuple):
-        return tuple(_tree_map(item, fn) for item in value)
-    if isinstance(value, list):
-        return [_tree_map(item, fn) for item in value]
-    if isinstance(value, dict):
-        return {key: _tree_map(item, fn) for key, item in value.items()}
-    return fn(value)
+    try:
+        from torch.utils import _pytree
+    except Exception:
+        if isinstance(value, tuple):
+            return tuple(_tree_map(item, fn) for item in value)
+        if isinstance(value, list):
+            return [_tree_map(item, fn) for item in value]
+        if isinstance(value, dict):
+            return {key: _tree_map(item, fn) for key, item in value.items()}
+        return fn(value)
+    return _pytree.tree_map(fn, value)
 
 
 def _to_cpu(value: Any) -> Any:
+    try:
+        import torch
+    except Exception:
+        return value
+
     def convert(item: Any) -> Any:
-        try:
-            import torch
-        except Exception:
-            return item
         if isinstance(item, torch.Tensor):
             return item.detach().cpu()
         return item
@@ -170,16 +176,54 @@ def _to_cpu(value: Any) -> Any:
 
 
 def _to_device(value: Any, device: str) -> Any:
+    try:
+        import torch
+    except Exception:
+        return value
+
     def convert(item: Any) -> Any:
-        try:
-            import torch
-        except Exception:
-            return item
         if isinstance(item, torch.Tensor):
             return item.to(device)
+        if isinstance(item, np.ndarray) and item.dtype.kind in "biufc":
+            if any(stride < 0 for stride in item.strides):
+                item = np.ascontiguousarray(item)
+            return torch.as_tensor(item, device=device)
         return item
 
     return _tree_map(value, convert)
+
+
+_DEVICE_HINT_NAMES = ("dev", "device")
+_DEVICE_HINT_RE = re.compile(r"^(?:cpu|cuda|npu|xpu|mps|meta|privateuseone)(?::\d+)?$")
+
+
+@contextmanager
+def _model_device_hints(model: Any, device: str):
+    """Temporarily align common module device hints with the execution stage."""
+    import torch
+
+    restored: list[tuple[Any, str, Any]] = []
+    for module in model.modules():
+        attributes = vars(module)
+        for name in _DEVICE_HINT_NAMES:
+            if name not in attributes:
+                continue
+            value = attributes[name]
+            if isinstance(value, str):
+                if not _DEVICE_HINT_RE.fullmatch(value):
+                    continue
+                replacement: Any = str(device)
+            elif isinstance(value, torch.device):
+                replacement = torch.device(device)
+            else:
+                continue
+            restored.append((module, name, value))
+            setattr(module, name, replacement)
+    try:
+        yield
+    finally:
+        for module, name, value in reversed(restored):
+            setattr(module, name, value)
 
 
 def _input_info(inputs: tuple[Any, ...]) -> dict[str, dict[str, Any]]:
@@ -235,33 +279,34 @@ def export_graph_and_dump(
     model = case.model.to(device).eval()
     inputs = _to_device(case.inputs, device)
     kwargs = _to_device(case.kwargs, device)
-    exported = torch.export.export(model, inputs, kwargs)
-    if hasattr(exported, "run_decompositions"):
-        exported = exported.run_decompositions()
-    args = _export_args(exported, inputs, kwargs)
-    saved: dict[str, dict[str, Any]] = {}
+    with _model_device_hints(model, device):
+        exported = torch.export.export(model, inputs, kwargs)
+        if hasattr(exported, "run_decompositions"):
+            exported = exported.run_decompositions()
+        args = _export_args(exported, inputs, kwargs)
+        saved: dict[str, dict[str, Any]] = {}
 
-    class CaptureInterpreter(torch.fx.Interpreter):
-        def run_node(self, node):  # type: ignore[no-untyped-def]
-            result = super().run_node(node)
-            if node.op != "call_function":
+        class CaptureInterpreter(torch.fx.Interpreter):
+            def run_node(self, node):  # type: ignore[no-untyped-def]
+                result = super().run_node(node)
+                if node.op != "call_function":
+                    return result
+                tensor = _first_tensor(result, torch=torch)
+                if tensor is None:
+                    return result
+                array, dtype = tensor_to_numpy(tensor)
+                path = dump_dir / f"{node.name}.output.0.npy"
+                np.save(path, array)
+                saved[node.name] = {
+                    "shape": tuple(int(dim) for dim in array.shape),
+                    "dtype": dtype,
+                    "size": int(array.size),
+                    "path": path,
+                }
                 return result
-            tensor = _first_tensor(result, torch=torch)
-            if tensor is None:
-                return result
-            array, dtype = tensor_to_numpy(tensor)
-            path = dump_dir / f"{node.name}.output.0.npy"
-            np.save(path, array)
-            saved[node.name] = {
-                "shape": tuple(int(dim) for dim in array.shape),
-                "dtype": dtype,
-                "size": int(array.size),
-                "path": path,
-            }
-            return result
 
-    with torch.no_grad():
-        CaptureInterpreter(exported.graph_module).run(*args)
+        with torch.no_grad():
+            CaptureInterpreter(exported.graph_module).run(*args)
 
     user_names = [
         spec.arg.name
@@ -422,14 +467,15 @@ def run_npu_model(
     torch.npu.set_device(device)
     model = case.model.eval().to(device)
     compile_options = {"npu_backend": "ascendc"} if package_root.startswith("torch_npu.") else None
-    compiled = torch.compile(model, dynamic=case.dynamic, fullgraph=case.fullgraph, options=compile_options)
     device_inputs = _to_device(case.inputs, device)
     device_kwargs = _to_device(case.kwargs, device)
     records, save_intermediate = capture_inductor_outputs(npu_dump_dir)
-    with intermediate_hook(save_intermediate):
-        with torch.no_grad():
-            out = compiled(*device_inputs, **device_kwargs)
-            torch.npu.synchronize()
+    with _model_device_hints(model, device):
+        compiled = torch.compile(model, dynamic=case.dynamic, fullgraph=case.fullgraph, options=compile_options)
+        with intermediate_hook(save_intermediate):
+            with torch.no_grad():
+                out = compiled(*device_inputs, **device_kwargs)
+                torch.npu.synchronize()
     diagnostics = autofuse_diagnostics()
     return _to_cpu(out), records, {
         "mode": "torch_inductor_npu_ext_autofuse",
@@ -467,16 +513,25 @@ def run_torch_case(
     compile_dir.mkdir(parents=True, exist_ok=True)
     autofuse_dump.mkdir(parents=True, exist_ok=True)
 
-    cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(case, cpu_dump)
-    npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(case, npu_eager_dump, device=device)
-    _, npu_records, native_capture = run_npu_model(
-        case,
-        npu_dump,
-        compile_dir,
-        autofuse_dump,
-        cann_root=cann_root,
-        device=device,
-    )
+    try:
+        cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(case, cpu_dump)
+    except Exception as exc:
+        raise RuntimeError(f"CPU graph capture failed: {type(exc).__name__}: {exc}") from exc
+    try:
+        npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(case, npu_eager_dump, device=device)
+    except Exception as exc:
+        raise RuntimeError(f"NPU eager graph capture failed: {type(exc).__name__}: {exc}") from exc
+    try:
+        _, npu_records, native_capture = run_npu_model(
+            case,
+            npu_dump,
+            compile_dir,
+            autofuse_dump,
+            cann_root=cann_root,
+            device=device,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"NPU Autofuse execution failed: {type(exc).__name__}: {exc}") from exc
     diagnostics = native_capture.pop("diagnostics", {})
     diagnostics_path = root / "autofuse_diagnostics.json"
     _save_json(diagnostics_path, diagnostics)

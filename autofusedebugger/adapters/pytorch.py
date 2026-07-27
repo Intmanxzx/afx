@@ -16,18 +16,17 @@ class _CaptureComplete(BaseException):
 
 
 def _snapshot(value: Any, torch: Any) -> Any:
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu().clone()
-    if isinstance(value, tuple):
-        return tuple(_snapshot(item, torch) for item in value)
-    if isinstance(value, list):
-        return [_snapshot(item, torch) for item in value]
-    if isinstance(value, dict):
-        return {key: _snapshot(item, torch) for key, item in value.items()}
-    try:
-        return copy.deepcopy(value)
-    except Exception:
-        return value
+    from torch.utils import _pytree
+
+    def copy_leaf(item: Any) -> Any:
+        if isinstance(item, torch.Tensor):
+            return item.detach().cpu().clone()
+        try:
+            return copy.deepcopy(item)
+        except Exception:
+            return item
+
+    return _pytree.tree_map(copy_leaf, value)
 
 
 def _module_identity(module: Any) -> str:

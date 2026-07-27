@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,13 @@ def run_framework_script(
 ) -> dict[str, Any]:
     path = Path(script).resolve()
     old_path = list(sys.path)
+    old_pythonpath = os.environ.get("PYTHONPATH")
+    pythonpath_items = [item for item in (old_pythonpath or "").split(os.pathsep) if item]
+    script_dir = str(path.parent)
     sys.path.insert(0, str(path.parent))
+    os.environ["PYTHONPATH"] = os.pathsep.join(
+        [script_dir, *(item for item in pythonpath_items if item != script_dir)]
+    )
     try:
         frontend = get_framework_adapter(framework)
         target = get_backend_adapter(backend)
@@ -53,3 +60,7 @@ def run_framework_script(
         )
     finally:
         sys.path[:] = old_path
+        if old_pythonpath is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = old_pythonpath

@@ -9,11 +9,54 @@ from autofusedebugger.artifact_io import tensor_to_numpy
 
 from autofusedebugger.torch_model import (
     TorchCase,
+    _model_device_hints,
+    _to_device,
     cpu_candidates_for_npu,
     export_cpu_graph_and_dump,
     load_torch_case,
     match_npu_to_cpu,
 )
+
+
+def test_to_device_converts_numpy_in_nested_pytree() -> None:
+    from collections import namedtuple
+
+    import numpy as np
+
+    torch = pytest.importorskip("torch")
+    Batch = namedtuple("Batch", ("tokens",))
+    value = {"batch": Batch(np.array([[1, 2]], dtype=np.int64))}
+
+    converted = _to_device(value, "cpu")
+
+    assert isinstance(converted["batch"], Batch)
+    assert isinstance(converted["batch"].tokens, torch.Tensor)
+    assert converted["batch"].tokens.device.type == "cpu"
+    assert converted["batch"].tokens.tolist() == [[1, 2]]
+
+
+def test_model_device_hints_are_aligned_and_restored() -> None:
+    torch = pytest.importorskip("torch")
+
+    class Child(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.device = torch.device("meta")
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.dev = "npu:0"
+            self.child = Child()
+
+    model = Model()
+
+    with _model_device_hints(model, "cpu"):
+        assert model.dev == "cpu"
+        assert model.child.device == torch.device("cpu")
+
+    assert model.dev == "npu:0"
+    assert model.child.device == torch.device("meta")
 
 
 def test_tensor_to_numpy_uses_float32_storage_for_bfloat16() -> None:
