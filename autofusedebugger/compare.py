@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from autofusedebugger.artifact_io import SCHEMA, load_array, read_json, resolve_artifact, write_json
+from autofusedebugger.progress import progress_message
 
 
 def convert_nc1hwc0_to_nhwc(arr: np.ndarray) -> np.ndarray:
@@ -158,7 +159,14 @@ def _apply_format(golden: np.ndarray, actual: np.ndarray, golden_fmt: str | None
 
 
 @np.errstate(all="ignore")
-def _cann_metrics(golden: np.ndarray, actual: np.ndarray) -> dict[str, Any]:
+def _cann_metrics(
+    golden: np.ndarray,
+    actual: np.ndarray,
+    *,
+    golden_float64: np.ndarray | None = None,
+    actual_float64: np.ndarray | None = None,
+    difference: np.ndarray | None = None,
+) -> dict[str, Any]:
     if not np.issubdtype(golden.dtype, np.floating) and not np.issubdtype(golden.dtype, np.complexfloating):
         passed = bool(np.array_equal(golden, actual))
         return {
@@ -169,8 +177,8 @@ def _cann_metrics(golden: np.ndarray, actual: np.ndarray) -> dict[str, Any]:
             "cann_passed": passed,
         }
 
-    x = np.asarray(golden).astype(np.float64).reshape(-1)
-    y = np.asarray(actual).astype(np.float64).reshape(-1)
+    x = golden_float64 if golden_float64 is not None else np.asarray(golden).astype(np.float64).reshape(-1)
+    y = actual_float64 if actual_float64 is not None else np.asarray(actual).astype(np.float64).reshape(-1)
     if x.size == 0:
         return {
             "cann_cosine_similarity": 1.0,
@@ -187,18 +195,21 @@ def _cann_metrics(golden: np.ndarray, actual: np.ndarray) -> dict[str, Any]:
     elif x_norm <= CANN_EPSILON or y_norm <= CANN_EPSILON:
         cosine = 0.0
     else:
-        cosine = min(float(np.sum((x / x_norm) * (y / y_norm))), 1.0)
+        cosine = min(float(np.dot(x, y) / (x_norm * y_norm)), 1.0)
 
+    diff = difference if difference is not None else x - y
     relative_euclidean = (
         0.0
         if y_norm <= CANN_EPSILON
-        else float(np.sqrt(np.sum((x - y) ** 2) / np.sum(y**2)))
+        else float(np.sqrt(np.dot(diff, diff)) / y_norm)
     )
 
-    x_range = float(np.max(x) - np.min(x))
-    y_range = float(np.max(y) - np.min(y))
-    x_normalized = (x - np.min(x)) / x_range if x_range > CANN_EPSILON else x
-    y_normalized = (y - np.min(y)) / y_range if y_range > CANN_EPSILON else y
+    x_min = float(np.min(x))
+    y_min = float(np.min(y))
+    x_range = float(np.max(x) - x_min)
+    y_range = float(np.max(y) - y_min)
+    x_normalized = (x - x_min) / x_range if x_range > CANN_EPSILON else x
+    y_normalized = (y - y_min) / y_range if y_range > CANN_EPSILON else y
     x_normalized = np.maximum(x_normalized, CANN_EPSILON)
     y_normalized = np.maximum(y_normalized, CANN_EPSILON)
     x_sum = float(np.sum(x_normalized))
@@ -212,9 +223,8 @@ def _cann_metrics(golden: np.ndarray, actual: np.ndarray) -> dict[str, Any]:
         if abs(kl_divergence) <= CANN_EPSILON:
             kl_divergence = 0.0
 
-    diff = x - y
     mae = float(np.mean(np.abs(diff)))
-    rmse = float(np.sqrt(np.mean(diff**2)))
+    rmse = float(np.sqrt(np.dot(diff, diff) / diff.size))
     rmse_mae_ratio = rmse / mae if mae > CANN_EPSILON else 1.0
     passed = bool(
         np.isfinite(cosine)
@@ -281,20 +291,34 @@ def _elementwise_payload(
     rtol: float,
     atol: float,
     logical_dtype: str,
+    close: np.ndarray | None = None,
+    encoded_golden: dict[str, Any] | None = None,
+    encoded_actual: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    close = np.isclose(golden.astype(np.float64), actual.astype(np.float64), rtol=rtol, atol=atol, equal_nan=False)
+    if close is None:
+        close = np.isclose(
+            golden.astype(np.float64), actual.astype(np.float64), rtol=rtol, atol=atol, equal_nan=False
+        )
+    else:
+        close = close.reshape(golden.shape)
     return {
         "shape": list(golden.shape),
         "logical_dtype": logical_dtype,
-        "cpu": _encode_tensor_array(golden),
-        "npu": _encode_tensor_array(actual),
+        "cpu": encoded_golden or _encode_tensor_array(golden),
+        "npu": encoded_actual or _encode_tensor_array(actual),
         "strict_mask": _encode_tensor_array(close.astype(np.uint8)),
     }
 
 
-def _nonfinite_metrics(golden: np.ndarray, actual: np.ndarray) -> dict[str, Any]:
-    gf = np.asarray(golden).astype(np.float64).reshape(-1)
-    af = np.asarray(actual).astype(np.float64).reshape(-1)
+def _nonfinite_metrics(
+    golden: np.ndarray,
+    actual: np.ndarray,
+    *,
+    golden_float64: np.ndarray | None = None,
+    actual_float64: np.ndarray | None = None,
+) -> dict[str, Any]:
+    gf = golden_float64 if golden_float64 is not None else np.asarray(golden).astype(np.float64).reshape(-1)
+    af = actual_float64 if actual_float64 is not None else np.asarray(actual).astype(np.float64).reshape(-1)
     cpu = {"nan": np.isnan(gf), "pos_inf": np.isposinf(gf), "neg_inf": np.isneginf(gf)}
     npu = {"nan": np.isnan(af), "pos_inf": np.isposinf(af), "neg_inf": np.isneginf(af)}
     aligned = {key: cpu[key] & npu[key] for key in cpu}
@@ -329,32 +353,63 @@ def _nonfinite_metrics(golden: np.ndarray, actual: np.ndarray) -> dict[str, Any]
     return stats
 
 
-def _metrics(golden: np.ndarray, actual: np.ndarray, *, rtol: float, atol: float) -> dict[str, Any]:
+def _metrics_with_close(
+    golden: np.ndarray, actual: np.ndarray, *, rtol: float, atol: float
+) -> tuple[dict[str, Any], np.ndarray]:
     gf = np.asarray(golden).astype(np.float64).reshape(-1)
     af = np.asarray(actual).astype(np.float64).reshape(-1)
     with np.errstate(invalid="ignore"):
-        abs_err = np.abs(gf - af)
+        diff = gf - af
+        abs_err = np.abs(diff)
     finite = np.isfinite(gf) & np.isfinite(af)
     if finite.any():
-        fe = abs_err[finite]
-        denom = np.maximum(np.maximum(np.abs(gf[finite]), np.abs(af[finite])), 1e-12)
+        all_finite = bool(finite.all())
+        if all_finite:
+            finite_golden = gf
+            finite_actual = af
+            fe = abs_err
+        else:
+            finite_golden = gf[finite]
+            finite_actual = af[finite]
+            fe = abs_err[finite]
+        denom = np.maximum(np.maximum(np.abs(finite_golden), np.abs(finite_actual)), 1e-12)
         rel_err = fe / denom
         max_abs = float(fe.max())
         mean_abs = float(fe.mean())
         max_rel = float(rel_err.max())
-        rmse = float(np.sqrt(np.mean(fe * fe)))
-        dot = float(np.dot(gf[finite], af[finite]))
-        norm = float(np.linalg.norm(gf[finite]) * np.linalg.norm(af[finite]))
+        rmse = float(np.sqrt(np.dot(fe, fe) / fe.size))
+        dot = float(np.dot(finite_golden, finite_actual))
+        norm = float(np.linalg.norm(finite_golden) * np.linalg.norm(finite_actual))
         cosine = float(dot / (norm + 1e-12))
-        max_flat_index = int(np.argmax(np.where(finite, abs_err, -np.inf)))
+        max_flat_index = int(np.argmax(abs_err if all_finite else np.where(finite, abs_err, -np.inf)))
         max_index = tuple(int(i) for i in np.unravel_index(max_flat_index, golden.shape))
     else:
         max_abs = mean_abs = max_rel = rmse = cosine = 0.0
         max_index = ()
     close = np.isclose(gf, af, rtol=rtol, atol=atol, equal_nan=False)
     strict_passed = bool(close.all())
-    nonfinite = _nonfinite_metrics(golden, actual)
-    cann = _cann_metrics(golden, actual)
+    nonfinite = (
+        {
+            "present": False,
+            "cpu": {"nan": 0, "pos_inf": 0, "neg_inf": 0},
+            "npu": {"nan": 0, "pos_inf": 0, "neg_inf": 0},
+            "aligned": {"nan": 0, "pos_inf": 0, "neg_inf": 0},
+            "different_positions": 0,
+            "first_index": None,
+            "first_cpu": None,
+            "first_npu": None,
+            "summary": "",
+        }
+        if bool(finite.all())
+        else _nonfinite_metrics(golden, actual, golden_float64=gf, actual_float64=af)
+    )
+    cann = _cann_metrics(
+        golden,
+        actual,
+        golden_float64=gf,
+        actual_float64=af,
+        difference=diff,
+    )
     cann_unavailable_reason = (
         "NONFINITE_INPUT"
         if nonfinite["present"]
@@ -383,7 +438,27 @@ def _metrics(golden: np.ndarray, actual: np.ndarray, *, rtol: float, atol: float
         "passed": strict_passed,
         "strict_passed": strict_passed,
         **cann,
-    }
+    }, close
+
+
+def _metrics(golden: np.ndarray, actual: np.ndarray, *, rtol: float, atol: float) -> dict[str, Any]:
+    metrics, _ = _metrics_with_close(golden, actual, rtol=rtol, atol=atol)
+    return metrics
+
+
+def _cached_tensor_payload(
+    ref: TensorRef,
+    array: np.ndarray,
+    cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] | None,
+) -> dict[str, Any]:
+    if cache is None or ref.path is None:
+        return _encode_tensor_array(array)
+    key = (str(ref.path), str(array.dtype), tuple(int(dim) for dim in array.shape))
+    payload = cache.get(key)
+    if payload is None:
+        payload = _encode_tensor_array(array)
+        cache[key] = payload
+    return payload
 
 
 def _dtype_family(value: Any) -> str:
@@ -450,6 +525,7 @@ def compare_pair(
     *,
     rtol: float | None = None,
     atol: float | None = None,
+    tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "cpu_op": cpu.op_name,
@@ -506,7 +582,8 @@ def compare_pair(
             result["status"] = f"SHAPE_MISMATCH: cpu={golden.shape}, npu={actual.shape}"
             return result
 
-    result.update(_metrics(golden, actual, rtol=resolved_rtol, atol=resolved_atol))
+    metrics, close = _metrics_with_close(golden, actual, rtol=resolved_rtol, atol=resolved_atol)
+    result.update(metrics)
     result["shape"] = list(golden.shape)
     result["dtype"] = str(cpu.dtype or npu.dtype or golden.dtype).removeprefix("torch.")
     result["storage_dtype"] = str(golden.dtype)
@@ -516,6 +593,9 @@ def compare_pair(
         rtol=resolved_rtol,
         atol=resolved_atol,
         logical_dtype=result["dtype"],
+        close=close,
+        encoded_golden=_cached_tensor_payload(cpu, golden, tensor_payload_cache),
+        encoded_actual=_cached_tensor_payload(npu, actual, tensor_payload_cache),
     )
     if statuses:
         result["status"] = "OK_" + "_".join(statuses)
@@ -528,6 +608,8 @@ def compare_manifests(
     *,
     rtol: float | None = None,
     atol: float | None = None,
+    progress_label: str | None = None,
+    tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     cpu_data = read_json(cpu_manifest)
     npu_data = read_json(npu_manifest)
@@ -539,8 +621,23 @@ def compare_manifests(
 
     rows: list[dict[str, Any]] = []
     observed_cpu_keys: set[tuple[str, int]] = set()
-    for npu_key in sorted(npu_index):
+    sorted_npu_keys = sorted(npu_index)
+    for ordinal, npu_key in enumerate(sorted_npu_keys, start=1):
         npu_ref = npu_index[npu_key]
+        size_mib = 0.0
+        if progress_label and npu_ref.path is not None:
+            try:
+                size_mib = npu_ref.path.stat().st_size / (1024.0 * 1024.0)
+            except OSError:
+                pass
+        if progress_label and (
+            ordinal == 1 or ordinal % 10 == 0 or ordinal == len(sorted_npu_keys) or size_mib >= 64.0
+        ):
+            progress_message(
+                "PROGRESS",
+                f"{progress_label} tensor={ordinal}/{len(sorted_npu_keys)} "
+                f"op={npu_key[0]} output={npu_key[1]} dump={size_mib:.1f}MiB",
+            )
         if npu_ref.path is None:
             rows.append(
                 {
@@ -583,7 +680,13 @@ def compare_manifests(
         cpu_ref = cpu_index.get(cpu_key)
         if cpu_ref is None:
             cpu_ref = TensorRef(cpu_key[0], cpu_key[1], None, None, "")
-        row = compare_pair(cpu_ref, npu_ref, rtol=rtol, atol=atol)
+        row = compare_pair(
+            cpu_ref,
+            npu_ref,
+            rtol=rtol,
+            atol=atol,
+            tensor_payload_cache=tensor_payload_cache,
+        )
         row["mapping_method"] = mapping_method
         row["unmapped_reason"] = "" if mapping_method == "compiler_origin" else "按同名同输出序号映射"
         row["observable"] = True
@@ -723,24 +826,46 @@ def compare_three_manifests(
     atol: float | None = None,
 ) -> dict[str, Any]:
     """Compare CPU eager/export, NPU eager, and NPU Autofuse outputs pairwise."""
+    tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] = {}
     pairs = {
         "cpu_npu_autofuse": {
             "left": "CPU",
             "right": "NPU Autofuse",
             "right_graph_key": "npu",
-            "report": compare_manifests(cpu_manifest, npu_autofuse_manifest, rtol=rtol, atol=atol),
+            "report": compare_manifests(
+                cpu_manifest,
+                npu_autofuse_manifest,
+                rtol=rtol,
+                atol=atol,
+                progress_label="CPU vs NPU Autofuse",
+                tensor_payload_cache=tensor_payload_cache,
+            ),
         },
         "cpu_npu_eager": {
             "left": "CPU",
             "right": "NPU eager",
             "right_graph_key": "npu_eager",
-            "report": compare_manifests(cpu_manifest, npu_eager_manifest, rtol=rtol, atol=atol),
+            "report": compare_manifests(
+                cpu_manifest,
+                npu_eager_manifest,
+                rtol=rtol,
+                atol=atol,
+                progress_label="CPU vs NPU eager",
+                tensor_payload_cache=tensor_payload_cache,
+            ),
         },
         "npu_eager_npu_autofuse": {
             "left": "NPU eager",
             "right": "NPU Autofuse",
             "right_graph_key": "npu",
-            "report": compare_manifests(npu_eager_manifest, npu_autofuse_manifest, rtol=rtol, atol=atol),
+            "report": compare_manifests(
+                npu_eager_manifest,
+                npu_autofuse_manifest,
+                rtol=rtol,
+                atol=atol,
+                progress_label="NPU eager vs NPU Autofuse",
+                tensor_payload_cache=tensor_payload_cache,
+            ),
         },
     }
     primary = pairs["cpu_npu_autofuse"]["report"]

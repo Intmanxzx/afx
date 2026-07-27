@@ -10,6 +10,7 @@ from autofusedebugger.camodel import camodel_info, format_info
 from autofusedebugger.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
 from autofusedebugger.graph import build_manifest
 from autofusedebugger.html import write_report_html, write_report_html_from_json
+from autofusedebugger.progress import progress_stage
 from autofusedebugger.runner import run_camodel_command, run_command, run_debug_cpu_command
 from autofusedebugger.script_runner import run_framework_script
 from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
@@ -52,21 +53,24 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_compare_three(args: argparse.Namespace) -> int:
-    report = compare_three_manifests(
-        args.cpu_manifest,
-        args.npu_eager_manifest,
-        args.npu_autofuse_manifest,
-        rtol=args.rtol,
-        atol=args.atol,
-    )
+    with progress_stage("Three-way tensor comparison", detail="existing manifests"):
+        report = compare_three_manifests(
+            args.cpu_manifest,
+            args.npu_eager_manifest,
+            args.npu_autofuse_manifest,
+            rtol=args.rtol,
+            atol=args.atol,
+        )
     autofuse_dump = (
         Path(args.autofuse_dump)
         if args.autofuse_dump
         else Path(args.npu_autofuse_manifest).resolve().parent / "autofuse_dump"
     )
     if autofuse_dump.is_dir():
-        attach_autofuse_graphs(report, autofuse_dump)
-    save_report(report, args.out, args.csv)
+        with progress_stage("AutoFuse graph collection", detail=f"dump_dir={autofuse_dump}"):
+            attach_autofuse_graphs(report, autofuse_dump)
+    with progress_stage("Report JSON and CSV write"):
+        save_report(report, args.out, args.csv)
     if args.html:
         write_report_html(report, args.html)
     for key in report.get("comparison_order", []):
@@ -199,7 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
     cmp_parser.add_argument("--npu-manifest", required=True)
     cmp_parser.add_argument("--out", default=None)
     cmp_parser.add_argument("--csv", default=None)
-    cmp_parser.add_argument("--html", default=None, help="write single-file HTML visualization")
+    cmp_parser.add_argument("--html", default=None, help="write HTML visualization with lazy tensor data")
     cmp_parser.add_argument(
         "--autofuse-dump",
         default=None,
@@ -214,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     cmp_three.add_argument("--npu-autofuse-manifest", required=True)
     cmp_three.add_argument("--out", default=None)
     cmp_three.add_argument("--csv", default=None)
-    cmp_three.add_argument("--html", default=None, help="write single-file HTML visualization")
+    cmp_three.add_argument("--html", default=None, help="write HTML visualization with lazy tensor data")
     cmp_three.add_argument("--autofuse-dump", default=None)
     _add_common_thresholds(cmp_three)
     cmp_three.set_defaults(func=cmd_compare_three)
@@ -226,11 +230,11 @@ def build_parser() -> argparse.ArgumentParser:
     npy.add_argument("--actual-format", default=None)
     npy.add_argument("--out", default=None)
     npy.add_argument("--csv", default=None)
-    npy.add_argument("--html", default=None, help="write single-file HTML visualization")
+    npy.add_argument("--html", default=None, help="write HTML visualization with lazy tensor data")
     _add_common_thresholds(npy)
     npy.set_defaults(func=cmd_compare_npy)
 
-    html = sub.add_parser("report-html", help="render an existing report JSON as a single HTML file")
+    html = sub.add_parser("report-html", help="render an existing report JSON with lazy tensor data")
     html.add_argument("--report", required=True)
     html.add_argument("--out", required=True)
     html.add_argument("--title", default="Autofuse Accuracy Report")

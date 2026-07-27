@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from autofusedebugger.html import write_report_html
+from autofusedebugger.html import write_report_html, write_report_html_from_json
 
 
 def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
@@ -308,3 +309,144 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "source: ${item.source_node}" in content
     assert content.count("unfusedReasons(node).forEach") == 1
     assert content.index("unfusedReasons(node).forEach") < content.index("grid.innerHTML")
+
+
+def test_write_report_html_streams_script_safe_json(tmp_path: Path) -> None:
+    report = {
+        "summary": {"total": 0, "passed": 0, "failed": 0},
+        "graphs": {},
+        "results": [],
+        "text": "</script><script>alert(1)</script>",
+    }
+    target = tmp_path / "streamed.html"
+
+    write_report_html(report, target)
+
+    content = target.read_text(encoding="utf-8")
+    assert "<\\/script>" in content
+    assert "</script><script>alert(1)</script>" not in content
+    assert '"text":"<\\/script><script>alert(1)<\\/script>"' in content
+
+
+def test_write_report_html_deduplicates_tensor_payloads(tmp_path: Path) -> None:
+    encoded = {
+        "encoding": "base64",
+        "dtype": "float32",
+        "logical_dtype": "float32",
+        "shape": [2],
+        "data": "AACAPwAAAEA=",
+    }
+    row = {"elementwise_data": {"shape": [2], "cpu": encoded, "npu": encoded, "strict_mask": encoded}}
+    report = {
+        "summary": {"total": 1, "passed": 1, "failed": 0},
+        "graphs": {},
+        "results": [row],
+        "comparison_order": ["cpu_npu_autofuse"],
+        "comparisons": {
+            "cpu_npu_autofuse": {
+                "right_graph_key": "npu",
+                "summary": {"total": 1, "passed": 1, "failed": 0},
+                "results": [row],
+                "graphs": {"unused": True},
+            }
+        },
+    }
+    target = tmp_path / "deduplicated.html"
+
+    write_report_html(report, target)
+
+    content = target.read_text(encoding="utf-8")
+    assert content.count("AACAPwAAAEA=") == 1
+    assert '"tensor_ref":"tensor_0"' in content
+    assert '"tensor_payloads":{"tensor_0"' in content
+    assert '"unused":true' not in content
+
+
+def test_write_report_html_externalizes_large_tensor_payloads(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOFUSEDEBUGGER_EMBED_TENSOR_BYTES", "0")
+    encoded = {
+        "encoding": "base64",
+        "dtype": "float32",
+        "logical_dtype": "float32",
+        "shape": [2],
+        "data": "AACAPwAAAEA=",
+    }
+    row = {
+        "npu_op": "add",
+        "elementwise_data": {"shape": [2], "cpu": encoded, "npu": encoded, "strict_mask": encoded},
+    }
+    report = {
+        "summary": {"total": 1, "passed": 1, "failed": 0},
+        "graphs": {},
+        "results": [row],
+    }
+    target = tmp_path / "lazy.html"
+
+    write_report_html(report, target)
+
+    content = target.read_text(encoding="utf-8")
+    tensor_script = tmp_path / "lazy_data" / "tensor_0.js"
+    assert "AACAPwAAAEA=" not in content
+    assert '"external_script":"lazy_data/tensor_0.js"' in content
+    assert content.count('"tensor_ref":"tensor_0"') == 3
+    assert "loadTensorPayload" in content
+    assert "return new Constructor(buffer)" in content
+    assert tensor_script.is_file()
+    assert "window.__autofuseRegisterTensor" in tensor_script.read_text(encoding="utf-8")
+    assert "AACAPwAAAEA=" in tensor_script.read_text(encoding="utf-8")
+
+
+def test_write_report_html_from_json_streams_source_file(tmp_path: Path) -> None:
+    report = tmp_path / "report.json"
+    report.write_text(
+        '{"summary":{"total":0,"passed":0,"failed":0},"graphs":{},"results":[],"text":"</script>"}',
+        encoding="utf-8",
+    )
+    target = tmp_path / "from-json.html"
+
+    write_report_html_from_json(report, target)
+
+    content = target.read_text(encoding="utf-8")
+    assert '"text":"<\\/script>"' in content
+    assert "HTML report placeholder" not in content
+
+
+def test_write_report_html_from_json_externalizes_tensor_payloads(tmp_path: Path) -> None:
+    encoded = {
+        "encoding": "base64",
+        "dtype": "float32",
+        "logical_dtype": "float32",
+        "shape": [2],
+        "data": "AACAPwAAAEA=",
+    }
+    source = tmp_path / "report.json"
+    source.write_text(
+        json.dumps(
+            {
+                "summary": {"total": 1, "passed": 1, "failed": 0},
+                "graphs": {},
+                "results": [
+                    {
+                        "elementwise_data": {
+                            "shape": [2],
+                            "cpu": encoded,
+                            "npu": encoded,
+                            "strict_mask": encoded,
+                        }
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    target = tmp_path / "from-json-lazy.html"
+
+    write_report_html_from_json(source, target)
+
+    content = target.read_text(encoding="utf-8")
+    scripts = list((tmp_path / "from-json-lazy_data").glob("tensor_*.js"))
+    assert "AACAPwAAAEA=" not in content
+    assert len(scripts) == 1
+    assert content.count('"tensor_ref":"tensor_0"') == 3
+    assert '"external_script":"from-json-lazy_data/tensor_0.js"' in content

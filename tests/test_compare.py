@@ -360,6 +360,12 @@ def test_compare_three_manifests_returns_all_pairwise_results(tmp_path: Path) ->
     assert report["comparison_mode"] == "three_way"
     assert report["comparison_order"] == ["cpu_npu_autofuse", "cpu_npu_eager", "npu_eager_npu_autofuse"]
     assert all(report["comparisons"][key]["summary"]["dual_failed"] == 0 for key in report["comparison_order"])
+    cpu_autofuse = report["comparisons"]["cpu_npu_autofuse"]["results"][0]["elementwise_data"]
+    cpu_eager = report["comparisons"]["cpu_npu_eager"]["results"][0]["elementwise_data"]
+    eager_autofuse = report["comparisons"]["npu_eager_npu_autofuse"]["results"][0]["elementwise_data"]
+    assert cpu_autofuse["cpu"] is cpu_eager["cpu"]
+    assert cpu_eager["npu"] is eager_autofuse["cpu"]
+    assert cpu_autofuse["npu"] is eager_autofuse["npu"]
 
 
 def test_compare_pair_preserves_bfloat16_logical_dtype_with_float32_storage(tmp_path: Path) -> None:

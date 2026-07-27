@@ -1,6 +1,6 @@
 # autofusedebugger
 
-`autofusedebugger` 用于比较同一个 PyTorch 模型在 CPU、NPU eager 和 NPU Autofuse 三条路径上的逐算子/逐 kernel 输出精度，并生成单文件 HTML 报告。
+`autofusedebugger` 用于比较同一个 PyTorch 模型在 CPU、NPU eager 和 NPU Autofuse 三条路径上的逐算子/逐 kernel 输出精度，并生成 HTML 报告。
 
 自动化模型命令只使用以下两条数据链路：
 
@@ -158,6 +158,7 @@ OUT_DIR/
   report.json
   report.csv
   report.html
+  report_data/          大 Tensor 逐元素数据，打开 report.html 时按需加载
 ```
 
 ### 运行进度与卡顿判断
@@ -171,7 +172,22 @@ export AUTOFUSEDEBUGGER_HEARTBEAT_SECONDS=10
 export AUTOFUSEDEBUGGER_STALL_SECONDS=60
 ```
 
-HTML 阶段会分别显示 `HTML template rendering` 和 `HTML file write`，并在写文件前报告预计 HTML 大小与绝对路径。看到 `run completed html=...` 表示所有报告产物已经完整落盘。
+HTML 阶段会分别显示 `HTML template rendering` 和 `HTML streaming write`，完成后报告 HTML 大小与绝对路径。小 Tensor 可直接内嵌；大 Tensor 写入与 HTML 同目录的 `<HTML文件名>_data/tensor_*.js`，点击节点的 `T` 按钮时才从本地加载和解码。三方比较中内容相同的 Tensor 只保存一份。看到 `run completed html=...` 表示所有报告产物已经完整落盘。
+
+复制或归档报告时，必须同时保留 HTML 及其同名 `_data` 目录。例如 `report.html` 与 `report_data/` 应放在同一目录。只移动 HTML 会导致逐元素 Tensor 查看器提示数据文件加载失败，但主图和精度指标仍可查看。
+
+默认单个不超过 64 KiB、累计不超过 8 MiB 的 Tensor 数据内嵌到 HTML，可通过环境变量调整；均设为 `0` 可让所有 Tensor 数据外置：
+
+```bash
+export AUTOFUSEDEBUGGER_EMBED_TENSOR_BYTES=0
+export AUTOFUSEDEBUGGER_EMBED_TOTAL_BYTES=0
+```
+
+已有超大 `report.json` 时，`report-html` 会流式扫描 JSON，把全部逐元素 Tensor 数据拆到同名 `_data` 目录，不把整份报告加载进内存：
+
+```bash
+autofusedbg report-html --report work/report.json --out work/report.html
+```
 
 ## HTML 报告
 

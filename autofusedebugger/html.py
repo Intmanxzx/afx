@@ -1,16 +1,285 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import json
+import mmap
+import os
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from autofusedebugger.artifact_io import read_json
 from autofusedebugger.progress import progress_message, progress_stage
 
 
 def _json_for_script(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+
+
+_DEFAULT_EMBED_TENSOR_BYTES = 64 * 1024
+_DEFAULT_EMBED_TOTAL_BYTES = 8 * 1024 * 1024
+_ENCODED_OBJECT_PATTERN = re.compile(rb'\{\s*"encoding"\s*:\s*"(base64|json)"')
+_BASE64_OBJECT_END_PATTERN = re.compile(rb'"\s*\}')
+
+
+def _env_size(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _encoded_payload_size(payload: dict[str, Any]) -> int:
+    if payload.get("encoding") == "base64":
+        return len(payload.get("data", ""))
+    values = payload.get("values", [])
+    return len(values) * 16 if isinstance(values, list) else 0
+
+
+def _tensor_data_dir(target: Path) -> Path:
+    return target.with_name(f"{target.stem}_data")
+
+
+def _write_tensor_script(path: Path, payload_id: str, payload: dict[str, Any]) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        stream.write("window.__autofuseRegisterTensor(")
+        json.dump(payload_id, stream, ensure_ascii=False)
+        stream.write(",")
+        json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+        stream.write(");\n")
+    temporary.replace(path)
+    return path.stat().st_size
+
+
+class _TensorPayloadStore:
+    def __init__(self, target: Path):
+        self.data_dir = _tensor_data_dir(target)
+        self.embed_tensor_bytes = _env_size("AUTOFUSEDEBUGGER_EMBED_TENSOR_BYTES", _DEFAULT_EMBED_TENSOR_BYTES)
+        self.embed_total_bytes = _env_size("AUTOFUSEDEBUGGER_EMBED_TOTAL_BYTES", _DEFAULT_EMBED_TOTAL_BYTES)
+        self.embedded_bytes = 0
+        self.external_bytes = 0
+        self.external_files = 0
+
+    def store(self, payload_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        payload_size = _encoded_payload_size(payload)
+        if (
+            payload_size <= self.embed_tensor_bytes
+            and self.embedded_bytes + payload_size <= self.embed_total_bytes
+        ):
+            self.embedded_bytes += payload_size
+            return payload
+
+        filename = f"{payload_id}.js"
+        path = self.data_dir / filename
+        self.external_bytes += _write_tensor_script(path, payload_id, payload)
+        self.external_files += 1
+        return {
+            "external_script": quote(f"{self.data_dir.name}/{filename}"),
+            "byte_size": payload_size,
+            "dtype": payload.get("dtype"),
+            "logical_dtype": payload.get("logical_dtype"),
+            "shape": payload.get("shape"),
+        }
+
+
+def _compact_report_for_html(
+    report: dict[str, Any], payload_store: _TensorPayloadStore | None = None
+) -> dict[str, Any]:
+    source = dict(report)
+    comparisons = source.get("comparisons")
+    if isinstance(comparisons, dict) and comparisons:
+        source.pop("results", None)
+        source["comparisons"] = {
+            key: {field: value for field, value in comparison.items() if field != "graphs"}
+            for key, comparison in comparisons.items()
+        }
+
+    payloads: dict[str, dict[str, Any]] = {}
+    seen: dict[tuple[Any, ...], str] = {}
+
+    def compact(value: Any) -> Any:
+        if isinstance(value, dict) and value.get("encoding") in {"base64", "json"}:
+            if value.get("encoding") == "base64":
+                cache_key = (
+                    "base64",
+                    value.get("dtype"),
+                    value.get("logical_dtype"),
+                    tuple(value.get("shape", [])),
+                    value.get("data", ""),
+                )
+            else:
+                cache_key = ("json_identity", id(value))
+            payload_id = seen.get(cache_key)
+            if payload_id is None:
+                payload_id = f"tensor_{len(payloads)}"
+                seen[cache_key] = payload_id
+                payloads[payload_id] = payload_store.store(payload_id, value) if payload_store else value
+            return {"tensor_ref": payload_id}
+        if isinstance(value, dict):
+            return {key: compact(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [compact(item) for item in value]
+        return value
+
+    compacted = compact(source)
+    compacted["tensor_payloads"] = payloads
+    return compacted
+
+
+class _ScriptSafeWriter:
+    def __init__(self, stream: Any):
+        self.stream = stream
+        self.pending = ""
+
+    def write(self, value: str) -> int:
+        text = self.pending + value
+        self.pending = "<" if text.endswith("<") else ""
+        if self.pending:
+            text = text[:-1]
+        return self.stream.write(text.replace("</", "<\\/"))
+
+    def finish(self) -> None:
+        if self.pending:
+            self.stream.write(self.pending)
+            self.pending = ""
+
+
+class _ScriptSafeBinaryWriter:
+    def __init__(self, stream: Any):
+        self.stream = stream
+        self.pending = b""
+
+    def write(self, value: bytes) -> None:
+        data = self.pending + value
+        self.pending = b"<" if data.endswith(b"<") else b""
+        if self.pending:
+            data = data[:-1]
+        self.stream.write(data.replace(b"</", b"<\\/"))
+
+    def finish(self) -> None:
+        if self.pending:
+            self.stream.write(self.pending)
+            self.pending = b""
+
+
+def _json_object_end(data: mmap.mmap, start: int) -> int:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(data)):
+        value = data[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif value == ord("\\"):
+                escaped = True
+            elif value == ord('"'):
+                in_string = False
+            continue
+        if value == ord('"'):
+            in_string = True
+        elif value == ord("{"):
+            depth += 1
+        elif value == ord("}"):
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    raise ValueError(f"unterminated JSON object at byte {start}")
+
+
+def _encoded_object_end(data: mmap.mmap, match: re.Match[bytes]) -> int:
+    if match.group(1) == b"base64":
+        closing = _BASE64_OBJECT_END_PATTERN.search(data, match.end())
+        if closing is None:
+            raise ValueError(f"unterminated base64 tensor payload at byte {match.start()}")
+        return closing.end()
+    return _json_object_end(data, match.start())
+
+
+def _write_mmap_range(writer: _ScriptSafeBinaryWriter, data: mmap.mmap, start: int, end: int) -> None:
+    chunk_size = 1024 * 1024
+    for offset in range(start, end, chunk_size):
+        writer.write(data[offset : min(end, offset + chunk_size)])
+
+
+def _hash_mmap_range(data: mmap.mmap, start: int, end: int) -> str:
+    digest = hashlib.sha256()
+    chunk_size = 1024 * 1024
+    for offset in range(start, end, chunk_size):
+        digest.update(data[offset : min(end, offset + chunk_size)])
+    return digest.hexdigest()
+
+
+def _write_raw_tensor_script(
+    path: Path, payload_id: str, data: mmap.mmap, start: int, end: int
+) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    with temporary.open("wb") as stream:
+        stream.write(b"window.__autofuseRegisterTensor(")
+        stream.write(json.dumps(payload_id).encode("ascii"))
+        stream.write(b",")
+        chunk_size = 1024 * 1024
+        for offset in range(start, end, chunk_size):
+            stream.write(data[offset : min(end, offset + chunk_size)])
+        stream.write(b");\n")
+    temporary.replace(path)
+    return path.stat().st_size
+
+
+def _stream_externalized_report_json(
+    source: Path, target: Path, prefix: str, suffix: str
+) -> tuple[int, int, Path]:
+    data_dir = _tensor_data_dir(target)
+    payloads: dict[str, dict[str, Any]] = {}
+    seen: dict[tuple[str, int], str] = {}
+    external_bytes = 0
+
+    with source.open("rb") as source_stream, mmap.mmap(source_stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        root_end = len(data) - 1
+        while root_end >= 0 and data[root_end] in b" \t\r\n":
+            root_end -= 1
+        if root_end < 0 or data[root_end] != ord("}"):
+            raise ValueError(f"report JSON root must be an object: {source}")
+
+        with target.open("wb") as stream:
+            stream.write(prefix.encode("utf-8"))
+            writer = _ScriptSafeBinaryWriter(stream)
+            position = 0
+            search_position = 0
+            while match := _ENCODED_OBJECT_PATTERN.search(data, search_position, root_end):
+                payload_start = match.start()
+                payload_end = _encoded_object_end(data, match)
+                digest = _hash_mmap_range(data, payload_start, payload_end)
+                cache_key = (digest, payload_end - payload_start)
+                payload_id = seen.get(cache_key)
+                if payload_id is None:
+                    payload_id = f"tensor_{len(payloads)}"
+                    seen[cache_key] = payload_id
+                    filename = f"{payload_id}.js"
+                    external_bytes += _write_raw_tensor_script(
+                        data_dir / filename, payload_id, data, payload_start, payload_end
+                    )
+                    payloads[payload_id] = {
+                        "external_script": quote(f"{data_dir.name}/{filename}"),
+                        "byte_size": payload_end - payload_start,
+                    }
+                _write_mmap_range(writer, data, position, payload_start)
+                writer.write(json.dumps({"tensor_ref": payload_id}, separators=(",", ":")).encode("ascii"))
+                position = payload_end
+                search_position = payload_end
+
+            _write_mmap_range(writer, data, position, root_end)
+            writer.write(b',"tensor_payloads":')
+            writer.write(json.dumps(payloads, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            writer.write(b"}")
+            _write_mmap_range(writer, data, root_end + 1, len(data))
+            writer.finish()
+            stream.write(suffix.encode("utf-8"))
+    return len(payloads), external_bytes, data_dir
 
 
 def _fmt(value: Any, digits: int = 3) -> str:
@@ -19,7 +288,9 @@ def _fmt(value: Any, digits: int = 3) -> str:
     return "-"
 
 
-def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy Report") -> str:
+def render_report_html(
+    report: dict[str, Any], title: str = "Autofuse Accuracy Report", *, embed_report: bool = True
+) -> str:
     summary = report.get("summary", {})
     failed = int(summary.get("failed", 0) or 0)
     total = int(summary.get("total", 0) or 0)
@@ -40,7 +311,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     coverage = float(summary.get("coverage", compared / observable_total if observable_total else 0.0) or 0.0)
     status_text = str(summary.get("dual_status", summary.get("status", "PASS" if failed == 0 else "FAIL")))
     status_class = "pass" if status_text == "PASS" else ("fail" if status_text == "FAIL" else "warn")
-    payload = _json_for_script(report)
+    payload = _json_for_script(_compact_report_for_html(report)) if embed_report else "__REPORT_JSON__"
     template = """<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -720,6 +991,10 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
   <script>
     const report = JSON.parse(document.getElementById('reportData').textContent);
     const comparisonSets = report.comparisons || {};
+    const tensorPayloads = report.tensor_payloads || {};
+    const loadedTensorPayloads = new Map();
+    const tensorLoadPromises = new Map();
+    window.__autofuseRegisterTensor = (payloadId, payload) => loadedTensorPayloads.set(payloadId, payload);
     const comparisonOrder = report.comparison_order || Object.keys(comparisonSets);
     let activeComparisonKey = comparisonOrder[0] || null;
     let rows = ((comparisonSets[activeComparisonKey]?.results || report.results || [])).map((row, idx) => ({...row, _idx: idx}));
@@ -964,7 +1239,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     }
     const tensorViewerState = {
       nodeName: null, row: null, shape: [], rows: 1, cols: 1, cpu: null, npu: null, mask: null,
-      rowStart: 0, colStart: 0, rowPageSize: 32, colPageSize: 16, mode: 'difference', selected: null,
+      rowStart: 0, colStart: 0, rowPageSize: 32, colPageSize: 16, mode: 'difference', selected: null, loadToken: 0,
     };
     function decodeBase64Bytes(value) {
       const raw = atob(value || '');
@@ -983,11 +1258,39 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         uint32: Uint32Array, int32: Int32Array, float32: Float32Array, float64: Float64Array,
       };
       if (dtype === 'int64' || dtype === 'uint64') {
-        const values = dtype === 'int64' ? new BigInt64Array(buffer) : new BigUint64Array(buffer);
-        return Array.from(values, value => Number(value));
+        return dtype === 'int64' ? new BigInt64Array(buffer) : new BigUint64Array(buffer);
       }
       const Constructor = constructors[dtype] || Float32Array;
-      return Array.from(new Constructor(buffer));
+      return new Constructor(buffer);
+    }
+    function loadTensorPayload(payload) {
+      if (!payload?.tensor_ref) return Promise.resolve(payload);
+      const payloadId = payload.tensor_ref;
+      const descriptor = tensorPayloads[payloadId];
+      if (!descriptor) return Promise.reject(new Error(`Tensor 数据索引不存在: ${payloadId}`));
+      if (!descriptor.external_script) return Promise.resolve(descriptor);
+      if (tensorLoadPromises.has(payloadId)) return tensorLoadPromises.get(payloadId);
+      const promise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.async = true;
+        script.src = descriptor.external_script;
+        script.onload = () => {
+          script.remove();
+          const loaded = loadedTensorPayloads.get(payloadId);
+          loadedTensorPayloads.delete(payloadId);
+          tensorLoadPromises.delete(payloadId);
+          if (loaded) resolve(loaded);
+          else reject(new Error(`Tensor 数据文件未注册内容: ${descriptor.external_script}`));
+        };
+        script.onerror = () => {
+          script.remove();
+          tensorLoadPromises.delete(payloadId);
+          reject(new Error(`无法加载 ${descriptor.external_script}，请确认 HTML 与同名 _data 目录位于同一目录`));
+        };
+        document.head.appendChild(script);
+      });
+      tensorLoadPromises.set(payloadId, promise);
+      return promise;
     }
     function tensorRowsAndCols(shape) {
       if (!Array.isArray(shape) || shape.length === 0) return {rows: 1, cols: 1};
@@ -1113,33 +1416,52 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       meta.textContent = `shape=${shapeText(tensorViewerState.shape)} · dtype=${row?.dtype || payload?.logical_dtype || '-'} · 元素数=${tensorViewerState.rows * tensorViewerState.cols} · mismatch=${row?.mismatched ?? '-'} · 绿色=PASS，红色=FAIL`;
       renderTensorMatrix();
     }
-    function openTensorViewer(nodeName) {
+    async function openTensorViewer(nodeName) {
       const row = nodeMetric(nodeName)?.row;
       const payload = row?.elementwise_data;
       if (!payload) return;
+      const loadToken = ++tensorViewerState.loadToken;
+      const viewer = document.getElementById('tensorViewer');
+      viewer.hidden = false;
+      viewer.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('tensor-viewer-open');
+      document.getElementById('tensorViewerTitle').textContent = `输出 Tensor 逐元素精度 · ${row?.npu_op || nodeName || '-'}`;
+      document.getElementById('tensorViewerMeta').textContent = '正在按需加载 Tensor 数据...';
+      document.getElementById('tensorWindowSummary').textContent = '';
+      document.getElementById('tensorMatrix').textContent = '';
+      document.getElementById('tensorElementDetail').textContent = '';
       try {
+        const [cpuPayload, npuPayload, maskPayload] = await Promise.all([
+          loadTensorPayload(payload.cpu), loadTensorPayload(payload.npu), loadTensorPayload(payload.strict_mask),
+        ]);
+        if (loadToken !== tensorViewerState.loadToken) return;
         const dimensions = tensorRowsAndCols(payload.shape || row.shape || []);
         tensorViewerState.nodeName = nodeName;
         tensorViewerState.row = row;
         tensorViewerState.shape = payload.shape || row.shape || [];
         tensorViewerState.rows = dimensions.rows;
         tensorViewerState.cols = dimensions.cols;
-        tensorViewerState.cpu = decodeTensorArray(payload.cpu);
-        tensorViewerState.npu = decodeTensorArray(payload.npu);
-        tensorViewerState.mask = decodeTensorArray(payload.strict_mask);
+        tensorViewerState.cpu = decodeTensorArray(cpuPayload);
+        tensorViewerState.npu = decodeTensorArray(npuPayload);
+        tensorViewerState.mask = decodeTensorArray(maskPayload);
         tensorViewerState.rowStart = 0;
         tensorViewerState.colStart = 0;
         tensorViewerState.selected = null;
-        const viewer = document.getElementById('tensorViewer');
-        viewer.hidden = false;
-        viewer.setAttribute('aria-hidden', 'false');
-        document.body.classList.add('tensor-viewer-open');
         renderTensorViewer();
       } catch (error) {
         console.error('failed to decode elementwise tensor data', error);
+        if (loadToken !== tensorViewerState.loadToken) return;
+        document.getElementById('tensorViewerMeta').textContent = `Tensor 数据加载失败: ${error?.message || error}`;
       }
     }
     function closeTensorViewer() {
+      tensorViewerState.loadToken += 1;
+      tensorViewerState.row = null;
+      tensorViewerState.cpu = null;
+      tensorViewerState.npu = null;
+      tensorViewerState.mask = null;
+      tensorViewerState.selected = null;
+      document.getElementById('tensorMatrix').textContent = '';
       const viewer = document.getElementById('tensorViewer');
       viewer.hidden = true;
       viewer.setAttribute('aria-hidden', 'true');
@@ -2480,6 +2802,8 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       if (Number.isFinite(initialLifecycleHeight) && initialLifecycleHeight > 0) setLifecycleHeight(initialLifecycleHeight);
       if (initialParams.get('lifecycle') === 'open') document.getElementById('autofuseAnalytics').open = true;
       }
+    const initialTensorNode = initialParams.get('tensor');
+    if (initialTensorNode) openTensorViewer(initialTensorNode);
     window.addEventListener('resize', () => {
       drawChart();
       setDetailsWidth(detailsWidthState.width);
@@ -2525,13 +2849,54 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
 def write_report_html(report: dict[str, Any], path: str | Path, title: str = "Autofuse Accuracy Report") -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    payload_store = _TensorPayloadStore(target)
     with progress_stage("HTML template rendering", detail=f"output={target}"):
-        rendered = render_report_html(report, title)
-    size_mib = len(rendered.encode("utf-8")) / (1024.0 * 1024.0)
-    progress_message("INFO", f"HTML rendered size={size_mib:.1f}MiB output={target}")
-    with progress_stage("HTML file write", detail=f"output={target}"):
-        target.write_text(rendered, encoding="utf-8")
+        template = render_report_html(report, title, embed_report=False)
+        html_report = _compact_report_for_html(report, payload_store)
+        prefix, marker, suffix = template.partition("__REPORT_JSON__")
+        if not marker:
+            raise RuntimeError("HTML report placeholder is missing")
+
+    with progress_stage("HTML streaming write", detail=f"output={target}"):
+        with target.open("w", encoding="utf-8") as stream:
+            stream.write(prefix)
+            writer = _ScriptSafeWriter(stream)
+            json.dump(html_report, writer, ensure_ascii=False, separators=(",", ":"))
+            writer.finish()
+            stream.write(suffix)
+    size_mib = target.stat().st_size / (1024.0 * 1024.0)
+    progress_message("INFO", f"HTML written size={size_mib:.1f}MiB output={target}")
+    if payload_store.external_files:
+        external_mib = payload_store.external_bytes / (1024.0 * 1024.0)
+        progress_message(
+            "INFO",
+            f"HTML lazy tensor data files={payload_store.external_files} size={external_mib:.1f}MiB "
+            f"directory={payload_store.data_dir}",
+        )
 
 
 def write_report_html_from_json(report_path: str | Path, html_path: str | Path, title: str = "Autofuse Accuracy Report") -> None:
-    write_report_html(read_json(report_path), html_path, title)
+    source = Path(report_path)
+    target = Path(html_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with progress_stage("HTML template rendering", detail=f"output={target}"):
+        template = render_report_html(
+            {"summary": {}, "graphs": {}, "results": []},
+            title,
+            embed_report=False,
+        )
+        prefix, marker, suffix = template.partition("__REPORT_JSON__")
+        if not marker:
+            raise RuntimeError("HTML report placeholder is missing")
+    with progress_stage("HTML JSON tensor externalization", detail=f"report={source} output={target}"):
+        payload_count, external_bytes, data_dir = _stream_externalized_report_json(
+            source, target, prefix, suffix
+        )
+    size_mib = target.stat().st_size / (1024.0 * 1024.0)
+    progress_message("INFO", f"HTML written size={size_mib:.1f}MiB output={target}")
+    if payload_count:
+        progress_message(
+            "INFO",
+            f"HTML lazy tensor data files={payload_count} size={external_bytes / (1024.0 * 1024.0):.1f}MiB "
+            f"directory={data_dir}",
+        )
