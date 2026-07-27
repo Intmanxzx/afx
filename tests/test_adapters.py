@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from autofusedebugger import script_runner
 from autofusedebugger.adapters import (
+    CapturedInvocation,
     InductorAutofuseBackend,
     JaxAdapter,
     PyTorchAdapter,
@@ -86,3 +88,46 @@ def test_reserved_framework_adapters_fail_explicitly() -> None:
         JaxAdapter().capture(script="unused.py")
     assert InductorAutofuseBackend().supports("pytorch")
     assert not InductorAutofuseBackend().supports("tensorflow")
+
+
+def test_run_script_keeps_script_directory_importable_during_backend_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "libs.py").write_text(
+        "def add_one(value):\n    return value + 1\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "model.py"
+    script.write_text("# Captured by the fake frontend.\n", encoding="utf-8")
+
+    class LazyModel:
+        def __call__(self, value):
+            from libs import add_one
+
+            return add_one(value)
+
+    class FakeFrontend:
+        def capture(self, **kwargs):
+            del kwargs
+            return CapturedInvocation(
+                framework="pytorch",
+                model=LazyModel(),
+                args=(0,),
+                kwargs={},
+                name="LazyModel",
+            )
+
+    class FakeBackend:
+        def supports(self, framework):
+            return framework == "pytorch"
+
+        def run(self, invocation, **kwargs):
+            del kwargs
+            return {"output": invocation.model(*invocation.args)}
+
+    monkeypatch.setattr(script_runner, "get_framework_adapter", lambda name: FakeFrontend())
+    monkeypatch.setattr(script_runner, "get_backend_adapter", lambda name: FakeBackend())
+
+    result = script_runner.run_framework_script(script=script, out_dir=tmp_path / "out")
+
+    assert result == {"output": 1}
