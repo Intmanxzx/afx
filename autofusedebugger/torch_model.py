@@ -24,6 +24,7 @@ from autofusedebugger.inductor_autofuse import (
     install_autofuse_intermediate_hooks,
     reset_autofuse_diagnostics,
 )
+from autofusedebugger.progress import progress_message, progress_stage
 from autofusedebugger.npu_examples import (
     _cann_dump_sort_key,
     _candidate_cann_roots,
@@ -501,6 +502,7 @@ def run_torch_case(
     atol: float | None = None,
 ) -> dict[str, Any]:
     root = Path(out_dir).resolve()
+    progress_message("INFO", f"run started model={case.name} device={device} out_dir={root}")
     _clean_dir(root)
     cpu_dump = root / "cpu_dump"
     npu_eager_dump = root / "npu_eager_dump"
@@ -514,56 +516,66 @@ def run_torch_case(
     autofuse_dump.mkdir(parents=True, exist_ok=True)
 
     try:
-        cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(case, cpu_dump)
+        with progress_stage("CPU graph capture", detail=f"dump_dir={cpu_dump}"):
+            cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(case, cpu_dump)
     except Exception as exc:
         raise RuntimeError(f"CPU graph capture failed: {type(exc).__name__}: {exc}") from exc
+    progress_message("INFO", f"CPU graph captured tensors={len(cpu_outputs)}")
     try:
-        npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(case, npu_eager_dump, device=device)
+        with progress_stage("NPU eager graph capture", detail=f"dump_dir={npu_eager_dump}"):
+            npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(case, npu_eager_dump, device=device)
     except Exception as exc:
         raise RuntimeError(f"NPU eager graph capture failed: {type(exc).__name__}: {exc}") from exc
+    progress_message("INFO", f"NPU eager graph captured tensors={len(npu_eager_outputs)}")
     try:
-        _, npu_records, native_capture = run_npu_model(
-            case,
-            npu_dump,
-            compile_dir,
-            autofuse_dump,
-            cann_root=cann_root,
-            device=device,
-        )
+        with progress_stage("NPU Autofuse execution", detail=f"dump_dir={npu_dump}"):
+            _, npu_records, native_capture = run_npu_model(
+                case,
+                npu_dump,
+                compile_dir,
+                autofuse_dump,
+                cann_root=cann_root,
+                device=device,
+            )
     except Exception as exc:
         raise RuntimeError(f"NPU Autofuse execution failed: {type(exc).__name__}: {exc}") from exc
-    diagnostics = native_capture.pop("diagnostics", {})
-    diagnostics_path = root / "autofuse_diagnostics.json"
-    _save_json(diagnostics_path, diagnostics)
-    npu_graph_data = build_inductor_autofuse_graph(compile_dir, npu_records, cpu_outputs, diagnostics)
+    progress_message("INFO", f"NPU Autofuse captured kernels={len(npu_records)}")
+    with progress_stage("NPU graph reconstruction", detail=f"compile_dir={compile_dir}"):
+        diagnostics = native_capture.pop("diagnostics", {})
+        diagnostics_path = root / "autofuse_diagnostics.json"
+        _save_json(diagnostics_path, diagnostics)
+        npu_graph_data = build_inductor_autofuse_graph(compile_dir, npu_records, cpu_outputs, diagnostics)
 
     cpu_graph = root / "cpu_graph.json"
     npu_eager_graph = root / "npu_eager_graph.json"
     npu_graph = root / "npu_graph.json"
-    _save_json(cpu_graph, cpu_graph_data)
-    _save_json(npu_eager_graph, npu_eager_graph_data)
-    _save_json(npu_graph, npu_graph_data)
-    cpu_manifest = root / "cpu_manifest.json"
-    npu_eager_manifest = root / "npu_eager_manifest.json"
-    npu_manifest = root / "npu_manifest.json"
-    build_manifest(side="cpu", graph_path=cpu_graph, dump_dir=cpu_dump, out_path=cpu_manifest, model_name=case.name)
-    build_manifest(
-        side="npu_eager",
-        graph_path=npu_eager_graph,
-        dump_dir=npu_eager_dump,
-        out_path=npu_eager_manifest,
-        model_name=case.name,
-    )
-    build_manifest(side="npu", graph_path=npu_graph, dump_dir=npu_dump, out_path=npu_manifest, model_name=case.name)
+    with progress_stage("Graph manifest generation", detail=f"out_dir={root}"):
+        _save_json(cpu_graph, cpu_graph_data)
+        _save_json(npu_eager_graph, npu_eager_graph_data)
+        _save_json(npu_graph, npu_graph_data)
+        cpu_manifest = root / "cpu_manifest.json"
+        npu_eager_manifest = root / "npu_eager_manifest.json"
+        npu_manifest = root / "npu_manifest.json"
+        build_manifest(side="cpu", graph_path=cpu_graph, dump_dir=cpu_dump, out_path=cpu_manifest, model_name=case.name)
+        build_manifest(
+            side="npu_eager",
+            graph_path=npu_eager_graph,
+            dump_dir=npu_eager_dump,
+            out_path=npu_eager_manifest,
+            model_name=case.name,
+        )
+        build_manifest(side="npu", graph_path=npu_graph, dump_dir=npu_dump, out_path=npu_manifest, model_name=case.name)
 
-    report = compare_three_manifests(
-        cpu_manifest,
-        npu_eager_manifest,
-        npu_manifest,
-        rtol=rtol,
-        atol=atol,
-    )
-    attach_autofuse_graphs(report, autofuse_dump)
+    with progress_stage("Three-way tensor comparison", detail="CPU vs NPU eager vs NPU Autofuse"):
+        report = compare_three_manifests(
+            cpu_manifest,
+            npu_eager_manifest,
+            npu_manifest,
+            rtol=rtol,
+            atol=atol,
+        )
+    with progress_stage("AutoFuse graph collection", detail=f"dump_dir={autofuse_dump}"):
+        attach_autofuse_graphs(report, autofuse_dump)
     native_capture["graph_count"] = len(report["graphs"]["autofuse"]["graphs"])
     native_capture["npu_eager_nodes"] = len(npu_eager_graph_data["graph"][0]["op"])
     native_capture["npu_eager_dump_nodes"] = len(npu_eager_outputs)
@@ -576,8 +588,9 @@ def run_torch_case(
     if invocation_metadata:
         native_capture["invocation"] = invocation_metadata
     report["graphs"]["autofuse"]["capture"] = native_capture
-    save_report(report, root / "report.json", root / "report.csv")
     html = Path(html_path).resolve() if html_path else root / "report.html"
+    with progress_stage("Report JSON and CSV write", detail=f"out_dir={root}"):
+        save_report(report, root / "report.json", root / "report.csv")
     write_report_html(report, html, title=f"Autofuse {case.name} Accuracy Report")
     summary: dict[str, Any] = {
         "example": case.name,
@@ -604,6 +617,7 @@ def run_torch_case(
     if invocation_metadata:
         summary["invocation"] = invocation_metadata
     _save_json(root / "run_summary.json", summary)
+    progress_message("INFO", f"run completed html={html}")
     return summary
 
 

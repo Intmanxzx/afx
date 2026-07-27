@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from autofusedebugger.artifact_io import read_json
+from autofusedebugger.progress import progress_message, progress_stage
 
 
 def _json_for_script(data: Any) -> str:
@@ -2524,7 +2525,12 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
 def write_report_html(report: dict[str, Any], path: str | Path, title: str = "Autofuse Accuracy Report") -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render_report_html(report, title), encoding="utf-8")
+    with progress_stage("HTML template rendering", detail=f"output={target}"):
+        rendered = render_report_html(report, title)
+    size_mib = len(rendered.encode("utf-8")) / (1024.0 * 1024.0)
+    progress_message("INFO", f"HTML rendered size={size_mib:.1f}MiB output={target}")
+    with progress_stage("HTML file write", detail=f"output={target}"):
+        target.write_text(rendered, encoding="utf-8")
 
 
 def write_report_html_from_json(report_path: str | Path, html_path: str | Path, title: str = "Autofuse Accuracy Report") -> None:

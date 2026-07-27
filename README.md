@@ -15,8 +15,7 @@ NPU 中间输出由 PyTorch Inductor intermediate hook 采集。工具为 Ascend
 在已安装 PyTorch 2.9、torch_npu 2.9 和 CANN 的 NPU 环境执行：
 
 ```bash
-git clone git@gitcode.com:xingzhixiong/Autofuse-Debugger.git
-cd ${HOME}/Autofuse-Debugger/
+cd /home/xingzhixiong/dfx_dir/autofusedebugger
 python3 -m pip install -e .
 ```
 
@@ -57,10 +56,11 @@ if __name__ == "__main__":
 ```bash
 source /home/developer/Ascend/cann-9.1.0/set_env.sh
 
-autofusedebugger run-script \
+autofusedbg run-script \
   --framework pytorch \
   --backend inductor_autofuse \
   --script /path/to/model.py \
+  --cann-root /home/developer/Ascend/cann-9.1.0 \
   --out-dir /tmp/my_model_accuracy \
   --html /tmp/my_model_accuracy.html
 ```
@@ -159,6 +159,19 @@ OUT_DIR/
   report.csv
   report.html
 ```
+
+### 运行进度与卡顿判断
+
+`run-script` 和 `run-torch-model` 会为 CPU/NPU 采集、图重建、三方精度比较、AutoFuse 图收集、报告写入和 HTML 渲染输出 `START/DONE/FAILED` 日志。单个阶段超过 30 秒时，每 30 秒输出一次包含墙钟耗时、CPU 时间和 RSS 内存的 `RUNNING` 心跳；连续 120 秒没有可测 CPU 进展时输出 `WARNING`，提示该阶段可能正在等待外部任务或已经卡住。
+
+可通过环境变量调整两个时间间隔：
+
+```bash
+export AUTOFUSEDEBUGGER_HEARTBEAT_SECONDS=10
+export AUTOFUSEDEBUGGER_STALL_SECONDS=60
+```
+
+HTML 阶段会分别显示 `HTML template rendering` 和 `HTML file write`，并在写文件前报告预计 HTML 大小与绝对路径。看到 `run completed html=...` 表示所有报告产物已经完整落盘。
 
 ## HTML 报告
 
