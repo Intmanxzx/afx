@@ -124,6 +124,13 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "highlight-controls" in content
     assert "联动高亮" in content
     assert "detailsPanel" in content
+    assert "tensorViewer" in content
+    assert "tensorMatrix" in content
+    assert "openTensorViewer" in content
+    assert "tensor-mark" in content
+    assert "查看输出 Tensor 逐元素精度" in content
+    assert "tensorRowsAndCols" in content
+    assert "绿色=PASS，红色=FAIL" in content
     assert "data-highlight-mode=\"depth1\"" in content
     assert "data-highlight-mode=\"depth2\"" in content
     assert "data-highlight-mode=\"all\"" in content
@@ -153,9 +160,12 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "NO MAP" in content
     assert "NO DUMP" in content
     assert "NPU_OUTPUT_NOT_CAPTURED" in content
+    assert "NOT_OBSERVABLE_ON_NPU" in content
+    assert "融合内部不可观测" in content
+    assert "not_observable" in content
     assert "CPU 对照" in content
     assert "rtol / atol" in content
-    assert "Tolerance" in content
+    assert "逐元素对比容差" in content
     assert "tolerance_source" in content
     assert "fitGraph" in content
     assert "applyGraphView" in content
@@ -234,12 +244,30 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "QUE REUSED" in content
     assert "Queue 节点分类" in content
     assert "精度结果分类" in content
-    assert "双标准通过" in content
-    assert "CANN 失败" in content
-    assert "Strict Elementwise Pass" in content
-    assert "CANN Metrics Pass" in content
-    assert "Relative Euclidean" in content
-    assert "KL divergence" in content
+    assert "逐元素 / 整体均通过" in content
+    assert "整体 Tensor 失败" in content
+    assert "逐元素对比通过" in content
+    assert "整体 Tensor 对比通过" in content
+    assert "CosineSimilarity（余弦值相似度）" in content
+    assert "RelativeEuclideanDistance（欧氏相对距离）" in content
+    assert "KullbackLeiblerDivergence（KL散度）" in content
+    assert "Precision: 逐元素" in content
+    assert "metric-group-row" in content
+    assert "逐元素精度对比指标" in content
+    assert "整 Tensor 精度对比指标" in content
+    assert '<th colspan="10"></th><th colspan="6" class="elementwise-group">逐元素精度对比指标</th><th colspan="3" class="tensor-group">整 Tensor 精度对比指标</th>' in content
+    assert content.index('data-key="mismatched"') < content.index('data-key="cann_cosine_similarity"')
+    assert content.index('data-key="max_error_index"') < content.index('data-key="cann_cosine_similarity"')
+    assert "overflow-x: auto" in content
+    assert "table { width: max-content" in content
+    assert "tableHorizontalScrollbar" in content
+    assert "tableHorizontalScrollbarContent" in content
+    assert "initTableHorizontalScrollbar" in content
+    assert "scrollbar.scrollLeft = wrap.scrollLeft" in content
+    assert "wrap.scrollLeft = scrollbar.scrollLeft" in content
+    assert "detailsResizeHandle" in content
+    assert "initDetailsResize" in content
+    assert "details-wide" in content
     assert "最大有限误差位置" in content
     assert "非有限值统计" in content
     assert "首个非有限值位置" in content
@@ -252,7 +280,7 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "cann_passed" in content
     assert ".load-legend[hidden] { display: none; }" in content
     assert "loadLegend.innerHTML = '<span class=\"resource\">Queue 同一 que_id 同色；Buffer 同一 buf_id 同色" in content
-    assert "loadLegend.innerHTML = '<span class=\"pass\">双标准通过" in content
+    assert "loadLegend.innerHTML = '<span class=\"pass\">逐元素 / 整体均通过" in content
     assert "queue_id=" in content
     assert "buffer_id=" in content
     assert "reuse_id=" in content

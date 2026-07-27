@@ -1,10 +1,11 @@
 # autofusedebugger
 
-`autofusedebugger` 用于比较同一个 PyTorch 模型在 CPU 和 NPU Autofuse 路径上的逐 kernel 输出精度，并生成单文件 HTML 报告。
+`autofusedebugger` 用于比较同一个 PyTorch 模型在 CPU、NPU eager 和 NPU Autofuse 三条路径上的逐算子/逐 kernel 输出精度，并生成单文件 HTML 报告。
 
 自动化模型命令只使用以下两条数据链路：
 
 - CPU：`torch.export` 后执行默认 Core ATen decomposition，与 Inductor 图对齐，并用 FX Interpreter 保存每个 `call_function` 节点输出。
+- NPU eager：复用导出的 ATen/FX 图，在 NPU 上直接用 FX Interpreter 执行，不经过 Inductor 和 AscendC，用于区分 NPU 原生 eager 误差与融合误差。
 - NPU：加载 `torch_npu` 内置的 `torch_npu._inductor.ascendc` 后端，并调用 `torch.compile(model, options={"npu_backend": "ascendc"})`，执行 PyTorch Inductor -> AscendC/Autofuse 路径。工具不会调用 `torchair.get_npu_backend()`，也不会使用 GE 图作为 NPU 主图。
 
 NPU 中间输出由 PyTorch Inductor intermediate hook 采集。工具为 AscendC 后端的 `autofused_*` 调用补充相同 hook，只保存融合 kernel 的出口；`mm`、`tanh` 等 fallback kernel 使用 Inductor 原生 hook。主图拓扑来自 `ir_post_fusion.txt`，融合子图来自对应 kernel `benchmark.py` 中的 ASCIR `graph_hint`。
@@ -14,6 +15,7 @@ NPU 中间输出由 PyTorch Inductor intermediate hook 采集。工具为 Ascend
 在已安装 PyTorch 2.9、torch_npu 2.9 和 CANN 的 NPU 环境执行：
 
 ```bash
+git clone git@gitcode.com:xingzhixiong/Autofuse-Debugger.git
 cd /home/xingzhixiong/dfx_dir/autofusedebugger
 python3 -m pip install -e .
 ```
@@ -59,12 +61,11 @@ autofusedbg run-script \
   --framework pytorch \
   --backend inductor_autofuse \
   --script /path/to/model.py \
-  --cann-root /home/developer/Ascend/cann-9.1.0 \
   --out-dir /tmp/my_model_accuracy \
   --html /tmp/my_model_accuracy.html
 ```
 
-工具执行脚本并在目标最外层 `torch.nn.Module` 调用发生前截获模型、位置参数和关键字参数。原脚本中的该次推理不会实际执行，CPU reference 和 NPU Autofuse 执行均由工具使用同一份输入快照发起。
+工具执行脚本并在目标最外层 `torch.nn.Module` 调用发生前截获模型、位置参数和关键字参数。原脚本中的该次推理不会实际执行，CPU、NPU eager 和 NPU Autofuse 执行均由工具使用同一份输入快照发起。
 
 默认按比较双方精度较低的 dtype 自动选择逐元素 `np.isclose` 阈值：
 
@@ -78,7 +79,7 @@ autofusedbg run-script \
 
 显式传入 `--rtol`、`--atol` 可覆盖自动阈值；JSON、CSV 和 HTML 明细会记录每个节点实际使用的阈值。
 
-报告同时保留两套判定：`Strict` 是逐元素 `np.isclose`，要求所有元素通过；`CANN` 使用 Cosine Similarity、Relative Euclidean Distance 和 KL Divergence，阈值分别为 `cosine > 0.99`、`relative_euclidean < 0.05`、`KL < 0.005`，三项都通过才算通过。报告总状态要求两套标准同时通过。包含 `Inf/NaN` 时，相关聚合指标会标记为 `N/A`，并在详情中显示非有限值类型、数量和位置。
+报告同时保留两套判定：报告中的“逐元素对比”（内部字段 `strict`）使用逐元素 `np.isclose`，要求所有元素通过；“整体 Tensor 对比”（内部字段 `cann`）将整个输出 Tensor 作为整体，使用 Cosine Similarity、Relative Euclidean Distance 和 KL Divergence，阈值分别为 `cosine > 0.99`、`relative_euclidean < 0.05`、`KL < 0.005`，三项都通过才算通过。报告总状态要求两套标准同时通过。包含 `Inf/NaN` 时，相关聚合指标会标记为 `N/A`，并在详情中显示非有限值类型、数量和位置。
 
 脚本有多个模型或多次推理时，可选择目标调用：
 
@@ -121,26 +122,38 @@ autofusedbg run-torch-model \
 
 `create_case()` 返回 `(model, inputs)`，或包含 `model`、`inputs`、可选 `kwargs/fullgraph/dynamic/name` 的字典。
 
+仓库提供了一个包含 17 个 `bf16` 输入、16 个串联 `torch.add` 的验证用例：
+
+```bash
+autofusedbg run-torch-model \
+  --script examples/af_bf16_add_chain16.py \
+  --out-dir /tmp/bf16_add_chain16
+```
+
 命令只执行一次 NPU 模型，会自动完成：
 
 1. 采集 CPU ATen FX 每个节点输出。
-2. 通过 `torch.compile(options={"npu_backend": "ascendc"})` 执行原生 Inductor + AscendC/Autofuse。
-3. 采集每个 NPU 调度 kernel 输出；融合 kernel 只采集出口。
-4. 解析真实 Inductor post-fusion 拓扑、compiler provenance 和 ASCIR 融合子图。
-5. 收集同次编译生成的所有 `AutoFuseAfterOptimize` 图。
-6. 生成 manifest、JSON、CSV 和 HTML 精度报告。
+2. 在 NPU 上直接执行导出的 ATen FX 图，采集 NPU eager 每个节点输出。
+3. 通过 `torch.compile(options={"npu_backend": "ascendc"})` 执行原生 Inductor + AscendC/Autofuse。
+4. 采集每个 NPU 调度 kernel 输出；融合 kernel 只采集出口。
+5. 解析真实 Inductor post-fusion 拓扑、compiler provenance 和 ASCIR 融合子图。
+6. 收集同次编译生成的所有 `AutoFuseAfterOptimize` 图。
+7. 生成三方 manifest、JSON、CSV 和 HTML 精度报告。
 
 主要产物：
 
 ```text
 OUT_DIR/
   cpu_dump/              CPU 节点输出 .npy
+  npu_eager_dump/        NPU eager 节点输出 .npy
   npu_dump/              NPU Autofuse/fallback kernel 输出 .npy
   inductor_compile/      FX、post-fusion IR、generated code、provenance
   autofuse_dump/         AutoFuseAfterOptimize 等 AscendC DFX 图
   cpu_graph.json
+  npu_eager_graph.json
   npu_graph.json
   cpu_manifest.json
+  npu_eager_manifest.json
   npu_manifest.json
   report.json
   report.csv
@@ -151,20 +164,25 @@ OUT_DIR/
 
 报告以 NPU Autofuse 主图为主要区域：
 
-- 主图节点对应真实 Inductor 调度 kernel；绿色表示 Strict 和 CANN 都通过，橙色表示仅 Strict 失败，红色表示 CANN 失败，蓝色表示输入/权重，灰色表示未映射或未采集。
+- 主图节点对应真实 Inductor 调度 kernel；绿色表示逐元素对比和整体 Tensor 对比都通过，橙色表示仅逐元素对比失败，红色表示整体 Tensor 对比失败，蓝色表示输入/权重，灰色表示未映射或未采集。
 - 单击节点查看精度和输入输出；可同时向前追溯输入链、向后追溯输出链，并选择一层、两层或全部链路。
 - 融合节点右上角蓝色入口用于进入 ASCIR 融合子图。
 - 图支持滚轮缩放、鼠标拖动和自动适配。
 - `AutoFuseAfterOptimize` 按 `autofused_*` kernel 分组，每组保留全部优化变体；选中主图融合节点时会高亮对应分组，并可从详情抽屉直接进入。
 - `AutoFuseAfterOptimize` 节点会解析 `sched.exec_condition`；启用 broadcast 条件缓存的节点使用青色 `BC` 圆标和 `BROADCAST CACHE` 标签，详情中展示完整 condition，生命周期节点表头同步标记。
 - 每张优化图提供默认收起的 Queue/Buffer 时间线：Queue 按 `queue_id/reuse_id` 分层，横条表示按拓扑推导的静态占用区间，实心/空心节点分别表示生产者和直接消费者；支持 Queue、Buffer、全部视图切换、状态过滤、横轴缩放，并与上方 ASCIR 拓扑双向高亮。展开后可拖动顶部把手调整时间线高度，双击把手会尽量显示全部资源。
-- 误差详情默认收起，可查看 Strict/CANN 判定、max abs、max rel、RMSE、Cosine、Relative Euclidean Distance、KL Divergence、mismatch 和最大有限误差位置。输出含 `Inf/NaN` 时还会显示 CPU/NPU 两侧的数量、同位置数量和首个位置。
+- 主图节点只显示一行精度摘要 `Precision: 逐元素pass, 整Tensor pass/fail`；逐算子明细表按“逐元素精度对比指标”和“整 Tensor 精度对比指标”分组展示 max abs、max rel、RMSE、`CosineSimilarity（余弦值相似度）`、`RelativeEuclideanDistance（欧氏相对距离）`、`KullbackLeiblerDivergence（KL散度）`，表格和节点详情抽屉均支持横向滚动。误差详情默认收起。输出含 `Inf/NaN` 时还会显示 CPU/NPU 两侧的数量、同位置数量和首个位置。
+- 三方报告顶部提供 `CPU ↔ NPU Autofuse`、`CPU ↔ NPU eager`、`NPU eager ↔ NPU Autofuse` 三组页签；切换时会同步更新统计、主图和逐算子明细。
+- 有逐元素 dump 的节点会显示蓝色 `T` 按钮，可查看二维展开后的 CPU 值、NPU 值、绝对误差、相对误差和逐元素 PASS/FAIL。
 
 已有 `report.json` 时可单独重建 HTML：
 
 ```bash
 autofusedbg report-html --report work/report.json --out work/report.html
 ```
+
+功能截图、三方比较示例、未融合原因和 TQue/TBuf 生命周期展示见
+[docs/feature_gallery.md](docs/feature_gallery.md)。
 
 ## 离线 manifest 比较
 
@@ -194,3 +212,6 @@ autofusedbg run-camodel --cann-root /path/to/cann --out-dir work/camodel --comma
 ```
 
 更多 manifest 字段见 [docs/manifest_schema.md](docs/manifest_schema.md)。
+
+算子输出映射规则、融合出口定义、未映射状态和跨环境排查方法见
+[docs/accuracy_mapping.md](docs/accuracy_mapping.md)。

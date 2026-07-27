@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import csv
 from dataclasses import dataclass
 from pathlib import Path
@@ -246,6 +247,51 @@ def _nonfinite_value(value: float) -> str:
     return f"{value:.8g}"
 
 
+def _encode_tensor_array(value: np.ndarray) -> dict[str, Any]:
+    array = np.ascontiguousarray(value)
+    original_dtype = str(array.dtype)
+    # Browsers do not consistently expose Float16Array, so use float32 for
+    # display while keeping the logical/storage dtype in the surrounding metadata.
+    if array.dtype == np.dtype("float16"):
+        array = array.astype(np.float32)
+    if not (
+        np.issubdtype(array.dtype, np.bool_)
+        or np.issubdtype(array.dtype, np.integer)
+        or np.issubdtype(array.dtype, np.floating)
+    ):
+        return {
+            "encoding": "json",
+            "dtype": original_dtype,
+            "shape": list(array.shape),
+            "values": array.reshape(-1).tolist(),
+        }
+    return {
+        "encoding": "base64",
+        "dtype": str(array.dtype),
+        "logical_dtype": original_dtype,
+        "shape": list(array.shape),
+        "data": base64.b64encode(array.tobytes(order="C")).decode("ascii"),
+    }
+
+
+def _elementwise_payload(
+    golden: np.ndarray,
+    actual: np.ndarray,
+    *,
+    rtol: float,
+    atol: float,
+    logical_dtype: str,
+) -> dict[str, Any]:
+    close = np.isclose(golden.astype(np.float64), actual.astype(np.float64), rtol=rtol, atol=atol, equal_nan=False)
+    return {
+        "shape": list(golden.shape),
+        "logical_dtype": logical_dtype,
+        "cpu": _encode_tensor_array(golden),
+        "npu": _encode_tensor_array(actual),
+        "strict_mask": _encode_tensor_array(close.astype(np.uint8)),
+    }
+
+
 def _nonfinite_metrics(golden: np.ndarray, actual: np.ndarray) -> dict[str, Any]:
     gf = np.asarray(golden).astype(np.float64).reshape(-1)
     af = np.asarray(actual).astype(np.float64).reshape(-1)
@@ -462,7 +508,15 @@ def compare_pair(
 
     result.update(_metrics(golden, actual, rtol=resolved_rtol, atol=resolved_atol))
     result["shape"] = list(golden.shape)
-    result["dtype"] = str(golden.dtype)
+    result["dtype"] = str(cpu.dtype or npu.dtype or golden.dtype).removeprefix("torch.")
+    result["storage_dtype"] = str(golden.dtype)
+    result["elementwise_data"] = _elementwise_payload(
+        golden,
+        actual,
+        rtol=resolved_rtol,
+        atol=resolved_atol,
+        logical_dtype=result["dtype"],
+    )
     if statuses:
         result["status"] = "OK_" + "_".join(statuses)
     return result
@@ -484,6 +538,7 @@ def compare_manifests(
     fusions = _fusion_index(npu_data)
 
     rows: list[dict[str, Any]] = []
+    observed_cpu_keys: set[tuple[str, int]] = set()
     for npu_key in sorted(npu_index):
         npu_ref = npu_index[npu_key]
         if npu_ref.path is None:
@@ -495,14 +550,19 @@ def compare_manifests(
                     "npu_index": npu_key[1],
                     "npu_type": npu_ref.node_type,
                     "status": "NPU_OUTPUT_NOT_CAPTURED",
+                    "unmapped_reason": "NPU 图存在输出描述，但没有对应的 dump 文件",
+                    "mapping_method": "none",
+                    "observable": True,
                     "passed": False,
                     "compared": False,
                 }
             )
             continue
         cpu_key = fusions.get(npu_key)
+        mapping_method = "compiler_origin" if cpu_key is not None else None
         if cpu_key is None and npu_key in cpu_index:
             cpu_key = npu_key
+            mapping_method = "same_name"
         if cpu_key is None:
             rows.append(
                 {
@@ -512,6 +572,9 @@ def compare_manifests(
                     "npu_index": npu_key[1],
                     "npu_type": npu_ref.node_type,
                     "status": "UNMATCHED_CPU_OP",
+                    "unmapped_reason": "NPU 输出已采集，但没有 compiler origin 或同名 CPU 输出",
+                    "mapping_method": "none",
+                    "observable": True,
                     "passed": False,
                     "compared": False,
                 }
@@ -520,12 +583,69 @@ def compare_manifests(
         cpu_ref = cpu_index.get(cpu_key)
         if cpu_ref is None:
             cpu_ref = TensorRef(cpu_key[0], cpu_key[1], None, None, "")
-        rows.append(compare_pair(cpu_ref, npu_ref, rtol=rtol, atol=atol))
+        row = compare_pair(cpu_ref, npu_ref, rtol=rtol, atol=atol)
+        row["mapping_method"] = mapping_method
+        row["unmapped_reason"] = "" if mapping_method == "compiler_origin" else "按同名同输出序号映射"
+        row["observable"] = True
+        rows.append(row)
+        observed_cpu_keys.add(cpu_key)
+
+    # A fusion's origin_ops includes CPU nodes whose values are internal to the
+    # NPU kernel. Only the mapped fusion output is observable in the current
+    # dump workflow, so report other CPU outputs explicitly instead of marking
+    # them as ordinary mapping failures.
+    reported_internal: set[tuple[str, int]] = set()
+    for node in npu_data.get("nodes", []):
+        origin_ops = [str(name) for name in node.get("origin_ops", []) if name]
+        if len(origin_ops) <= 1:
+            continue
+        npu_name = str(node.get("name", ""))
+        if not npu_name:
+            continue
+        for output in node.get("outputs", []):
+            npu_key = (npu_name, int(output.get("index", 0)))
+            origin_key = fusions.get(npu_key)
+            npu_ref = npu_index.get(npu_key)
+            if origin_key is None or npu_ref is None or npu_ref.path is None:
+                continue
+            primary_row = next(
+                (
+                    row
+                    for row in rows
+                    if row.get("npu_op") == npu_key[0]
+                    and int(row.get("npu_index", 0)) == npu_key[1]
+                    and row.get("observable", True)
+                ),
+                None,
+            )
+            if primary_row is None or primary_row.get("mapping_method") != "compiler_origin":
+                continue
+            for origin_name in origin_ops:
+                cpu_key = (origin_name, 0)
+                if cpu_key not in cpu_index or cpu_key in observed_cpu_keys or cpu_key in reported_internal:
+                    continue
+                reported_internal.add(cpu_key)
+                rows.append(
+                    {
+                        "cpu_op": origin_name,
+                        "cpu_index": 0,
+                        "npu_op": npu_key[0],
+                        "npu_index": npu_key[1],
+                        "npu_type": npu_ref.node_type,
+                        "status": "NOT_OBSERVABLE_ON_NPU",
+                        "unmapped_reason": "CPU 节点位于 NPU 融合内部，且不是当前 dump 的融合出口",
+                        "mapping_method": "fusion_internal",
+                        "observable": False,
+                        "passed": False,
+                        "compared": False,
+                    }
+                )
 
     compared = [r for r in rows if r.get("compared", True)]
     unmatched = [r for r in rows if not r.get("compared", True)]
     not_captured = [r for r in unmatched if r.get("status") == "NPU_OUTPUT_NOT_CAPTURED"]
     unmapped = [r for r in unmatched if r.get("status") == "UNMATCHED_CPU_OP"]
+    not_observable = [r for r in unmatched if r.get("status") == "NOT_OBSERVABLE_ON_NPU"]
     failed = [r for r in compared if not r.get("passed")]
     passed = len(compared) - len(failed)
     cann_failed = [r for r in compared if not r.get("cann_passed", False)]
@@ -539,8 +659,10 @@ def compare_manifests(
         for r in compared
         if bool(r.get("strict_passed", r.get("passed", False))) != bool(r.get("cann_passed", False))
     ]
-    coverage = len(compared) / len(rows) if rows else 0.0
-    status = "FAIL" if failed else ("INCOMPLETE" if unmatched else "PASS")
+    observable_total = len(rows) - len(not_observable)
+    coverage = len(compared) / observable_total if observable_total else 0.0
+    incomplete = bool(unmapped or not_captured)
+    status = "FAIL" if failed else ("INCOMPLETE" if incomplete else "PASS")
     return {
         "schema": "autofusedebugger-report/1",
         "rtol": rtol,
@@ -560,11 +682,13 @@ def compare_manifests(
         },
         "summary": {
             "total": len(rows),
+            "observable_total": observable_total,
             "compared": len(compared),
             "unmatched": len(unmatched),
             "unmapped": len(unmapped),
             "not_captured": len(not_captured),
-            "dumped": len(rows) - len(not_captured),
+            "not_observable": len(not_observable),
+            "dumped": observable_total - len(not_captured),
             "coverage": coverage,
             "status": status,
             "passed": passed,
@@ -572,10 +696,10 @@ def compare_manifests(
             "strict_status": status,
             "strict_passed": passed,
             "strict_failed": len(failed),
-            "cann_status": "FAIL" if cann_failed else ("INCOMPLETE" if unmatched else "PASS"),
+            "cann_status": "FAIL" if cann_failed else ("INCOMPLETE" if incomplete else "PASS"),
             "cann_passed": cann_passed,
             "cann_failed": len(cann_failed),
-            "dual_status": "FAIL" if dual_failed else ("INCOMPLETE" if unmatched else "PASS"),
+            "dual_status": "FAIL" if dual_failed else ("INCOMPLETE" if incomplete else "PASS"),
             "dual_passed": dual_passed,
             "dual_failed": len(dual_failed),
             "standard_disagreements": len(standard_disagreements),
@@ -590,6 +714,69 @@ def compare_manifests(
     }
 
 
+def compare_three_manifests(
+    cpu_manifest: str | Path,
+    npu_eager_manifest: str | Path,
+    npu_autofuse_manifest: str | Path,
+    *,
+    rtol: float | None = None,
+    atol: float | None = None,
+) -> dict[str, Any]:
+    """Compare CPU eager/export, NPU eager, and NPU Autofuse outputs pairwise."""
+    pairs = {
+        "cpu_npu_autofuse": {
+            "left": "CPU",
+            "right": "NPU Autofuse",
+            "right_graph_key": "npu",
+            "report": compare_manifests(cpu_manifest, npu_autofuse_manifest, rtol=rtol, atol=atol),
+        },
+        "cpu_npu_eager": {
+            "left": "CPU",
+            "right": "NPU eager",
+            "right_graph_key": "npu_eager",
+            "report": compare_manifests(cpu_manifest, npu_eager_manifest, rtol=rtol, atol=atol),
+        },
+        "npu_eager_npu_autofuse": {
+            "left": "NPU eager",
+            "right": "NPU Autofuse",
+            "right_graph_key": "npu",
+            "report": compare_manifests(npu_eager_manifest, npu_autofuse_manifest, rtol=rtol, atol=atol),
+        },
+    }
+    primary = pairs["cpu_npu_autofuse"]["report"]
+    eager = pairs["cpu_npu_eager"]["report"]
+    return {
+        "schema": "autofusedebugger-report/1",
+        "comparison_mode": "three_way",
+        "comparison_order": list(pairs),
+        "comparisons": {
+            key: {
+                "left": value["left"],
+                "right": value["right"],
+                "right_graph_key": value["right_graph_key"],
+                "summary": value["report"]["summary"],
+                "results": value["report"]["results"],
+                "graphs": value["report"]["graphs"],
+            }
+            for key, value in pairs.items()
+        },
+        "rtol": rtol,
+        "atol": atol,
+        "tolerance_mode": primary.get("tolerance_mode"),
+        "default_dtype_tolerances": primary.get("default_dtype_tolerances", {}),
+        "cann_thresholds": primary.get("cann_thresholds", {}),
+        "summary": primary["summary"],
+        "graphs": {
+            "cpu": primary["graphs"].get("cpu", {}),
+            "npu_eager": eager["graphs"].get("npu", {}),
+            "npu": primary["graphs"].get("npu", {}),
+        },
+        # Keep the existing top-level fields backward-compatible. Existing
+        # report consumers continue to see CPU vs NPU Autofuse by default.
+        "results": primary["results"],
+    }
+
+
 def write_report_csv(path: str | Path, report: dict[str, Any]) -> None:
     fieldnames = [
         "compared",
@@ -597,6 +784,9 @@ def write_report_csv(path: str | Path, report: dict[str, Any]) -> None:
         "strict_passed",
         "cann_passed",
         "status",
+        "mapping_method",
+        "unmapped_reason",
+        "observable",
         "cpu_op",
         "cpu_index",
         "npu_op",
@@ -607,6 +797,7 @@ def write_report_csv(path: str | Path, report: dict[str, Any]) -> None:
         "tolerance_source",
         "shape",
         "dtype",
+        "storage_dtype",
         "max_abs_error",
         "mean_abs_error",
         "max_rel_error",
@@ -645,12 +836,13 @@ def save_report(report: dict[str, Any], out_path: str | Path | None, csv_path: s
 
 def format_summary(report: dict[str, Any], *, limit: int = 20) -> str:
     summary = report["summary"]
+    observable_total = summary.get("observable_total", summary["total"])
     lines = [
         "accuracy: "
         f"{summary.get('status', 'PASS' if summary['failed'] == 0 else 'FAIL')} "
         f"strict={summary['passed']}/{summary.get('compared', summary['total'])} "
         f"cann={summary.get('cann_passed', summary['passed'])}/{summary.get('compared', summary['total'])} "
-        f"coverage={summary.get('compared', summary['total'])}/{summary['total']} "
+        f"coverage={summary.get('compared', summary['total'])}/{observable_total} "
         f"max_abs={summary['max_abs_error']:.3e} "
         f"max_rel={summary['max_rel_error']:.3e}"
     ]
@@ -663,4 +855,6 @@ def format_summary(report: dict[str, Any], *, limit: int = 20) -> str:
         )
     if len(failed) > limit:
         lines.append(f"  ... {len(failed) - limit} more failed rows")
+    if summary.get("not_observable", 0):
+        lines.append(f"  not_observable={summary['not_observable']} (fusion internal outputs excluded from coverage)")
     return "\n".join(lines)

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from autofusedebugger.cli import build_parser
+from autofusedebugger.io import tensor_to_numpy
 
 from autofusedebugger.torch_model import (
     TorchCase,
@@ -13,6 +14,16 @@ from autofusedebugger.torch_model import (
     load_torch_case,
     match_npu_to_cpu,
 )
+
+
+def test_tensor_to_numpy_uses_float32_storage_for_bfloat16() -> None:
+    torch = pytest.importorskip("torch")
+    tensor = torch.tensor([1.0, 2.0], dtype=torch.bfloat16)
+
+    array, dtype = tensor_to_numpy(tensor)
+
+    assert str(array.dtype) == "float32"
+    assert dtype == "bfloat16"
 
 
 def test_load_torch_case_from_tuple(tmp_path: Path) -> None:

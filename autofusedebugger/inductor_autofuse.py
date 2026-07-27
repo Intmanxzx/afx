@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from autofusedebugger.io import tensor_to_numpy
 from autofusedebugger.npu_examples import _desc
 
 
@@ -227,14 +228,15 @@ def capture_inductor_outputs(dump_dir: Path):
         record = records.setdefault(name, {"name": name, "outputs": []})
         for offset, tensor in enumerate(tensors):
             index = base_index + offset
-            array = tensor.detach().cpu().numpy().copy()
+            array, dtype = tensor_to_numpy(tensor)
+            array = array.copy()
             path = dump_dir / f"{name}.output.{index}.npy"
             np.save(path, array)
             record["outputs"].append(
                 {
                     "index": index,
                     "path": path,
-                    "dtype": str(array.dtype),
+                    "dtype": dtype,
                     "shape": tuple(int(dim) for dim in array.shape),
                     "size": int(array.size),
                 }

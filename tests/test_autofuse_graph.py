@@ -87,22 +87,7 @@ def test_parse_ascgraph_classifies_load_queue_usage() -> None:
     ]
     assert graph["queues"][1]["instances"][0]["producer_nodes"] == [4]
     assert graph["queues"][1]["instances"][0]["consumer_nodes"] == [5]
-    assert graph["buffers"] == [
-        {
-            "id": 1,
-            "uses": [4],
-            "instances": [
-                {
-                    "kind": "tmp_buf",
-                    "source_node": 4,
-                    "producer_nodes": [4],
-                    "consumer_nodes": [],
-                    "start": 4,
-                    "end": 4,
-                }
-            ],
-        }
-    ]
+    assert graph["buffers"] == []
     nodes = {node["name"]: node for node in graph["nodes"]}
     assert nodes["load1"]["exec_condition"] == "cache_block_split_fused_brc_axis"
     assert nodes["load1"]["broadcast_cache"] is True

@@ -11,9 +11,10 @@ from typing import Any
 import numpy as np
 
 from autofusedebugger.autofuse_graph import attach_autofuse_graphs, collect_autofuse_graphs, enable_autofuse_graph_dump
-from autofusedebugger.compare import compare_manifests, save_report
+from autofusedebugger.compare import compare_three_manifests, save_report
 from autofusedebugger.graph import build_manifest
 from autofusedebugger.html import write_report_html
+from autofusedebugger.io import tensor_to_numpy
 from autofusedebugger.inductor_autofuse import (
     activate_autofuse_backend,
     autofuse_diagnostics,
@@ -189,9 +190,10 @@ def _input_info(inputs: tuple[Any, ...]) -> dict[str, dict[str, Any]]:
         torch = None
     for idx, value in enumerate(inputs):
         if torch is not None and isinstance(value, torch.Tensor):
+            _, dtype = tensor_to_numpy(value)
             result[f"input_{idx}"] = {
                 "shape": tuple(int(dim) for dim in value.shape),
-                "dtype": str(value.detach().cpu().numpy().dtype),
+                "dtype": dtype,
             }
         else:
             result[f"input_{idx}"] = {"shape": (), "dtype": type(value).__name__}
@@ -222,12 +224,17 @@ def _export_args(exported: Any, inputs: tuple[Any, ...], kwargs: dict[str, Any])
     return args
 
 
-def export_cpu_graph_and_dump(case: TorchCase, cpu_dump: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+def export_graph_and_dump(
+    case: TorchCase,
+    dump_dir: Path,
+    *,
+    device: str = "cpu",
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     import torch
 
-    model = case.model.cpu().eval()
-    inputs = _to_cpu(case.inputs)
-    kwargs = _to_cpu(case.kwargs)
+    model = case.model.to(device).eval()
+    inputs = _to_device(case.inputs, device)
+    kwargs = _to_device(case.kwargs, device)
     exported = torch.export.export(model, inputs, kwargs)
     if hasattr(exported, "run_decompositions"):
         exported = exported.run_decompositions()
@@ -242,12 +249,12 @@ def export_cpu_graph_and_dump(case: TorchCase, cpu_dump: Path) -> tuple[dict[str
             tensor = _first_tensor(result, torch=torch)
             if tensor is None:
                 return result
-            array = tensor.detach().cpu().numpy()
-            path = cpu_dump / f"{node.name}.output.0.npy"
+            array, dtype = tensor_to_numpy(tensor)
+            path = dump_dir / f"{node.name}.output.0.npy"
             np.save(path, array)
             saved[node.name] = {
                 "shape": tuple(int(dim) for dim in array.shape),
-                "dtype": str(array.dtype),
+                "dtype": dtype,
                 "size": int(array.size),
                 "path": path,
             }
@@ -290,6 +297,10 @@ def export_cpu_graph_and_dump(case: TorchCase, cpu_dump: Path) -> tuple[dict[str
         )
         included.add(node.name)
     return {"graph": [{"op": ops}]}, saved
+
+
+def export_cpu_graph_and_dump(case: TorchCase, cpu_dump: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    return export_graph_and_dump(case, cpu_dump, device="cpu")
 
 
 def _cpu_name(prefix: str, suffix: str) -> str:
@@ -446,15 +457,18 @@ def run_torch_case(
     root = Path(out_dir).resolve()
     _clean_dir(root)
     cpu_dump = root / "cpu_dump"
+    npu_eager_dump = root / "npu_eager_dump"
     npu_dump = root / "npu_dump"
     compile_dir = root / "inductor_compile"
     autofuse_dump = root / "autofuse_dump"
     cpu_dump.mkdir(parents=True, exist_ok=True)
+    npu_eager_dump.mkdir(parents=True, exist_ok=True)
     npu_dump.mkdir(parents=True, exist_ok=True)
     compile_dir.mkdir(parents=True, exist_ok=True)
     autofuse_dump.mkdir(parents=True, exist_ok=True)
 
     cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(case, cpu_dump)
+    npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(case, npu_eager_dump, device=device)
     _, npu_records, native_capture = run_npu_model(
         case,
         npu_dump,
@@ -469,17 +483,35 @@ def run_torch_case(
     npu_graph_data = build_inductor_autofuse_graph(compile_dir, npu_records, cpu_outputs, diagnostics)
 
     cpu_graph = root / "cpu_graph.json"
+    npu_eager_graph = root / "npu_eager_graph.json"
     npu_graph = root / "npu_graph.json"
     _save_json(cpu_graph, cpu_graph_data)
+    _save_json(npu_eager_graph, npu_eager_graph_data)
     _save_json(npu_graph, npu_graph_data)
     cpu_manifest = root / "cpu_manifest.json"
+    npu_eager_manifest = root / "npu_eager_manifest.json"
     npu_manifest = root / "npu_manifest.json"
     build_manifest(side="cpu", graph_path=cpu_graph, dump_dir=cpu_dump, out_path=cpu_manifest, model_name=case.name)
+    build_manifest(
+        side="npu_eager",
+        graph_path=npu_eager_graph,
+        dump_dir=npu_eager_dump,
+        out_path=npu_eager_manifest,
+        model_name=case.name,
+    )
     build_manifest(side="npu", graph_path=npu_graph, dump_dir=npu_dump, out_path=npu_manifest, model_name=case.name)
 
-    report = compare_manifests(cpu_manifest, npu_manifest, rtol=rtol, atol=atol)
+    report = compare_three_manifests(
+        cpu_manifest,
+        npu_eager_manifest,
+        npu_manifest,
+        rtol=rtol,
+        atol=atol,
+    )
     attach_autofuse_graphs(report, autofuse_dump)
     native_capture["graph_count"] = len(report["graphs"]["autofuse"]["graphs"])
+    native_capture["npu_eager_nodes"] = len(npu_eager_graph_data["graph"][0]["op"])
+    native_capture["npu_eager_dump_nodes"] = len(npu_eager_outputs)
     native_capture["inductor_traces"] = npu_graph_data["metadata"]["inductor_traces"]
     native_capture["diagnostics"] = {
         "path": str(diagnostics_path),
@@ -500,12 +532,14 @@ def run_torch_case(
         "out_dir": str(root),
         "html": str(html),
         "cpu_nodes": len(cpu_graph_data["graph"][0]["op"]),
+        "npu_eager_nodes": len(npu_eager_graph_data["graph"][0]["op"]),
         "npu_nodes": len(npu_graph_data["graph"][0]["op"]),
         "matched_nodes": report["summary"].get("compared", report["summary"]["total"]),
         "unmatched_nodes": report["summary"].get("unmatched", 0),
         "coverage": report["summary"].get("coverage", 1.0),
         "topology": npu_graph_data["metadata"]["topology"],
         "autofuse_graphs": native_capture["graph_count"],
+        "comparisons": list(report.get("comparisons", {})),
         "inductor_traces": native_capture["inductor_traces"],
         "passed": report["summary"].get("status") == "PASS",
         "summary": report["summary"],

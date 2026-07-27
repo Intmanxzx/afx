@@ -9,7 +9,6 @@ from typing import Any
 _NODE_RE = re.compile(r"^\s*\[(\d+)\]\s+(.+?)\s+:\s+ascir\.ops\.([^\s]+)\s*$")
 _GRAPH_RE = re.compile(r"^Graph:\s+(.+?)\s*$")
 _MEM_RE = re.compile(r"\.mem\s*=\s*([^\[]+)\[([^\]]*)\]")
-_TMP_BUF_RE = re.compile(r"\.tmp_buf\s*=\s*\{\{\s*id=([-\d]+)")
 _EXEC_CONDITION_RE = re.compile(r"\.exec_condition\s*=\s*([A-Za-z0-9_]+)")
 _REF_RE = re.compile(r"([A-Za-z0-9_./:-]+)\.y")
 _INT_RE = re.compile(r"(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)=([-\d]+)")
@@ -33,7 +32,6 @@ def _memory_item(place: str, attrs: str) -> dict[str, Any]:
 def _finish_node(node: dict[str, Any], lines: list[str]) -> dict[str, Any]:
     inputs: list[str] = []
     memories: list[dict[str, Any]] = []
-    buffers: list[dict[str, Any]] = []
     exec_condition = "no_cache"
     for line in lines:
         if ".x =" in line:
@@ -41,15 +39,11 @@ def _finish_node(node: dict[str, Any], lines: list[str]) -> dict[str, Any]:
         match = _MEM_RE.search(line)
         if match:
             memories.append(_memory_item(match.group(1), match.group(2)))
-        match = _TMP_BUF_RE.search(line)
-        if match:
-            buffers.append({"id": int(match.group(1)), "kind": "tmp_buf"})
         match = _EXEC_CONDITION_RE.search(line)
         if match:
             exec_condition = match.group(1)
     node["inputs"] = inputs
     node["outputs"] = memories
-    node["tmp_buffers"] = buffers
     node["exec_condition"] = exec_condition
     node["broadcast_cache"] = exec_condition in _BROADCAST_CACHE_CONDITIONS
     return node
@@ -186,27 +180,12 @@ def parse_ascgraph_text(text: str, source: str = "") -> dict[str, Any]:
                 buffer["instances"].append(
                     {"kind": "output", "source_node": node["id"], "_producer_nodes": [node["id"]]}
                 )
-        for buffer_item in node["tmp_buffers"]:
-            buf_id = buffer_item["id"]
-            buffer = buffers.setdefault(buf_id, {"id": buf_id, "uses": [], "instances": []})
-            if node["id"] not in buffer["uses"]:
-                buffer["uses"].append(node["id"])
-            buffer["instances"].append(
-                {"kind": buffer_item["kind"], "source_node": node["id"], "_producer_nodes": [node["id"]]}
-            )
-
     for (que_id, _), instance in sorted(queue_instances.items()):
         _finish_interval(instance, consumers)
         queues[que_id]["instances"].append(instance)
     for buffer in buffers.values():
         for instance in buffer["instances"]:
-            if instance["kind"] == "tmp_buf":
-                instance["producer_nodes"] = instance.pop("_producer_nodes")
-                instance["consumer_nodes"] = []
-                instance["start"] = instance["source_node"]
-                instance["end"] = instance["source_node"]
-            else:
-                _finish_interval(instance, consumers)
+            _finish_interval(instance, consumers)
 
     for resource in (*queues.values(), *buffers.values()):
         resource["uses"].sort()

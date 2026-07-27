@@ -7,7 +7,7 @@ from pathlib import Path
 from autofusedebugger.adapters import backend_names, framework_names
 from autofusedebugger.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
 from autofusedebugger.camodel import camodel_info, format_info
-from autofusedebugger.compare import compare_manifests, compare_pair, format_summary, save_report
+from autofusedebugger.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
 from autofusedebugger.graph import build_manifest
 from autofusedebugger.html import write_report_html, write_report_html_from_json
 from autofusedebugger.runner import run_camodel_command, run_command, run_debug_cpu_command
@@ -49,6 +49,38 @@ def cmd_compare(args: argparse.Namespace) -> int:
         write_report_html(report, args.html)
     print(format_summary(report))
     return 0 if report["summary"].get("dual_failed", report["summary"]["failed"]) == 0 else 1
+
+
+def cmd_compare_three(args: argparse.Namespace) -> int:
+    report = compare_three_manifests(
+        args.cpu_manifest,
+        args.npu_eager_manifest,
+        args.npu_autofuse_manifest,
+        rtol=args.rtol,
+        atol=args.atol,
+    )
+    autofuse_dump = (
+        Path(args.autofuse_dump)
+        if args.autofuse_dump
+        else Path(args.npu_autofuse_manifest).resolve().parent / "autofuse_dump"
+    )
+    if autofuse_dump.is_dir():
+        attach_autofuse_graphs(report, autofuse_dump)
+    save_report(report, args.out, args.csv)
+    if args.html:
+        write_report_html(report, args.html)
+    for key in report.get("comparison_order", []):
+        comparison = report["comparisons"][key]
+        summary = comparison["summary"]
+        print(
+            f"{comparison['left']} <-> {comparison['right']}: "
+            f"strict={summary.get('strict_passed', summary.get('passed', 0))}/{summary.get('compared', 0)} "
+            f"cann={summary.get('cann_passed', 0)}/{summary.get('compared', 0)}"
+        )
+    return 0 if all(
+        report["comparisons"][key]["summary"].get("dual_failed", 0) == 0
+        for key in report.get("comparison_order", [])
+    ) else 1
 
 
 def cmd_compare_npy(args: argparse.Namespace) -> int:
@@ -175,6 +207,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_thresholds(cmp_parser)
     cmp_parser.set_defaults(func=cmd_compare)
+
+    cmp_three = sub.add_parser("compare-three", help="compare CPU, NPU eager, and NPU Autofuse manifests")
+    cmp_three.add_argument("--cpu-manifest", required=True)
+    cmp_three.add_argument("--npu-eager-manifest", required=True)
+    cmp_three.add_argument("--npu-autofuse-manifest", required=True)
+    cmp_three.add_argument("--out", default=None)
+    cmp_three.add_argument("--csv", default=None)
+    cmp_three.add_argument("--html", default=None, help="write single-file HTML visualization")
+    cmp_three.add_argument("--autofuse-dump", default=None)
+    _add_common_thresholds(cmp_three)
+    cmp_three.set_defaults(func=cmd_compare_three)
 
     npy = sub.add_parser("compare-npy", help="compare two npy files directly")
     npy.add_argument("--golden", required=True)

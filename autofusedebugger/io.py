@@ -10,6 +10,14 @@ import numpy as np
 SCHEMA = "autofusedebugger-manifest/1"
 
 
+def tensor_to_numpy(tensor: Any) -> tuple[np.ndarray, str]:
+    value = tensor.detach().cpu()
+    dtype = str(value.dtype).removeprefix("torch.")
+    if dtype == "bfloat16":
+        return value.float().numpy(), dtype
+    return value.numpy(), dtype
+
+
 def read_json(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as f:
         data = json.load(f)

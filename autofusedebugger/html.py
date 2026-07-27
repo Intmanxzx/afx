@@ -26,6 +26,8 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     unmatched = int(summary.get("unmatched", max(0, total - compared)) or 0)
     unmapped = int(summary.get("unmapped", unmatched) or 0)
     not_captured = int(summary.get("not_captured", 0) or 0)
+    not_observable = int(summary.get("not_observable", 0) or 0)
+    observable_total = int(summary.get("observable_total", max(0, total - not_observable)) or 0)
     passed = int(summary.get("passed", 0) or 0)
     strict_passed = int(summary.get("strict_passed", passed) or 0)
     strict_failed = int(summary.get("strict_failed", failed) or 0)
@@ -34,7 +36,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     disagreements = int(summary.get("standard_disagreements", 0) or 0)
     pass_rate = (passed / compared * 100.0) if compared else 0.0
     cann_pass_rate = (cann_passed / compared * 100.0) if compared else 0.0
-    coverage = float(summary.get("coverage", compared / total if total else 0.0) or 0.0)
+    coverage = float(summary.get("coverage", compared / observable_total if observable_total else 0.0) or 0.0)
     status_text = str(summary.get("dual_status", summary.get("status", "PASS" if failed == 0 else "FAIL")))
     status_class = "pass" if status_text == "PASS" else ("fail" if status_text == "FAIL" else "warn")
     payload = _json_for_script(report)
@@ -114,6 +116,12 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     .status-pill.fail { color: var(--bad); background: #fdecec; }
     .status-pill.warn { color: var(--warn); background: #fff1d6; }
     .quick-stat strong { color: var(--text); }
+    .comparison-label { color: var(--muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .comparison-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 7px 18px 0; border-top: 1px solid var(--line); }
+    .comparison-tabs[hidden] { display: none; }
+    .comparison-tab { flex: 0 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 5px 5px 0 0; background: transparent; color: var(--muted); padding: 6px 10px 7px; white-space: nowrap; }
+    .comparison-tab:hover { color: var(--text); background: var(--accent-soft); }
+    .comparison-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--accent-soft); font-weight: 700; }
     .metrics-panel { margin-top: 10px; }
     .metrics-panel summary, .table-panel summary {
       color: var(--muted);
@@ -144,6 +152,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       flex: 1 1 auto;
       height: auto;
       min-height: 0;
+      min-width: 0;
       display: flex;
       flex-direction: column;
       padding: 10px 14px 12px;
@@ -152,6 +161,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     .workspace {
       flex: 1 1 auto;
       min-height: 0;
+      min-width: 0;
       display: flex;
       position: relative;
       gap: 8px;
@@ -268,6 +278,9 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     .graph-node .unfused-mark { fill: #b97800; stroke: #fff; stroke-width: 2; pointer-events: none; }
     .graph-node .unfused-mark-text { fill: #fff; font-size: 8px; font-weight: 800; text-anchor: middle; pointer-events: none; }
     .graph-node .unfused-label { fill: #a66700; font-size: 10.5px; font-weight: 700; pointer-events: none; }
+    .graph-node .tensor-mark { fill: #2457a6; stroke: #fff; stroke-width: 2; cursor: pointer; }
+    .graph-node .tensor-mark:focus { stroke: #16202a; stroke-width: 2.5; }
+    .graph-node .tensor-mark-text { fill: #fff; font-size: 8px; font-weight: 800; text-anchor: middle; pointer-events: none; }
     .graph-empty { padding: 24px; color: var(--muted); text-align: center; }
     .autofuse-analytics {
       flex: 0 0 auto;
@@ -354,8 +367,13 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     .load-legend .reused::before { background: #fff; border: 2px dashed #b97800; }
     .load-legend .single::before { background: #fff; border: 2px solid #2457a6; }
     .details-panel {
-      flex: 0 0 360px;
+      --details-width: 360px;
+      flex: 0 0 var(--details-width);
+      width: var(--details-width);
       min-height: 0;
+      min-width: 0;
+      max-width: min(760px, 70vw);
+      position: relative;
       display: flex;
       flex-direction: column;
       background: var(--panel);
@@ -365,6 +383,13 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       overflow: hidden;
     }
     .details-panel[hidden] { display: none; }
+    .details-resize-handle { position: absolute; z-index: 6; top: 0; bottom: 0; left: -7px; width: 14px; cursor: ew-resize; touch-action: none; }
+    .details-resize-handle::after { content: '⋮'; position: absolute; top: 50%; left: 50%; width: 14px; height: 46px; color: #7d8794; background: #f6f8fb; border: 1px solid var(--line); border-radius: 5px; font-size: 18px; line-height: 41px; text-align: center; transform: translate(-50%, -50%); }
+    .details-resize-handle:hover::after, .details-resize-handle:focus-visible::after { color: var(--accent); border-color: var(--accent); }
+    body.details-resizing, body.details-resizing * { cursor: ew-resize !important; user-select: none !important; }
+    body.tensor-viewer-open { overflow: hidden !important; }
+    .details-panel.details-wide .details-grid { grid-template-columns: max-content minmax(0, 1fr); }
+    .details-panel.details-wide .details-grid dd, .details-panel.details-wide .io-item { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
     .details-head {
       flex: 0 0 auto;
       display: flex;
@@ -375,17 +400,19 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       border-bottom: 1px solid var(--line);
     }
     .details-title { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
-    .details-body { min-height: 0; overflow: auto; padding: 12px; }
+    .details-body { min-width: 0; min-height: 0; overflow-x: auto; overflow-y: auto; padding: 12px; }
     .details-kicker { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
     .details-op-type { margin-top: 2px; color: var(--muted); }
     .linked-autofuse-button { width: 100%; margin-top: 10px; color: var(--accent); font-weight: 700; }
+    .tensor-view-button { width: 100%; margin-top: 8px; color: var(--accent); font-weight: 700; }
     .details-grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; margin-top: 12px; font-size: 13px; }
     .details-grid dt { color: var(--muted); }
-    .details-grid dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .details-grid dd { min-width: 0; margin: 0; overflow-wrap: anywhere; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .detail-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid #edf0f5; }
     .detail-section-title { margin-bottom: 8px; font-weight: 700; }
     .io-list { display: grid; gap: 6px; }
     .io-item {
+      min-width: 0;
       padding: 7px 8px;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -393,6 +420,31 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       overflow-wrap: anywhere;
     }
     .io-item small { display: block; color: var(--muted); margin-top: 2px; }
+    .tensor-viewer { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; }
+    .tensor-viewer[hidden] { display: none; }
+    .tensor-viewer-backdrop { position: absolute; inset: 0; background: rgba(22, 32, 42, 0.46); }
+    .tensor-viewer-panel { position: relative; width: min(1480px, calc(100vw - 32px)); height: min(900px, calc(100vh - 32px)); min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 18px 48px rgba(22, 32, 42, 0.28); overflow: hidden; }
+    .tensor-viewer-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+    .tensor-viewer-title { min-width: 0; font-size: 16px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tensor-viewer-meta { flex: 0 0 auto; padding: 7px 14px; color: var(--muted); font-size: 12px; border-bottom: 1px solid #edf0f5; }
+    .tensor-viewer-controls { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: #fbfcfe; }
+    .tensor-viewer-controls label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
+    .tensor-viewer-controls input { width: 88px; }
+    .tensor-window-summary { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .tensor-matrix-wrap { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: auto; background: #f6f8fb; scrollbar-gutter: stable both-edges; }
+    .tensor-matrix { display: grid; width: max-content; min-width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .tensor-axis, .tensor-cell { min-width: 104px; min-height: 54px; border-right: 1px solid #dfe5ed; border-bottom: 1px solid #dfe5ed; }
+    .tensor-axis { position: sticky; z-index: 3; display: flex; align-items: center; justify-content: center; padding: 5px; background: #eef1f5; color: var(--muted); font-size: 10px; }
+    .tensor-axis.column { top: 0; }
+    .tensor-axis.row { left: 0; justify-content: flex-start; min-width: 180px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tensor-axis.corner { top: 0; left: 0; z-index: 5; min-width: 180px; }
+    .tensor-cell { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 2px; padding: 6px 7px; cursor: pointer; }
+    .tensor-cell.pass { background: #e7f5ee; color: #0f6b43; }
+    .tensor-cell.fail { background: #fdecec; color: #a52020; }
+    .tensor-cell:hover, .tensor-cell.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .tensor-cell strong { font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .tensor-cell small { color: #536172; font-size: 9.5px; white-space: nowrap; }
+    .tensor-element-detail { flex: 0 0 auto; min-height: 42px; padding: 8px 14px; border-top: 1px solid var(--line); color: #3d4856; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-x: auto; white-space: nowrap; }
     .highlight-controls { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
     .highlight-controls .control-label { color: var(--muted); font-size: 12px; margin-right: 2px; }
     .highlight-controls button { height: 26px; padding: 0 8px; font-size: 12px; }
@@ -400,15 +452,17 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     .highlight-controls button:disabled { cursor: default; opacity: 0.45; }
     .table-panel {
       flex: 0 0 auto;
+      min-width: 0;
+      max-width: 100%;
       max-height: 46vh;
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
       box-shadow: var(--shadow);
-      overflow: auto;
+      overflow: hidden;
     }
     .table-panel summary { padding: 8px 12px; }
-    .table-content { border-top: 1px solid var(--line); }
+    .table-content { min-width: 0; border-top: 1px solid var(--line); overflow: hidden; }
     .toolbar {
       display: grid;
       grid-template-columns: minmax(220px, 1fr) auto auto auto;
@@ -419,10 +473,21 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     input, select { height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); padding: 0 9px; }
     .chart-wrap { padding: 8px 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     canvas { width: 100%; height: 120px; display: block; }
-    .table-wrap { overflow: auto; max-height: 34vh; }
-    table { width: 100%; border-collapse: collapse; min-width: 1180px; }
+    .table-wrap { min-width: 0; max-width: 100%; overflow-x: hidden; overflow-y: auto; max-height: 34vh; scrollbar-gutter: stable both-edges; }
+    .table-horizontal-scrollbar { min-width: 0; max-width: 100%; height: 17px; margin: 0 12px 7px; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--line); border-radius: 4px; background: #f6f8fb; scrollbar-gutter: stable; }
+    .table-horizontal-scrollbar[hidden] { display: none; }
+    .table-horizontal-scrollbar-content { height: 1px; min-width: 100%; }
+    .table-horizontal-scrollbar::-webkit-scrollbar { height: 12px; }
+    .table-horizontal-scrollbar::-webkit-scrollbar-track { background: #eef1f5; border-radius: 4px; }
+    .table-horizontal-scrollbar::-webkit-scrollbar-thumb { background: #9aa5b1; border-radius: 4px; border: 2px solid #eef1f5; }
+    .table-horizontal-scrollbar:hover::-webkit-scrollbar-thumb { background: #6f7d8d; }
+    table { width: max-content; border-collapse: collapse; min-width: 1500px; }
     th, td { padding: 7px 9px; border-bottom: 1px solid #edf0f5; text-align: left; vertical-align: top; }
     th { background: #fbfcfe; position: sticky; top: 0; z-index: 2; font-size: 12px; color: var(--muted); user-select: none; cursor: pointer; white-space: nowrap; }
+    .metric-group-row th { top: 0; z-index: 3; padding-top: 6px; padding-bottom: 6px; text-align: center; color: #3d4856; background: #f2f5f9; cursor: default; }
+    .metric-group-row .elementwise-group { color: #8a5a00; background: #fff7e5; }
+    .metric-group-row .tensor-group { color: #2457a6; background: #eaf1ff; }
+    .metric-column-row th { top: 31px; }
     td { white-space: nowrap; }
     td.op { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     tbody tr { cursor: pointer; }
@@ -431,9 +496,11 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     .badge.pass { color: var(--good); background: #e7f5ee; }
     .badge.fail { color: var(--bad); background: #fdecec; }
     .badge.warn { color: var(--warn); background: #fff1d6; }
+    .badge.neutral { color: #2457a6; background: #eaf1ff; }
     .status-ok { color: var(--good); }
     .status-warn { color: var(--warn); }
     .status-bad { color: var(--bad); }
+    .status-neutral { color: #2457a6; }
     .empty { padding: 24px; color: var(--muted); text-align: center; }
     @media (max-width: 1000px) {
       body { overflow: auto; }
@@ -449,10 +516,13 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       .graph-meta { white-space: normal; }
       .autofuse-analytics[open] { flex-basis: 440px; }
       .autofuse-analytics-content { height: var(--lifecycle-height, 386px); }
-      .details-panel { position: absolute; inset: 8px 8px 8px auto; width: min(360px, calc(100% - 16px)); z-index: 5; }
+      .details-panel { position: absolute; inset: 8px 8px 8px auto; width: min(var(--details-width), calc(100% - 16px)); max-width: calc(100% - 16px); flex-basis: auto; z-index: 5; }
       .table-panel { max-height: none; }
       .toolbar { grid-template-columns: 1fr; }
       .table-wrap { max-height: none; }
+      .tensor-viewer { padding: 8px; }
+      .tensor-viewer-panel { width: calc(100vw - 16px); height: calc(100vh - 16px); }
+      .tensor-window-summary { flex-basis: 100%; margin-left: 0; }
     }
   </style>
 </head>
@@ -462,23 +532,25 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       <h1>__TITLE__</h1>
       <div class="quick-status">
         <span id="resultStatus" class="status-pill __STATUS_CLASS__">__STATUS_TEXT__</span>
-        <span class="quick-stat">Strict <strong>__STRICT_PASSED__/__COMPARED__</strong></span>
-        <span class="quick-stat">CANN <strong>__CANN_PASSED__/__COMPARED__</strong></span>
-        <span class="quick-stat">coverage <strong>__COVERAGE__%</strong></span>
+        <span id="comparisonLabel" class="comparison-label">CPU ↔ NPU Autofuse</span>
+        <span class="quick-stat">逐元素对比 <strong id="strictQuickValue">__STRICT_PASSED__/__COMPARED__</strong></span>
+        <span class="quick-stat">整体 Tensor 对比 <strong id="cannQuickValue">__CANN_PASSED__/__COMPARED__</strong></span>
+        <span class="quick-stat">coverage <strong id="coverageQuickValue">__COVERAGE__%</strong></span>
         <button id="toggleMetrics" type="button" aria-expanded="false">指标</button>
       </div>
     </div>
+    <div id="comparisonTabs" class="comparison-tabs" hidden role="tablist" aria-label="三方精度对比视图"></div>
     <details id="metricsPanel" class="metrics-panel">
       <summary>报告指标</summary>
       <div class="metrics">
-        <div class="metric"><div class="label">Compared</div><div class="value">__COMPARED__/__TOTAL__</div></div>
-        <div class="metric"><div class="label">Coverage</div><div class="value __COVERAGE_CLASS__">__COVERAGE__%</div></div>
-        <div class="metric"><div class="label">Strict Elementwise Pass</div><div class="value">__STRICT_PASSED__/__COMPARED__ (__PASS_RATE__%)</div></div>
-        <div class="metric"><div class="label">CANN Metrics Pass</div><div class="value">__CANN_PASSED__/__COMPARED__ (__CANN_PASS_RATE__%)</div></div>
-        <div class="metric"><div class="label">Strict / CANN Failed</div><div class="value __FAILED_CLASS__">__STRICT_FAILED__ / __CANN_FAILED__</div></div>
-        <div class="metric"><div class="label">Standard Disagreements</div><div class="value __DISAGREEMENT_CLASS__">__DISAGREEMENTS__</div></div>
-        <div class="metric"><div class="label">Unmapped / No dump</div><div class="value __UNMATCHED_CLASS__">__UNMAPPED__ / __NOT_CAPTURED__</div></div>
-        <div class="metric"><div class="label">Max Abs / Max Rel</div><div class="value">__MAX_ABS__ / __MAX_REL__</div></div>
+        <div class="metric"><div class="label">Compared</div><div id="metricCompared" class="value">__COMPARED__/__TOTAL__</div></div>
+        <div class="metric"><div class="label">Coverage</div><div id="metricCoverage" class="value __COVERAGE_CLASS__">__COVERAGE__%</div></div>
+        <div class="metric"><div class="label">逐元素对比通过</div><div id="metricStrict" class="value">__STRICT_PASSED__/__COMPARED__ (__PASS_RATE__%)</div></div>
+        <div class="metric"><div class="label">整体 Tensor 对比通过</div><div id="metricCann" class="value">__CANN_PASSED__/__COMPARED__ (__CANN_PASS_RATE__%)</div></div>
+        <div class="metric"><div class="label">逐元素 / 整体 Tensor 失败</div><div id="metricFailed" class="value __FAILED_CLASS__">__STRICT_FAILED__ / __CANN_FAILED__</div></div>
+        <div class="metric"><div class="label">Standard Disagreements</div><div id="metricDisagreements" class="value __DISAGREEMENT_CLASS__">__DISAGREEMENTS__</div></div>
+        <div class="metric"><div class="label">Unmapped / No dump / Internal</div><div id="metricUnmatched" class="value __UNMATCHED_CLASS__">__UNMAPPED__ / __NOT_CAPTURED__ / __NOT_OBSERVABLE__</div></div>
+        <div class="metric"><div class="label">Max Abs / Max Rel</div><div id="metricMaxError" class="value">__MAX_ABS__ / __MAX_REL__</div></div>
       </div>
     </details>
   </header>
@@ -497,7 +569,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
             </div>
             <button class="fusion-details-button" id="fusionDetails" type="button" title="查看父融合算子的精度和输入输出详情" hidden>融合详情</button>
             <div class="load-legend" id="loadLegend" aria-label="精度结果分类">
-              <span class="pass">双标准通过</span><span class="warning">仅 Strict 失败</span><span class="fail">CANN 失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">输入 / 权重</span><span class="unfused">未融合原因</span>
+              <span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>
             </div>
           </div>
           <div class="graph-head-right">
@@ -552,6 +624,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         </details>
       </div>
       <aside id="detailsPanel" class="details-panel" hidden aria-label="节点详情">
+        <div id="detailsResizeHandle" class="details-resize-handle" role="separator" aria-label="拖动调整详情抽屉宽度" aria-orientation="vertical" aria-valuemin="300" aria-valuemax="760" aria-valuenow="360" tabindex="0" title="左右拖动调整详情抽屉宽度"></div>
         <div class="details-head">
           <div class="details-title" id="detailsTitle">节点详情</div>
           <button id="dismissDetails" type="button" title="关闭节点详情">×</button>
@@ -560,6 +633,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
           <div class="details-kicker" id="detailsKicker">selected NPU Autofuse op</div>
           <div class="details-op-type" id="detailsType">点击图中节点查看</div>
           <button class="linked-autofuse-button" id="linkedAutofuseButton" type="button" hidden></button>
+          <button class="tensor-view-button" id="tensorViewButton" type="button" hidden>查看输出 Tensor 逐元素精度</button>
           <dl class="details-grid" id="detailsGrid"></dl>
           <div class="detail-section" id="ioSection">
             <div class="detail-section-title">输入 / 输出</div>
@@ -567,6 +641,35 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
           </div>
         </div>
       </aside>
+      <div id="tensorViewer" class="tensor-viewer" hidden aria-hidden="true">
+        <div class="tensor-viewer-backdrop" data-tensor-close></div>
+        <section class="tensor-viewer-panel" role="dialog" aria-modal="true" aria-labelledby="tensorViewerTitle">
+          <div class="tensor-viewer-head">
+            <div id="tensorViewerTitle" class="tensor-viewer-title">输出 Tensor 逐元素精度</div>
+            <button id="closeTensorViewer" type="button" title="关闭 Tensor 查看器">×</button>
+          </div>
+          <div id="tensorViewerMeta" class="tensor-viewer-meta"></div>
+          <div class="tensor-viewer-controls">
+            <label>显示 <select id="tensorDisplayMode">
+              <option value="difference">绝对误差</option>
+              <option value="cpu">CPU 值</option>
+              <option value="npu">NPU 值</option>
+              <option value="status">逐元素状态</option>
+            </select></label>
+            <label>行起点 <input id="tensorRowStart" type="number" min="0" step="1" value="0"></label>
+            <label>列起点 <input id="tensorColStart" type="number" min="0" step="1" value="0"></label>
+            <button id="tensorPrevRows" type="button">上一组行</button>
+            <button id="tensorNextRows" type="button">下一组行</button>
+            <button id="tensorPrevCols" type="button">上一组列</button>
+            <button id="tensorNextCols" type="button">下一组列</button>
+            <span id="tensorWindowSummary" class="tensor-window-summary"></span>
+          </div>
+          <div id="tensorMatrixWrap" class="tensor-matrix-wrap">
+            <div id="tensorMatrix" class="tensor-matrix"></div>
+          </div>
+          <div id="tensorElementDetail" class="tensor-element-detail">点击矩阵单元查看该位置的 CPU/NPU 值、绝对误差和相对误差。</div>
+        </section>
+      </div>
     </section>
     <details id="tablePanel" class="table-panel">
       <summary>逐算子精度明细 <span id="tableSummary"></span></summary>
@@ -575,27 +678,36 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
           <input id="search" type="search" placeholder="搜索 op / type / status">
           <select id="passFilter">
             <option value="all">全部</option>
-            <option value="both_passed">双标准通过</option>
-            <option value="failed">Strict 失败</option>
-            <option value="cann_failed">CANN 失败</option>
+            <option value="both_passed">逐元素 / 整体均通过</option>
+            <option value="failed">逐元素对比失败</option>
+            <option value="cann_failed">整体 Tensor 对比失败</option>
             <option value="disagreement">标准不一致</option>
             <option value="unmatched">全部未对比</option>
             <option value="unmapped">仅未映射</option>
             <option value="not_captured">仅未采集</option>
+            <option value="not_observable">仅融合内部不可观测</option>
           </select>
           <select id="typeFilter"><option value="all">全部类型</option></select>
           <button id="exportCsv" type="button">导出 CSV</button>
         </div>
         <div class="chart-wrap"><canvas id="errorChart" height="120"></canvas></div>
+        <div id="tableHorizontalScrollbar" class="table-horizontal-scrollbar" hidden tabindex="0" role="scrollbar" aria-label="逐算子精度明细横向滚动条" aria-controls="resultTable" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+          <div id="tableHorizontalScrollbarContent" class="table-horizontal-scrollbar-content"></div>
+        </div>
         <div class="table-wrap">
           <table id="resultTable">
-            <thead><tr>
-              <th data-key="passed">结果</th><th data-key="strict_passed">Strict</th><th data-key="cann_passed">CANN</th><th data-key="status">状态</th><th data-key="npu_op">NPU Autofuse op</th>
-              <th data-key="npu_type">类型</th><th data-key="cpu_op">CPU op</th><th data-key="shape">shape</th>
+            <thead>
+            <tr class="metric-group-row">
+              <th colspan="10"></th><th colspan="6" class="elementwise-group">逐元素精度对比指标</th><th colspan="3" class="tensor-group">整 Tensor 精度对比指标</th>
+            </tr>
+            <tr class="metric-column-row">
+              <th data-key="passed">结果</th><th data-key="strict_passed">逐元素对比</th><th data-key="cann_passed">整体 Tensor 对比</th><th data-key="status">状态</th><th data-key="unmapped_reason">映射说明</th><th id="rightOpHeader" data-key="npu_op">NPU Autofuse op</th>
+              <th data-key="npu_type">类型</th><th id="leftOpHeader" data-key="cpu_op">CPU op</th><th data-key="shape">shape</th>
               <th data-key="dtype">dtype</th><th data-key="rtol">rtol / atol</th><th data-key="max_abs_error">max abs</th><th data-key="max_rel_error">max rel</th>
-              <th data-key="rmse">rmse</th><th data-key="cann_cosine_similarity">CANN cosine</th><th data-key="mismatched">mismatch</th>
-              <th data-key="max_error_index">max finite index / non-finite</th>
-            </tr></thead>
+              <th data-key="rmse">rmse</th><th data-key="mismatched">mismatch</th><th data-key="max_error_index">max finite index / non-finite</th>
+              <th data-key="cann_cosine_similarity">CosineSimilarity（余弦值相似度）</th><th data-key="relative_euclidean_distance">RelativeEuclideanDistance（欧氏相对距离）</th><th data-key="kl_divergence">KullbackLeiblerDivergence（KL散度）</th>
+            </tr>
+            </thead>
             <tbody></tbody>
           </table>
           <div id="empty" class="empty" hidden>没有匹配的结果</div>
@@ -606,9 +718,12 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
   <script id="reportData" type="application/json">__REPORT_JSON__</script>
   <script>
     const report = JSON.parse(document.getElementById('reportData').textContent);
-    const rows = (report.results || []).map((row, idx) => ({...row, _idx: idx}));
-    const npuGraph = report.graphs?.npu || {nodes: [], edges: [], fusions: []};
-    const cpuGraph = report.graphs?.cpu || {nodes: []};
+    const comparisonSets = report.comparisons || {};
+    const comparisonOrder = report.comparison_order || Object.keys(comparisonSets);
+    let activeComparisonKey = comparisonOrder[0] || null;
+    let rows = ((comparisonSets[activeComparisonKey]?.results || report.results || [])).map((row, idx) => ({...row, _idx: idx}));
+    let npuGraph = report.graphs?.[comparisonSets[activeComparisonKey]?.right_graph_key || 'npu'] || {nodes: [], edges: [], fusions: []};
+    let cpuGraph = report.graphs?.cpu || {nodes: []};
     const autofuseGraphs = report.graphs?.autofuse?.graphs || [];
     function kernelNameFromText(value) {
       const match = String(value || '').replace(/^graph\\d+\\./, '').match(/^(autofused_.+_[0-9a-f]{32})(?:__.*)?$/);
@@ -631,6 +746,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       autofuseGroups.get(kernel).push(index);
     });
     const state = {sortKey: 'max_abs_error', sortDir: -1, filtered: rows.slice()};
+    let refreshTableHorizontalScrollbar = () => {};
     const selection = {name: null, mode: 'depth1', detailNode: null, explicit: null};
     const graphViews = new Map();
     const tbody = document.querySelector('#resultTable tbody');
@@ -639,9 +755,100 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     const passFilter = document.getElementById('passFilter');
     const typeFilter = document.getElementById('typeFilter');
     const detailsPanel = document.getElementById('detailsPanel');
-    const mainNpuNodes = new Map((npuGraph.nodes || []).map(node => [node.name, node]));
-    const cpuNodes = new Map((cpuGraph.nodes || []).map(node => [node.name, node]));
-    const resultByNpu = new Map(rows.map(row => [row.npu_op, row]));
+    let mainNpuNodes = new Map((npuGraph.nodes || []).map(node => [node.name, node]));
+    let cpuNodes = new Map((cpuGraph.nodes || []).map(node => [node.name, node]));
+    const resultByNpu = new Map();
+    function rebuildResultIndex() {
+      resultByNpu.clear();
+      for (const row of rows) {
+        const previous = resultByNpu.get(row.npu_op);
+        if (!previous || (previous.status === 'NOT_OBSERVABLE_ON_NPU' && row.status !== 'NOT_OBSERVABLE_ON_NPU')) {
+          resultByNpu.set(row.npu_op, row);
+        }
+      }
+    }
+    rebuildResultIndex();
+    function activeComparison() {
+      return comparisonSets[activeComparisonKey] || null;
+    }
+    function comparisonStatus(summary) {
+      return String(summary?.dual_status || summary?.status || 'PASS');
+    }
+    function updateComparisonSummary() {
+      const comparison = activeComparison();
+      if (!comparison) return;
+      const summary = comparison.summary || {};
+      const compared = Number(summary.compared || 0);
+      const status = comparisonStatus(summary);
+      const statusPill = document.getElementById('resultStatus');
+      statusPill.textContent = status;
+      statusPill.className = `status-pill ${status === 'PASS' ? 'pass' : status === 'FAIL' ? 'fail' : 'warn'}`;
+      document.getElementById('comparisonLabel').textContent = `${comparison.left} ↔ ${comparison.right}`;
+      document.getElementById('strictQuickValue').textContent = `${summary.strict_passed ?? summary.passed ?? 0}/${compared}`;
+      document.getElementById('cannQuickValue').textContent = `${summary.cann_passed ?? summary.passed ?? 0}/${compared}`;
+      document.getElementById('coverageQuickValue').textContent = `${(Number(summary.coverage || 0) * 100).toFixed(1)}%`;
+      const strictPassed = Number(summary.strict_passed ?? summary.passed ?? 0);
+      const cannPassed = Number(summary.cann_passed ?? summary.passed ?? 0);
+      document.getElementById('metricCompared').textContent = `${compared}/${summary.total ?? compared}`;
+      document.getElementById('metricCoverage').textContent = `${(Number(summary.coverage || 0) * 100).toFixed(1)}%`;
+      document.getElementById('metricStrict').textContent = `${strictPassed}/${compared} (${compared ? (strictPassed / compared * 100).toFixed(1) : '0.0'}%)`;
+      document.getElementById('metricCann').textContent = `${cannPassed}/${compared} (${compared ? (cannPassed / compared * 100).toFixed(1) : '0.0'}%)`;
+      document.getElementById('metricFailed').textContent = `${summary.strict_failed ?? (compared - strictPassed)} / ${summary.cann_failed ?? (compared - cannPassed)}`;
+      document.getElementById('metricDisagreements').textContent = String(summary.standard_disagreements ?? 0);
+      document.getElementById('metricUnmatched').textContent = `${summary.unmapped ?? 0} / ${summary.not_captured ?? 0} / ${summary.not_observable ?? 0}`;
+      document.getElementById('metricMaxError').textContent = `${fmt(summary.max_abs_error)} / ${fmt(summary.max_rel_error)}`;
+      document.getElementById('leftOpHeader').textContent = `${comparison.left} op`;
+      document.getElementById('rightOpHeader').textContent = `${comparison.right} op`;
+      const mainTab = document.querySelector('[data-graph-tab="main"]');
+      if (mainTab) mainTab.textContent = `${comparison.left} ↔ ${comparison.right} 精度对比`;
+    }
+    function renderComparisonTabs() {
+      const target = document.getElementById('comparisonTabs');
+      if (!comparisonOrder.length) return;
+      target.hidden = false;
+      target.textContent = '';
+      for (const key of comparisonOrder) {
+        const comparison = comparisonSets[key];
+        if (!comparison) continue;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `comparison-tab${key === activeComparisonKey ? ' active' : ''}`;
+        button.dataset.comparison = key;
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', key === activeComparisonKey ? 'true' : 'false');
+        button.textContent = `${comparison.left} ↔ ${comparison.right}`;
+        button.addEventListener('click', () => switchComparison(key));
+        target.appendChild(button);
+      }
+    }
+    function switchComparison(key) {
+      const comparison = comparisonSets[key];
+      if (!comparison || key === activeComparisonKey) return;
+      activeComparisonKey = key;
+      rows = (comparison.results || []).map((row, idx) => ({...row, _idx: idx}));
+      const graphKey = comparison.right_graph_key || 'npu';
+      npuGraph = report.graphs?.[graphKey] || {nodes: [], edges: [], fusions: []};
+      const leftGraphKey = comparison.left === 'NPU eager' ? 'npu_eager' : 'cpu';
+      cpuGraph = report.graphs?.[leftGraphKey] || {nodes: []};
+      mainNpuNodes = new Map((npuGraph.nodes || []).map(node => [node.name, node]));
+      cpuNodes = new Map((cpuGraph.nodes || []).map(node => [node.name, node]));
+      rebuildResultIndex();
+      graphContext.kind = 'main';
+      graphContext.graph = npuGraph;
+      graphContext.nodes = mainNpuNodes;
+      graphContext.edges = (npuGraph.edges || []).filter(edge => mainNpuNodes.has(edge.src) && mainNpuNodes.has(edge.dst));
+      graphContext.parent = null;
+      graphContext.autoIndex = null;
+      selection.name = null;
+      selection.detailNode = null;
+      detailsPanel.hidden = true;
+      state.filtered = rows.slice();
+      fillTypeFilter();
+      applyFilters();
+      renderComparisonTabs();
+      updateComparisonSummary();
+      renderGraph();
+    }
     const queueClassColors = {
       shared: {fill: '#dff3e9', stroke: '#2f8f62'},
       reused: {fill: '#fff1d6', stroke: '#b97800'},
@@ -754,6 +961,189 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         cannPassed: !!(row.cann_passed ?? row.passed),
       };
     }
+    const tensorViewerState = {
+      nodeName: null, row: null, shape: [], rows: 1, cols: 1, cpu: null, npu: null, mask: null,
+      rowStart: 0, colStart: 0, rowPageSize: 32, colPageSize: 16, mode: 'difference', selected: null,
+    };
+    function decodeBase64Bytes(value) {
+      const raw = atob(value || '');
+      const bytes = new Uint8Array(raw.length);
+      for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
+      return bytes;
+    }
+    function decodeTensorArray(payload) {
+      if (!payload) return [];
+      if (payload.encoding === 'json') return payload.values || [];
+      const bytes = decodeBase64Bytes(payload.data);
+      const buffer = bytes.buffer;
+      const dtype = String(payload.dtype || 'float32');
+      const constructors = {
+        bool: Uint8Array, uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array,
+        uint32: Uint32Array, int32: Int32Array, float32: Float32Array, float64: Float64Array,
+      };
+      if (dtype === 'int64' || dtype === 'uint64') {
+        const values = dtype === 'int64' ? new BigInt64Array(buffer) : new BigUint64Array(buffer);
+        return Array.from(values, value => Number(value));
+      }
+      const Constructor = constructors[dtype] || Float32Array;
+      return Array.from(new Constructor(buffer));
+    }
+    function tensorRowsAndCols(shape) {
+      if (!Array.isArray(shape) || shape.length === 0) return {rows: 1, cols: 1};
+      const cols = Math.max(1, Number(shape[shape.length - 1]) || 1);
+      const rows = Math.max(1, shape.slice(0, -1).reduce((total, value) => total * Math.max(1, Number(value) || 1), 1));
+      return {rows, cols};
+    }
+    function tensorIndexCoords(flatIndex, shape) {
+      if (!Array.isArray(shape) || shape.length === 0) return [];
+      let value = flatIndex;
+      const coords = new Array(shape.length);
+      for (let index = shape.length - 1; index >= 0; index -= 1) {
+        const size = Math.max(1, Number(shape[index]) || 1);
+        coords[index] = value % size;
+        value = Math.floor(value / size);
+      }
+      return coords;
+    }
+    function tensorFormatValue(value) {
+      if (typeof value === 'bigint') return `${value}n`;
+      const number = Number(value);
+      if (Number.isNaN(number)) return 'NaN';
+      if (number === Infinity) return '+Inf';
+      if (number === -Infinity) return '-Inf';
+      if (Object.is(number, -0)) return '-0';
+      if (Number.isInteger(number) && Math.abs(number) < 1e6) return String(number);
+      return Number.isFinite(number) ? number.toExponential(5) : String(value);
+    }
+    function tensorAbsError(cpu, npu) {
+      const left = Number(cpu), right = Number(npu);
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return '-';
+      return tensorFormatValue(Math.abs(left - right));
+    }
+    function tensorRelError(cpu, npu) {
+      const left = Number(cpu), right = Number(npu);
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return '-';
+      return tensorFormatValue(Math.abs(left - right) / Math.max(Math.abs(left), Math.abs(right), 1e-12));
+    }
+    function tensorStatus(flatIndex) {
+      return Number(tensorViewerState.mask?.[flatIndex] || 0) === 1;
+    }
+    function tensorElementTitle(flatIndex) {
+      const cpu = tensorViewerState.cpu?.[flatIndex];
+      const npu = tensorViewerState.npu?.[flatIndex];
+      const coords = tensorIndexCoords(flatIndex, tensorViewerState.shape);
+      return `${indexText(coords)}\nCPU=${tensorFormatValue(cpu)}\nNPU=${tensorFormatValue(npu)}\nabs=${tensorAbsError(cpu, npu)}\nrel=${tensorRelError(cpu, npu)}\n${tensorStatus(flatIndex) ? 'PASS' : 'FAIL'}`;
+    }
+    function tensorDisplayValue(flatIndex) {
+      const cpu = tensorViewerState.cpu?.[flatIndex];
+      const npu = tensorViewerState.npu?.[flatIndex];
+      if (tensorViewerState.mode === 'cpu') return tensorFormatValue(cpu);
+      if (tensorViewerState.mode === 'npu') return tensorFormatValue(npu);
+      if (tensorViewerState.mode === 'status') return tensorStatus(flatIndex) ? 'PASS' : 'FAIL';
+      return tensorAbsError(cpu, npu);
+    }
+    function renderTensorElementDetail() {
+      const target = document.getElementById('tensorElementDetail');
+      const flatIndex = tensorViewerState.selected;
+      if (flatIndex === null || flatIndex === undefined) {
+        target.textContent = '点击矩阵单元查看该位置的 CPU/NPU 值、绝对误差和相对误差。';
+        return;
+      }
+      const cpu = tensorViewerState.cpu?.[flatIndex], npu = tensorViewerState.npu?.[flatIndex];
+      target.textContent = `${indexText(tensorIndexCoords(flatIndex, tensorViewerState.shape))} · CPU=${tensorFormatValue(cpu)} · NPU=${tensorFormatValue(npu)} · abs=${tensorAbsError(cpu, npu)} · rel=${tensorRelError(cpu, npu)} · ${tensorStatus(flatIndex) ? 'PASS' : 'FAIL'}`;
+    }
+    function renderTensorMatrix() {
+      const matrix = document.getElementById('tensorMatrix');
+      const summary = document.getElementById('tensorWindowSummary');
+      const rowStart = Math.max(0, Math.min(tensorViewerState.rows - 1, Number(tensorViewerState.rowStart) || 0));
+      const colStart = Math.max(0, Math.min(tensorViewerState.cols - 1, Number(tensorViewerState.colStart) || 0));
+      const rowEnd = Math.min(tensorViewerState.rows, rowStart + tensorViewerState.rowPageSize);
+      const colEnd = Math.min(tensorViewerState.cols, colStart + tensorViewerState.colPageSize);
+      tensorViewerState.rowStart = rowStart;
+      tensorViewerState.colStart = colStart;
+      document.getElementById('tensorRowStart').value = String(rowStart);
+      document.getElementById('tensorColStart').value = String(colStart);
+      summary.textContent = `行 ${rowStart}-${rowEnd - 1}/${tensorViewerState.rows - 1} · 列 ${colStart}-${colEnd - 1}/${tensorViewerState.cols - 1}`;
+      matrix.style.gridTemplateColumns = `180px repeat(${Math.max(1, colEnd - colStart)}, 104px)`;
+      matrix.textContent = '';
+      const corner = document.createElement('div');
+      corner.className = 'tensor-axis corner';
+      corner.textContent = '位置 / 列';
+      matrix.appendChild(corner);
+      for (let column = colStart; column < colEnd; column += 1) {
+        const axis = document.createElement('div');
+        axis.className = 'tensor-axis column';
+        axis.textContent = String(column);
+        matrix.appendChild(axis);
+      }
+      for (let row = rowStart; row < rowEnd; row += 1) {
+        const rowAxis = document.createElement('div');
+        rowAxis.className = 'tensor-axis row';
+        const flatIndex = row * tensorViewerState.cols + colStart;
+        const prefix = tensorIndexCoords(flatIndex, tensorViewerState.shape).slice(0, -1);
+        rowAxis.textContent = `行 ${row} · [${prefix.join(', ')}]`;
+        matrix.appendChild(rowAxis);
+        for (let column = colStart; column < colEnd; column += 1) {
+          const index = row * tensorViewerState.cols + column;
+          const cell = document.createElement('div');
+          const passed = tensorStatus(index);
+          cell.className = `tensor-cell ${passed ? 'pass' : 'fail'}${tensorViewerState.selected === index ? ' selected' : ''}`;
+          cell.title = tensorElementTitle(index);
+          const value = document.createElement('strong');
+          value.textContent = tensorDisplayValue(index);
+          const status = document.createElement('small');
+          status.textContent = passed ? 'PASS' : 'FAIL';
+          cell.append(value, status);
+          cell.addEventListener('click', () => {
+            tensorViewerState.selected = index;
+            renderTensorMatrix();
+            renderTensorElementDetail();
+          });
+          matrix.appendChild(cell);
+        }
+      }
+      renderTensorElementDetail();
+    }
+    function renderTensorViewer() {
+      const row = tensorViewerState.row;
+      const payload = row?.elementwise_data;
+      const meta = document.getElementById('tensorViewerMeta');
+      document.getElementById('tensorViewerTitle').textContent = `输出 Tensor 逐元素精度 · ${row?.npu_op || tensorViewerState.nodeName || '-'}`;
+      meta.textContent = `shape=${shapeText(tensorViewerState.shape)} · dtype=${row?.dtype || payload?.logical_dtype || '-'} · 元素数=${tensorViewerState.rows * tensorViewerState.cols} · mismatch=${row?.mismatched ?? '-'} · 绿色=PASS，红色=FAIL`;
+      renderTensorMatrix();
+    }
+    function openTensorViewer(nodeName) {
+      const row = nodeMetric(nodeName)?.row;
+      const payload = row?.elementwise_data;
+      if (!payload) return;
+      try {
+        const dimensions = tensorRowsAndCols(payload.shape || row.shape || []);
+        tensorViewerState.nodeName = nodeName;
+        tensorViewerState.row = row;
+        tensorViewerState.shape = payload.shape || row.shape || [];
+        tensorViewerState.rows = dimensions.rows;
+        tensorViewerState.cols = dimensions.cols;
+        tensorViewerState.cpu = decodeTensorArray(payload.cpu);
+        tensorViewerState.npu = decodeTensorArray(payload.npu);
+        tensorViewerState.mask = decodeTensorArray(payload.strict_mask);
+        tensorViewerState.rowStart = 0;
+        tensorViewerState.colStart = 0;
+        tensorViewerState.selected = null;
+        const viewer = document.getElementById('tensorViewer');
+        viewer.hidden = false;
+        viewer.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('tensor-viewer-open');
+        renderTensorViewer();
+      } catch (error) {
+        console.error('failed to decode elementwise tensor data', error);
+      }
+    }
+    function closeTensorViewer() {
+      const viewer = document.getElementById('tensorViewer');
+      viewer.hidden = true;
+      viewer.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('tensor-viewer-open');
+    }
     function nodeState(node, contextKind = graphContext.kind) {
       if (contextKind === 'fusion') {
         if (node.origin === false) return {fill: '#fff1d6', stroke: '#a66700', label: 'INSERTED', metric: null, dashed: true};
@@ -772,8 +1162,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
           };
         }
         const bufferMemory = (node.outputs || []).find(memory => Number(memory.buf_id) >= 0);
-        const tmpBuffer = (node.tmp_buffers || [])[0];
-        const bufferId = bufferMemory?.buf_id ?? tmpBuffer?.id;
+        const bufferId = bufferMemory?.buf_id;
         if (Number(bufferId) >= 0) {
           const color = resourceColor('buffer', bufferId);
           return {...color, label: `BUFFER ${bufferId}`, metric: null};
@@ -785,15 +1174,18 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       if (!metric) return {fill: '#eef1f5', stroke: '#9aa5b1', label: 'NO DATA', metric: null};
       if (!metric.compared) {
         const noDump = metric.row.status === 'NPU_OUTPUT_NOT_CAPTURED';
+        if (metric.row.status === 'NOT_OBSERVABLE_ON_NPU') {
+          return {fill: '#eaf1ff', stroke: '#7d9dcc', label: 'INTERNAL ONLY', metric, dashed: true};
+        }
         return {fill: '#eef1f5', stroke: '#9aa5b1', label: noDump ? 'NO DUMP' : 'NO MAP', metric, dashed: noDump};
       }
       if (!metric.cannPassed) {
-        const label = metric.strictPassed ? 'CANN FAIL' : 'BOTH FAIL';
+        const label = metric.strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败';
         return {fill: '#fde2e2', stroke: '#d34a4a', label, metric};
       }
-      if (!metric.strictPassed) return {fill: '#fff1d6', stroke: '#b97800', label: 'STRICT FAIL', metric};
+      if (!metric.strictPassed) return {fill: '#fff1d6', stroke: '#b97800', label: '逐元素失败', metric};
       if (metric.row.status && metric.row.status !== 'OK') return {fill: '#fff1d6', stroke: '#b97800', label: 'WARN', metric};
-      return {fill: '#dff3e9', stroke: '#2f8f62', label: 'BOTH PASS', metric};
+      return {fill: '#dff3e9', stroke: '#2f8f62', label: '逐元素 + 整体均通过', metric};
     }
     function isFusionNode(node) {
       const origins = Array.isArray(node?.origin_ops) ? node.origin_ops : [];
@@ -1118,24 +1510,27 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       linkedButton.hidden = !linkedGraphs.length;
       linkedButton.dataset.graphIndex = linkedGraphs.length ? String(linkedGraphs[0]) : '';
       linkedButton.textContent = linkedGraphs.length ? `查看 AutoFuseAfterOptimize (${linkedGraphs.length})` : '';
+      const tensorButton = document.getElementById('tensorViewButton');
+      tensorButton.hidden = !row?.elementwise_data;
+      tensorButton.dataset.tensorNode = row?.elementwise_data ? String(row.npu_op || node.name) : '';
       const grid = document.getElementById('detailsGrid');
       const mapping = row?.compared === false
-        ? (row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : 'NO MAP')
+        ? (row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (row?.status === 'NOT_OBSERVABLE_ON_NPU' ? '融合内部不可观测' : 'NO MAP'))
         : (row?.cpu_op ? `${row.cpu_op}:${row.cpu_index ?? 0}` : '-');
       const strictResult = row?.compared === false ? '-' : ((row?.strict_passed ?? row?.passed) ? 'PASS' : 'FAIL');
       const cannResult = row?.compared === false ? '-' : ((row?.cann_passed ?? row?.passed) ? 'PASS' : 'FAIL');
       const detailRows = [
-        ['结果', state.label], ['Strict', strictResult], ['CANN', cannResult], ['状态', row?.status || '-'],
-        ['CPU 对照', mapping], ['max abs（有限值）', finiteMetricText(row, 'max_abs_error')],
+        ['结果', state.label], ['逐元素对比', strictResult], ['整体 Tensor 对比', cannResult], ['状态', row?.status || '-'],
+        ['映射说明', row?.unmapped_reason || row?.mapping_method || '-'], ['CPU 对照', mapping], ['max abs（有限值）', finiteMetricText(row, 'max_abs_error')],
         ['max rel（有限值）', finiteMetricText(row, 'max_rel_error')], ['rmse（有限值）', finiteMetricText(row, 'rmse')],
-        ['CANN cosine', cannMetricText(row, 'cann_cosine_similarity')],
-        ['Relative Euclidean', cannMetricText(row, 'relative_euclidean_distance')],
-        ['KL divergence', cannMetricText(row, 'kl_divergence')], ['mismatch', mismatchText(row)],
+        ['CosineSimilarity（余弦值相似度）', cannMetricText(row, 'cann_cosine_similarity')],
+        ['RelativeEuclideanDistance（欧氏相对距离）', cannMetricText(row, 'relative_euclidean_distance')],
+        ['KullbackLeiblerDivergence（KL散度）', cannMetricText(row, 'kl_divergence')], ['mismatch', mismatchText(row)],
         ['最大有限误差位置', row?.finite_pair_count === 0 ? 'N/A（无有限值对）' : indexText(row?.max_error_index)],
       ];
       if (row?.compared !== false) detailRows.splice(5, 0,
-        ['Strict Tolerance', `${fmt(row?.rtol)} / ${fmt(row?.atol)} (${row?.tolerance_source || '-'})`],
-        ['CANN thresholds', 'cos>0.99 / rel_euclid<0.05 / KL<0.005'],
+        ['逐元素对比容差', `${fmt(row?.rtol)} / ${fmt(row?.atol)} (${row?.tolerance_source || '-'})`],
+        ['整体 Tensor 指标阈值', 'cos>0.99 / rel_euclid<0.05 / KL<0.005'],
       );
       if (row?.nonfinite?.present) detailRows.push(
         ['非有限值统计', nonfiniteBrief(row)],
@@ -1215,7 +1610,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     function initGraphInteractions() {
       const target = document.getElementById('npuGraph');
       let pointerId = null, startX = 0, startY = 0, lastX = 0, lastY = 0;
-      let pointerNode = null, pointerFusionEntry = false;
+      let pointerNode = null, pointerFusionEntry = false, pointerTensorButton = false;
       const view = () => graphViews.get('npuGraph');
       target.addEventListener('wheel', event => {
         event.preventDefault();
@@ -1230,6 +1625,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         startY = lastY = event.clientY;
         pointerNode = event.target.closest?.('.graph-node')?.dataset.node || null;
         pointerFusionEntry = !!event.target.closest?.('.fusion-mark');
+        pointerTensorButton = !!event.target.closest?.('.tensor-mark');
         view().dragged = false;
         target.setPointerCapture(pointerId);
         target.focus({preventScroll: true});
@@ -1258,14 +1654,17 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         const wasDragged = currentView.dragged;
         const selectedNode = pointerNode;
         const selectedFusionEntry = pointerFusionEntry;
+        const selectedTensorButton = pointerTensorButton;
         if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
         pointerId = null;
         pointerNode = null;
         pointerFusionEntry = false;
+        pointerTensorButton = false;
         currentView.dragged = false;
         target.classList.remove('is-panning');
         if (wasDragged) return;
         if (selectedNode && selectedFusionEntry) enterFusionNode(selectedNode);
+        else if (selectedNode && selectedTensorButton) { activateNode(selectedNode); openTensorViewer(selectedNode); }
         else if (selectedNode) activateNode(selectedNode);
         else closeDetails();
       });
@@ -1274,6 +1673,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         pointerId = null;
         pointerNode = null;
         pointerFusionEntry = false;
+        pointerTensorButton = false;
         view().dragged = false;
         target.classList.remove('is-panning');
       });
@@ -1283,7 +1683,9 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         if (!currentView) return;
         const focusedNode = event.target.closest?.('.graph-node')?.dataset.node;
         const focusedFusionEntry = !!event.target.closest?.('.fusion-mark');
+        const focusedTensorButton = !!event.target.closest?.('.tensor-mark');
         if ((event.key === 'Enter' || event.key === ' ') && focusedNode && focusedFusionEntry) enterFusionNode(focusedNode);
+        else if ((event.key === 'Enter' || event.key === ' ') && focusedNode && focusedTensorButton) { activateNode(focusedNode); openTensorViewer(focusedNode); }
         else if ((event.key === 'Enter' || event.key === ' ') && focusedNode) activateNode(focusedNode);
         else if (event.key === '+' || event.key === '=') changeGraphZoom('npuGraph', currentView.scale * 1.2);
         else if (event.key === '-') changeGraphZoom('npuGraph', currentView.scale / 1.2);
@@ -1390,7 +1792,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     function lifecycleTooltip(row, segment) {
       const fields = [row.title];
       if (row.kind === 'queue') fields.push(row.detail, lifecycleStatusText(row.status));
-      else fields.push(segment.kind === 'tmp_buf' ? 'Temporary buffer' : 'Buffer output');
+      else fields.push('Buffer output');
       fields.push(`Producer nodes: ${(segment.producer_nodes || []).join(', ') || '-'}`);
       fields.push(`Direct consumer nodes: ${(segment.consumer_nodes || []).join(', ') || '-'}`);
       const nodes = intervalNodes(segment);
@@ -1629,6 +2031,106 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         event.stopPropagation();
       });
     }
+    const detailsWidthState = {width: 360};
+    function detailsWidthBounds() {
+      const workspace = document.querySelector('.workspace');
+      const available = workspace?.clientWidth || window.innerWidth;
+      return {
+        min: 300,
+        max: Math.max(360, Math.min(760, Math.round(window.innerWidth * 0.7), available - 260)),
+      };
+    }
+    function setDetailsWidth(value) {
+      const panel = document.getElementById('detailsPanel');
+      const handle = document.getElementById('detailsResizeHandle');
+      const bounds = detailsWidthBounds();
+      const width = Math.round(Math.max(bounds.min, Math.min(bounds.max, Number(value) || bounds.min)));
+      detailsWidthState.width = width;
+      panel.style.setProperty('--details-width', `${width}px`);
+      panel.classList.toggle('details-wide', width >= 520);
+      handle.setAttribute('aria-valuemin', String(bounds.min));
+      handle.setAttribute('aria-valuemax', String(bounds.max));
+      handle.setAttribute('aria-valuenow', String(width));
+    }
+    function initDetailsResize() {
+      const panel = document.getElementById('detailsPanel');
+      const handle = document.getElementById('detailsResizeHandle');
+      let pointerId = null, startX = 0, startWidth = detailsWidthState.width;
+      setDetailsWidth(detailsWidthState.width);
+      handle.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        pointerId = event.pointerId;
+        startX = event.clientX;
+        startWidth = panel.getBoundingClientRect().width || detailsWidthState.width;
+        handle.setPointerCapture(pointerId);
+        document.body.classList.add('details-resizing');
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      handle.addEventListener('pointermove', event => {
+        if (event.pointerId !== pointerId) return;
+        setDetailsWidth(startWidth + startX - event.clientX);
+      });
+      function finishResize(event) {
+        if (event.pointerId !== pointerId) return;
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+        pointerId = null;
+        document.body.classList.remove('details-resizing');
+      }
+      handle.addEventListener('pointerup', finishResize);
+      handle.addEventListener('pointercancel', finishResize);
+      handle.addEventListener('keydown', event => {
+        if (event.key === 'ArrowLeft') setDetailsWidth(detailsWidthState.width + 40);
+        else if (event.key === 'ArrowRight') setDetailsWidth(detailsWidthState.width - 40);
+        else if (event.key === 'Home') setDetailsWidth(detailsWidthBounds().min);
+        else if (event.key === 'End') setDetailsWidth(detailsWidthBounds().max);
+        else return;
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    }
+    function initTableHorizontalScrollbar() {
+      const wrap = document.querySelector('.table-wrap');
+      const scrollbar = document.getElementById('tableHorizontalScrollbar');
+      const scrollbarContent = document.getElementById('tableHorizontalScrollbarContent');
+      const panel = document.getElementById('tablePanel');
+      let syncing = false;
+      function update() {
+        const contentWidth = Math.max(wrap.scrollWidth, wrap.clientWidth);
+        const max = Math.max(0, contentWidth - wrap.clientWidth);
+        scrollbarContent.style.width = `${contentWidth}px`;
+        scrollbar.hidden = max <= 2;
+        scrollbar.setAttribute('aria-valuemax', String(max));
+        scrollbar.setAttribute('aria-valuenow', String(Math.min(max, wrap.scrollLeft)));
+        if (!syncing && Math.abs(scrollbar.scrollLeft - wrap.scrollLeft) > 1) {
+          syncing = true;
+          scrollbar.scrollLeft = Math.min(max, wrap.scrollLeft);
+          syncing = false;
+        }
+      }
+      refreshTableHorizontalScrollbar = update;
+      wrap.addEventListener('scroll', () => {
+        if (syncing) return;
+        syncing = true;
+        scrollbar.scrollLeft = wrap.scrollLeft;
+        syncing = false;
+        update();
+      });
+      scrollbar.addEventListener('scroll', () => {
+        if (syncing) return;
+        syncing = true;
+        wrap.scrollLeft = scrollbar.scrollLeft;
+        syncing = false;
+        update();
+      });
+      panel.addEventListener('toggle', () => requestAnimationFrame(update));
+      if (window.ResizeObserver) {
+        const observer = new ResizeObserver(update);
+        observer.observe(wrap);
+        observer.observe(document.getElementById('resultTable'));
+      }
+      update();
+    }
     function updateGraphTabs(scrollLinked = false) {
       const linkedKernel = nodeKernelName(selection.detailNode);
       const activeKernel = graphContext.kind === 'autofuse' ? graphKernelName(autofuseGraphs[graphContext.autoIndex]) : '';
@@ -1723,15 +2225,16 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         loadLegend.innerHTML = '<span class="resource">Queue 同一 que_id 同色；Buffer 同一 buf_id 同色</span><span class="shared">共用</span><span class="reused">复用</span><span class="single">单独</span><span class="cache">Broadcast 条件缓存</span>';
         renderAutofuseAnalytics(graph, true);
       } else {
-        title.textContent = 'NPU Autofuse Dump Graph';
-        meta.textContent = `${layout.nodes.length} ops / ${layout.edges.length} edges · ${npuGraph.model?.topology || 'TorchInductor Autofuse'}`;
+        const comparison = activeComparison();
+        title.textContent = `${comparison?.right || 'NPU Autofuse'} Dump Graph`;
+        meta.textContent = `${layout.nodes.length} ops / ${layout.edges.length} edges · ${npuGraph.model?.topology || comparison?.right || 'TorchInductor Autofuse'}`;
         back.hidden = true;
         fusionDetails.hidden = true;
         analytics.hidden = true;
         analytics.open = false;
         loadLegend.hidden = false;
         loadLegend.setAttribute('aria-label', '精度结果分类');
-        loadLegend.innerHTML = '<span class="pass">双标准通过</span><span class="warning">仅 Strict 失败</span><span class="fail">CANN 失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">输入 / 权重</span><span class="unfused">未融合原因</span>';
+        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
       }
       updateGraphTabs();
       if (!layout.nodes.length) { target.innerHTML = '<div class="graph-empty">当前图没有可展示的算子拓扑</div>'; return; }
@@ -1753,14 +2256,20 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       for (const node of layout.nodes) {
         const position = layout.positions.get(node.name), state = nodeState(node), metric = state.metric;
         const broadcastCached = graphContext.kind === 'autofuse' && hasBroadcastCache(node);
+        const tensorAvailable = graphContext.kind === 'main' && !!metric?.row?.elementwise_data;
         const nodeUnfusedReasons = graphContext.kind === 'main' ? unfusedReasons(node) : [];
         const detail = graphContext.kind === 'autofuse'
           ? `node id=${node.id}`
           : graphContext.kind === 'fusion'
           ? (node.origin === false ? 'compiler inserted' : 'fusion origin')
           : (metric?.compared
-            ? `Strict=${metric.strictPassed ? 'PASS' : 'FAIL'} CANN=${metric.cannPassed ? 'PASS' : 'FAIL'}`
+            ? `逐元素=${metric.strictPassed ? 'PASS' : 'FAIL'} 整体Tensor=${metric.cannPassed ? 'PASS' : 'FAIL'}`
             : 'no compare result');
+        const precisionLine = graphContext.kind === 'main'
+          ? (metric?.compared
+            ? `Precision: 逐元素${metric.strictPassed ? 'pass' : 'fail'}, 整Tensor ${metric.cannPassed ? 'pass' : 'fail'}`
+            : `Precision: ${metric?.row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'no dump' : 'no map'}`)
+          : `${state.label} · ${detail}`;
         const lineLength = graphContext.kind === 'autofuse' ? 56 : 44;
         const inputLine = shortText('in: ' + graphInputText(node), lineLength);
         const outputLine = shortText('out: ' + graphOutputText(node), lineLength);
@@ -1773,7 +2282,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         parts.push(`<text x="${position.x + 10}" y="${position.y + 39}" font-size="11" fill="#5f6b7a">${escapeHtml(shortText(node.type || '-', 36))}</text>`);
         parts.push(`<text x="${position.x + 10}" y="${position.y + 59}" font-size="10.5" fill="#3d4856">${escapeHtml(inputLine)}</text>`);
         parts.push(`<text x="${position.x + 10}" y="${position.y + 78}" font-size="10.5" fill="#3d4856">${escapeHtml(outputLine)}</text>`);
-        parts.push(`<text x="${position.x + 10}" y="${position.y + 99}" font-size="11" fill="${state.stroke}">${escapeHtml(state.label)} · ${escapeHtml(detail)}</text>`);
+        parts.push(`<text x="${position.x + 10}" y="${position.y + 99}" font-size="11" fill="${state.stroke}">${escapeHtml(shortText(precisionLine, 44))}</text>`);
         if (broadcastCached) {
           parts.push(`<circle class="broadcast-cache-mark" cx="${position.x + position.w - 17}" cy="${position.y + 17}" r="11"><title>Broadcast 条件缓存 · ${escapeHtml(node.exec_condition)}</title></circle>`);
           parts.push(`<text class="broadcast-cache-mark-text" x="${position.x + position.w - 17}" y="${position.y + 20}">BC</text>`);
@@ -1786,6 +2295,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
           parts.push(`<text class="unfused-label" x="${position.x + 10}" y="${position.y + 119}">${escapeHtml(shortText('NOT FUSED · ' + firstReason, 43))}</text>`);
         }
         if (fusionLine) parts.push(`<text x="${position.x + 10}" y="${position.y + 119}" font-size="10.5" fill="#2457a6">${escapeHtml(fusionLine)}</text><circle class="fusion-mark" data-fusion-entry="true" tabindex="0" role="button" aria-label="进入融合子图" cx="${position.x + position.w - 15}" cy="${position.y + 15}" r="8"><title>点击蓝色入口进入融合子图</title></circle>`);
+        if (tensorAvailable) parts.push(`<circle class="tensor-mark" data-tensor-node="${escapeHtml(node.name)}" tabindex="0" role="button" aria-label="查看输出 Tensor 逐元素精度" cx="${position.x + position.w - 15}" cy="${position.y + position.h - 15}" r="9"><title>查看输出 Tensor 逐元素精度</title></circle><text class="tensor-mark-text" x="${position.x + position.w - 15}" y="${position.y + position.h - 12}">T</text>`);
         parts.push('</g>');
       }
       parts.push('</svg>');
@@ -1804,11 +2314,12 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       return Number.isFinite(number) ? number : -Infinity;
     }
     function rowText(row) {
-      return [row.cpu_op, row.npu_op, row.npu_type, row.status, row.dtype, row.strict_passed, row.cann_passed, Array.isArray(row.shape) ? row.shape.join('x') : row.shape].join(' ').toLowerCase();
+      return [row.cpu_op, row.npu_op, row.npu_type, row.status, row.unmapped_reason, row.mapping_method, row.dtype, row.strict_passed, row.cann_passed, Array.isArray(row.shape) ? row.shape.join('x') : row.shape].join(' ').toLowerCase();
     }
     function statusClass(status) {
       if (!status) return 'status-bad';
       if (status === 'OK') return 'status-ok';
+      if (status === 'NOT_OBSERVABLE_ON_NPU') return 'status-neutral';
       if (status.startsWith('OK_') || status === 'UNMATCHED_CPU_OP') return 'status-warn';
       return 'status-bad';
     }
@@ -1824,6 +2335,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         if (pass === 'unmatched' && row.compared !== false) return false;
         if (pass === 'unmapped' && row.status !== 'UNMATCHED_CPU_OP') return false;
         if (pass === 'not_captured' && row.status !== 'NPU_OUTPUT_NOT_CAPTURED') return false;
+        if (pass === 'not_observable' && row.status !== 'NOT_OBSERVABLE_ON_NPU') return false;
         if (type !== 'all' && row.npu_type !== type) return false;
         return !query || rowText(row).includes(query);
       });
@@ -1847,13 +2359,14 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         const shape = Array.isArray(row.shape) ? row.shape.join('x') : (row.shape || '-');
         const strictPassed = row.strict_passed ?? row.passed;
         const cannPassed = row.cann_passed ?? row.passed;
-        const badgeClass = row.compared === false ? 'warn' : (!cannPassed ? 'fail' : (!strictPassed ? 'warn' : 'pass'));
+        const internalOnly = row.status === 'NOT_OBSERVABLE_ON_NPU';
+        const badgeClass = internalOnly ? 'neutral' : (row.compared === false ? 'warn' : (!cannPassed ? 'fail' : (!strictPassed ? 'warn' : 'pass')));
         const badgeText = row.compared === false
-          ? (row.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : 'NO MAP')
-          : (!cannPassed ? 'FAIL' : (!strictPassed ? 'STRICT FAIL' : 'PASS'));
+          ? (row.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (internalOnly ? 'INTERNAL' : 'NO MAP'))
+          : (!cannPassed ? (strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败') : (!strictPassed ? '逐元素失败' : '逐元素 + 整体均通过'));
         const strictText = row.compared === false ? '-' : (strictPassed ? 'PASS' : 'FAIL');
         const cannText = row.compared === false ? '-' : (cannPassed ? 'PASS' : 'FAIL');
-        tr.innerHTML = `<td><span class="badge ${badgeClass}">${badgeText}</span></td><td>${strictText}</td><td>${cannText}</td><td class="${statusClass(row.status)}">${escapeHtml(row.status || '-')}</td><td class="op">${escapeHtml(row.npu_op || '-')}:${row.npu_index ?? '-'}</td><td>${escapeHtml(row.npu_type || '-')}</td><td class="op">${escapeHtml(row.cpu_op || '-')}:${row.cpu_index ?? '-'}</td><td>${escapeHtml(shape)}</td><td>${escapeHtml(row.dtype || '-')}</td><td>${fmt(row.rtol)} / ${fmt(row.atol)}</td><td>${finiteMetricText(row, 'max_abs_error')}</td><td>${finiteMetricText(row, 'max_rel_error')}</td><td>${finiteMetricText(row, 'rmse')}</td><td>${escapeHtml(cannMetricText(row, 'cann_cosine_similarity'))}</td><td>${escapeHtml(mismatchText(row))}</td><td>${escapeHtml(maxIndexText(row))}</td>`;
+        tr.innerHTML = `<td><span class="badge ${badgeClass}">${badgeText}</span></td><td>${strictText}</td><td>${cannText}</td><td class="${statusClass(row.status)}">${escapeHtml(row.status || '-')}</td><td>${escapeHtml(row.unmapped_reason || row.mapping_method || '-')}</td><td class="op">${escapeHtml(row.npu_op || '-')}:${row.npu_index ?? '-'}</td><td>${escapeHtml(row.npu_type || '-')}</td><td class="op">${escapeHtml(row.cpu_op || '-')}:${row.cpu_index ?? '-'}</td><td>${escapeHtml(shape)}</td><td>${escapeHtml(row.dtype || '-')}</td><td>${fmt(row.rtol)} / ${fmt(row.atol)}</td><td>${finiteMetricText(row, 'max_abs_error')}</td><td>${finiteMetricText(row, 'max_rel_error')}</td><td>${finiteMetricText(row, 'rmse')}</td><td>${escapeHtml(mismatchText(row))}</td><td>${escapeHtml(maxIndexText(row))}</td><td>${escapeHtml(cannMetricText(row, 'cann_cosine_similarity'))}</td><td>${escapeHtml(cannMetricText(row, 'relative_euclidean_distance'))}</td><td>${escapeHtml(cannMetricText(row, 'kl_divergence'))}</td>`;
         tr.addEventListener('click', () => {
           if (graphContext.kind !== 'main') showMainGraph();
           selectNode(row.npu_op);
@@ -1861,6 +2374,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         tbody.appendChild(tr);
       }
       drawChart();
+      refreshTableHorizontalScrollbar();
     }
     function drawChart() {
       const canvas = document.getElementById('errorChart'), ctx = canvas.getContext('2d');
@@ -1876,10 +2390,11 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       ctx.fillStyle = '#617083'; ctx.fillText(`top ${data.length} by current sort/filter`, pad.l, height - 6);
     }
     function fillTypeFilter() {
+      typeFilter.innerHTML = '<option value="all">全部类型</option>';
       [...new Set(rows.map(row => row.npu_type || '').filter(Boolean))].sort().forEach(type => { const option = document.createElement('option'); option.value = type; option.textContent = type; typeFilter.appendChild(option); });
     }
     function downloadCsv() {
-      const columns = ['compared','passed','strict_passed','cann_passed','status','cpu_op','cpu_index','npu_op','npu_index','npu_type','rtol','atol','tolerance_source','shape','dtype','max_abs_error','mean_abs_error','max_rel_error','rmse','cosine_similarity','cann_cosine_similarity','relative_euclidean_distance','kl_divergence','rmse_mae_ratio','cann_warning','mismatched','num_elements','finite_pair_count','max_error_index','nonfinite_summary','first_nonfinite_index','first_nonfinite_cpu','first_nonfinite_npu','cann_unavailable_reason'];
+      const columns = ['compared','passed','strict_passed','cann_passed','status','mapping_method','unmapped_reason','observable','cpu_op','cpu_index','npu_op','npu_index','npu_type','rtol','atol','tolerance_source','shape','dtype','storage_dtype','max_abs_error','mean_abs_error','max_rel_error','rmse','cosine_similarity','cann_cosine_similarity','relative_euclidean_distance','kl_divergence','rmse_mae_ratio','cann_warning','mismatched','num_elements','finite_pair_count','max_error_index','nonfinite_summary','first_nonfinite_index','first_nonfinite_cpu','first_nonfinite_npu','cann_unavailable_reason'];
       const lines = [columns.join(',')];
       for (const row of state.filtered) lines.push(columns.map(key => { const raw = Array.isArray(row[key]) ? row[key].join('x') : (row[key] ?? ''); return '"' + String(raw).replace(/"/g, '""') + '"'; }).join(','));
       const blob = new Blob([lines.join('\\n') + '\\n'], {type: 'text/csv'}), link = document.createElement('a');
@@ -1925,8 +2440,19 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
     });
     search.addEventListener('input', applyFilters); passFilter.addEventListener('change', applyFilters); typeFilter.addEventListener('change', applyFilters);
     document.getElementById('exportCsv').addEventListener('click', downloadCsv);
+    document.getElementById('tensorViewButton').addEventListener('click', event => openTensorViewer(event.currentTarget.dataset.tensorNode));
+    document.getElementById('closeTensorViewer').addEventListener('click', closeTensorViewer);
+    for (const closeTarget of document.querySelectorAll('[data-tensor-close]')) closeTarget.addEventListener('click', closeTensorViewer);
+    document.getElementById('tensorDisplayMode').addEventListener('change', event => { tensorViewerState.mode = event.target.value; renderTensorMatrix(); });
+    document.getElementById('tensorRowStart').addEventListener('change', event => { tensorViewerState.rowStart = Number(event.target.value) || 0; renderTensorMatrix(); });
+    document.getElementById('tensorColStart').addEventListener('change', event => { tensorViewerState.colStart = Number(event.target.value) || 0; renderTensorMatrix(); });
+    document.getElementById('tensorPrevRows').addEventListener('click', () => { tensorViewerState.rowStart -= tensorViewerState.rowPageSize; renderTensorMatrix(); });
+    document.getElementById('tensorNextRows').addEventListener('click', () => { tensorViewerState.rowStart += tensorViewerState.rowPageSize; renderTensorMatrix(); });
+    document.getElementById('tensorPrevCols').addEventListener('click', () => { tensorViewerState.colStart -= tensorViewerState.colPageSize; renderTensorMatrix(); });
+    document.getElementById('tensorNextCols').addEventListener('click', () => { tensorViewerState.colStart += tensorViewerState.colPageSize; renderTensorMatrix(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && !document.getElementById('tensorViewer').hidden) closeTensorViewer(); });
     for (const th of document.querySelectorAll('th[data-key]')) th.addEventListener('click', () => { const key = th.dataset.key; if (state.sortKey === key) state.sortDir *= -1; else { state.sortKey = key; state.sortDir = ['max_abs_error','max_rel_error','rmse','mismatched'].includes(key) ? -1 : 1; } sortRows(); renderTable(); });
-    renderGraphTabs(); renderGraph(); initGraphInteractions(); initZoomControls(); initLifecycleResize(); fillTypeFilter(); applyFilters();
+    renderGraphTabs(); renderComparisonTabs(); updateComparisonSummary(); renderGraph(); initGraphInteractions(); initZoomControls(); initLifecycleResize(); initDetailsResize(); initTableHorizontalScrollbar(); fillTypeFilter(); applyFilters();
     const initialParams = new URLSearchParams(window.location.search);
     const initialNode = initialParams.get('node');
     const initialAutofuseIndex = Number(initialParams.get('graph'));
@@ -1955,6 +2481,7 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
       }
     window.addEventListener('resize', () => {
       drawChart();
+      setDetailsWidth(detailsWidthState.width);
       if (lifecycleState.height != null) setLifecycleHeight(lifecycleState.height);
     });
   </script>
@@ -1980,10 +2507,11 @@ def render_report_html(report: dict[str, Any], title: str = "Autofuse Accuracy R
         "__UNMATCHED__": str(unmatched),
         "__UNMAPPED__": str(unmapped),
         "__NOT_CAPTURED__": str(not_captured),
-        "__COVERAGE_CLASS__": "pass" if unmatched == 0 else "warn",
+        "__NOT_OBSERVABLE__": str(not_observable),
+        "__COVERAGE_CLASS__": "pass" if (unmapped == 0 and not_captured == 0) else "warn",
         "__FAILED_CLASS__": "fail" if failed else "pass",
         "__DISAGREEMENT_CLASS__": "warn" if disagreements else "pass",
-        "__UNMATCHED_CLASS__": "warn" if unmatched else "pass",
+        "__UNMATCHED_CLASS__": "warn" if (unmapped or not_captured) else "pass",
         "__MAX_ABS__": _fmt(summary.get("max_abs_error")),
         "__MAX_REL__": _fmt(summary.get("max_rel_error")),
         "__REPORT_JSON__": payload,

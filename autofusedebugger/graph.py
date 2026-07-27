@@ -145,8 +145,8 @@ def build_manifest(
     out_path: str | Path,
     model_name: str | None = None,
 ) -> dict[str, Any]:
-    if side not in {"cpu", "npu"}:
-        raise ValueError("side must be 'cpu' or 'npu'")
+    if side not in {"cpu", "npu", "npu_eager", "npu_autofuse"}:
+        raise ValueError("side must be 'cpu', 'npu_eager', or 'npu_autofuse'")
     graph_file = Path(graph_path).resolve()
     root = Path(dump_dir).resolve()
     if not graph_file.is_file():
@@ -193,7 +193,7 @@ def build_manifest(
         "artifacts": {"root": str(root)},
         "nodes": nodes,
         "edges": extract_edges(ops),
-        "fusions": extract_fusions(ops) if side == "npu" else [],
+        "fusions": extract_fusions(ops) if side in {"npu", "npu_autofuse"} else [],
     }
     write_json(out_path, manifest)
     return manifest

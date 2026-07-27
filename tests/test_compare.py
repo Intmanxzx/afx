@@ -5,7 +5,14 @@ from pathlib import Path
 
 import numpy as np
 
-from autofusedebugger.compare import TensorRef, _metrics, compare_manifests, compare_pair, resolve_tolerances
+from autofusedebugger.compare import (
+    TensorRef,
+    _metrics,
+    compare_manifests,
+    compare_pair,
+    compare_three_manifests,
+    resolve_tolerances,
+)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -63,6 +70,62 @@ def test_compare_fused_output_to_cpu_origin(tmp_path: Path) -> None:
     assert report["results"][0]["cpu_op"] == "Relu_1"
     assert report["graphs"]["cpu"]["nodes"][0]["name"] == "Relu_1"
     assert report["graphs"]["npu"]["fusions"][0]["origin_op"] == "Relu_1"
+
+
+def test_fusion_internal_cpu_outputs_are_not_observable(tmp_path: Path) -> None:
+    for name in ("addmm", "mul", "relu"):
+        np.save(tmp_path / f"{name}.npy", np.array([1.0, 2.0], dtype=np.float32))
+    np.save(tmp_path / "npu_fused.npy", np.array([1.0, 2.0], dtype=np.float32))
+
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "m"},
+        "artifacts": {"root": str(tmp_path)},
+        "edges": [],
+    }
+    cpu = dict(
+        base,
+        side="cpu",
+        nodes=[
+            {"name": name, "type": name, "outputs": [{"index": 0, "path": f"{name}.npy"}]}
+            for name in ("addmm", "mul", "relu")
+        ],
+        fusions=[],
+    )
+    npu = dict(
+        base,
+        side="npu",
+        nodes=[
+            {
+                "name": "autofused_addmm_mul_relu",
+                "type": "AutofuseFusion",
+                "origin_ops": ["addmm", "mul", "relu"],
+                "outputs": [{"index": 0, "path": "npu_fused.npy"}],
+            }
+        ],
+        fusions=[
+            {
+                "fused_op": "autofused_addmm_mul_relu",
+                "fused_index": 0,
+                "origin_op": "relu",
+                "origin_index": 0,
+            }
+        ],
+    )
+    _write_json(tmp_path / "cpu.json", cpu)
+    _write_json(tmp_path / "npu.json", npu)
+
+    report = compare_manifests(tmp_path / "cpu.json", tmp_path / "npu.json", rtol=0, atol=0)
+
+    assert report["summary"]["status"] == "PASS"
+    assert report["summary"]["compared"] == 1
+    assert report["summary"]["observable_total"] == 1
+    assert report["summary"]["coverage"] == 1.0
+    assert report["summary"]["not_observable"] == 2
+    assert report["summary"]["unmapped"] == 0
+    internal = [row for row in report["results"] if row["status"] == "NOT_OBSERVABLE_ON_NPU"]
+    assert {row["cpu_op"] for row in internal} == {"addmm", "mul"}
+    assert all(row["mapping_method"] == "fusion_internal" for row in internal)
 
 
 def test_shape_mismatch_is_reported(tmp_path: Path) -> None:
@@ -152,10 +215,12 @@ def test_unmatched_npu_output_is_reported_as_incomplete(tmp_path: Path) -> None:
 
     assert report["summary"] == {
         "total": 1,
+        "observable_total": 1,
         "compared": 0,
         "unmatched": 1,
         "unmapped": 1,
         "not_captured": 0,
+        "not_observable": 0,
         "dumped": 1,
         "coverage": 0.0,
         "status": "INCOMPLETE",
@@ -247,6 +312,70 @@ def test_compare_pair_uses_strict_float32_default_and_records_threshold(tmp_path
     assert row["passed"] is False
     assert row["strict_passed"] is False
     assert (row["rtol"], row["atol"], row["tolerance_source"]) == (1e-5, 1e-5, "dtype")
+
+
+def test_compare_pair_embeds_elementwise_tensor_data(tmp_path: Path) -> None:
+    cpu_path = tmp_path / "cpu.npy"
+    npu_path = tmp_path / "npu.npy"
+    np.save(cpu_path, np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+    np.save(npu_path, np.array([[1.0, 2.1], [3.0, 4.0]], dtype=np.float32))
+
+    row = compare_pair(
+        TensorRef("cpu", 0, cpu_path, "ND", "Add"),
+        TensorRef("npu", 0, npu_path, "ND", "Add"),
+    )
+
+    payload = row["elementwise_data"]
+    assert payload["shape"] == [2, 2]
+    assert payload["logical_dtype"] == "float32"
+    assert payload["cpu"]["encoding"] == "base64"
+    assert payload["npu"]["encoding"] == "base64"
+    assert payload["strict_mask"]["dtype"] == "uint8"
+
+
+def test_compare_three_manifests_returns_all_pairwise_results(tmp_path: Path) -> None:
+    value = np.array([1.0, 2.0], dtype=np.float32)
+    np.save(tmp_path / "cpu.npy", value)
+    np.save(tmp_path / "eager.npy", value)
+    np.save(tmp_path / "autofuse.npy", value)
+
+    def manifest(side: str, output: str) -> dict:
+        return {
+            "schema": "autofusedebugger-manifest/1",
+            "side": side,
+            "model": {"name": "m"},
+            "artifacts": {"root": str(tmp_path)},
+            "nodes": [{"name": "add", "type": "Add", "outputs": [{"index": 0, "path": output}]}],
+            "edges": [],
+            "fusions": [],
+        }
+
+    paths = []
+    for name, side, output in (("cpu", "cpu", "cpu.npy"), ("eager", "npu_eager", "eager.npy"), ("autofuse", "npu", "autofuse.npy")):
+        path = tmp_path / f"{name}.json"
+        _write_json(path, manifest(side, output))
+        paths.append(path)
+
+    report = compare_three_manifests(*paths, rtol=0, atol=0)
+    assert report["comparison_mode"] == "three_way"
+    assert report["comparison_order"] == ["cpu_npu_autofuse", "cpu_npu_eager", "npu_eager_npu_autofuse"]
+    assert all(report["comparisons"][key]["summary"]["dual_failed"] == 0 for key in report["comparison_order"])
+
+
+def test_compare_pair_preserves_bfloat16_logical_dtype_with_float32_storage(tmp_path: Path) -> None:
+    cpu_path = tmp_path / "cpu.npy"
+    npu_path = tmp_path / "npu.npy"
+    np.save(cpu_path, np.array([1.0], dtype=np.float32))
+    np.save(npu_path, np.array([1.0], dtype=np.float32))
+
+    row = compare_pair(
+        TensorRef("cpu", 0, cpu_path, "ND", "Add", "bfloat16"),
+        TensorRef("npu", 0, npu_path, "ND", "Add", "bfloat16"),
+    )
+
+    assert row["dtype"] == "bfloat16"
+    assert row["storage_dtype"] == "float32"
+    assert (row["rtol"], row["atol"]) == (1e-2, 1e-2)
 
 
 def test_compare_pair_uses_lower_precision_dtype_and_allows_override(tmp_path: Path) -> None:
