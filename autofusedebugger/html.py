@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autofusedebugger.io import read_json
+from autofusedebugger.artifact_io import read_json
 
 
 def _json_for_script(data: Any) -> str:

@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from autofusedebugger.io import SCHEMA, read_json, write_json
+from autofusedebugger.artifact_io import SCHEMA, read_json, write_json
 
 def normalize_op_name(name: str) -> str:
     return name.replace("/", "_")

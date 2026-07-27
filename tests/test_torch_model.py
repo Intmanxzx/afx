@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from autofusedebugger.cli import build_parser
-from autofusedebugger.io import tensor_to_numpy
+from autofusedebugger.artifact_io import tensor_to_numpy
 
 from autofusedebugger.torch_model import (
     TorchCase,

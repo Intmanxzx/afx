@@ -130,7 +130,7 @@ Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化
 
 ### 可维护性
 
-代码按 `graph.py`、`compare.py`、`io.py`、`runner.py`、`cli.py` 拆分。manifest 是稳定边界，后续接入 CAModel 专用 adapter 时不影响比较核心。
+代码按 `graph.py`、`compare.py`、`artifact_io.py`、`runner.py`、`cli.py` 拆分。manifest 是稳定边界，后续接入 CAModel 专用 adapter 时不影响比较核心。
 
 ### 可测试性
 

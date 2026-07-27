@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from autofusedebugger.io import tensor_to_numpy
+from autofusedebugger.artifact_io import tensor_to_numpy
 from autofusedebugger.npu_examples import _desc
 
 

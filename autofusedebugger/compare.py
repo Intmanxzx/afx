@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from autofusedebugger.io import SCHEMA, load_array, read_json, resolve_artifact, write_json
+from autofusedebugger.artifact_io import SCHEMA, load_array, read_json, resolve_artifact, write_json
 
 
 def convert_nc1hwc0_to_nhwc(arr: np.ndarray) -> np.ndarray:

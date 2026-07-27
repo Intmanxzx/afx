@@ -14,7 +14,7 @@ from autofusedebugger.autofuse_graph import attach_autofuse_graphs, collect_auto
 from autofusedebugger.compare import compare_three_manifests, save_report
 from autofusedebugger.graph import build_manifest
 from autofusedebugger.html import write_report_html
-from autofusedebugger.io import tensor_to_numpy
+from autofusedebugger.artifact_io import tensor_to_numpy
 from autofusedebugger.inductor_autofuse import (
     activate_autofuse_backend,
     autofuse_diagnostics,

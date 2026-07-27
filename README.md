@@ -16,7 +16,7 @@ NPU 中间输出由 PyTorch Inductor intermediate hook 采集。工具为 Ascend
 
 ```bash
 git clone git@gitcode.com:xingzhixiong/Autofuse-Debugger.git
-cd /home/xingzhixiong/dfx_dir/autofusedebugger
+cd ${HOME}/Autofuse-Debugger/
 python3 -m pip install -e .
 ```
 
@@ -57,7 +57,7 @@ if __name__ == "__main__":
 ```bash
 source /home/developer/Ascend/cann-9.1.0/set_env.sh
 
-autofusedbg run-script \
+autofusedebugger run-script \
   --framework pytorch \
   --backend inductor_autofuse \
   --script /path/to/model.py \
