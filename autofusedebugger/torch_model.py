@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import os
 import re
 import sys
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,8 +48,12 @@ class TorchCase:
     inputs: tuple[Any, ...]
     name: str
     kwargs: dict[str, Any] = field(default_factory=dict)
-    fullgraph: bool = True
+    fullgraph: bool = False
     dynamic: bool = False
+    training: bool | None = None
+    grad_enabled: bool = True
+    autocast: dict[str, dict[str, Any]] = field(default_factory=dict)
+    rewrite_device_hints: bool = False
 
 
 _NPU_CPU_PREFIXES = {
@@ -124,20 +129,28 @@ def load_torch_case(script: str | Path, entry: str = "create_case") -> TorchCase
         inputs = raw["inputs"]
         kwargs = raw.get("kwargs", {})
         name = _case_name(script, raw)
-        fullgraph = bool(raw.get("fullgraph", True))
+        fullgraph = bool(raw.get("fullgraph", False))
         dynamic = bool(raw.get("dynamic", False))
+        rewrite_device_hints = bool(raw.get("rewrite_device_hints", False))
     elif isinstance(raw, tuple) and len(raw) == 2:
         model, inputs = raw
         kwargs = {}
         name = Path(script).stem
-        fullgraph = True
+        fullgraph = False
         dynamic = False
+        rewrite_device_hints = False
     else:
         raise ValueError(f"{entry}() must return (model, inputs) or a dict")
     if not isinstance(inputs, (tuple, list)):
         inputs = (inputs,)
     if not isinstance(kwargs, dict):
         raise ValueError(f"{entry}() 'kwargs' must be a dict")
+    try:
+        import torch
+
+        grad_enabled = bool(torch.is_grad_enabled())
+    except Exception:
+        grad_enabled = True
     return TorchCase(
         model=model,
         inputs=tuple(inputs),
@@ -145,6 +158,9 @@ def load_torch_case(script: str | Path, entry: str = "create_case") -> TorchCase
         name=name,
         fullgraph=fullgraph,
         dynamic=dynamic,
+        training=bool(getattr(model, "training", False)),
+        grad_enabled=grad_enabled,
+        rewrite_device_hints=rewrite_device_hints,
     )
 
 
@@ -194,13 +210,80 @@ def _to_device(value: Any, device: str) -> Any:
     return _tree_map(value, convert)
 
 
+def _clone_execution_value(value: Any) -> Any:
+    try:
+        import torch
+    except Exception:
+        return copy.deepcopy(value)
+
+    def clone(item: Any) -> Any:
+        if isinstance(item, torch.Tensor):
+            copied = item.detach().clone()
+            if item.requires_grad and (copied.is_floating_point() or copied.is_complex()):
+                copied.requires_grad_(True)
+            return copied
+        if isinstance(item, np.ndarray):
+            return item.copy()
+        try:
+            return copy.deepcopy(item)
+        except Exception:
+            return item
+
+    return _tree_map(value, clone)
+
+
+def _stage_case(case: TorchCase, stage: str) -> TorchCase:
+    try:
+        model = copy.deepcopy(case.model)
+    except Exception as exc:
+        raise RuntimeError(
+            f"{stage} requires an independent model copy to avoid changing the captured model state; "
+            "make the model deepcopyable or use a model-specific adapter"
+        ) from exc
+    return replace(
+        case,
+        model=model,
+        inputs=tuple(_clone_execution_value(case.inputs)),
+        kwargs=dict(_clone_execution_value(case.kwargs)),
+    )
+
+
+def _autocast_context(case: TorchCase, device: str):
+    import torch
+
+    device_type = str(device).split(":", 1)[0]
+    config = case.autocast.get(device_type)
+    if not config or not config.get("enabled", False):
+        return nullcontext()
+    dtype_name = str(config.get("dtype", "")).removeprefix("torch.")
+    dtype = getattr(torch, dtype_name, None)
+    kwargs: dict[str, Any] = {"device_type": device_type, "enabled": True}
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    if "cache_enabled" in config:
+        kwargs["cache_enabled"] = bool(config["cache_enabled"])
+    return torch.autocast(**kwargs)
+
+
+@contextmanager
+def _execution_context(case: TorchCase, device: str):
+    import torch
+
+    with torch.set_grad_enabled(case.grad_enabled):
+        with _autocast_context(case, device):
+            yield
+
+
 _DEVICE_HINT_NAMES = ("dev", "device")
 _DEVICE_HINT_RE = re.compile(r"^(?:cpu|cuda|npu|xpu|mps|meta|privateuseone)(?::\d+)?$")
 
 
 @contextmanager
-def _model_device_hints(model: Any, device: str):
-    """Temporarily align common module device hints with the execution stage."""
+def _model_device_hints(model: Any, device: str, *, enabled: bool = False):
+    """Optionally align explicit module device hints with the execution stage."""
+    if not enabled:
+        yield
+        return
     import torch
 
     restored: list[tuple[Any, str, Any]] = []
@@ -277,36 +360,38 @@ def export_graph_and_dump(
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     import torch
 
-    model = case.model.to(device).eval()
+    model = case.model.to(device)
+    if case.training is not None:
+        model.train(case.training)
     inputs = _to_device(case.inputs, device)
     kwargs = _to_device(case.kwargs, device)
-    with _model_device_hints(model, device):
-        exported = torch.export.export(model, inputs, kwargs)
-        if hasattr(exported, "run_decompositions"):
-            exported = exported.run_decompositions()
-        args = _export_args(exported, inputs, kwargs)
-        saved: dict[str, dict[str, Any]] = {}
+    with _model_device_hints(model, device, enabled=case.rewrite_device_hints):
+        with _execution_context(case, device):
+            exported = torch.export.export(model, inputs, kwargs)
+            if hasattr(exported, "run_decompositions"):
+                exported = exported.run_decompositions()
+            args = _export_args(exported, inputs, kwargs)
+            saved: dict[str, dict[str, Any]] = {}
 
-        class CaptureInterpreter(torch.fx.Interpreter):
-            def run_node(self, node):  # type: ignore[no-untyped-def]
-                result = super().run_node(node)
-                if node.op != "call_function":
+            class CaptureInterpreter(torch.fx.Interpreter):
+                def run_node(self, node):  # type: ignore[no-untyped-def]
+                    result = super().run_node(node)
+                    if node.op != "call_function":
+                        return result
+                    tensor = _first_tensor(result, torch=torch)
+                    if tensor is None:
+                        return result
+                    array, dtype = tensor_to_numpy(tensor)
+                    path = dump_dir / f"{node.name}.output.0.npy"
+                    np.save(path, array)
+                    saved[node.name] = {
+                        "shape": tuple(int(dim) for dim in array.shape),
+                        "dtype": dtype,
+                        "size": int(array.size),
+                        "path": path,
+                    }
                     return result
-                tensor = _first_tensor(result, torch=torch)
-                if tensor is None:
-                    return result
-                array, dtype = tensor_to_numpy(tensor)
-                path = dump_dir / f"{node.name}.output.0.npy"
-                np.save(path, array)
-                saved[node.name] = {
-                    "shape": tuple(int(dim) for dim in array.shape),
-                    "dtype": dtype,
-                    "size": int(array.size),
-                    "path": path,
-                }
-                return result
 
-        with torch.no_grad():
             CaptureInterpreter(exported.graph_module).run(*args)
 
     user_names = [
@@ -466,15 +551,17 @@ def run_npu_model(
     install_autofuse_intermediate_hooks(package_root)
     reset_autofuse_diagnostics()
     torch.npu.set_device(device)
-    model = case.model.eval().to(device)
+    model = case.model.to(device)
+    if case.training is not None:
+        model.train(case.training)
     compile_options = {"npu_backend": "ascendc"} if package_root.startswith("torch_npu.") else None
     device_inputs = _to_device(case.inputs, device)
     device_kwargs = _to_device(case.kwargs, device)
     records, save_intermediate = capture_inductor_outputs(npu_dump_dir)
-    with _model_device_hints(model, device):
-        compiled = torch.compile(model, dynamic=case.dynamic, fullgraph=case.fullgraph, options=compile_options)
-        with intermediate_hook(save_intermediate):
-            with torch.no_grad():
+    with _model_device_hints(model, device, enabled=case.rewrite_device_hints):
+        with _execution_context(case, device):
+            compiled = torch.compile(model, dynamic=case.dynamic, fullgraph=case.fullgraph, options=compile_options)
+            with intermediate_hook(save_intermediate):
                 out = compiled(*device_inputs, **device_kwargs)
                 torch.npu.synchronize()
     diagnostics = autofuse_diagnostics()
@@ -517,20 +604,22 @@ def run_torch_case(
 
     try:
         with progress_stage("CPU graph capture", detail=f"dump_dir={cpu_dump}"):
-            cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(case, cpu_dump)
+            cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(_stage_case(case, "CPU graph capture"), cpu_dump)
     except Exception as exc:
         raise RuntimeError(f"CPU graph capture failed: {type(exc).__name__}: {exc}") from exc
     progress_message("INFO", f"CPU graph captured tensors={len(cpu_outputs)}")
     try:
         with progress_stage("NPU eager graph capture", detail=f"dump_dir={npu_eager_dump}"):
-            npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(case, npu_eager_dump, device=device)
+            npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(
+                _stage_case(case, "NPU eager graph capture"), npu_eager_dump, device=device
+            )
     except Exception as exc:
         raise RuntimeError(f"NPU eager graph capture failed: {type(exc).__name__}: {exc}") from exc
     progress_message("INFO", f"NPU eager graph captured tensors={len(npu_eager_outputs)}")
     try:
         with progress_stage("NPU Autofuse execution", detail=f"dump_dir={npu_dump}"):
             _, npu_records, native_capture = run_npu_model(
-                case,
+                _stage_case(case, "NPU Autofuse execution"),
                 npu_dump,
                 compile_dir,
                 autofuse_dump,
@@ -538,7 +627,15 @@ def run_torch_case(
                 device=device,
             )
     except Exception as exc:
-        raise RuntimeError(f"NPU Autofuse execution failed: {type(exc).__name__}: {exc}") from exc
+        detail = str(exc)
+        if "Check dtype failed" in detail:
+            detail += (
+                "\nAutofuse rejected an ASCIR dtype conversion. The debugger preserved "
+                f"fullgraph={case.fullgraph} and rewrite_device_hints={case.rewrite_device_hints}. "
+                "Compare this with the standalone torch.compile options and inspect the generated "
+                "inductor_compile/autofuse_dump files for the reported cast source."
+            )
+        raise RuntimeError(f"NPU Autofuse execution failed: {type(exc).__name__}: {detail}") from exc
     progress_message("INFO", f"NPU Autofuse captured kernels={len(npu_records)}")
     with progress_stage("NPU graph reconstruction", detail=f"compile_dir={compile_dir}"):
         diagnostics = native_capture.pop("diagnostics", {})
@@ -580,6 +677,15 @@ def run_torch_case(
     native_capture["npu_eager_nodes"] = len(npu_eager_graph_data["graph"][0]["op"])
     native_capture["npu_eager_dump_nodes"] = len(npu_eager_outputs)
     native_capture["inductor_traces"] = npu_graph_data["metadata"]["inductor_traces"]
+    native_capture["execution_policy"] = {
+        "training": case.training,
+        "grad_enabled": case.grad_enabled,
+        "autocast_devices": sorted(case.autocast),
+        "fullgraph": case.fullgraph,
+        "dynamic": case.dynamic,
+        "rewrite_device_hints": case.rewrite_device_hints,
+        "stage_model_copies": True,
+    }
     native_capture["diagnostics"] = {
         "path": str(diagnostics_path),
         "lowering_fallbacks": npu_graph_data["metadata"]["lowering_fallbacks"],
@@ -608,6 +714,7 @@ def run_torch_case(
         "topology": npu_graph_data["metadata"]["topology"],
         "autofuse_graphs": native_capture["graph_count"],
         "comparisons": list(report.get("comparisons", {})),
+        "execution_policy": native_capture["execution_policy"],
         "inductor_traces": native_capture["inductor_traces"],
         "passed": report["summary"].get("status") == "PASS",
         "summary": report["summary"],
@@ -631,8 +738,14 @@ def run_torch_model(
     entry: str = "create_case",
     rtol: float | None = None,
     atol: float | None = None,
+    fullgraph: bool | None = None,
+    rewrite_device_hints: bool = False,
 ) -> dict[str, Any]:
     case = load_torch_case(script, entry)
+    if fullgraph is not None:
+        case = replace(case, fullgraph=fullgraph)
+    if rewrite_device_hints:
+        case = replace(case, rewrite_device_hints=True)
     return run_torch_case(
         case=case,
         script=script,

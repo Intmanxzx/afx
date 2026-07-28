@@ -53,6 +53,8 @@ raise RuntimeError('the adapter should stop at the selected invocation')
     assert captured.args[0].tolist() == [[3.0] * 4, [3.0] * 4]
     assert captured.kwargs["bias"].tolist() == [1.0] * 4
     assert captured.metadata["capture_call"] == 0
+    assert captured.metadata["execution"]["training"] is False
+    assert captured.metadata["execution"]["grad_enabled"] is True
 
 
 def test_pytorch_adapter_selects_module_and_matching_call(tmp_path: Path) -> None:
@@ -90,6 +92,39 @@ def test_reserved_framework_adapters_fail_explicitly() -> None:
         JaxAdapter().capture(script="unused.py")
     assert InductorAutofuseBackend().supports("pytorch")
     assert not InductorAutofuseBackend().supports("tensorflow")
+
+
+def test_inductor_backend_preserves_captured_execution_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autofusedebugger import torch_model
+
+    received = {}
+
+    def fake_run_torch_case(*, case, **kwargs):
+        received["case"] = case
+        received["kwargs"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr(torch_model, "run_torch_case", fake_run_torch_case)
+    invocation = CapturedInvocation(
+        framework="pytorch",
+        model=object(),
+        args=(1,),
+        kwargs={},
+        name="Model",
+        metadata={
+            "script": "/tmp/model.py",
+            "execution": {"training": True, "grad_enabled": False, "autocast": {"npu": {"enabled": True}}},
+        },
+    )
+
+    result = InductorAutofuseBackend().run(invocation, out_dir="/tmp/out")
+
+    assert result == {"ok": True}
+    assert received["case"].fullgraph is False
+    assert received["case"].training is True
+    assert received["case"].grad_enabled is False
+    assert received["case"].autocast == {"npu": {"enabled": True}}
+    assert received["case"].rewrite_device_hints is False
 
 
 def test_run_script_keeps_script_directory_importable_during_backend_execution(

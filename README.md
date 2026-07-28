@@ -65,7 +65,9 @@ autofusedbg run-script \
   --html /tmp/my_model_accuracy.html
 ```
 
-工具执行脚本并在目标最外层 `torch.nn.Module` 调用发生前截获模型、位置参数和关键字参数。原脚本中的该次推理不会实际执行，CPU、NPU eager 和 NPU Autofuse 执行均由工具使用同一份输入快照发起。
+工具执行脚本并在目标最外层 `torch.nn.Module` 调用发生前截获模型、位置参数和关键字参数。原脚本中的该次推理不会实际执行；工具为 CPU、NPU eager 和 NPU Autofuse 分别创建独立的模型/输入副本，避免任一采集阶段修改后续阶段的状态。捕获时的 train/eval、grad 和 autocast 状态会随调用保存并在对应阶段恢复。
+
+默认只迁移模型参数和 Tensor 输入到目标设备，不会修改模型的 `dev`、`device` 等普通属性，也不会强制 `eval()` 或 `no_grad()`。对于依赖这类属性创建张量的旧模型，可显式传入 `--rewrite-device-hints` 兼容开关；该开关可能改变模型图，仅应在确认需要时使用。
 
 默认按比较双方精度较低的 dtype 自动选择逐元素 `np.isclose` 阈值：
 
@@ -95,7 +97,8 @@ autofusedbg run-script \
 - `--module-pattern`：按模块完整类名或类名正则筛选。
 - `--capture-call`：筛选结果中从零开始的调用序号。
 - `--` 后的参数原样传递给模型脚本。
-- `--allow-graph-breaks` 对应 `fullgraph=False`，默认使用 `fullgraph=True`。
+- 默认使用 `fullgraph=False`，与 `torch.compile` 默认行为一致；`--fullgraph` 才会强制单一完整图。
+- `--rewrite-device-hints` 临时改写模块的 `dev/device` 属性以兼容旧模型，默认关闭。
 - `--dynamic` 开启动态 shape 编译。
 
 ### 框架和后端适配器
@@ -120,7 +123,8 @@ autofusedbg run-torch-model \
   --out-dir /tmp/my_model_accuracy
 ```
 
-`create_case()` 返回 `(model, inputs)`，或包含 `model`、`inputs`、可选 `kwargs/fullgraph/dynamic/name` 的字典。
+`create_case()` 返回 `(model, inputs)`，或包含 `model`、`inputs`、可选 `kwargs/fullgraph/dynamic/name/rewrite_device_hints` 的字典。
+未指定时使用 `fullgraph=False`；`run-torch-model --fullgraph` 可显式覆盖该设置。
 
 仓库提供了一个包含 17 个 `bf16` 输入、16 个串联 `torch.add` 的验证用例：
 

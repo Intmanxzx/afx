@@ -38,6 +38,32 @@ def _original_module(module: Any) -> Any:
     return getattr(module, "_orig_mod", module)
 
 
+def _execution_metadata(module: Any, torch: Any) -> dict[str, Any]:
+    autocast: dict[str, dict[str, Any]] = {}
+    for device_type in ("cpu", "cuda", "npu"):
+        try:
+            enabled = bool(torch.is_autocast_enabled(device_type))
+        except Exception:
+            continue
+        if not enabled:
+            continue
+        entry: dict[str, Any] = {"enabled": True}
+        try:
+            entry["dtype"] = str(torch.get_autocast_dtype(device_type))
+        except Exception:
+            pass
+        try:
+            entry["cache_enabled"] = bool(torch.is_autocast_cache_enabled())
+        except Exception:
+            pass
+        autocast[device_type] = entry
+    return {
+        "training": bool(getattr(module, "training", False)),
+        "grad_enabled": bool(torch.is_grad_enabled()),
+        "autocast": autocast,
+    }
+
+
 class PyTorchAdapter(FrameworkAdapter):
     name = "pytorch"
     implemented = True
@@ -85,6 +111,7 @@ class PyTorchAdapter(FrameworkAdapter):
                                     "capture_call": current_call,
                                     "module": identity,
                                     "script": str(path),
+                                    "execution": _execution_metadata(original, torch),
                                 },
                             )
                         )

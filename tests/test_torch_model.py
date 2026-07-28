@@ -9,7 +9,9 @@ from autofusedebugger.artifact_io import tensor_to_numpy
 
 from autofusedebugger.torch_model import (
     TorchCase,
+    _execution_context,
     _model_device_hints,
+    _stage_case,
     _to_device,
     cpu_candidates_for_npu,
     export_cpu_graph_and_dump,
@@ -51,12 +53,52 @@ def test_model_device_hints_are_aligned_and_restored() -> None:
 
     model = Model()
 
-    with _model_device_hints(model, "cpu"):
+    with _model_device_hints(model, "cpu", enabled=True):
         assert model.dev == "cpu"
         assert model.child.device == torch.device("cpu")
 
     assert model.dev == "npu:0"
     assert model.child.device == torch.device("meta")
+
+
+def test_model_device_hints_are_preserved_by_default() -> None:
+    torch = pytest.importorskip("torch")
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.device = "cpu"
+
+    model = Model()
+
+    with _model_device_hints(model, "npu:0"):
+        assert model.device == "cpu"
+
+
+def test_stage_case_uses_independent_model_and_inputs() -> None:
+    torch = pytest.importorskip("torch")
+    model = torch.nn.Linear(2, 2).train()
+    inputs = (torch.ones(1, 2, requires_grad=True),)
+    case = TorchCase(
+        model=model,
+        inputs=inputs,
+        name="isolation",
+        training=True,
+        grad_enabled=False,
+    )
+
+    stage = _stage_case(case, "test")
+    with torch.no_grad():
+        stage.model.weight.zero_()
+        stage.inputs[0].zero_()
+
+    assert stage.model is not model
+    assert stage.model.training is True
+    assert stage.inputs[0] is not inputs[0]
+    assert inputs[0].tolist() == [[1.0, 1.0]]
+    assert not torch.equal(stage.model.weight, model.weight)
+    with _execution_context(stage, "cpu"):
+        assert torch.is_grad_enabled() is False
 
 
 def test_tensor_to_numpy_uses_float32_storage_for_bfloat16() -> None:
@@ -86,6 +128,7 @@ def create_case():
 
     assert case.name == "case"
     assert case.inputs == (1, 2)
+    assert case.fullgraph is False
 
 
 def test_load_torch_case_from_dict(tmp_path: Path) -> None:
@@ -155,6 +198,12 @@ def test_cli_has_run_torch_model() -> None:
     assert args.device == "npu:0"
     assert args.rtol is None
     assert args.atol is None
+    assert args.fullgraph is None
+
+    explicit = parser.parse_args(
+        ["run-torch-model", "--script", "case.py", "--out-dir", "out", "--fullgraph"]
+    )
+    assert explicit.fullgraph is True
 
 
 def test_cli_has_run_script_with_script_arguments() -> None:
@@ -175,6 +224,22 @@ def test_cli_has_run_script_with_script_arguments() -> None:
     )
     assert args.backend == "inductor_autofuse"
     assert args.script_args == ["--", "--batch-size", "2"]
+    assert args.fullgraph is False
+    assert args.rewrite_device_hints is False
+
+    explicit = parser.parse_args(
+        [
+            "run-script",
+            "--script",
+            "model.py",
+            "--out-dir",
+            "out",
+            "--fullgraph",
+            "--rewrite-device-hints",
+        ]
+    )
+    assert explicit.fullgraph is True
+    assert explicit.rewrite_device_hints is True
 
 
 def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None:

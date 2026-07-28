@@ -18,8 +18,9 @@ def run_framework_script(
     capture_call: int = 0,
     module_pattern: str | None = None,
     name: str | None = None,
-    fullgraph: bool = True,
+    fullgraph: bool = False,
     dynamic: bool = False,
+    rewrite_device_hints: bool = False,
     html_path: str | Path | None = None,
     cann_root: str | Path | None = None,
     device: str = "npu:0",
@@ -55,6 +56,7 @@ def run_framework_script(
             name=name,
             fullgraph=fullgraph,
             dynamic=dynamic,
+            rewrite_device_hints=rewrite_device_hints,
             rtol=rtol,
             atol=atol,
         )

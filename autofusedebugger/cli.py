@@ -156,6 +156,8 @@ def cmd_run_torch_model(args: argparse.Namespace) -> int:
         device=args.device,
         rtol=args.rtol,
         atol=args.atol,
+        fullgraph=args.fullgraph,
+        rewrite_device_hints=args.rewrite_device_hints,
     )
     print(format_torch_run_summary(summary))
     return 0 if summary["passed"] else 1
@@ -174,8 +176,9 @@ def cmd_run_script(args: argparse.Namespace) -> int:
         capture_call=args.capture_call,
         module_pattern=args.module_pattern,
         name=args.name,
-        fullgraph=not args.allow_graph_breaks,
+        fullgraph=args.fullgraph,
         dynamic=args.dynamic,
+        rewrite_device_hints=args.rewrite_device_hints,
         html_path=args.html,
         cann_root=args.cann_root,
         device=args.device,
@@ -249,6 +252,15 @@ def build_parser() -> argparse.ArgumentParser:
     torch_model.add_argument("--html", default=None, help="write HTML path; defaults to OUT_DIR/report.html")
     torch_model.add_argument("--cann-root", default=None, help="CANN installation root")
     torch_model.add_argument("--device", default="npu:0")
+    torch_graph_mode = torch_model.add_mutually_exclusive_group()
+    torch_graph_mode.add_argument("--fullgraph", action="store_const", const=True, help="override create_case and compile one full graph")
+    torch_graph_mode.add_argument("--allow-graph-breaks", dest="fullgraph", action="store_const", const=False, help=argparse.SUPPRESS)
+    torch_model.set_defaults(fullgraph=None)
+    torch_model.add_argument(
+        "--rewrite-device-hints",
+        action="store_true",
+        help="compatibility mode: temporarily rewrite model dev/device attributes for each target device",
+    )
     _add_common_thresholds(torch_model)
     torch_model.set_defaults(func=cmd_run_torch_model)
 
@@ -262,8 +274,16 @@ def build_parser() -> argparse.ArgumentParser:
     script_runner.add_argument("--capture-call", type=int, default=0, help="zero-based matching top-level model call")
     script_runner.add_argument("--module-pattern", default=None, help="regex matched against module class name")
     script_runner.add_argument("--name", default=None, help="report model name; defaults to captured module class")
-    script_runner.add_argument("--allow-graph-breaks", action="store_true", help="compile with fullgraph=False")
+    graph_mode = script_runner.add_mutually_exclusive_group()
+    graph_mode.add_argument("--fullgraph", action="store_true", help="compile one full graph instead of allowing graph breaks")
+    graph_mode.add_argument("--allow-graph-breaks", dest="fullgraph", action="store_false", help="compatibility alias; graph breaks are now the default")
+    script_runner.set_defaults(fullgraph=False)
     script_runner.add_argument("--dynamic", action="store_true")
+    script_runner.add_argument(
+        "--rewrite-device-hints",
+        action="store_true",
+        help="compatibility mode: temporarily rewrite model dev/device attributes for each target device",
+    )
     script_runner.add_argument("--html", default=None, help="write HTML path; defaults to OUT_DIR/report.html")
     script_runner.add_argument("--cann-root", default=None, help="CANN installation root")
     script_runner.add_argument("--device", default="npu:0")
