@@ -201,6 +201,7 @@ autofusedbg report-html --report work/report.json --out work/report.html
 - `AutoFuseAfterOptimize` 节点会解析 `sched.exec_condition`；启用 broadcast 条件缓存的节点使用青色 `BC` 圆标和 `BROADCAST CACHE` 标签，详情中展示完整 condition，生命周期节点表头同步标记。
 - 每张优化图提供默认收起的 Queue/Buffer 时间线：Queue 按 `queue_id/reuse_id` 分层，横条表示按拓扑推导的静态占用区间，实心/空心节点分别表示生产者和直接消费者；支持 Queue、Buffer、全部视图切换、状态过滤、横轴缩放，并与上方 ASCIR 拓扑双向高亮。展开后可拖动顶部把手调整时间线高度，双击把手会尽量显示全部资源。
 - 主图节点只显示一行精度摘要 `Precision: 逐元素pass, 整Tensor pass/fail`；逐算子明细表按“逐元素精度对比指标”和“整 Tensor 精度对比指标”分组展示 max abs、max rel、RMSE、`CosineSimilarity（余弦值相似度）`、`RelativeEuclideanDistance（欧氏相对距离）`、`KullbackLeiblerDivergence（KL散度）`，表格和节点详情抽屉均支持横向滚动。误差详情默认收起。输出含 `Inf/NaN` 时还会显示 CPU/NPU 两侧的数量、同位置数量和首个位置。
+- 主图沿真实数据依赖 DAG 自动识别首次超过精度阈值的节点：上游比较链完整时标记 `FIRST FAIL`，融合出口标记 `FUSION FIRST FAIL`；如果上游存在未映射、未采集或其他不可比较节点，则降级为 `SUSPECTED FIRST FAIL`。详情抽屉展示判断依据、输入传播路径和上游不确定节点；后续失败节点展示其上游首次失败边界。并行分支可以各自存在首次失败节点。
 - 三方报告顶部提供 `CPU ↔ NPU Autofuse`、`CPU ↔ NPU eager`、`NPU eager ↔ NPU Autofuse` 三组页签；切换时会同步更新统计、主图和逐算子明细。
 - 有逐元素 dump 的节点会显示蓝色 `T` 按钮，可查看二维展开后的 CPU 值、NPU 值、绝对误差、相对误差和逐元素 PASS/FAIL。
 

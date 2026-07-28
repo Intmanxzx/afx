@@ -396,6 +396,41 @@ def test_write_report_html_externalizes_large_tensor_payloads(tmp_path: Path, mo
     assert "AACAPwAAAEA=" in tensor_script.read_text(encoding="utf-8")
 
 
+def test_write_report_html_includes_topological_first_failure_analysis(tmp_path: Path) -> None:
+    report = {
+        "summary": {"total": 3, "passed": 1, "failed": 2},
+        "graphs": {
+            "npu": {
+                "nodes": [
+                    {"name": "input", "type": "Data"},
+                    {"name": "first", "type": "Mul"},
+                    {"name": "downstream", "type": "Relu"},
+                ],
+                "edges": [
+                    {"src": "input", "dst": "first"},
+                    {"src": "first", "dst": "downstream"},
+                ],
+            }
+        },
+        "results": [
+            {"npu_op": "first", "compared": True, "strict_passed": False, "cann_passed": False},
+            {"npu_op": "downstream", "compared": True, "strict_passed": False, "cann_passed": False},
+        ],
+    }
+    target = tmp_path / "first-failure.html"
+
+    write_report_html(report, target)
+
+    content = target.read_text(encoding="utf-8")
+    assert "function rebuildFirstFailureAnalysis()" in content
+    assert "hasFailedAncestor.get(predecessor)" in content
+    assert "SUSPECTED FIRST FAIL" in content
+    assert "FUSION FIRST FAIL" in content
+    assert "function upstreamFirstFailures(nodeName)" in content
+    assert "first-failure-mark" in content
+    assert "输入传播路径" in content
+
+
 def test_write_report_html_from_json_streams_source_file(tmp_path: Path) -> None:
     report = tmp_path / "report.json"
     report.write_text(

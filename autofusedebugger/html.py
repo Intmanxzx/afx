@@ -538,10 +538,16 @@ def render_report_html(
     .graph-node { cursor: pointer; transition: opacity 120ms ease; }
     .graph-node.dimmed { opacity: 0.2; }
     .graph-node.lifecycle-dimmed { opacity: 0.2; }
-    .graph-node rect { transition: stroke 120ms ease, stroke-width 120ms ease, filter 120ms ease; }
-    .graph-node.related rect { stroke: var(--accent); stroke-width: 3; }
-    .graph-node.lifecycle-related rect { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 3px rgba(36, 87, 166, 0.4)); }
-    .graph-node.selected rect { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 4px rgba(36, 87, 166, 0.35)); }
+    .graph-node > rect { transition: stroke 120ms ease, stroke-width 120ms ease, filter 120ms ease; }
+    .graph-node.related > rect { stroke: var(--accent); stroke-width: 3; }
+    .graph-node.lifecycle-related > rect { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 3px rgba(36, 87, 166, 0.4)); }
+    .graph-node.first-failure > rect { stroke: #8f1230; stroke-width: 4; filter: drop-shadow(0 0 3px rgba(143, 18, 48, 0.3)); }
+    .graph-node.suspected-first-failure > rect { stroke: #a66700; stroke-width: 4; stroke-dasharray: 7 4; filter: drop-shadow(0 0 3px rgba(166, 103, 0, 0.25)); }
+    .graph-node.selected > rect { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 4px rgba(36, 87, 166, 0.35)); }
+    .first-failure-mark { pointer-events: none; }
+    .first-failure-mark rect { fill: #8f1230; stroke: #fff; stroke-width: 1.5; }
+    .first-failure-mark.suspected rect { fill: #a66700; }
+    .first-failure-mark text { fill: #fff; font-size: 8.5px; font-weight: 800; text-anchor: middle; }
     .graph-node .fusion-mark { fill: var(--accent); cursor: pointer; }
     .graph-node .fusion-mark:focus { stroke: #fff; stroke-width: 2; }
     .graph-node .broadcast-cache-mark { fill: #087f8c; stroke: #fff; stroke-width: 2; pointer-events: none; }
@@ -629,6 +635,8 @@ def render_report_html(
     .load-legend .pass::before { background: #dff3e9; border: 1px solid #2f8f62; }
     .load-legend .fail::before { background: #fde2e2; border: 1px solid #d34a4a; }
     .load-legend .warning::before { background: #fff1d6; border: 1px solid #b97800; }
+    .load-legend .first-fail::before { background: #fde2e2; border: 3px double #8f1230; }
+    .load-legend .suspected-first::before { background: #fff1d6; border: 2px dashed #a66700; }
     .load-legend .unfused::before { width: 10px; height: 10px; border-radius: 50%; background: #b97800; border: 1px solid #b97800; }
     .load-legend .unmapped::before { background: #eef1f5; border: 1px solid #9aa5b1; }
     .load-legend .internal::before { background: #eaf1ff; border: 1px solid #2457a6; }
@@ -841,7 +849,7 @@ def render_report_html(
             </div>
             <button class="fusion-details-button" id="fusionDetails" type="button" title="查看父融合算子的精度和输入输出详情" hidden>融合详情</button>
             <div class="load-legend" id="loadLegend" aria-label="精度结果分类">
-              <span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>
+              <span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="first-fail">首次失败</span><span class="suspected-first">疑似首次失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>
             </div>
           </div>
           <div class="graph-head-right">
@@ -1034,9 +1042,16 @@ def render_report_html(
     let mainNpuNodes = new Map((npuGraph.nodes || []).map(node => [node.name, node]));
     let cpuNodes = new Map((cpuGraph.nodes || []).map(node => [node.name, node]));
     const resultByNpu = new Map();
+    const resultRowsByNpu = new Map();
+    let firstFailureByNode = new Map();
     function rebuildResultIndex() {
       resultByNpu.clear();
+      resultRowsByNpu.clear();
       for (const row of rows) {
+        if (row.status !== 'NOT_OBSERVABLE_ON_NPU' && row.observable !== false) {
+          if (!resultRowsByNpu.has(row.npu_op)) resultRowsByNpu.set(row.npu_op, []);
+          resultRowsByNpu.get(row.npu_op).push(row);
+        }
         const previous = resultByNpu.get(row.npu_op);
         if (!previous || (previous.status === 'NOT_OBSERVABLE_ON_NPU' && row.status !== 'NOT_OBSERVABLE_ON_NPU')) {
           resultByNpu.set(row.npu_op, row);
@@ -1044,6 +1059,146 @@ def render_report_html(
       }
     }
     rebuildResultIndex();
+    function precisionNodeStatus(node) {
+      if (!node) return 'unknown';
+      if (String(node.type || '').toLowerCase() === 'data') return 'source';
+      const nodeRows = resultRowsByNpu.get(node.name) || [];
+      if (!nodeRows.length) return 'unknown';
+      let hasUnknown = false;
+      for (const row of nodeRows) {
+        if (row.compared === false) {
+          hasUnknown = true;
+          continue;
+        }
+        const strictPassed = row.strict_passed ?? row.passed;
+        const cannPassed = row.cann_passed ?? row.passed;
+        if (strictPassed === undefined && cannPassed === undefined) hasUnknown = true;
+        else if (!strictPassed || !cannPassed) return 'fail';
+      }
+      return hasUnknown ? 'unknown' : 'pass';
+    }
+    function firstFailurePath(candidate, incoming, longestParent, preferUnknown) {
+      if (preferUnknown) {
+        const queue = [{name: candidate, path: [candidate]}];
+        const visited = new Set([candidate]);
+        while (queue.length) {
+          const current = queue.shift();
+          for (const predecessor of incoming.get(current.name) || []) {
+            if (visited.has(predecessor)) continue;
+            const path = current.path.concat(predecessor);
+            if (precisionNodeStatus(mainNpuNodes.get(predecessor)) === 'unknown') return path.reverse();
+            visited.add(predecessor);
+            queue.push({name: predecessor, path});
+          }
+        }
+      }
+      const reversed = [];
+      const visited = new Set();
+      let current = candidate;
+      while (current && !visited.has(current)) {
+        visited.add(current);
+        reversed.push(current);
+        current = longestParent.get(current) || null;
+      }
+      return reversed.reverse();
+    }
+    function upstreamUnknownNodes(candidate, incoming) {
+      const unknown = [];
+      const visited = new Set([candidate]);
+      const stack = [...(incoming.get(candidate) || [])];
+      while (stack.length) {
+        const name = stack.pop();
+        if (visited.has(name)) continue;
+        visited.add(name);
+        if (precisionNodeStatus(mainNpuNodes.get(name)) === 'unknown') unknown.push(name);
+        stack.push(...(incoming.get(name) || []));
+      }
+      return unknown;
+    }
+    function rebuildFirstFailureAnalysis() {
+      firstFailureByNode = new Map();
+      const nodes = npuGraph.nodes || [];
+      const known = new Set(nodes.map(node => node.name));
+      const incoming = new Map(nodes.map(node => [node.name, []]));
+      const outgoing = new Map(nodes.map(node => [node.name, []]));
+      const indegree = new Map(nodes.map(node => [node.name, 0]));
+      for (const edge of npuGraph.edges || []) {
+        if (!known.has(edge.src) || !known.has(edge.dst)) continue;
+        incoming.get(edge.dst).push(edge.src);
+        outgoing.get(edge.src).push(edge.dst);
+        indegree.set(edge.dst, (indegree.get(edge.dst) || 0) + 1);
+      }
+      const queue = nodes.filter(node => indegree.get(node.name) === 0).map(node => node.name);
+      const topological = [];
+      while (queue.length) {
+        const name = queue.shift();
+        topological.push(name);
+        for (const destination of outgoing.get(name) || []) {
+          indegree.set(destination, indegree.get(destination) - 1);
+          if (indegree.get(destination) === 0) queue.push(destination);
+        }
+      }
+      const ordered = new Set(topological);
+      for (const node of nodes) if (!ordered.has(node.name)) topological.push(node.name);
+
+      const hasFailedAncestor = new Map();
+      const hasUnknownAncestor = new Map();
+      const depth = new Map();
+      const longestParent = new Map();
+      for (const name of topological) {
+        const predecessors = incoming.get(name) || [];
+        hasFailedAncestor.set(name, predecessors.some(predecessor =>
+          precisionNodeStatus(mainNpuNodes.get(predecessor)) === 'fail' || hasFailedAncestor.get(predecessor)
+        ));
+        hasUnknownAncestor.set(name, predecessors.some(predecessor =>
+          precisionNodeStatus(mainNpuNodes.get(predecessor)) === 'unknown' || hasUnknownAncestor.get(predecessor)
+        ));
+        let parent = null;
+        let nodeDepth = 0;
+        for (const predecessor of predecessors) {
+          const candidateDepth = (depth.get(predecessor) || 0) + 1;
+          if (candidateDepth > nodeDepth) {
+            nodeDepth = candidateDepth;
+            parent = predecessor;
+          }
+        }
+        depth.set(name, nodeDepth);
+        if (parent) longestParent.set(name, parent);
+      }
+
+      for (const name of topological) {
+        const node = mainNpuNodes.get(name);
+        if (precisionNodeStatus(node) !== 'fail' || hasFailedAncestor.get(name)) continue;
+        const unknowns = upstreamUnknownNodes(name, incoming);
+        const suspected = !!hasUnknownAncestor.get(name);
+        const fusion = isFusionNode(node);
+        const kind = suspected ? 'suspected' : (fusion ? 'fusion' : 'first');
+        const label = suspected ? 'SUSPECTED FIRST FAIL' : (fusion ? 'FUSION FIRST FAIL' : 'FIRST FAIL');
+        const reason = suspected
+          ? `未发现更早的已知失败，但上游存在 ${unknowns.length} 个未比较节点`
+          : (fusion ? '所有可比较上游均通过，首次失败位于融合算子出口' : '所有可比较上游均通过，当前节点首次失败');
+        firstFailureByNode.set(name, {
+          kind, label, reason, unknowns,
+          path: firstFailurePath(name, incoming, longestParent, suspected),
+        });
+      }
+    }
+    function upstreamFirstFailures(nodeName) {
+      const incoming = new Map((npuGraph.nodes || []).map(node => [node.name, []]));
+      for (const edge of npuGraph.edges || []) incoming.get(edge.dst)?.push(edge.src);
+      const found = new Set();
+      const visited = new Set([nodeName]);
+      const stack = [...(incoming.get(nodeName) || [])];
+      while (stack.length) {
+        const name = stack.pop();
+        if (visited.has(name)) continue;
+        visited.add(name);
+        if (firstFailureByNode.has(name)) found.add(name);
+        stack.push(...(incoming.get(name) || []));
+      }
+      return [...found];
+    }
+    rebuildFirstFailureAnalysis();
     function activeComparison() {
       return comparisonSets[activeComparisonKey] || null;
     }
@@ -1109,6 +1264,7 @@ def render_report_html(
       mainNpuNodes = new Map((npuGraph.nodes || []).map(node => [node.name, node]));
       cpuNodes = new Map((cpuGraph.nodes || []).map(node => [node.name, node]));
       rebuildResultIndex();
+      rebuildFirstFailureAnalysis();
       graphContext.kind = 'main';
       graphContext.graph = npuGraph;
       graphContext.nodes = mainNpuNodes;
@@ -1228,13 +1384,18 @@ def render_report_html(
       return palette[index];
     }
     function nodeMetric(name) {
-      const row = resultByNpu.get(name);
+      const nodeRows = resultRowsByNpu.get(name) || [];
+      const failedRow = nodeRows.find(row => row.compared !== false && (
+        !(row.strict_passed ?? row.passed) || !(row.cann_passed ?? row.passed)
+      ));
+      const row = failedRow || nodeRows.find(item => item.compared === false) || resultByNpu.get(name);
       if (!row) return null;
+      const precisionStatus = precisionNodeStatus(mainNpuNodes.get(name));
       return {
         row,
-        compared: row.compared !== false,
-        strictPassed: !!(row.strict_passed ?? row.passed),
-        cannPassed: !!(row.cann_passed ?? row.passed),
+        compared: precisionStatus === 'pass' || precisionStatus === 'fail',
+        strictPassed: !!nodeRows.length && nodeRows.every(item => item.compared !== false && !!(item.strict_passed ?? item.passed)),
+        cannPassed: !!nodeRows.length && nodeRows.every(item => item.compared !== false && !!(item.cann_passed ?? item.passed)),
       };
     }
     const tensorViewerState = {
@@ -1842,6 +2003,7 @@ def render_report_html(
         : (row?.cpu_op ? `${row.cpu_op}:${row.cpu_index ?? 0}` : '-');
       const strictResult = row?.compared === false ? '-' : ((row?.strict_passed ?? row?.passed) ? 'PASS' : 'FAIL');
       const cannResult = row?.compared === false ? '-' : ((row?.cann_passed ?? row?.passed) ? 'PASS' : 'FAIL');
+      const firstFailure = firstFailureByNode.get(node.name);
       const detailRows = [
         ['结果', state.label], ['逐元素对比', strictResult], ['整体 Tensor 对比', cannResult], ['状态', row?.status || '-'],
         ['映射说明', row?.unmapped_reason || row?.mapping_method || '-'], ['CPU 对照', mapping], ['max abs（有限值）', finiteMetricText(row, 'max_abs_error')],
@@ -1851,6 +2013,27 @@ def render_report_html(
         ['KullbackLeiblerDivergence（KL散度）', cannMetricText(row, 'kl_divergence')], ['mismatch', mismatchText(row)],
         ['最大有限误差位置', row?.finite_pair_count === 0 ? 'N/A（无有限值对）' : indexText(row?.max_error_index)],
       ];
+      if (firstFailure) {
+        const path = firstFailure.path.map(name => nodeDisplayName(mainNpuNodes.get(name) || {name})).join(' → ');
+        detailRows.splice(1, 0,
+          ['首次失败判断', firstFailure.label],
+          ['判断依据', firstFailure.reason],
+          ['输入传播路径', path || nodeDisplayName(node)],
+        );
+        if (firstFailure.unknowns.length) {
+          const unknownNames = firstFailure.unknowns.slice(0, 8).map(name => nodeDisplayName(mainNpuNodes.get(name) || {name}));
+          const remainder = firstFailure.unknowns.length > unknownNames.length ? ` 等 ${firstFailure.unknowns.length} 个` : '';
+          detailRows.splice(4, 0, ['上游不确定节点', unknownNames.join(', ') + remainder]);
+        }
+      } else if (metric?.compared && (!metric.strictPassed || !metric.cannPassed)) {
+        const origins = upstreamFirstFailures(node.name);
+        if (origins.length) {
+          detailRows.splice(1, 0,
+            ['首次失败判断', '否（上游已经存在精度失败）'],
+            ['上游首次失败边界', origins.map(name => nodeDisplayName(mainNpuNodes.get(name) || {name})).join(', ')],
+          );
+        }
+      }
       if (row?.compared !== false) detailRows.splice(5, 0,
         ['逐元素对比容差', `${fmt(row?.rtol)} / ${fmt(row?.atol)} (${row?.tolerance_source || '-'})`],
         ['整体 Tensor 指标阈值', 'cos>0.99 / rel_euclid<0.05 / KL<0.005'],
@@ -2549,15 +2732,20 @@ def render_report_html(
         renderAutofuseAnalytics(graph, true);
       } else {
         const comparison = activeComparison();
+        const confirmedFirstFailures = [...firstFailureByNode.values()].filter(item => item.kind !== 'suspected').length;
+        const suspectedFirstFailures = [...firstFailureByNode.values()].filter(item => item.kind === 'suspected').length;
         title.textContent = `${comparison?.right || 'NPU Autofuse'} Dump Graph`;
-        meta.textContent = `${layout.nodes.length} ops / ${layout.edges.length} edges · ${npuGraph.model?.topology || comparison?.right || 'TorchInductor Autofuse'}`;
+        const failureSummary = firstFailureByNode.size
+          ? ` · 首次失败 ${confirmedFirstFailures} · 疑似 ${suspectedFirstFailures}`
+          : '';
+        meta.textContent = `${layout.nodes.length} ops / ${layout.edges.length} edges · ${npuGraph.model?.topology || comparison?.right || 'TorchInductor Autofuse'}${failureSummary}`;
         back.hidden = true;
         fusionDetails.hidden = true;
         analytics.hidden = true;
         analytics.open = false;
         loadLegend.hidden = false;
         loadLegend.setAttribute('aria-label', '精度结果分类');
-        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
+        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="first-fail">首次失败</span><span class="suspected-first">疑似首次失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
       }
       updateGraphTabs();
       if (!layout.nodes.length) { target.innerHTML = '<div class="graph-empty">当前图没有可展示的算子拓扑</div>'; return; }
@@ -2578,6 +2766,7 @@ def render_report_html(
       }
       for (const node of layout.nodes) {
         const position = layout.positions.get(node.name), state = nodeState(node), metric = state.metric;
+        const firstFailure = graphContext.kind === 'main' ? firstFailureByNode.get(node.name) : null;
         const broadcastCached = graphContext.kind === 'autofuse' && hasBroadcastCache(node);
         const tensorAvailable = graphContext.kind === 'main' && !!metric?.row?.elementwise_data;
         const nodeUnfusedReasons = graphContext.kind === 'main' ? unfusedReasons(node) : [];
@@ -2598,8 +2787,14 @@ def render_report_html(
         const outputLine = shortText('out: ' + graphOutputText(node), lineLength);
         const fusionLine = graphContext.kind === 'main' && isFusionNode(node) ? `FUSED · ${node.origin_ops.length} ops` : '';
         const unfusedTooltip = nodeUnfusedReasons.map(unfusedReasonText).join('\\n');
-        const tooltipDetail = [detail, broadcastCached ? `Broadcast cache: ${node.exec_condition}` : '', unfusedTooltip].filter(Boolean).join('\\n');
-        parts.push(`<g class="graph-node" data-node="${escapeHtml(node.name)}" tabindex="0"><title>${escapeHtml(nodeDisplayName(node))}\n${escapeHtml(node.type || '')}\n${escapeHtml(tooltipDetail)}</title>`);
+        const firstFailureTooltip = firstFailure
+          ? `${firstFailure.label}: ${firstFailure.reason}\\nPath: ${firstFailure.path.join(' -> ')}`
+          : '';
+        const tooltipDetail = [detail, firstFailureTooltip, broadcastCached ? `Broadcast cache: ${node.exec_condition}` : '', unfusedTooltip].filter(Boolean).join('\\n');
+        const failureClasses = firstFailure
+          ? ` first-failure${firstFailure.kind === 'suspected' ? ' suspected-first-failure' : ''}`
+          : '';
+        parts.push(`<g class="graph-node${failureClasses}" data-node="${escapeHtml(node.name)}" tabindex="0"><title>${escapeHtml(nodeDisplayName(node))}\n${escapeHtml(node.type || '')}\n${escapeHtml(tooltipDetail)}</title>`);
         parts.push(`<rect x="${position.x}" y="${position.y}" width="${position.w}" height="${position.h}" rx="8" fill="${state.fill}" stroke="${state.stroke}" stroke-width="${state.strokeWidth || 2}"${state.dashed ? ' stroke-dasharray="7 5"' : ''}/>`);
         parts.push(`<text x="${position.x + 10}" y="${position.y + 20}" font-size="12" font-weight="700" fill="#16202a">${escapeHtml(shortText(nodeDisplayName(node), 36))}</text>`);
         parts.push(`<text x="${position.x + 10}" y="${position.y + 39}" font-size="11" fill="#5f6b7a">${escapeHtml(shortText(node.type || '-', 36))}</text>`);
@@ -2616,6 +2811,11 @@ def render_report_html(
           parts.push(`<circle class="unfused-mark" cx="${position.x + position.w - 17}" cy="${position.y + 17}" r="11"><title>${escapeHtml(unfusedTooltip)}</title></circle>`);
           parts.push(`<text class="unfused-mark-text" x="${position.x + position.w - 17}" y="${position.y + 20}">NF</text>`);
           parts.push(`<text class="unfused-label" x="${position.x + 10}" y="${position.y + 119}">${escapeHtml(shortText('NOT FUSED · ' + firstReason, 43))}</text>`);
+        }
+        if (firstFailure) {
+          const badgeWidth = firstFailure.kind === 'suspected' ? 154 : (firstFailure.kind === 'fusion' ? 126 : 76);
+          const badgeX = position.x + position.w - badgeWidth - 8;
+          parts.push(`<g class="first-failure-mark${firstFailure.kind === 'suspected' ? ' suspected' : ''}"><rect x="${badgeX}" y="${position.y - 14}" width="${badgeWidth}" height="18" rx="4"/><text x="${badgeX + badgeWidth / 2}" y="${position.y - 1}">${firstFailure.label}</text></g>`);
         }
         if (fusionLine) parts.push(`<text x="${position.x + 10}" y="${position.y + 119}" font-size="10.5" fill="#2457a6">${escapeHtml(fusionLine)}</text><circle class="fusion-mark" data-fusion-entry="true" tabindex="0" role="button" aria-label="进入融合子图" cx="${position.x + position.w - 15}" cy="${position.y + 15}" r="8"><title>点击蓝色入口进入融合子图</title></circle>`);
         if (tensorAvailable) parts.push(`<circle class="tensor-mark" data-tensor-node="${escapeHtml(node.name)}" tabindex="0" role="button" aria-label="查看输出 Tensor 逐元素精度" cx="${position.x + position.w - 15}" cy="${position.y + position.h - 15}" r="9"><title>查看输出 Tensor 逐元素精度</title></circle><text class="tensor-mark-text" x="${position.x + position.w - 15}" y="${position.y + position.h - 12}">T</text>`);
@@ -2687,9 +2887,11 @@ def render_report_html(
         const badgeText = row.compared === false
           ? (row.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (internalOnly ? 'INTERNAL' : 'NO MAP'))
           : (!cannPassed ? (strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败') : (!strictPassed ? '逐元素失败' : '逐元素 + 整体均通过'));
+        const firstFailure = firstFailureByNode.get(row.npu_op);
+        const resultText = firstFailure ? `${firstFailure.label} · ${badgeText}` : badgeText;
         const strictText = row.compared === false ? '-' : (strictPassed ? 'PASS' : 'FAIL');
         const cannText = row.compared === false ? '-' : (cannPassed ? 'PASS' : 'FAIL');
-        tr.innerHTML = `<td><span class="badge ${badgeClass}">${badgeText}</span></td><td>${strictText}</td><td>${cannText}</td><td class="${statusClass(row.status)}">${escapeHtml(row.status || '-')}</td><td>${escapeHtml(row.unmapped_reason || row.mapping_method || '-')}</td><td class="op">${escapeHtml(row.npu_op || '-')}:${row.npu_index ?? '-'}</td><td>${escapeHtml(row.npu_type || '-')}</td><td class="op">${escapeHtml(row.cpu_op || '-')}:${row.cpu_index ?? '-'}</td><td>${escapeHtml(shape)}</td><td>${escapeHtml(row.dtype || '-')}</td><td>${fmt(row.rtol)} / ${fmt(row.atol)}</td><td>${finiteMetricText(row, 'max_abs_error')}</td><td>${finiteMetricText(row, 'max_rel_error')}</td><td>${finiteMetricText(row, 'rmse')}</td><td>${escapeHtml(mismatchText(row))}</td><td>${escapeHtml(maxIndexText(row))}</td><td>${escapeHtml(cannMetricText(row, 'cann_cosine_similarity'))}</td><td>${escapeHtml(cannMetricText(row, 'relative_euclidean_distance'))}</td><td>${escapeHtml(cannMetricText(row, 'kl_divergence'))}</td>`;
+        tr.innerHTML = `<td><span class="badge ${badgeClass}">${escapeHtml(resultText)}</span></td><td>${strictText}</td><td>${cannText}</td><td class="${statusClass(row.status)}">${escapeHtml(row.status || '-')}</td><td>${escapeHtml(row.unmapped_reason || row.mapping_method || '-')}</td><td class="op">${escapeHtml(row.npu_op || '-')}:${row.npu_index ?? '-'}</td><td>${escapeHtml(row.npu_type || '-')}</td><td class="op">${escapeHtml(row.cpu_op || '-')}:${row.cpu_index ?? '-'}</td><td>${escapeHtml(shape)}</td><td>${escapeHtml(row.dtype || '-')}</td><td>${fmt(row.rtol)} / ${fmt(row.atol)}</td><td>${finiteMetricText(row, 'max_abs_error')}</td><td>${finiteMetricText(row, 'max_rel_error')}</td><td>${finiteMetricText(row, 'rmse')}</td><td>${escapeHtml(mismatchText(row))}</td><td>${escapeHtml(maxIndexText(row))}</td><td>${escapeHtml(cannMetricText(row, 'cann_cosine_similarity'))}</td><td>${escapeHtml(cannMetricText(row, 'relative_euclidean_distance'))}</td><td>${escapeHtml(cannMetricText(row, 'kl_divergence'))}</td>`;
         tr.addEventListener('click', () => {
           if (graphContext.kind !== 'main') showMainGraph();
           selectNode(row.npu_op);
