@@ -318,10 +318,14 @@ def _input_info(inputs: tuple[Any, ...]) -> dict[str, dict[str, Any]]:
         torch = None
     for idx, value in enumerate(inputs):
         if torch is not None and isinstance(value, torch.Tensor):
-            _, dtype = tensor_to_numpy(value)
             result[f"input_{idx}"] = {
                 "shape": tuple(int(dim) for dim in value.shape),
-                "dtype": dtype,
+                "dtype": str(value.dtype).removeprefix("torch."),
+            }
+        elif isinstance(value, np.ndarray):
+            result[f"input_{idx}"] = {
+                "shape": tuple(int(dim) for dim in value.shape),
+                "dtype": str(value.dtype),
             }
         else:
             result[f"input_{idx}"] = {"shape": (), "dtype": type(value).__name__}
@@ -342,7 +346,7 @@ def _export_args(exported: Any, inputs: tuple[Any, ...], kwargs: dict[str, Any])
     if not isinstance(example_inputs, tuple) or len(example_inputs) != 2:
         example_inputs = (inputs, kwargs)
     user_inputs = _flatten_user_inputs(example_inputs[0], example_inputs[1])
-    for spec in exported.graph_signature.input_specs:
+    for spec in _export_input_specs(exported):
         kind = spec.kind.name
         if kind in {"PARAMETER", "BUFFER"}:
             args.append(exported.state_dict[spec.target])
@@ -352,6 +356,11 @@ def _export_args(exported: Any, inputs: tuple[Any, ...], kwargs: dict[str, Any])
             args.append(user_inputs[user_idx])
             user_idx += 1
     return args
+
+
+def _export_input_specs(exported: Any) -> list[Any]:
+    supported = {"PARAMETER", "BUFFER", "CONSTANT_TENSOR", "USER_INPUT"}
+    return [spec for spec in exported.graph_signature.input_specs if spec.kind.name in supported]
 
 
 def export_graph_and_dump(
@@ -396,15 +405,14 @@ def export_graph_and_dump(
 
             CaptureInterpreter(exported.graph_module).run(*args)
 
-    user_names = [
-        spec.arg.name
-        for spec in exported.graph_signature.input_specs
-        if spec.kind.name == "USER_INPUT" and hasattr(spec.arg, "name")
-    ]
-    input_meta = _input_info(tuple(_flatten_user_inputs(inputs, kwargs)))
+    input_specs = _export_input_specs(exported)
+    input_meta = _input_info(tuple(args))
     ops: list[dict[str, Any]] = []
     included: set[str] = set()
-    for idx, name in enumerate(user_names):
+    for idx, spec in enumerate(input_specs):
+        if not hasattr(spec.arg, "name"):
+            continue
+        name = spec.arg.name
         meta = input_meta.get(f"input_{idx}", {"dtype": "unknown", "shape": ()})
         ops.append({"name": name, "type": "Data", "output_desc": [_desc(meta["dtype"], meta["shape"])]})
         included.add(name)

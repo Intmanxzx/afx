@@ -556,15 +556,15 @@ def _hook_capture_map(path: Path) -> dict[str, str]:
     return captures
 
 
-def _fused_component_ids(blocks: list[dict[str, Any]]) -> set[str]:
-    components = set()
+def _fused_component_parents(blocks: list[dict[str, Any]]) -> dict[str, str]:
+    parents = {}
     for block in blocks:
         if not block["kind"].startswith("FusedSchedulerNode"):
             continue
         ids = re.findall(r"op\d+", block["id"])
         if len(ids) > 1:
-            components.update(ids)
-    return components
+            parents.update({component: block["id"] for component in ids})
+    return parents
 
 
 def _record_output(records: dict[str, dict[str, Any]], name: str, index: int = 0) -> dict[str, Any] | None:
@@ -721,7 +721,8 @@ def _trace_graph(
     for name, layout in fx_layouts.items():
         layouts.setdefault(name, layout)
     blocks = _ir_blocks(text)
-    fused_components = _fused_component_ids(blocks)
+    fused_component_parents = _fused_component_parents(blocks)
+    fused_components = set(fused_component_parents)
     hook_captures = _hook_capture_map(trace_dir / "output_code.py")
     fusion_by_scheduler: dict[str, dict[str, Any]] = {}
     fusion_by_kernel: dict[str, dict[str, Any]] = {}
@@ -751,7 +752,7 @@ def _trace_graph(
             aliases[block["writes"][0]] = block["dependencies"][0]
         elif "NopKernelSchedulerNode" not in block["kind"]:
             for name in block["writes"]:
-                producer[name] = block["id"]
+                producer[name] = fused_component_parents.get(block["id"], block["id"])
 
     def resolve_buffer(name: str) -> str:
         seen = set()

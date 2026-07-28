@@ -230,6 +230,12 @@ op1: SchedulerNode(ComputedBuffer)
 op1.writes = [MemoryDep('buf1', c0, {c0: 8})]
 op1.unmet_dependencies = [MemoryDep('buf0', c0, {c0: 8})]
 op1.met_dependencies = []
+
+op2: ExternKernelSchedulerNode(FallbackKernel)
+op2.writes = [StarDep(name='buf2', mode=None)]
+op2.unmet_dependencies = [StarDep(name='buf1', mode=None)]
+op2.met_dependencies = [StarDep(name='arg1_1', mode=None), StarDep(name='arg2_1', mode=None)]
+op2.node.kernel = torch.ops.aten.convolution.default
 """,
         encoding="utf-8",
     )
@@ -237,7 +243,9 @@ op1.met_dependencies = []
     graph = build_inductor_autofuse_graph(tmp_path / "compile", {}, {})
     computed = [op for op in graph["graph"][0]["op"] if op["type"] != "Data"]
 
-    assert [op["name"] for op in computed] == ["inductor_op0_op1"]
+    assert [op["name"] for op in computed] == ["inductor_op0_op1", "convolution"]
+    assert computed[1]["input"] == ["inductor_op0_op1:0", "Data.arg1_1:0", "Data.arg2_1:0"]
+    assert not any(op["name"] == "Data.buf1" for op in graph["graph"][0]["op"])
 
 
 def test_build_inductor_graph_attaches_node_level_unfused_reasons(tmp_path: Path) -> None:

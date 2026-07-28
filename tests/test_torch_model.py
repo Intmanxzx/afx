@@ -266,6 +266,27 @@ def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None
     assert outputs["relu"]["shape"] == (2, 4)
 
 
+def test_export_cpu_graph_includes_parameter_edges_for_convolution(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = torch.nn.Conv2d(3, 4, 3, bias=True)
+
+        def forward(self, x):
+            return self.conv(x)
+
+    graph, _ = export_cpu_graph_and_dump(
+        TorchCase(model=Model().eval(), inputs=(torch.ones(1, 3, 8, 8),), name="convolution"), tmp_path
+    )
+    ops = graph["graph"][0]["op"]
+    convolution = next(op for op in ops if op["type"] == "convolution")
+
+    assert len(convolution["input"]) == 3
+    assert all(next(op for op in ops if op["name"] == value.split(":", 1)[0])["type"] == "Data" for value in convolution["input"])
+
+
 def test_export_cpu_graph_runs_lifted_constant_tensor(tmp_path: Path) -> None:
     torch = pytest.importorskip("torch")
 
