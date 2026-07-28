@@ -346,6 +346,8 @@ def _export_args(exported: Any, inputs: tuple[Any, ...], kwargs: dict[str, Any])
         kind = spec.kind.name
         if kind in {"PARAMETER", "BUFFER"}:
             args.append(exported.state_dict[spec.target])
+        elif kind == "CONSTANT_TENSOR":
+            args.append(exported.constants[spec.target])
         elif kind == "USER_INPUT":
             args.append(user_inputs[user_idx])
             user_idx += 1
@@ -431,7 +433,25 @@ def export_graph_and_dump(
 
 
 def export_cpu_graph_and_dump(case: TorchCase, cpu_dump: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    return export_graph_and_dump(case, cpu_dump, device="cpu")
+    try:
+        return export_graph_and_dump(case, cpu_dump, device="cpu")
+    except RuntimeError as exc:
+        if case.rewrite_device_hints or "Unhandled FakeTensor Device Propagation" not in str(exc):
+            raise
+
+        progress_message(
+            "WARNING",
+            "CPU export detected mixed FakeTensor devices; retrying the independent CPU model copy "
+            "with dev/device hints mapped to cpu",
+        )
+        try:
+            retry_case = _stage_case(case, "CPU graph capture device retry")
+            return export_graph_and_dump(replace(retry_case, rewrite_device_hints=True), cpu_dump, device="cpu")
+        except Exception as retry_exc:
+            raise RuntimeError(
+                "CPU export still failed after mapping dev/device hints to cpu. "
+                f"Initial error: {exc}; retry error: {retry_exc}"
+            ) from retry_exc
 
 
 def _cpu_name(prefix: str, suffix: str) -> str:

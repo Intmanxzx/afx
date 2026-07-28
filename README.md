@@ -69,6 +69,8 @@ autofusedbg run-script \
 
 默认只迁移模型参数和 Tensor 输入到目标设备，不会修改模型的 `dev`、`device` 等普通属性，也不会强制 `eval()` 或 `no_grad()`。对于依赖这类属性创建张量的旧模型，可显式传入 `--rewrite-device-hints` 兼容开关；该开关可能改变模型图，仅应在确认需要时使用。
 
+若 CPU 的 `torch.export` 明确报出 `Unhandled FakeTensor Device Propagation`，工具会仅对独立的 CPU 模型副本自动重试一次，将其 `dev/device` 属性临时映射为 `cpu`。这用于处理模型在 `forward` 内通过 `torch.arange(..., device=self.dev)` 等方式创建临时张量的场景；原模型和两条 NPU 路径均不受影响。重试仍失败时，错误信息会同时保留首次和重试错误。
+
 默认按比较双方精度较低的 dtype 自动选择逐元素 `np.isclose` 阈值：
 
 | dtype | rtol | atol |

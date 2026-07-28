@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+import autofusedebugger.torch_model as torch_model
 from autofusedebugger.cli import build_parser
 from autofusedebugger.artifact_io import tensor_to_numpy
 
@@ -262,6 +264,43 @@ def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None
 
     assert [op["type"] for op in graph["graph"][0]["op"]][-2:] == ["add", "relu"]
     assert outputs["relu"]["shape"] == (2, 4)
+
+
+def test_export_cpu_graph_runs_lifted_constant_tensor(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+
+    class Model(torch.nn.Module):
+        def forward(self, x):
+            return x * torch.tensor(2.0)
+
+    graph, outputs = export_cpu_graph_and_dump(
+        TorchCase(model=Model().eval(), inputs=(torch.ones(4),), name="lifted-constant"), tmp_path
+    )
+
+    assert any(op["type"] == "mul" for op in graph["graph"][0]["op"])
+    assert any(np.allclose(np.load(info["path"]), 2.0) for info in outputs.values())
+
+
+def test_cpu_export_retries_device_hints_for_fake_tensor_device_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = TorchCase(model=object(), inputs=(), name="mixed-device")
+    expected = ({"graph": [{"op": []}]}, {})
+    calls: list[tuple[str, bool]] = []
+
+    def export(case_arg, dump_dir, *, device):  # type: ignore[no-untyped-def]
+        del dump_dir
+        calls.append((device, case_arg.rewrite_device_hints))
+        if not case_arg.rewrite_device_hints:
+            raise RuntimeError(
+                "Unhandled FakeTensor Device Propagation for aten.mul_.Tensor, found two different devices npu:0, cpu"
+            )
+        return expected
+
+    monkeypatch.setattr(torch_model, "export_graph_and_dump", export)
+
+    assert torch_model.export_cpu_graph_and_dump(case, tmp_path) == expected
+    assert calls == [("cpu", False), ("cpu", True)]
 
 
 def test_export_cpu_graph_uses_inductor_level_decomposition(tmp_path: Path) -> None:
