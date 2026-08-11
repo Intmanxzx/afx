@@ -104,22 +104,23 @@ autofused_add_... -> CPU add_15
 实现函数是 `inductor_autofuse._match_cpu_output()`。对每个 NPU 主图节点，目前只尝试其 `output.0`：
 
 1. 找到 NPU intermediate hook 采集的输出文件；没有文件时不进入 CPU 映射，最终状态为 `NPU_OUTPUT_NOT_CAPTURED`。
-2. 使用融合出口的 `exit_name/exit_type`；未融合或 fallback 节点使用其生成的 kernel/capture 名称和类型。
+2. 使用融合出口的 `exit_name/exit_type`；同时从 `benchmark.py` 的 `Original ATen` 注释中提取原始 ATen 类型。未融合或 fallback 节点使用其生成的 kernel/capture 名称和类型。
 3. 遍历尚未使用的 CPU 输出，只保留 `element_count` 相同的候选。
 4. 候选必须满足下面至少一个条件：
    - CPU 输出名与期望名称相同。
    - CPU 输出名和期望名称规范化后相同。
    - CPU 节点类型和期望类型规范化后相同。
+   - CPU 输出名或节点类型与 `Original ATen` provenance 匹配。
 5. 按以下顺序选择候选，越靠前优先级越高：
 
 ```text
 shape 完全相同
+Original ATen 名称（含调用序号）相同
+Original ATen 类型相同
 精确名称相同
 规范化名称相同
 规范化类型相同
-非有限值位置不匹配数量更少
-max absolute error 更小
-名称字典序更小
+CPU FX 拓扑中的稳定顺序更靠前
 ```
 
 6. 一个 CPU 输出只能被使用一次，避免多个 NPU 节点都映射到同一个 CPU 节点。
@@ -130,7 +131,7 @@ _autofusedebugger_cpu_origin_name
 _autofusedebugger_cpu_origin_output_index
 ```
 
-需要特别注意：当前 native 匹配是“编译器出口信息 + 名称/类型/元素数 + 数值距离”的组合策略，不是单纯按 kernel 名字查找，也不是完整的拓扑图同构匹配。
+需要特别注意：当前 native 匹配只使用编译器 provenance、名称、类型、shape 和稳定顺序，不读取 CPU/NPU 数值来决定映射。否则真正发生精度错误时，按数值距离选择候选会把失败节点错误映射到数值更接近但拓扑无关的 CPU 节点。该策略仍不是完整的拓扑图同构匹配。
 
 ### 2.4 名称规范化规则
 
@@ -148,8 +149,14 @@ native 路径会统一大小写、去掉 `aten.` 前缀和 overload 后缀，并
 | `realdiv` | `div` |
 | `mm`、`bmm` | `matmul` |
 | `addmm` | `linear` |
+| `baddbmm` | `add` |
+| `masked_fill` | `where` |
 
 名称末尾的数字后缀也会被规范化，例如 `add_3` 的类型匹配部分会按 `add` 处理；但精确名称 `add_3` 仍然优先于类型匹配。
+
+`baddbmm -> add` 用于 Inductor 将 CPU FX 中的 `bmm -> add` 重组为一个 `baddbmm` kernel 的场景。二者的可观测出口等价，因此 NPU `baddbmm` 输出应与 CPU 最后的 `add` 输出比较。
+
+`masked_fill -> where` 对应 `torch.export` 将 `masked_fill(self, mask, value)` 分解为 `where(mask, value, self)` 的场景。NPU fallback 可能仍保留 `aten.masked_fill`，两者的可观测出口等价。
 
 ### 2.5 compare 阶段的最终规则
 
@@ -233,7 +240,7 @@ _datadump_origin_output_index
 1. **编译器版本差异**：不同 `torch/torch_npu/inductor_npu_ext` 版本会改变 decomposition、FX 节点名、`benchmark.py` 结构或 provenance 属性名。
 2. **融合出口不在 CPU dump 中**：融合 kernel 的 `# return` 节点可能在 CPU 侧被进一步 decomposition、被过滤，或不是 `call_function` Tensor 输出。
 3. **输出元素数不同**：native 候选筛选首先要求 CPU/NPU 输出的元素数量相同；broadcast、reshape、动态 shape 或错误的输出序号都会导致候选被排除。
-4. **多个同类型同元素数节点**：当模型中有多个 `add`、`mul`、`matmul` 形状相同且名称已被重写时，候选可能不唯一。工具会使用未使用约束和数值距离选一个，但当前不会把候选集合完整写进报告。
+4. **多个同类型同元素数节点**：当模型中有多个 `add`、`mul`、`matmul` 形状相同且名称已被重写时，候选可能不唯一。工具会使用 provenance、未使用约束和 CPU FX 稳定顺序选择，但当前不会把候选集合完整写进报告。
 5. **多输出算子**：当前 native 自动映射主要以输出 0 为中心，不能保证一个多输出算子的每个输出都有独立 origin 映射。
 6. **图结构发生变化**：`fullgraph`、`dynamic`、graph break、参数常量化、layout/decomposition 变化都可能让 CPU 图和 NPU post-fusion 图不再拥有相同的出口语义。
 7. **hook 没有覆盖该 kernel**：NPU kernel 没有 live output、生成代码格式变化、hook 安装时机不兼容或 dump 转换失败时，会表现为 `NPU_OUTPUT_NOT_CAPTURED`。
@@ -300,5 +307,5 @@ jq '.graph[0].op[] | {
 1. 优先消费编译器提供的结构化 provenance，名称启发式只作为 fallback。
 2. 对每个 output index 独立建立映射，禁止默认把所有输出都标成 origin index 0。
 3. 把候选列表、排除原因和最终 score 写入 `report.json`，便于判断是名称、元素数还是 provenance 缺失。
-4. 在候选相同的情况下增加输入边和拓扑邻域约束，减少仅靠数值距离误配的可能。
+4. 在候选相同的情况下增加输入边和拓扑邻域约束，减少仅靠名称、类型和顺序误配的可能。
 5. 对版本、decomposition 和后端 provenance 字段做兼容层，并为每种真实 dump 格式增加回归测试。

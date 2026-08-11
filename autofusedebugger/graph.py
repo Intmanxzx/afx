@@ -164,6 +164,7 @@ def build_manifest(
             "type": op.get("type", ""),
             "outputs": [],
             "origin_ops": op.get("origin_ops", []),
+            "original_aten_types": op.get("original_aten_types", []),
             "origin_subgraph": op.get("origin_subgraph"),
             "unfused_reasons": op.get("unfused_reasons", []),
         }

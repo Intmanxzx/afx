@@ -333,6 +333,95 @@ def test_match_cpu_output_prefers_exact_exit_and_handles_infinity(tmp_path: Path
     assert _match_cpu_output(op, records, cpu_outputs, set()) == "add_3"
 
 
+def test_match_cpu_output_maps_baddbmm_exit_to_cpu_add(tmp_path: Path) -> None:
+    npu_path = tmp_path / "baddbmm.npy"
+    cpu_path = tmp_path / "add_2.npy"
+    np.save(npu_path, np.zeros((2, 4, 4), dtype=np.float32))
+    np.save(cpu_path, np.zeros((2, 4, 4), dtype=np.float32))
+    records = {
+        "baddbmm": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (2, 4, 4), "size": 32}],
+        }
+    }
+    cpu_outputs = {
+        "add_2": {"path": cpu_path, "shape": (2, 4, 4), "size": 32, "type": "add"},
+    }
+    op = {"name": "baddbmm", "_exit_name": "baddbmm", "_exit_type": "baddbmm"}
+
+    assert _match_cpu_output(op, records, cpu_outputs, set()) == "add_2"
+
+
+def test_match_cpu_output_maps_masked_fill_to_cpu_where(tmp_path: Path) -> None:
+    npu_path = tmp_path / "masked_fill.npy"
+    cpu_path = tmp_path / "where.npy"
+    np.save(npu_path, np.array([[0.0, -np.inf]], dtype=np.float32))
+    np.save(cpu_path, np.array([[0.0, -np.inf]], dtype=np.float32))
+    records = {
+        "masked_fill": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (1, 2), "size": 2}],
+        }
+    }
+    cpu_outputs = {
+        "where": {"path": cpu_path, "shape": (1, 2), "size": 2, "type": "where"},
+    }
+    op = {"name": "masked_fill", "_exit_name": "masked_fill", "_exit_type": "masked_fill"}
+
+    assert _match_cpu_output(op, records, cpu_outputs, set()) == "where"
+
+
+def test_build_inductor_graph_maps_decomposed_softmax_to_original_aten(tmp_path: Path) -> None:
+    trace = tmp_path / "compile" / "torchinductor" / "model__0"
+    trace.mkdir(parents=True)
+    (trace / "ir_post_fusion.txt").write_text(
+        """
+op0: FusedSchedulerNode(SchedulerNode,SchedulerNode)
+op0.writes = [MemoryDep('buf0', c0, {c0: 8})]
+op0.unmet_dependencies = [MemoryDep('arg0_1', c0, {c0: 8})]
+op0.met_dependencies = []
+""",
+        encoding="utf-8",
+    )
+    kernel = "autofused__softmax_deadbeef"
+    benchmark = trace / kernel / "benchmark.py"
+    benchmark.parent.mkdir()
+    benchmark.write_text(
+        """
+# Topologically Sorted Source Nodes: [attention], Original ATen: [aten._softmax]
+# Graph fragment:
+#   %arg0_1 : Tensor "f32[2, 4]" = PlaceHolder[target=arg0_1]
+#   %amax : Tensor "f32[2, 1]" = call_function[target=torch.ops.aten.amax.default](args = (%arg0_1, [-1], True), kwargs = {})
+#   %div : Tensor "f32[2, 4]" = call_function[target=torch.ops.aten.div.Tensor](args = (%arg0_1, %amax), kwargs = {})
+#   return %amax,%div
+op0: SchedulerNode(ComputedBuffer)
+""",
+        encoding="utf-8",
+    )
+    capture_name = f"{kernel}__div"
+    (trace / "output_code.py").write_text(
+        f"run_intermediate_hooks('{capture_name}::autofusedebugger_output::0', buf0)\n",
+        encoding="utf-8",
+    )
+    npu_path = tmp_path / "softmax.npu.npy"
+    cpu_path = tmp_path / "softmax.cpu.npy"
+    np.save(npu_path, np.array([-np.inf, 0.5, 2.0, 0.5, 0.0, 1.0, 0.0, 0.0], dtype=np.float32))
+    np.save(cpu_path, np.array([0.0, 0.5, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0], dtype=np.float32))
+    records = {
+        capture_name: {
+            "outputs": [{"index": 0, "path": npu_path, "dtype": "float32", "shape": (2, 4), "size": 8}]
+        }
+    }
+    cpu_outputs = {
+        "_softmax": {"path": cpu_path, "dtype": "float32", "shape": (2, 4), "size": 8, "type": "_softmax"}
+    }
+
+    graph = build_inductor_autofuse_graph(tmp_path / "compile", records, cpu_outputs)
+    fusion = next(op for op in graph["graph"][0]["op"] if op["type"] == "AutofuseFusion")
+
+    assert fusion["original_aten_types"] == ["_softmax"]
+    assert fusion["output_desc"][0]["attr"][0]["key"] == "_autofusedebugger_cpu_origin_name"
+    assert fusion["output_desc"][0]["attr"][0]["value"]["s"] == "_softmax"
+
+
 def test_reused_autofuse_kernel_keeps_fusion_provenance_and_only_live_outputs(tmp_path: Path) -> None:
     trace = tmp_path / "compile" / "torchinductor" / "model__0"
     trace.mkdir(parents=True)

@@ -292,9 +292,11 @@ def _parse_fx_fragment(text: str) -> tuple[list[dict[str, Any]], list[dict[str, 
             nodes.append(node)
             known.add(name)
             continue
-        return_match = re.match(r"^\s*#\s+return\s+%([A-Za-z0-9_]+)", line)
+        return_match = re.match(r"^\s*#\s+return\s+(.+)", line)
         if return_match:
-            exit_name = return_match.group(1)
+            returned = re.findall(r"%([A-Za-z0-9_]+)", return_match.group(1))
+            if returned:
+                exit_name = returned[-1]
     return nodes, edges, exit_name
 
 
@@ -438,6 +440,11 @@ def _benchmark_metadata(path: Path) -> dict[str, Any] | None:
         "missing": [],
     }
     exit_type = next((node["type"] for node in fx_nodes if node["name"] == exit_name), exit_name)
+    original_aten_types = []
+    for raw_types in re.findall(r"Original ATen:\s*\[([^\]]*)\]", text):
+        for target in re.findall(r"\baten\.([A-Za-z0-9_]+)(?:\.[A-Za-z0-9_]+)?", raw_types):
+            if target not in original_aten_types:
+                original_aten_types.append(target)
     return {
         "kernel_name": kernel_name,
         "capture_name": f"{kernel_name}__{exit_name}",
@@ -445,6 +452,7 @@ def _benchmark_metadata(path: Path) -> dict[str, Any] | None:
         "origin_ops": [node["name"] for node in fx_nodes],
         "exit_name": exit_name,
         "exit_type": exit_type,
+        "original_aten_types": original_aten_types,
         "origin_subgraph": subgraph,
     }
 
@@ -787,6 +795,7 @@ def _trace_graph(
                 name = _fusion_capture_name(fusion["capture_name"], records, used_captures)
             node_type = "AutofuseFusion"
             origin_ops = fusion["origin_ops"]
+            original_aten_types = fusion["original_aten_types"]
             origin_subgraph = fusion["origin_subgraph"]
             prefix = fusion["kernel_name"] + "__"
             exit_name = name[len(prefix):] if name.startswith(prefix) else fusion["exit_name"]
@@ -797,6 +806,7 @@ def _trace_graph(
                 name = _fallback_capture_name(block["kernel"], records, used_captures)
             node_type = f"aten.{block['kernel'].split('.', 1)[0]}" if block["kernel"] else block["kind"]
             origin_ops = [name]
+            original_aten_types = []
             origin_subgraph = None
             exit_name = name
             exit_type = block["kernel"].split(".", 1)[0] if block["kernel"] else name
@@ -835,6 +845,7 @@ def _trace_graph(
             "input": [],
             "output_desc": outputs,
             "origin_ops": origin_ops,
+            "original_aten_types": original_aten_types,
             "_exit_name": exit_name,
             "_exit_type": exit_type,
             "_dependencies": block["dependencies"],
@@ -898,24 +909,15 @@ def _trace_graph(
 
 
 def _canonical_match(value: str) -> str:
-    text = _canonical_type(value)
-    text = re.sub(r"_\d+$", "", text)
-    aliases = {"mm": "matmul", "bmm": "matmul", "addmm": "linear"}
+    text = _canonical_type(re.sub(r"_\d+$", "", value))
+    aliases = {
+        "mm": "matmul",
+        "bmm": "matmul",
+        "addmm": "linear",
+        "baddbmm": "add",
+        "masked_fill": "where",
+    }
     return aliases.get(text, text)
-
-
-def _array_distance(golden: np.ndarray, actual: np.ndarray) -> tuple[int, float]:
-    golden = golden.astype(np.float64).reshape(-1)
-    actual = actual.astype(np.float64).reshape(-1)
-    finite = np.isfinite(golden) & np.isfinite(actual)
-    same_nonfinite = (
-        (np.isnan(golden) & np.isnan(actual))
-        | (np.isposinf(golden) & np.isposinf(actual))
-        | (np.isneginf(golden) & np.isneginf(actual))
-    )
-    nonfinite_mismatches = int((~finite & ~same_nonfinite).sum())
-    error = float(np.max(np.abs(golden[finite] - actual[finite]))) if finite.any() else 0.0
-    return nonfinite_mismatches, error
 
 
 def _match_cpu_output(
@@ -926,32 +928,38 @@ def _match_cpu_output(
         return None
     expected_name = op.get("_exit_name", op["name"])
     expected_type = _canonical_match(op.get("_exit_type", expected_name))
+    suffix_match = re.search(r"(_\d+)$", expected_name)
+    instance_suffix = suffix_match.group(1) if suffix_match else ""
+    original_types = [str(value) for value in op.get("original_aten_types", []) if value]
+    original_canonical = {_canonical_match(value) for value in original_types}
+    original_names = {f"{value}{instance_suffix}" for value in original_types}
     candidates = []
-    for name, info in cpu_outputs.items():
+    for order, (name, info) in enumerate(cpu_outputs.items()):
         if name in used or int(info["size"]) != int(actual_info["size"]):
             continue
         exact_name = name == expected_name
         name_match = _canonical_match(name) == _canonical_match(expected_name)
         type_match = _canonical_match(str(info.get("type", ""))) == expected_type
-        if name_match or type_match:
-            candidates.append((name, info, exact_name, name_match, type_match))
+        original_name_match = name in original_names
+        original_type_match = _canonical_match(str(info.get("type", name))) in original_canonical
+        if exact_name or name_match or type_match or original_name_match or original_type_match:
+            candidates.append(
+                (name, info, order, exact_name, name_match, type_match, original_name_match, original_type_match)
+            )
     if not candidates:
         return None
-    actual = np.load(actual_info["path"], mmap_mode="r").astype(np.float64).reshape(-1)
     best = None
     actual_shape = tuple(int(dim) for dim in actual_info.get("shape", ()))
-    for name, info, exact_name, name_match, type_match in candidates:
-        golden = np.load(info["path"], mmap_mode="r").astype(np.float64).reshape(-1)
-        nonfinite_mismatches, error = _array_distance(golden, actual)
+    for name, info, order, exact_name, name_match, type_match, original_name_match, original_type_match in candidates:
         exact_shape = tuple(int(dim) for dim in info.get("shape", ())) == actual_shape
         score = (
             0 if exact_shape else 1,
+            0 if original_name_match else 1,
+            0 if original_type_match else 1,
             0 if exact_name else 1,
             0 if name_match else 1,
             0 if type_match else 1,
-            nonfinite_mismatches,
-            error,
-            name,
+            order,
         )
         if best is None or score < best[0]:
             best = (score, name)

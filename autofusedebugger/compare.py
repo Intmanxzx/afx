@@ -108,6 +108,7 @@ def _graph_summary(data: dict[str, Any]) -> dict[str, Any]:
                 "outputs": outputs,
                 "inputs": [],
                 "origin_ops": node.get("origin_ops", []),
+                "original_aten_types": node.get("original_aten_types", []),
                 "origin_subgraph": node.get("origin_subgraph"),
                 "unfused_reasons": node.get("unfused_reasons", []),
             }
@@ -386,7 +387,12 @@ def _metrics_with_close(
     else:
         max_abs = mean_abs = max_rel = rmse = cosine = 0.0
         max_index = ()
-    close = np.isclose(gf, af, rtol=rtol, atol=atol, equal_nan=False)
+    same_nonfinite = (
+        (np.isnan(gf) & np.isnan(af))
+        | (np.isposinf(gf) & np.isposinf(af))
+        | (np.isneginf(gf) & np.isneginf(af))
+    )
+    close = np.isclose(gf, af, rtol=rtol, atol=atol, equal_nan=False) | same_nonfinite
     strict_passed = bool(close.all())
     nonfinite = (
         {
@@ -403,22 +409,35 @@ def _metrics_with_close(
         if bool(finite.all())
         else _nonfinite_metrics(golden, actual, golden_float64=gf, actual_float64=af)
     )
-    cann = _cann_metrics(
-        golden,
-        actual,
-        golden_float64=gf,
-        actual_float64=af,
-        difference=diff,
-    )
-    cann_unavailable_reason = (
-        "NONFINITE_INPUT"
-        if nonfinite["present"]
-        and any(
-            cann.get(key) is None
-            for key in ("cann_cosine_similarity", "relative_euclidean_distance", "kl_divergence")
+    nonfinite_aligned = bool(nonfinite["present"] and nonfinite["different_positions"] == 0)
+    if not nonfinite["present"]:
+        cann = _cann_metrics(
+            golden,
+            actual,
+            golden_float64=gf,
+            actual_float64=af,
+            difference=diff,
         )
-        else None
-    )
+        cann_unavailable_reason = None
+    elif nonfinite_aligned and finite.any():
+        cann = _cann_metrics(
+            np.asarray(golden).reshape(-1)[finite],
+            np.asarray(actual).reshape(-1)[finite],
+            golden_float64=gf[finite],
+            actual_float64=af[finite],
+            difference=diff[finite],
+        )
+        cann_unavailable_reason = "FINITE_SUBSET_ONLY"
+    else:
+        cann = {
+            "cann_cosine_similarity": None,
+            "relative_euclidean_distance": None,
+            "kl_divergence": None,
+            "rmse_mae_ratio": None,
+            "cann_warning": False,
+            "cann_passed": bool(nonfinite_aligned and strict_passed),
+        }
+        cann_unavailable_reason = "ALIGNED_NONFINITE" if nonfinite_aligned else "NONFINITE_MISMATCH"
     return {
         "max_abs_error": max_abs,
         "mean_abs_error": mean_abs,
@@ -430,6 +449,7 @@ def _metrics_with_close(
         "finite_pair_count": int(finite.sum()),
         "max_error_index": list(max_index),
         "nonfinite": nonfinite,
+        "nonfinite_aligned": nonfinite_aligned,
         "nonfinite_summary": nonfinite["summary"],
         "first_nonfinite_index": nonfinite["first_index"],
         "first_nonfinite_cpu": nonfinite["first_cpu"],

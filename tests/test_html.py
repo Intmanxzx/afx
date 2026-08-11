@@ -94,10 +94,11 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
                 "rmse": 0.125,
                 "cosine_similarity": 0.99,
                 "cann_cosine_similarity": None,
-                "cann_unavailable_reason": "NONFINITE_INPUT",
+                "cann_unavailable_reason": "FINITE_SUBSET_ONLY",
                 "mismatched": 1,
                 "num_elements": 4,
                 "finite_pair_count": 3,
+                "nonfinite_aligned": True,
                 "max_error_index": [0, 1],
                 "nonfinite": {
                     "present": True,
@@ -424,7 +425,18 @@ def test_write_report_html_includes_topological_first_failure_analysis(tmp_path:
     content = target.read_text(encoding="utf-8")
     assert "function rebuildFirstFailureAnalysis()" in content
     assert "hasFailedAncestor.get(predecessor)" in content
-    assert "SUSPECTED FIRST FAIL" in content
+    assert "const hasUnknownInput = new Map();" in content
+    assert "const observed = !!hasUnknownInput.get(name);" in content
+    assert "hasUnknownAncestor.get(predecessor)" not in content
+    assert "FIRST OBSERVED FAIL" in content
+    assert "非有限值一致 · 通过" in content
+    assert "else if (!cannPassed) return 'fail';" in content
+    assert "else if (strictPassed === undefined) hasUnknown = true;" in content
+    assert "else if (!strictPassed) hasWarning = true;" in content
+    assert "if (hasUnknown) return 'unknown';" in content
+    assert "return hasWarning ? 'warning' : 'pass';" in content
+    assert "precisionStatus === 'warning'" in content
+    assert "首次整体失败" in content
     assert "FUSION FIRST FAIL" in content
     assert "function upstreamFirstFailures(nodeName)" in content
     assert "first-failure-mark" in content

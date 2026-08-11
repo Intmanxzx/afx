@@ -275,9 +275,10 @@ def test_metrics_handles_equal_infinity_without_warning() -> None:
         result = _metrics(np.array([1.0, -np.inf]), np.array([1.0, -np.inf]), rtol=0, atol=0)
 
     assert result["passed"] is True
-    assert result["cann_passed"] is False
-    assert result["cann_cosine_similarity"] is None
+    assert result["cann_passed"] is True
+    assert result["cann_cosine_similarity"] == 1.0
     assert result["mismatched"] == 0
+    assert result["nonfinite_aligned"] is True
     assert result["finite_pair_count"] == 1
     assert result["max_error_index"] == [0]
     assert result["nonfinite"]["cpu"]["neg_inf"] == 1
@@ -287,8 +288,30 @@ def test_metrics_handles_equal_infinity_without_warning() -> None:
     assert result["first_nonfinite_index"] == [1]
     assert result["first_nonfinite_cpu"] == "-Inf"
     assert result["first_nonfinite_npu"] == "-Inf"
-    assert result["cann_unavailable_reason"] == "NONFINITE_INPUT"
+    assert result["cann_unavailable_reason"] == "FINITE_SUBSET_ONLY"
     json.dumps(result, allow_nan=False)
+
+
+def test_metrics_treats_aligned_nan_only_tensor_as_pass() -> None:
+    result = _metrics(np.array([np.nan, np.nan]), np.array([np.nan, np.nan]), rtol=0, atol=0)
+
+    assert result["passed"] is True
+    assert result["strict_passed"] is True
+    assert result["cann_passed"] is True
+    assert result["mismatched"] == 0
+    assert result["finite_pair_count"] == 0
+    assert result["nonfinite_aligned"] is True
+    assert result["cann_unavailable_reason"] == "ALIGNED_NONFINITE"
+
+
+def test_metrics_rejects_different_nonfinite_types() -> None:
+    result = _metrics(np.array([np.nan, np.inf]), np.array([np.inf, -np.inf]), rtol=0, atol=0)
+
+    assert result["passed"] is False
+    assert result["cann_passed"] is False
+    assert result["mismatched"] == 2
+    assert result["nonfinite_aligned"] is False
+    assert result["cann_unavailable_reason"] == "NONFINITE_MISMATCH"
 
 
 def test_dtype_aware_default_tolerances() -> None:

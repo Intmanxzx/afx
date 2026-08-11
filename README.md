@@ -83,7 +83,9 @@ autofusedbg run-script \
 
 显式传入 `--rtol`、`--atol` 可覆盖自动阈值；JSON、CSV 和 HTML 明细会记录每个节点实际使用的阈值。
 
-报告同时保留两套判定：报告中的“逐元素对比”（内部字段 `strict`）使用逐元素 `np.isclose`，要求所有元素通过；“整体 Tensor 对比”（内部字段 `cann`）将整个输出 Tensor 作为整体，使用 Cosine Similarity、Relative Euclidean Distance 和 KL Divergence，阈值分别为 `cosine > 0.99`、`relative_euclidean < 0.05`、`KL < 0.005`，三项都通过才算通过。报告总状态要求两套标准同时通过。包含 `Inf/NaN` 时，相关聚合指标会标记为 `N/A`，并在详情中显示非有限值类型、数量和位置。
+报告同时保留两套判定：报告中的“逐元素对比”（内部字段 `strict`）使用逐元素 `np.isclose`，要求所有元素通过；“整体 Tensor 对比”（内部字段 `cann`）将整个输出 Tensor 作为整体，使用 Cosine Similarity、Relative Euclidean Distance 和 KL Divergence，阈值分别为 `cosine > 0.99`、`relative_euclidean < 0.05`、`KL < 0.005`，三项都通过才算通过。报告总状态要求两套标准同时通过。
+
+非有限值按位置和类型比较：CPU/NPU 同一位置均为 `NaN`、均为 `+Inf` 或均为 `-Inf` 时，该元素按一致通过处理；若 Tensor 还包含有限值，整体指标只在有限值子集上计算；若全部元素都是对齐的非有限值，则整体判定通过、聚合指标显示 `N/A`，节点以绿色“非有限值一致 · 通过”展示。位置不同、`NaN`/`Inf` 类型不同、`+Inf`/`-Inf` 符号不同或有限值与非有限值不一致时仍判定失败。这个结论只表示 CPU/NPU 结果一致，不表示模型输出本身在业务上有效。
 
 脚本有多个模型或多次推理时，可选择目标调用：
 
@@ -207,7 +209,7 @@ autofusedbg report-html --report work/report.json --out work/report.html
 - `AutoFuseAfterOptimize` 节点会解析 `sched.exec_condition`；启用 broadcast 条件缓存的节点使用青色 `BC` 圆标和 `BROADCAST CACHE` 标签，详情中展示完整 condition，生命周期节点表头同步标记。
 - 每张优化图提供默认收起的 Queue/Buffer 时间线：Queue 按 `queue_id/reuse_id` 分层，横条表示按拓扑推导的静态占用区间，实心/空心节点分别表示生产者和直接消费者；支持 Queue、Buffer、全部视图切换、状态过滤、横轴缩放，并与上方 ASCIR 拓扑双向高亮。展开后可拖动顶部把手调整时间线高度，双击把手会尽量显示全部资源。
 - 主图节点只显示一行精度摘要 `Precision: 逐元素pass, 整Tensor pass/fail`；逐算子明细表按“逐元素精度对比指标”和“整 Tensor 精度对比指标”分组展示 max abs、max rel、RMSE、`CosineSimilarity（余弦值相似度）`、`RelativeEuclideanDistance（欧氏相对距离）`、`KullbackLeiblerDivergence（KL散度）`，表格和节点详情抽屉均支持横向滚动。误差详情默认收起。输出含 `Inf/NaN` 时还会显示 CPU/NPU 两侧的数量、同位置数量和首个位置。
-- 主图沿真实数据依赖 DAG 自动识别首次超过精度阈值的节点：上游比较链完整时标记 `FIRST FAIL`，融合出口标记 `FUSION FIRST FAIL`；如果上游存在未映射、未采集或其他不可比较节点，则降级为 `SUSPECTED FIRST FAIL`。详情抽屉展示判断依据、输入传播路径和上游不确定节点；后续失败节点展示其上游首次失败边界。并行分支可以各自存在首次失败节点。
+- 主图沿真实数据依赖 DAG 识别首次“整体 Tensor 失败”的节点。仅逐元素失败但整体 Tensor 通过的橙色告警不会向下游传播为首失败；上游比较链完整时标记 `FIRST FAIL`，融合出口标记 `FUSION FIRST FAIL`。如果当前节点已确认整体失败、但上游存在未映射或未采集节点，则标记红色 `FIRST OBSERVED FAIL`，表示“当前是首个已观测失败，但不能排除不可比较的上游更早失败”。详情抽屉展示判断依据、输入传播路径和上游不确定节点；后续失败节点展示其上游首失败边界。并行分支可以各自存在首失败节点。
 - 三方报告顶部提供 `CPU ↔ NPU Autofuse`、`CPU ↔ NPU eager`、`NPU eager ↔ NPU Autofuse` 三组页签；切换时会同步更新统计、主图和逐算子明细。
 - 有逐元素 dump 的节点会显示蓝色 `T` 按钮，可查看二维展开后的 CPU 值、NPU 值、绝对误差、相对误差和逐元素 PASS/FAIL。
 
