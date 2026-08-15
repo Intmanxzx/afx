@@ -26,6 +26,7 @@ def run_framework_script(
     device: str = "npu:0",
     rtol: float | None = None,
     atol: float | None = None,
+    save_elementwise_data: bool = False,
 ) -> dict[str, Any]:
     path = Path(script).resolve()
     old_path = list(sys.path)
@@ -59,6 +60,7 @@ def run_framework_script(
             rewrite_device_hints=rewrite_device_hints,
             rtol=rtol,
             atol=atol,
+            save_elementwise_data=save_elementwise_data,
         )
     finally:
         sys.path[:] = old_path

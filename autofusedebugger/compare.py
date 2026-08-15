@@ -85,6 +85,83 @@ def _fusion_index(data: dict[str, Any]) -> dict[tuple[str, int], tuple[str, int]
     return result
 
 
+_EAGER_ALIGNMENT_TYPE_ALIASES = {
+    "_softmax": "softmax",
+    "view": "reshape",
+    "reshape": "reshape",
+    "permute": "transpose",
+    "transpose": "transpose",
+    "bmm": "matmul",
+    "matmul": "matmul",
+}
+
+
+def _alignment_type(value: Any) -> str:
+    name = str(value or "").rsplit(".", 1)[-1].lower()
+    return _EAGER_ALIGNMENT_TYPE_ALIASES.get(name, name)
+
+
+def _alignment_outputs(
+    data: dict[str, Any],
+) -> list[tuple[tuple[str, int], tuple[str, tuple[Any, ...] | None, str]]]:
+    result = []
+    for node in data.get("nodes", []):
+        if str(node.get("type", "")).lower() == "data":
+            continue
+        node_type = _alignment_type(node.get("type"))
+        for output in node.get("outputs", []):
+            raw_shape = output.get("shape")
+            shape = tuple(raw_shape) if isinstance(raw_shape, (list, tuple)) else None
+            key = (str(node.get("name", "")), int(output.get("index", 0)))
+            result.append((key, (node_type, shape, str(output.get("dtype") or ""))))
+    return result
+
+
+def _eager_topology_mapping(
+    cpu_data: dict[str, Any], eager_data: dict[str, Any]
+) -> dict[tuple[str, int], tuple[str, int]]:
+    """Align device-specific export graphs without trusting shifted FX names."""
+    cpu_outputs = _alignment_outputs(cpu_data)
+    eager_outputs = _alignment_outputs(eager_data)
+    cpu_count = len(cpu_outputs)
+    eager_count = len(eager_outputs)
+    gap_penalty = -2
+    scores = np.empty((cpu_count + 1, eager_count + 1), dtype=np.int32)
+    trace = np.zeros((cpu_count + 1, eager_count + 1), dtype=np.int8)
+    scores[:, 0] = np.arange(cpu_count + 1) * gap_penalty
+    scores[0, :] = np.arange(eager_count + 1) * gap_penalty
+    trace[1:, 0] = 1
+    trace[0, 1:] = 2
+
+    for cpu_pos in range(1, cpu_count + 1):
+        for eager_pos in range(1, eager_count + 1):
+            cpu_key, cpu_signature = cpu_outputs[cpu_pos - 1]
+            eager_key, eager_signature = eager_outputs[eager_pos - 1]
+            diagonal = -100_000_000
+            if cpu_signature == eager_signature:
+                same_name_bonus = 4 if cpu_key == eager_key else 0
+                diagonal = int(scores[cpu_pos - 1, eager_pos - 1]) + 20 + same_name_bonus
+            skip_cpu = int(scores[cpu_pos - 1, eager_pos]) + gap_penalty
+            skip_eager = int(scores[cpu_pos, eager_pos - 1]) + gap_penalty
+            best = max(diagonal, skip_cpu, skip_eager)
+            scores[cpu_pos, eager_pos] = best
+            trace[cpu_pos, eager_pos] = 3 if diagonal == best else (1 if skip_cpu >= skip_eager else 2)
+
+    result: dict[tuple[str, int], tuple[str, int]] = {}
+    cpu_pos, eager_pos = cpu_count, eager_count
+    while cpu_pos or eager_pos:
+        direction = trace[cpu_pos, eager_pos]
+        if cpu_pos and eager_pos and direction == 3:
+            result[eager_outputs[eager_pos - 1][0]] = cpu_outputs[cpu_pos - 1][0]
+            cpu_pos -= 1
+            eager_pos -= 1
+        elif cpu_pos and (not eager_pos or direction == 1):
+            cpu_pos -= 1
+        else:
+            eager_pos -= 1
+    return result
+
+
 def _graph_summary(data: dict[str, Any]) -> dict[str, Any]:
     nodes = []
     output_by_node: dict[str, list[dict[str, Any]]] = {}
@@ -545,6 +622,7 @@ def compare_pair(
     *,
     rtol: float | None = None,
     atol: float | None = None,
+    save_elementwise_data: bool = False,
     tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
@@ -607,16 +685,17 @@ def compare_pair(
     result["shape"] = list(golden.shape)
     result["dtype"] = str(cpu.dtype or npu.dtype or golden.dtype).removeprefix("torch.")
     result["storage_dtype"] = str(golden.dtype)
-    result["elementwise_data"] = _elementwise_payload(
-        golden,
-        actual,
-        rtol=resolved_rtol,
-        atol=resolved_atol,
-        logical_dtype=result["dtype"],
-        close=close,
-        encoded_golden=_cached_tensor_payload(cpu, golden, tensor_payload_cache),
-        encoded_actual=_cached_tensor_payload(npu, actual, tensor_payload_cache),
-    )
+    if save_elementwise_data:
+        result["elementwise_data"] = _elementwise_payload(
+            golden,
+            actual,
+            rtol=resolved_rtol,
+            atol=resolved_atol,
+            logical_dtype=result["dtype"],
+            close=close,
+            encoded_golden=_cached_tensor_payload(cpu, golden, tensor_payload_cache),
+            encoded_actual=_cached_tensor_payload(npu, actual, tensor_payload_cache),
+        )
     if statuses:
         result["status"] = "OK_" + "_".join(statuses)
     return result
@@ -628,8 +707,10 @@ def compare_manifests(
     *,
     rtol: float | None = None,
     atol: float | None = None,
+    save_elementwise_data: bool = False,
     progress_label: str | None = None,
     tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] | None = None,
+    origin_aliases: dict[tuple[str, int], tuple[str, int]] | None = None,
 ) -> dict[str, Any]:
     cpu_data = read_json(cpu_manifest)
     npu_data = read_json(npu_manifest)
@@ -638,6 +719,13 @@ def compare_manifests(
     cpu_index = _index_manifest(cpu_data)
     npu_index = _index_manifest(npu_data)
     fusions = _fusion_index(npu_data)
+    cpu_signatures = dict(_alignment_outputs(cpu_data))
+    npu_signatures = dict(_alignment_outputs(npu_data))
+    eager_mapping = (
+        _eager_topology_mapping(cpu_data, npu_data)
+        if cpu_data.get("side") == "cpu" and npu_data.get("side") == "npu_eager"
+        else None
+    )
 
     rows: list[dict[str, Any]] = []
     observed_cpu_keys: set[tuple[str, int]] = set()
@@ -675,12 +763,44 @@ def compare_manifests(
                 }
             )
             continue
-        cpu_key = fusions.get(npu_key)
-        mapping_method = "compiler_origin" if cpu_key is not None else None
-        if cpu_key is None and npu_key in cpu_index:
+        origin_key = fusions.get(npu_key)
+        cpu_key = origin_key
+        mapping_method = "compiler_origin" if origin_key is not None else None
+        missing_aliased_origin = False
+        if origin_key is not None and origin_aliases is not None:
+            cpu_key = origin_aliases.get(origin_key)
+            missing_aliased_origin = cpu_key is None
+            mapping_method = "compiler_origin_via_eager" if cpu_key is not None else None
+        if cpu_key is None and eager_mapping is not None and npu_key in eager_mapping:
+            cpu_key = eager_mapping[npu_key]
+            mapping_method = "same_name" if cpu_key == npu_key else "topology_signature"
+        if (
+            cpu_key is None
+            and eager_mapping is None
+            and origin_key is None
+            and npu_key in cpu_index
+            and cpu_signatures.get(npu_key) == npu_signatures.get(npu_key)
+        ):
             cpu_key = npu_key
             mapping_method = "same_name"
         if cpu_key is None:
+            if missing_aliased_origin:
+                rows.append(
+                    {
+                        "cpu_op": origin_key[0],
+                        "cpu_index": origin_key[1],
+                        "npu_op": npu_key[0],
+                        "npu_index": npu_key[1],
+                        "npu_type": npu_ref.node_type,
+                        "status": "NOT_OBSERVABLE_IN_REFERENCE",
+                        "unmapped_reason": "compiler origin 在 NPU eager decomposition 图中没有独立可观测输出",
+                        "mapping_method": "reference_internal",
+                        "observable": False,
+                        "passed": False,
+                        "compared": False,
+                    }
+                )
+                continue
             rows.append(
                 {
                     "cpu_op": "",
@@ -689,7 +809,7 @@ def compare_manifests(
                     "npu_index": npu_key[1],
                     "npu_type": npu_ref.node_type,
                     "status": "UNMATCHED_CPU_OP",
-                    "unmapped_reason": "NPU 输出已采集，但没有 compiler origin 或同名 CPU 输出",
+                    "unmapped_reason": "NPU 输出已采集，但没有 compiler origin 或语义对齐的基准输出",
                     "mapping_method": "none",
                     "observable": True,
                     "passed": False,
@@ -705,10 +825,16 @@ def compare_manifests(
             npu_ref,
             rtol=rtol,
             atol=atol,
+            save_elementwise_data=save_elementwise_data,
             tensor_payload_cache=tensor_payload_cache,
         )
         row["mapping_method"] = mapping_method
-        row["unmapped_reason"] = "" if mapping_method == "compiler_origin" else "按同名同输出序号映射"
+        row["unmapped_reason"] = {
+            "compiler_origin": "",
+            "compiler_origin_via_eager": "compiler origin 经 CPU↔NPU eager 语义映射",
+            "topology_signature": "按拓扑顺序、算子类型、dtype 和完整 shape 语义对齐",
+            "same_name": "按同名同输出序号映射",
+        }.get(mapping_method, "")
         row["observable"] = True
         rows.append(row)
         observed_cpu_keys.add(cpu_key)
@@ -741,10 +867,13 @@ def compare_manifests(
                 ),
                 None,
             )
-            if primary_row is None or primary_row.get("mapping_method") != "compiler_origin":
+            if primary_row is None or not str(primary_row.get("mapping_method", "")).startswith("compiler_origin"):
                 continue
             for origin_name in origin_ops:
-                cpu_key = (origin_name, 0)
+                original_key = (origin_name, 0)
+                cpu_key = origin_aliases.get(original_key) if origin_aliases is not None else original_key
+                if cpu_key is None:
+                    continue
                 if cpu_key not in cpu_index or cpu_key in observed_cpu_keys or cpu_key in reported_internal:
                     continue
                 reported_internal.add(cpu_key)
@@ -768,7 +897,11 @@ def compare_manifests(
     unmatched = [r for r in rows if not r.get("compared", True)]
     not_captured = [r for r in unmatched if r.get("status") == "NPU_OUTPUT_NOT_CAPTURED"]
     unmapped = [r for r in unmatched if r.get("status") == "UNMATCHED_CPU_OP"]
-    not_observable = [r for r in unmatched if r.get("status") == "NOT_OBSERVABLE_ON_NPU"]
+    not_observable = [
+        r
+        for r in unmatched
+        if r.get("status") in {"NOT_OBSERVABLE_ON_NPU", "NOT_OBSERVABLE_IN_REFERENCE"}
+    ]
     failed = [r for r in compared if not r.get("passed")]
     passed = len(compared) - len(failed)
     cann_failed = [r for r in compared if not r.get("cann_passed", False)]
@@ -788,6 +921,7 @@ def compare_manifests(
     status = "FAIL" if failed else ("INCOMPLETE" if incomplete else "PASS")
     return {
         "schema": "autofusedebugger-report/1",
+        "elementwise_data_saved": save_elementwise_data,
         "rtol": rtol,
         "atol": atol,
         "tolerance_mode": (
@@ -844,54 +978,62 @@ def compare_three_manifests(
     *,
     rtol: float | None = None,
     atol: float | None = None,
+    save_elementwise_data: bool = False,
 ) -> dict[str, Any]:
     """Compare CPU eager/export, NPU eager, and NPU Autofuse outputs pairwise."""
-    tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] = {}
+    tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] | None = (
+        {} if save_elementwise_data else None
+    )
+    cpu_autofuse = compare_manifests(
+        cpu_manifest,
+        npu_autofuse_manifest,
+        rtol=rtol,
+        atol=atol,
+        save_elementwise_data=save_elementwise_data,
+        progress_label="CPU vs NPU Autofuse",
+        tensor_payload_cache=tensor_payload_cache,
+    )
+    cpu_eager = compare_manifests(
+        cpu_manifest,
+        npu_eager_manifest,
+        rtol=rtol,
+        atol=atol,
+        save_elementwise_data=save_elementwise_data,
+        progress_label="CPU vs NPU eager",
+        tensor_payload_cache=tensor_payload_cache,
+    )
+    origin_aliases = {
+        (str(row["cpu_op"]), int(row.get("cpu_index", 0))):
+        (str(row["npu_op"]), int(row.get("npu_index", 0)))
+        for row in cpu_eager.get("results", [])
+        if row.get("compared") and row.get("cpu_op") and row.get("npu_op")
+    }
+    eager_autofuse = compare_manifests(
+        npu_eager_manifest,
+        npu_autofuse_manifest,
+        rtol=rtol,
+        atol=atol,
+        save_elementwise_data=save_elementwise_data,
+        progress_label="NPU eager vs NPU Autofuse",
+        tensor_payload_cache=tensor_payload_cache,
+        origin_aliases=origin_aliases,
+    )
     pairs = {
         "cpu_npu_autofuse": {
-            "left": "CPU",
-            "right": "NPU Autofuse",
-            "right_graph_key": "npu",
-            "report": compare_manifests(
-                cpu_manifest,
-                npu_autofuse_manifest,
-                rtol=rtol,
-                atol=atol,
-                progress_label="CPU vs NPU Autofuse",
-                tensor_payload_cache=tensor_payload_cache,
-            ),
+            "left": "CPU", "right": "NPU Autofuse", "right_graph_key": "npu", "report": cpu_autofuse,
         },
         "cpu_npu_eager": {
-            "left": "CPU",
-            "right": "NPU eager",
-            "right_graph_key": "npu_eager",
-            "report": compare_manifests(
-                cpu_manifest,
-                npu_eager_manifest,
-                rtol=rtol,
-                atol=atol,
-                progress_label="CPU vs NPU eager",
-                tensor_payload_cache=tensor_payload_cache,
-            ),
+            "left": "CPU", "right": "NPU eager", "right_graph_key": "npu_eager", "report": cpu_eager,
         },
         "npu_eager_npu_autofuse": {
-            "left": "NPU eager",
-            "right": "NPU Autofuse",
-            "right_graph_key": "npu",
-            "report": compare_manifests(
-                npu_eager_manifest,
-                npu_autofuse_manifest,
-                rtol=rtol,
-                atol=atol,
-                progress_label="NPU eager vs NPU Autofuse",
-                tensor_payload_cache=tensor_payload_cache,
-            ),
+            "left": "NPU eager", "right": "NPU Autofuse", "right_graph_key": "npu", "report": eager_autofuse,
         },
     }
     primary = pairs["cpu_npu_autofuse"]["report"]
     eager = pairs["cpu_npu_eager"]["report"]
     return {
         "schema": "autofusedebugger-report/1",
+        "elementwise_data_saved": save_elementwise_data,
         "comparison_mode": "three_way",
         "comparison_order": list(pairs),
         "comparisons": {
@@ -1001,5 +1143,5 @@ def format_summary(report: dict[str, Any], *, limit: int = 20) -> str:
     if len(failed) > limit:
         lines.append(f"  ... {len(failed) - limit} more failed rows")
     if summary.get("not_observable", 0):
-        lines.append(f"  not_observable={summary['not_observable']} (fusion internal outputs excluded from coverage)")
+        lines.append(f"  not_observable={summary['not_observable']} (non-independent outputs excluded from coverage)")
     return "\n".join(lines)

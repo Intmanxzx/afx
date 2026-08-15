@@ -6,6 +6,7 @@ import json
 import mmap
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -39,6 +40,14 @@ def _encoded_payload_size(payload: dict[str, Any]) -> int:
 
 def _tensor_data_dir(target: Path) -> Path:
     return target.with_name(f"{target.stem}_data")
+
+
+def _reset_tensor_data_dir(target: Path) -> None:
+    data_dir = _tensor_data_dir(target)
+    if data_dir.is_symlink() or data_dir.is_file():
+        data_dir.unlink()
+    elif data_dir.is_dir():
+        shutil.rmtree(data_dir)
 
 
 def _write_tensor_script(path: Path, payload_id: str, payload: dict[str, Any]) -> int:
@@ -632,6 +641,7 @@ def render_report_html(
     .load-legend span::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 3px; border-radius: 2px; vertical-align: -1px; }
     .load-legend .pass::before { background: #dff3e9; border: 1px solid #2f8f62; }
     .load-legend .fail::before { background: #fde2e2; border: 1px solid #d34a4a; }
+    .load-legend .propagated::before { background: #fbece5; border: 1px dashed #b5643d; }
     .load-legend .warning::before { background: #fff1d6; border: 1px solid #b97800; }
     .load-legend .first-fail::before { background: #fde2e2; border: 3px double #8f1230; }
     .load-legend .unfused::before { width: 10px; height: 10px; border-radius: 50%; background: #b97800; border: 1px solid #b97800; }
@@ -772,6 +782,7 @@ def render_report_html(
     .badge { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
     .badge.pass { color: var(--good); background: #e7f5ee; }
     .badge.fail { color: var(--bad); background: #fdecec; }
+    .badge.propagated { color: #934622; background: #fbece5; }
     .badge.warn { color: var(--warn); background: #fff1d6; }
     .badge.neutral { color: #2457a6; background: #eaf1ff; }
     .status-ok { color: var(--good); }
@@ -958,11 +969,12 @@ def render_report_html(
             <option value="both_passed">逐元素 / 整体均通过</option>
             <option value="failed">逐元素对比失败</option>
             <option value="cann_failed">整体 Tensor 对比失败</option>
+            <option value="propagated">上游失败传播</option>
             <option value="disagreement">标准不一致</option>
             <option value="unmatched">全部未对比</option>
             <option value="unmapped">仅未映射</option>
             <option value="not_captured">仅未采集</option>
-            <option value="not_observable">仅融合内部不可观测</option>
+            <option value="not_observable">仅不可独立观测</option>
           </select>
           <select id="typeFilter"><option value="all">全部类型</option></select>
           <button id="exportCsv" type="button">导出 CSV</button>
@@ -1041,16 +1053,17 @@ def render_report_html(
     const resultByNpu = new Map();
     const resultRowsByNpu = new Map();
     let firstFailureByNode = new Map();
+    let propagatedFailureByNode = new Set();
     function rebuildResultIndex() {
       resultByNpu.clear();
       resultRowsByNpu.clear();
       for (const row of rows) {
-        if (row.status !== 'NOT_OBSERVABLE_ON_NPU' && row.observable !== false) {
+        if (!['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(row.status) && row.observable !== false) {
           if (!resultRowsByNpu.has(row.npu_op)) resultRowsByNpu.set(row.npu_op, []);
           resultRowsByNpu.get(row.npu_op).push(row);
         }
         const previous = resultByNpu.get(row.npu_op);
-        if (!previous || (previous.status === 'NOT_OBSERVABLE_ON_NPU' && row.status !== 'NOT_OBSERVABLE_ON_NPU')) {
+        if (!previous || (previous.observable === false && row.observable !== false)) {
           resultByNpu.set(row.npu_op, row);
         }
       }
@@ -1119,6 +1132,7 @@ def render_report_html(
     }
     function rebuildFirstFailureAnalysis() {
       firstFailureByNode = new Map();
+      propagatedFailureByNode = new Set();
       const nodes = npuGraph.nodes || [];
       const known = new Set(nodes.map(node => node.name));
       const incoming = new Map(nodes.map(node => [node.name, []]));
@@ -1183,6 +1197,11 @@ def render_report_html(
           kind, label, reason, unknowns,
           path: firstFailurePath(name, incoming, longestParent, observed),
         });
+      }
+      for (const name of topological) {
+        if (precisionNodeStatus(mainNpuNodes.get(name)) === 'fail' && hasFailedAncestor.get(name)) {
+          propagatedFailureByNode.add(name);
+        }
       }
     }
     function upstreamFirstFailures(nodeName) {
@@ -1661,12 +1680,15 @@ def render_report_html(
       if (!metric) return {fill: '#eef1f5', stroke: '#9aa5b1', label: 'NO DATA', metric: null};
       if (!metric.compared) {
         const noDump = metric.row.status === 'NPU_OUTPUT_NOT_CAPTURED';
-        if (metric.row.status === 'NOT_OBSERVABLE_ON_NPU') {
-          return {fill: '#eaf1ff', stroke: '#7d9dcc', label: 'INTERNAL ONLY', metric, dashed: true};
+        if (['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(metric.row.status)) {
+          return {fill: '#eaf1ff', stroke: '#7d9dcc', label: 'NOT OBSERVABLE', metric, dashed: true};
         }
         return {fill: '#eef1f5', stroke: '#9aa5b1', label: noDump ? 'NO DUMP' : 'NO MAP', metric, dashed: noDump};
       }
       if (!metric.cannPassed) {
+        if (propagatedFailureByNode.has(node.name)) {
+          return {fill: '#fbece5', stroke: '#b5643d', label: '上游失败传播', metric, dashed: true};
+        }
         const label = metric.strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败';
         return {fill: '#fde2e2', stroke: '#d34a4a', label, metric};
       }
@@ -2003,11 +2025,12 @@ def render_report_html(
       tensorButton.dataset.tensorNode = row?.elementwise_data ? String(row.npu_op || node.name) : '';
       const grid = document.getElementById('detailsGrid');
       const mapping = row?.compared === false
-        ? (row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (row?.status === 'NOT_OBSERVABLE_ON_NPU' ? '融合内部不可观测' : 'NO MAP'))
+        ? (row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(row?.status) ? '不可独立观测' : 'NO MAP'))
         : (row?.cpu_op ? `${row.cpu_op}:${row.cpu_index ?? 0}` : '-');
       const strictResult = row?.compared === false ? '-' : ((row?.strict_passed ?? row?.passed) ? 'PASS' : 'FAIL');
       const cannResult = row?.compared === false ? '-' : ((row?.cann_passed ?? row?.passed) ? 'PASS' : 'FAIL');
       const firstFailure = firstFailureByNode.get(node.name);
+      const propagatedFailure = propagatedFailureByNode.has(node.name);
       const detailRows = [
         ['结果', state.label], ['逐元素对比', strictResult], ['整体 Tensor 对比', cannResult], ['状态', row?.status || '-'],
         ['映射说明', row?.unmapped_reason || row?.mapping_method || '-'], ['CPU 对照', mapping], ['max abs（有限值）', finiteMetricText(row, 'max_abs_error')],
@@ -2033,7 +2056,8 @@ def render_report_html(
         const origins = upstreamFirstFailures(node.name);
         if (origins.length) {
           detailRows.splice(1, 0,
-            ['首次失败判断', '否（上游已经存在精度失败）'],
+            ['失败归因', propagatedFailure ? '上游失败传播（当前节点不是首失败）' : '上游已经存在精度失败'],
+            ['判断说明', '当前输出仍未通过，但不能据此判定当前算子新增了精度误差'],
             ['上游首次失败边界', origins.map(name => nodeDisplayName(mainNpuNodes.get(name) || {name})).join(', ')],
           );
         }
@@ -2753,7 +2777,7 @@ def render_report_html(
         analytics.open = false;
         loadLegend.hidden = false;
         loadLegend.setAttribute('aria-label', '精度结果分类');
-        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
+        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">首次整体 Tensor 失败</span><span class="propagated">上游失败传播</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
       }
       updateGraphTabs();
       if (!layout.nodes.length) { target.innerHTML = '<div class="graph-empty">当前图没有可展示的算子拓扑</div>'; return; }
@@ -2787,7 +2811,9 @@ def render_report_html(
             : 'no compare result');
         const precisionLine = graphContext.kind === 'main'
           ? (metric?.compared
-            ? `Precision: 逐元素${metric.strictPassed ? 'pass' : 'fail'}, 整Tensor ${metric.cannPassed ? 'pass' : 'fail'}`
+            ? (propagatedFailureByNode.has(node.name)
+              ? 'Precision: 上游失败传播'
+              : `Precision: 逐元素${metric.strictPassed ? 'pass' : 'fail'}, 整Tensor ${metric.cannPassed ? 'pass' : 'fail'}`)
             : `Precision: ${metric?.row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'no dump' : 'no map'}`)
           : `${state.label} · ${detail}`;
         const lineLength = graphContext.kind === 'autofuse' ? 56 : 44;
@@ -2850,7 +2876,7 @@ def render_report_html(
     function statusClass(status) {
       if (!status) return 'status-bad';
       if (status === 'OK') return 'status-ok';
-      if (status === 'NOT_OBSERVABLE_ON_NPU') return 'status-neutral';
+      if (['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(status)) return 'status-neutral';
       if (status.startsWith('OK_') || status === 'UNMATCHED_CPU_OP') return 'status-warn';
       return 'status-bad';
     }
@@ -2862,11 +2888,12 @@ def render_report_html(
         if (pass === 'both_passed' && (row.compared === false || !strictPassed || !cannPassed)) return false;
         if (pass === 'failed' && (row.compared === false || strictPassed)) return false;
         if (pass === 'cann_failed' && (row.compared === false || cannPassed)) return false;
+        if (pass === 'propagated' && !propagatedFailureByNode.has(row.npu_op)) return false;
         if (pass === 'disagreement' && (row.compared === false || strictPassed === cannPassed)) return false;
         if (pass === 'unmatched' && row.compared !== false) return false;
         if (pass === 'unmapped' && row.status !== 'UNMATCHED_CPU_OP') return false;
         if (pass === 'not_captured' && row.status !== 'NPU_OUTPUT_NOT_CAPTURED') return false;
-        if (pass === 'not_observable' && row.status !== 'NOT_OBSERVABLE_ON_NPU') return false;
+        if (pass === 'not_observable' && !['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(row.status)) return false;
         if (type !== 'all' && row.npu_type !== type) return false;
         return !query || rowText(row).includes(query);
       });
@@ -2890,12 +2917,13 @@ def render_report_html(
         const shape = Array.isArray(row.shape) ? row.shape.join('x') : (row.shape || '-');
         const strictPassed = row.strict_passed ?? row.passed;
         const cannPassed = row.cann_passed ?? row.passed;
-        const internalOnly = row.status === 'NOT_OBSERVABLE_ON_NPU';
-        const badgeClass = internalOnly ? 'neutral' : (row.compared === false ? 'warn' : (!cannPassed ? 'fail' : (!strictPassed ? 'warn' : 'pass')));
+        const propagatedFailure = propagatedFailureByNode.has(row.npu_op);
+        const internalOnly = ['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(row.status);
+        const badgeClass = internalOnly ? 'neutral' : (row.compared === false ? 'warn' : (!cannPassed ? (propagatedFailure ? 'propagated' : 'fail') : (!strictPassed ? 'warn' : 'pass')));
         const alignedNonfinite = !!row.nonfinite_aligned && strictPassed && cannPassed;
         const badgeText = row.compared === false
           ? (row.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (internalOnly ? 'INTERNAL' : 'NO MAP'))
-          : (alignedNonfinite ? '非有限值一致 · 通过' : (!cannPassed ? (strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败') : (!strictPassed ? '逐元素失败' : '逐元素 + 整体均通过')));
+          : (propagatedFailure ? '上游失败传播' : (alignedNonfinite ? '非有限值一致 · 通过' : (!cannPassed ? (strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败') : (!strictPassed ? '逐元素失败' : '逐元素 + 整体均通过'))));
         const firstFailure = firstFailureByNode.get(row.npu_op);
         const resultText = firstFailure ? `${firstFailure.label} · ${badgeText}` : badgeText;
         const strictText = row.compared === false ? '-' : (strictPassed ? 'PASS' : 'FAIL');
@@ -2920,7 +2948,7 @@ def render_report_html(
       ctx.fillStyle = '#617083'; ctx.fillText('max_abs', 6, 17);
       if (!data.length) return;
       const max = Math.max(...data.map(row => Number(row.max_abs_error) || 0), 1e-12), bar = Math.max(2, w / data.length * 0.7);
-      data.forEach((row, index) => { const value = Number(row.max_abs_error) || 0; const x = pad.l + index * (w / data.length) + 1; const bh = Math.max(1, h * value / max); const strictPassed = row.strict_passed ?? row.passed; const cannPassed = row.cann_passed ?? row.passed; ctx.fillStyle = !cannPassed ? '#d34a4a' : (!strictPassed ? '#b97800' : '#2f8f62'); ctx.fillRect(x, pad.t + h - bh, bar, bh); });
+      data.forEach((row, index) => { const value = Number(row.max_abs_error) || 0; const x = pad.l + index * (w / data.length) + 1; const bh = Math.max(1, h * value / max); const strictPassed = row.strict_passed ?? row.passed; const cannPassed = row.cann_passed ?? row.passed; ctx.fillStyle = !cannPassed ? (propagatedFailureByNode.has(row.npu_op) ? '#b5643d' : '#d34a4a') : (!strictPassed ? '#b97800' : '#2f8f62'); ctx.fillRect(x, pad.t + h - bh, bar, bh); });
       ctx.fillStyle = '#617083'; ctx.fillText(`top ${data.length} by current sort/filter`, pad.l, height - 6);
     }
     function fillTypeFilter() {
@@ -3060,6 +3088,7 @@ def render_report_html(
 def write_report_html(report: dict[str, Any], path: str | Path, title: str = "Autofuse Accuracy Report") -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    _reset_tensor_data_dir(target)
     payload_store = _TensorPayloadStore(target)
     with progress_stage("HTML template rendering", detail=f"output={target}"):
         template = render_report_html(report, title, embed_report=False)
@@ -3090,6 +3119,7 @@ def write_report_html_from_json(report_path: str | Path, html_path: str | Path, 
     source = Path(report_path)
     target = Path(html_path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    _reset_tensor_data_dir(target)
     with progress_stage("HTML template rendering", detail=f"output={target}"):
         template = render_report_html(
             {"summary": {}, "graphs": {}, "results": []},

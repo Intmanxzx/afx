@@ -22,6 +22,14 @@ def _add_common_thresholds(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--atol", type=float, default=None, help="override dtype-aware absolute tolerance")
 
 
+def _add_elementwise_data_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--save-elementwise-data",
+        action="store_true",
+        help="persist per-element tensor values and masks for the HTML Tensor viewer",
+    )
+
+
 def cmd_make_manifest(args: argparse.Namespace) -> int:
     manifest = build_manifest(
         side=args.side,
@@ -37,7 +45,13 @@ def cmd_make_manifest(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    report = compare_manifests(args.cpu_manifest, args.npu_manifest, rtol=args.rtol, atol=args.atol)
+    report = compare_manifests(
+        args.cpu_manifest,
+        args.npu_manifest,
+        rtol=args.rtol,
+        atol=args.atol,
+        save_elementwise_data=args.save_elementwise_data,
+    )
     autofuse_dump = (
         Path(args.autofuse_dump)
         if args.autofuse_dump
@@ -60,6 +74,7 @@ def cmd_compare_three(args: argparse.Namespace) -> int:
             args.npu_autofuse_manifest,
             rtol=args.rtol,
             atol=args.atol,
+            save_elementwise_data=args.save_elementwise_data,
         )
     autofuse_dump = (
         Path(args.autofuse_dump)
@@ -94,9 +109,16 @@ def cmd_compare_npy(args: argparse.Namespace) -> int:
 
     cpu = TensorRef("golden", 0, Path(args.golden), args.golden_format, "")
     npu = TensorRef("actual", 0, Path(args.actual), args.actual_format, "")
-    row = compare_pair(cpu, npu, rtol=args.rtol, atol=args.atol)
+    row = compare_pair(
+        cpu,
+        npu,
+        rtol=args.rtol,
+        atol=args.atol,
+        save_elementwise_data=args.save_elementwise_data,
+    )
     report = {
         "schema": "autofusedebugger-report/1",
+        "elementwise_data_saved": args.save_elementwise_data,
         "rtol": args.rtol,
         "atol": args.atol,
         "tolerance_mode": row.get("tolerance_source", "override"),
@@ -156,6 +178,7 @@ def cmd_run_torch_model(args: argparse.Namespace) -> int:
         device=args.device,
         rtol=args.rtol,
         atol=args.atol,
+        save_elementwise_data=args.save_elementwise_data,
         fullgraph=args.fullgraph,
         rewrite_device_hints=args.rewrite_device_hints,
     )
@@ -184,6 +207,7 @@ def cmd_run_script(args: argparse.Namespace) -> int:
         device=args.device,
         rtol=args.rtol,
         atol=args.atol,
+        save_elementwise_data=args.save_elementwise_data,
     )
     print(format_torch_run_summary(summary))
     return 0 if summary["passed"] else 1
@@ -206,13 +230,14 @@ def build_parser() -> argparse.ArgumentParser:
     cmp_parser.add_argument("--npu-manifest", required=True)
     cmp_parser.add_argument("--out", default=None)
     cmp_parser.add_argument("--csv", default=None)
-    cmp_parser.add_argument("--html", default=None, help="write HTML visualization with lazy tensor data")
+    cmp_parser.add_argument("--html", default=None, help="write HTML visualization")
     cmp_parser.add_argument(
         "--autofuse-dump",
         default=None,
         help="AutoFuse dump root; defaults to NPU manifest sibling directory",
     )
     _add_common_thresholds(cmp_parser)
+    _add_elementwise_data_option(cmp_parser)
     cmp_parser.set_defaults(func=cmd_compare)
 
     cmp_three = sub.add_parser("compare-three", help="compare CPU, NPU eager, and NPU Autofuse manifests")
@@ -221,9 +246,10 @@ def build_parser() -> argparse.ArgumentParser:
     cmp_three.add_argument("--npu-autofuse-manifest", required=True)
     cmp_three.add_argument("--out", default=None)
     cmp_three.add_argument("--csv", default=None)
-    cmp_three.add_argument("--html", default=None, help="write HTML visualization with lazy tensor data")
+    cmp_three.add_argument("--html", default=None, help="write HTML visualization")
     cmp_three.add_argument("--autofuse-dump", default=None)
     _add_common_thresholds(cmp_three)
+    _add_elementwise_data_option(cmp_three)
     cmp_three.set_defaults(func=cmd_compare_three)
 
     npy = sub.add_parser("compare-npy", help="compare two npy files directly")
@@ -233,8 +259,9 @@ def build_parser() -> argparse.ArgumentParser:
     npy.add_argument("--actual-format", default=None)
     npy.add_argument("--out", default=None)
     npy.add_argument("--csv", default=None)
-    npy.add_argument("--html", default=None, help="write HTML visualization with lazy tensor data")
+    npy.add_argument("--html", default=None, help="write HTML visualization")
     _add_common_thresholds(npy)
+    _add_elementwise_data_option(npy)
     npy.set_defaults(func=cmd_compare_npy)
 
     html = sub.add_parser("report-html", help="render an existing report JSON with lazy tensor data")
@@ -262,6 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="compatibility mode: temporarily rewrite model dev/device attributes for each target device",
     )
     _add_common_thresholds(torch_model)
+    _add_elementwise_data_option(torch_model)
     torch_model.set_defaults(func=cmd_run_torch_model)
 
     script_runner = sub.add_parser(
@@ -288,6 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
     script_runner.add_argument("--cann-root", default=None, help="CANN installation root")
     script_runner.add_argument("--device", default="npu:0")
     _add_common_thresholds(script_runner)
+    _add_elementwise_data_option(script_runner)
     script_runner.add_argument("script_args", nargs=argparse.REMAINDER, help="arguments passed after -- to the script")
     script_runner.set_defaults(func=cmd_run_script)
 

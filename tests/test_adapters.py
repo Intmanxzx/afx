@@ -136,6 +136,7 @@ def test_run_script_keeps_script_directory_importable_during_backend_execution(
     )
     script = tmp_path / "model.py"
     script.write_text("# Captured by the fake frontend.\n", encoding="utf-8")
+    received = {}
 
     class LazyModel:
         def __call__(self, value):
@@ -159,7 +160,7 @@ def test_run_script_keeps_script_directory_importable_during_backend_execution(
             return framework == "pytorch"
 
         def run(self, invocation, **kwargs):
-            del kwargs
+            received.update(kwargs)
             local_output = invocation.model(*invocation.args)
             child_output = subprocess.check_output(
                 [sys.executable, "-c", "from libs import add_one; print(add_one(1))"],
@@ -170,6 +171,11 @@ def test_run_script_keeps_script_directory_importable_during_backend_execution(
     monkeypatch.setattr(script_runner, "get_framework_adapter", lambda name: FakeFrontend())
     monkeypatch.setattr(script_runner, "get_backend_adapter", lambda name: FakeBackend())
 
-    result = script_runner.run_framework_script(script=script, out_dir=tmp_path / "out")
+    result = script_runner.run_framework_script(
+        script=script,
+        out_dir=tmp_path / "out",
+        save_elementwise_data=True,
+    )
 
     assert result == {"local_output": 1, "child_output": 2}
+    assert received["save_elementwise_data"] is True

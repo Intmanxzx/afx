@@ -335,6 +335,7 @@ def test_compare_pair_uses_strict_float32_default_and_records_threshold(tmp_path
     assert row["passed"] is False
     assert row["strict_passed"] is False
     assert (row["rtol"], row["atol"], row["tolerance_source"]) == (1e-5, 1e-5, "dtype")
+    assert "elementwise_data" not in row
 
 
 def test_compare_pair_embeds_elementwise_tensor_data(tmp_path: Path) -> None:
@@ -346,6 +347,7 @@ def test_compare_pair_embeds_elementwise_tensor_data(tmp_path: Path) -> None:
     row = compare_pair(
         TensorRef("cpu", 0, cpu_path, "ND", "Add"),
         TensorRef("npu", 0, npu_path, "ND", "Add"),
+        save_elementwise_data=True,
     )
 
     payload = row["elementwise_data"]
@@ -379,8 +381,9 @@ def test_compare_three_manifests_returns_all_pairwise_results(tmp_path: Path) ->
         _write_json(path, manifest(side, output))
         paths.append(path)
 
-    report = compare_three_manifests(*paths, rtol=0, atol=0)
+    report = compare_three_manifests(*paths, rtol=0, atol=0, save_elementwise_data=True)
     assert report["comparison_mode"] == "three_way"
+    assert report["elementwise_data_saved"] is True
     assert report["comparison_order"] == ["cpu_npu_autofuse", "cpu_npu_eager", "npu_eager_npu_autofuse"]
     assert all(report["comparisons"][key]["summary"]["dual_failed"] == 0 for key in report["comparison_order"])
     cpu_autofuse = report["comparisons"]["cpu_npu_autofuse"]["results"][0]["elementwise_data"]
@@ -389,6 +392,152 @@ def test_compare_three_manifests_returns_all_pairwise_results(tmp_path: Path) ->
     assert cpu_autofuse["cpu"] is cpu_eager["cpu"]
     assert cpu_eager["npu"] is eager_autofuse["cpu"]
     assert cpu_autofuse["npu"] is eager_autofuse["npu"]
+
+
+def test_three_way_comparison_aligns_shifted_eager_names_and_aliases_compiler_origin(tmp_path: Path) -> None:
+    np.save(tmp_path / "cpu_view.npy", np.zeros((2, 3), dtype=np.float32))
+    expected = np.arange(6, dtype=np.float32)
+    np.save(tmp_path / "cpu_view_1.npy", expected)
+    np.save(tmp_path / "eager_view.npy", expected)
+    np.save(tmp_path / "autofuse.npy", expected)
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "shifted"},
+        "artifacts": {"root": str(tmp_path)},
+        "edges": [],
+        "fusions": [],
+    }
+    cpu = dict(
+        base,
+        side="cpu",
+        nodes=[
+            {
+                "name": "view",
+                "type": "view",
+                "outputs": [
+                    {"index": 0, "path": "cpu_view.npy", "dtype": "float32", "shape": [2, 3]}
+                ],
+            },
+            {
+                "name": "view_1",
+                "type": "view",
+                "outputs": [
+                    {"index": 0, "path": "cpu_view_1.npy", "dtype": "float32", "shape": [6]}
+                ],
+            },
+        ],
+    )
+    eager = dict(
+        base,
+        side="npu_eager",
+        nodes=[
+            {
+                "name": "view",
+                "type": "reshape",
+                "outputs": [
+                    {"index": 0, "path": "eager_view.npy", "dtype": "float32", "shape": [6]}
+                ],
+            }
+        ],
+    )
+    autofuse = dict(
+        base,
+        side="npu",
+        nodes=[
+            {
+                "name": "autofused_view",
+                "type": "AutofuseFusion",
+                "origin_ops": ["view_1"],
+                "outputs": [
+                    {"index": 0, "path": "autofuse.npy", "dtype": "float32", "shape": [6]}
+                ],
+            }
+        ],
+        fusions=[
+            {
+                "fused_op": "autofused_view",
+                "fused_index": 0,
+                "origin_op": "view_1",
+                "origin_index": 0,
+            }
+        ],
+    )
+    paths = []
+    for name, manifest in (("cpu", cpu), ("eager", eager), ("autofuse", autofuse)):
+        path = tmp_path / f"{name}.json"
+        _write_json(path, manifest)
+        paths.append(path)
+
+    report = compare_three_manifests(*paths, rtol=0, atol=0)
+
+    cpu_eager = report["comparisons"]["cpu_npu_eager"]["results"]
+    eager_autofuse = report["comparisons"]["npu_eager_npu_autofuse"]["results"]
+    assert len(cpu_eager) == 1
+    assert cpu_eager[0]["cpu_op"] == "view_1"
+    assert cpu_eager[0]["npu_op"] == "view"
+    assert cpu_eager[0]["mapping_method"] == "topology_signature"
+    assert cpu_eager[0]["passed"] is True
+    assert eager_autofuse[0]["cpu_op"] == "view"
+    assert eager_autofuse[0]["npu_op"] == "autofused_view"
+    assert eager_autofuse[0]["mapping_method"] == "compiler_origin_via_eager"
+    assert eager_autofuse[0]["passed"] is True
+
+
+def test_three_way_marks_origin_eliminated_from_eager_as_not_observable(tmp_path: Path) -> None:
+    expected = np.arange(6, dtype=np.float32)
+    np.save(tmp_path / "cpu.npy", expected)
+    np.save(tmp_path / "autofuse.npy", expected)
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "eliminated"},
+        "artifacts": {"root": str(tmp_path)},
+        "edges": [],
+        "fusions": [],
+    }
+    cpu = dict(
+        base,
+        side="cpu",
+        nodes=[
+            {
+                "name": "expand",
+                "type": "expand",
+                "outputs": [{"index": 0, "path": "cpu.npy", "dtype": "float32", "shape": [6]}],
+            }
+        ],
+    )
+    eager = dict(base, side="npu_eager", nodes=[])
+    autofuse = dict(
+        base,
+        side="npu",
+        nodes=[
+            {
+                "name": "expand",
+                "type": "aten.transpose",
+                "origin_ops": ["expand"],
+                "outputs": [
+                    {"index": 0, "path": "autofuse.npy", "dtype": "float32", "shape": [6]}
+                ],
+            }
+        ],
+        fusions=[
+            {"fused_op": "expand", "fused_index": 0, "origin_op": "expand", "origin_index": 0}
+        ],
+    )
+    paths = []
+    for name, manifest in (("cpu", cpu), ("eager", eager), ("autofuse", autofuse)):
+        path = tmp_path / f"{name}.json"
+        _write_json(path, manifest)
+        paths.append(path)
+
+    report = compare_three_manifests(*paths, rtol=0, atol=0)
+    comparison = report["comparisons"]["npu_eager_npu_autofuse"]
+
+    assert comparison["summary"]["status"] == "PASS"
+    assert comparison["summary"]["observable_total"] == 0
+    assert comparison["summary"]["not_observable"] == 1
+    assert comparison["summary"]["unmapped"] == 0
+    assert comparison["results"][0]["status"] == "NOT_OBSERVABLE_IN_REFERENCE"
+    assert comparison["results"][0]["mapping_method"] == "reference_internal"
 
 
 def test_compare_pair_preserves_bfloat16_logical_dtype_with_float32_storage(tmp_path: Path) -> None:

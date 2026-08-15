@@ -5,7 +5,7 @@
 自动化模型命令只使用以下两条数据链路：
 
 - CPU：`torch.export` 后执行默认 Core ATen decomposition，与 Inductor 图对齐，并用 FX Interpreter 保存每个 `call_function` 节点输出。
-- NPU eager：复用导出的 ATen/FX 图，在 NPU 上直接用 FX Interpreter 执行，不经过 Inductor 和 AscendC，用于区分 NPU 原生 eager 误差与融合误差。
+- NPU eager：在 NPU 设备语义下导出并 decomposition ATen/FX 图，再直接用 FX Interpreter 执行，不经过 Inductor 和 AscendC；工具通过拓扑、算子类型、dtype 和完整 shape 与 CPU 图做语义对齐，用于区分 NPU 原生 eager 误差与融合误差。
 - NPU：加载 `torch_npu` 内置的 `torch_npu._inductor.ascendc` 后端，并调用 `torch.compile(model, options={"npu_backend": "ascendc"})`，执行 PyTorch Inductor -> AscendC/Autofuse 路径。工具不会调用 `torchair.get_npu_backend()`，也不会使用 GE 图作为 NPU 主图。
 
 NPU 中间输出由 PyTorch Inductor intermediate hook 采集。工具为 AscendC 后端的 `autofused_*` 调用补充相同 hook，只保存融合 kernel 的出口；`mm`、`tanh` 等 fallback kernel 使用 Inductor 原生 hook。主图拓扑来自 `ir_post_fusion.txt`，融合子图来自对应 kernel `benchmark.py` 中的 ASCIR `graph_hint`。
@@ -87,6 +87,23 @@ autofusedbg run-script \
 
 非有限值按位置和类型比较：CPU/NPU 同一位置均为 `NaN`、均为 `+Inf` 或均为 `-Inf` 时，该元素按一致通过处理；若 Tensor 还包含有限值，整体指标只在有限值子集上计算；若全部元素都是对齐的非有限值，则整体判定通过、聚合指标显示 `N/A`，节点以绿色“非有限值一致 · 通过”展示。位置不同、`NaN`/`Inf` 类型不同、`+Inf`/`-Inf` 符号不同或有限值与非有限值不一致时仍判定失败。这个结论只表示 CPU/NPU 结果一致，不表示模型输出本身在业务上有效。
 
+### 可选的逐元素 Tensor 详情
+
+默认运行仍会完成逐元素 `np.isclose` 判定、mismatch 计数和 max abs、max rel、RMSE 等指标计算，但不会把每个位置的 CPU/NPU 值及 PASS/FAIL mask 写入 `report.json` 或 HTML。此时 HTML 仍展示每个节点的逐元素是否通过和聚合指标，只是不显示蓝色 `T` 查看入口。
+
+需要在 HTML 中查看输出 Tensor 每个位置的精度时，显式增加 `--save-elementwise-data`：
+
+```bash
+autofusedbg run-script \
+  --script /path/to/model.py \
+  --out-dir /tmp/model_accuracy \
+  --html /tmp/model_accuracy.html \
+  --save-elementwise-data \
+  -- --model-path /path/to/weights
+```
+
+该参数必须写在传给模型脚本的参数分隔符 `--` 之前。它同样适用于 `run-torch-model`、`compare`、`compare-three` 和 `compare-npy`。CPU/NPU 原始 dump 是比较输入，仍会保存在 `OUT_DIR`；开关控制的是报告中额外保存的逐元素值副本和 mask。
+
 脚本有多个模型或多次推理时，可选择目标调用：
 
 ```bash
@@ -141,7 +158,7 @@ autofusedbg run-torch-model \
 命令只执行一次 NPU 模型，会自动完成：
 
 1. 采集 CPU ATen FX 每个节点输出。
-2. 在 NPU 上直接执行导出的 ATen FX 图，采集 NPU eager 每个节点输出。
+2. 在 NPU 设备语义下导出并执行 ATen FX 图，采集 NPU eager 每个节点输出，再与 CPU 图做语义对齐。
 3. 通过 `torch.compile(options={"npu_backend": "ascendc"})` 执行原生 Inductor + AscendC/Autofuse。
 4. 采集每个 NPU 调度 kernel 输出；融合 kernel 只采集出口。
 5. 解析真实 Inductor post-fusion 拓扑、compiler provenance 和 ASCIR 融合子图。
@@ -166,7 +183,7 @@ OUT_DIR/
   report.json
   report.csv
   report.html
-  report_data/          大 Tensor 逐元素数据，打开 report.html 时按需加载
+  report_data/          可选；启用 --save-elementwise-data 后的大 Tensor 逐元素数据
 ```
 
 ### 运行进度与卡顿判断
@@ -180,11 +197,11 @@ export AUTOFUSEDEBUGGER_HEARTBEAT_SECONDS=10
 export AUTOFUSEDEBUGGER_STALL_SECONDS=60
 ```
 
-HTML 阶段会分别显示 `HTML template rendering` 和 `HTML streaming write`，完成后报告 HTML 大小与绝对路径。小 Tensor 可直接内嵌；大 Tensor 写入与 HTML 同目录的 `<HTML文件名>_data/tensor_*.js`，点击节点的 `T` 按钮时才从本地加载和解码。三方比较中内容相同的 Tensor 只保存一份。看到 `run completed html=...` 表示所有报告产物已经完整落盘。
+HTML 阶段会分别显示 `HTML template rendering` 和 `HTML streaming write`，完成后报告 HTML 大小与绝对路径。启用 `--save-elementwise-data` 后，小 Tensor 可直接内嵌；大 Tensor 写入与 HTML 同目录的 `<HTML文件名>_data/tensor_*.js`，点击节点的 `T` 按钮时才从本地加载和解码。三方比较中内容相同的 Tensor 只保存一份。看到 `run completed html=...` 表示所有报告产物已经完整落盘。
 
-复制或归档报告时，必须同时保留 HTML 及其同名 `_data` 目录。例如 `report.html` 与 `report_data/` 应放在同一目录。只移动 HTML 会导致逐元素 Tensor 查看器提示数据文件加载失败，但主图和精度指标仍可查看。
+只有启用 `--save-elementwise-data` 且生成了同名 `_data` 目录时，复制或归档报告才需要同时保留 HTML 和该目录。例如 `report.html` 与 `report_data/` 应放在同一目录。默认模式没有这个目录，可直接转存 HTML；同一路径重新生成默认报告时，工具会自动删除历史 `_data` 目录。
 
-默认单个不超过 64 KiB、累计不超过 8 MiB 的 Tensor 数据内嵌到 HTML，可通过环境变量调整；均设为 `0` 可让所有 Tensor 数据外置：
+启用逐元素详情时，默认单个不超过 64 KiB、累计不超过 8 MiB 的 Tensor 数据内嵌到 HTML，可通过环境变量调整；均设为 `0` 可让所有 Tensor 数据外置：
 
 ```bash
 export AUTOFUSEDEBUGGER_EMBED_TENSOR_BYTES=0
@@ -209,9 +226,9 @@ autofusedbg report-html --report work/report.json --out work/report.html
 - `AutoFuseAfterOptimize` 节点会解析 `sched.exec_condition`；启用 broadcast 条件缓存的节点使用青色 `BC` 圆标和 `BROADCAST CACHE` 标签，详情中展示完整 condition，生命周期节点表头同步标记。
 - 每张优化图提供默认收起的 Queue/Buffer 时间线：Queue 按 `queue_id/reuse_id` 分层，横条表示按拓扑推导的静态占用区间，实心/空心节点分别表示生产者和直接消费者；支持 Queue、Buffer、全部视图切换、状态过滤、横轴缩放，并与上方 ASCIR 拓扑双向高亮。展开后可拖动顶部把手调整时间线高度，双击把手会尽量显示全部资源。
 - 主图节点只显示一行精度摘要 `Precision: 逐元素pass, 整Tensor pass/fail`；逐算子明细表按“逐元素精度对比指标”和“整 Tensor 精度对比指标”分组展示 max abs、max rel、RMSE、`CosineSimilarity（余弦值相似度）`、`RelativeEuclideanDistance（欧氏相对距离）`、`KullbackLeiblerDivergence（KL散度）`，表格和节点详情抽屉均支持横向滚动。误差详情默认收起。输出含 `Inf/NaN` 时还会显示 CPU/NPU 两侧的数量、同位置数量和首个位置。
-- 主图沿真实数据依赖 DAG 识别首次“整体 Tensor 失败”的节点。仅逐元素失败但整体 Tensor 通过的橙色告警不会向下游传播为首失败；上游比较链完整时标记 `FIRST FAIL`，融合出口标记 `FUSION FIRST FAIL`。如果当前节点已确认整体失败、但上游存在未映射或未采集节点，则标记红色 `FIRST OBSERVED FAIL`，表示“当前是首个已观测失败，但不能排除不可比较的上游更早失败”。详情抽屉展示判断依据、输入传播路径和上游不确定节点；后续失败节点展示其上游首失败边界。并行分支可以各自存在首失败节点。
+- 主图沿真实数据依赖 DAG 识别首次“整体 Tensor 失败”的节点。仅逐元素失败但整体 Tensor 通过的橙色告警不会向下游传播为首失败；上游比较链完整时标记 `FIRST FAIL`，融合出口标记 `FUSION FIRST FAIL`。如果当前节点已确认整体失败、但上游存在未映射或未采集节点，则标记红色 `FIRST OBSERVED FAIL`，表示“当前是首个已观测失败，但不能排除不可比较的上游更早失败”。后续整体失败节点使用独立的“上游失败传播”颜色和标签，表示当前输出未通过、但不能据此判定当前单算子新增了误差；详情抽屉展示其上游首失败边界。并行分支可以各自存在首失败节点。
 - 三方报告顶部提供 `CPU ↔ NPU Autofuse`、`CPU ↔ NPU eager`、`NPU eager ↔ NPU Autofuse` 三组页签；切换时会同步更新统计、主图和逐算子明细。
-- 有逐元素 dump 的节点会显示蓝色 `T` 按钮，可查看二维展开后的 CPU 值、NPU 值、绝对误差、相对误差和逐元素 PASS/FAIL。
+- 使用 `--save-elementwise-data` 后，有逐元素数据的节点会显示蓝色 `T` 按钮，可查看二维展开后的 CPU 值、NPU 值、绝对误差、相对误差和逐元素 PASS/FAIL；默认不显示该入口。
 
 已有 `report.json` 时可单独重建 HTML：
 

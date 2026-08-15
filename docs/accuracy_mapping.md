@@ -37,7 +37,13 @@ CPU:
     -> ExportedProgram FX Interpreter
     -> CPU FX/ATen 节点输出 dump
 
-NPU:
+NPU eager:
+  torch.export（NPU 设备语义）
+    -> run_decompositions()
+    -> ExportedProgram FX Interpreter
+    -> NPU eager FX/ATen 节点输出 dump
+
+NPU Autofuse:
   torch.compile(options={"npu_backend": "ascendc"})
     -> TorchInductor
     -> post-fusion IR
@@ -158,7 +164,47 @@ native 路径会统一大小写、去掉 `aten.` 前缀和 overload 后缀，并
 
 `masked_fill -> where` 对应 `torch.export` 将 `masked_fill(self, mask, value)` 分解为 `where(mask, value, self)` 的场景。NPU fallback 可能仍保留 `aten.masked_fill`，两者的可观测出口等价。
 
-### 2.5 compare 阶段的最终规则
+### 2.5 CPU 与 NPU eager 的语义对齐
+
+CPU 和 NPU eager 会分别执行设备相关的 `torch.export + run_decompositions()`。不同设备可能选择不同 decomposition，例如 CPU 图中的：
+
+```text
+expand -> view -> bmm -> view -> add
+```
+
+在 NPU eager 图中可能变成：
+
+```text
+matmul -> add
+```
+
+这会让后续 FX 自动编号整体偏移。即使两侧都存在 `view_4`，它们也可能不是同一个语义节点。工具不会再仅凭同名映射 CPU/NPU eager，而是对两张有序 FX 图执行全局序列对齐：
+
+1. 候选输出的完整 shape 和 dtype 必须一致。
+2. 算子类型必须一致或属于明确等价组：`view/reshape`、`permute/transpose`、`bmm/matmul`、`_softmax/softmax`。
+3. 在候选约束下按拓扑稳定顺序做全局对齐。
+4. 同名只作为对齐加分项，不能覆盖类型、dtype 或 shape 不一致。
+5. 映射过程不读取 Tensor 数值。
+
+此类结果的 `mapping_method` 为 `topology_signature`；语义和名称都相同时仍显示 `same_name`。
+
+### 2.6 NPU eager 与 NPU Autofuse 的 provenance 转换
+
+Autofuse compiler provenance 指向 CPU export 节点名，不能直接拿该名称查找设备相关 decomposition 后的 NPU eager 图。三方比较先建立：
+
+```text
+CPU output -> NPU eager semantic output
+```
+
+再把 Autofuse 的 CPU origin 转换为 NPU eager 节点：
+
+```text
+NPU Autofuse output -> CPU origin -> NPU eager semantic output
+```
+
+成功转换时 `mapping_method` 为 `compiler_origin_via_eager`。如果 compiler origin 在 NPU eager 图中没有满足类型、dtype、完整 shape 和拓扑约束的语义节点，则记录 `UNMATCHED_CPU_OP`，不会退化为可能错位的同名比较。
+
+### 2.7 compare 阶段的最终规则
 
 `autofusedebugger/graph.py` 会从 NPU `output_desc[].attr` 中提取 origin 属性，生成：
 
@@ -171,15 +217,17 @@ native 路径会统一大小写、去掉 `aten.` 前缀和 overload 后缀，并
 }
 ```
 
-之后 `compare_manifests()` 对每个 NPU 输出按以下顺序选择 CPU 对照：
+之后 `compare_manifests()` 根据比较组合选择基准输出：
 
-1. 优先使用 `fusions` 中的 `(origin_op, origin_index)`。
-2. 没有融合映射时，尝试同名同输出序号 `(npu_op, npu_index)`。
-3. 两者都不存在时，记录 `UNMATCHED_CPU_OP`。
+1. CPU ↔ NPU Autofuse：优先使用 `fusions` 中的 `(origin_op, origin_index)`。
+2. CPU ↔ NPU eager：使用 2.5 节的拓扑、类型、dtype 和完整 shape 语义对齐。
+3. NPU eager ↔ NPU Autofuse：使用 2.6 节的 compiler origin 二段转换。
+4. 没有 compiler origin 时，仅在同名节点的语义签名也一致时允许同名回退。
+5. 不能可靠对齐时记录 `UNMATCHED_CPU_OP`。
 
 最终比较阶段不会再次执行上面的名称候选、误差距离或类型推断；这些工作只发生在 native 图构建阶段。
 
-### 2.6 历史文件名候选 helper
+### 2.8 历史文件名候选 helper
 
 `torch_model.py` 中还保留了 `cpu_candidates_for_npu()` 和 `match_npu_to_cpu()`。这组函数从 CANN 转换后的 `.npy` 文件名中提取 `Add`、`MatMul`、`ReduceSum` 等 token，再用 `_NPU_CPU_PREFIXES` 生成 `add`、`matmul`、`sum` 等 CPU 候选，并按元素数和最大绝对误差选择候选。
 
@@ -233,6 +281,7 @@ _datadump_origin_output_index
 | `NPU_OUTPUT_NOT_CAPTURED` | NPU 图中存在该输出，但没有找到对应 dump 文件；这是采集问题，不一定是映射问题。 |
 | `UNMATCHED_CPU_OP` | NPU 输出 dump 已存在，但没有建立到 CPU 输出的映射。 |
 | `NOT_OBSERVABLE_ON_NPU` | CPU 节点属于 NPU 融合内部节点，且不是当前 dump 的融合出口；当前 dump 粒度下没有独立 NPU 输出。 |
+| `NOT_OBSERVABLE_IN_REFERENCE` | Autofuse origin 在当前基准图中被 decomposition 合并或消除，没有可独立比较的 NPU eager 输出。 |
 | `CPU_FILE_NOT_FOUND` | 已经有映射，但映射指向的 CPU dump 文件不存在。 |
 
 常见原因如下：
@@ -246,6 +295,8 @@ _datadump_origin_output_index
 7. **hook 没有覆盖该 kernel**：NPU kernel 没有 live output、生成代码格式变化、hook 安装时机不兼容或 dump 转换失败时，会表现为 `NPU_OUTPUT_NOT_CAPTURED`。
 8. **不应比较的节点**：`Const`、`Data`、`NetOutput` 在 manifest 索引阶段会被排除，不属于逐算子精度比较对象。
 9. **GE provenance 缺失**：旧 GE/Qwen 路径没有 `_fx_tensor_name`、`_datadump_origin_name` 或对应 pre-run 图时，不能可靠地恢复 CPU origin。
+
+报告中的红色首次失败表示当前节点是首个已观测到的整体 Tensor 失败；后续整体失败节点如果已经存在失败祖先，会显示为“上游失败传播”。这表示当前输出确实未通过，但不能据此断言该单算子又新增了精度误差。
 
 对于 native Autofuse 融合节点，报告会根据 `origin_ops` 额外生成 `NOT_OBSERVABLE_ON_NPU` 行。例如 CPU 图中有 `addmm`，而 NPU 将 `mm -> add -> mul -> relu` 融合，并且只 dump `relu` 出口，则 `addmm`/`mm`/`add` 等非出口节点不会被伪造映射到融合最终输出，而会标记为融合内部不可观测。此类行会保留在报告明细中，但不会计入 `coverage` 的可观测分母；只有 `UNMATCHED_CPU_OP` 和 `NPU_OUTPUT_NOT_CAPTURED` 会使总体状态变成 `INCOMPLETE`。
 

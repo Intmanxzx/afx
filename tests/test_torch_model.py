@@ -201,11 +201,21 @@ def test_cli_has_run_torch_model() -> None:
     assert args.rtol is None
     assert args.atol is None
     assert args.fullgraph is None
+    assert args.save_elementwise_data is False
 
     explicit = parser.parse_args(
-        ["run-torch-model", "--script", "case.py", "--out-dir", "out", "--fullgraph"]
+        [
+            "run-torch-model",
+            "--script",
+            "case.py",
+            "--out-dir",
+            "out",
+            "--fullgraph",
+            "--save-elementwise-data",
+        ]
     )
     assert explicit.fullgraph is True
+    assert explicit.save_elementwise_data is True
 
 
 def test_cli_has_run_script_with_script_arguments() -> None:
@@ -228,6 +238,7 @@ def test_cli_has_run_script_with_script_arguments() -> None:
     assert args.script_args == ["--", "--batch-size", "2"]
     assert args.fullgraph is False
     assert args.rewrite_device_hints is False
+    assert args.save_elementwise_data is False
 
     explicit = parser.parse_args(
         [
@@ -238,10 +249,12 @@ def test_cli_has_run_script_with_script_arguments() -> None:
             "out",
             "--fullgraph",
             "--rewrite-device-hints",
+            "--save-elementwise-data",
         ]
     )
     assert explicit.fullgraph is True
     assert explicit.rewrite_device_hints is True
+    assert explicit.save_elementwise_data is True
 
 
 def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None:

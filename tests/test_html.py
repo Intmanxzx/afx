@@ -397,6 +397,23 @@ def test_write_report_html_externalizes_large_tensor_payloads(tmp_path: Path, mo
     assert "AACAPwAAAEA=" in tensor_script.read_text(encoding="utf-8")
 
 
+def test_write_report_html_removes_stale_tensor_data_when_report_has_no_payload(tmp_path: Path) -> None:
+    target = tmp_path / "report.html"
+    stale_data = tmp_path / "report_data"
+    stale_data.mkdir()
+    (stale_data / "stale.js").write_text("stale", encoding="utf-8")
+    report = {
+        "summary": {"total": 1, "passed": 1, "failed": 0},
+        "graphs": {},
+        "results": [{"npu_op": "add", "strict_passed": True, "cann_passed": True}],
+    }
+
+    write_report_html(report, target)
+
+    assert target.is_file()
+    assert not stale_data.exists()
+
+
 def test_write_report_html_includes_topological_first_failure_analysis(tmp_path: Path) -> None:
     report = {
         "summary": {"total": 3, "passed": 1, "failed": 2},
@@ -441,6 +458,8 @@ def test_write_report_html_includes_topological_first_failure_analysis(tmp_path:
     assert "function upstreamFirstFailures(nodeName)" in content
     assert "first-failure-mark" in content
     assert "输入传播路径" in content
+    assert "上游失败传播" in content
+    assert "当前输出仍未通过，但不能据此判定当前算子新增了精度误差" in content
 
 
 def test_write_report_html_from_json_streams_source_file(tmp_path: Path) -> None:
@@ -450,12 +469,16 @@ def test_write_report_html_from_json_streams_source_file(tmp_path: Path) -> None
         encoding="utf-8",
     )
     target = tmp_path / "from-json.html"
+    stale_data = tmp_path / "from-json_data"
+    stale_data.mkdir()
+    (stale_data / "stale.js").write_text("stale", encoding="utf-8")
 
     write_report_html_from_json(report, target)
 
     content = target.read_text(encoding="utf-8")
     assert '"text":"<\\/script>"' in content
     assert "HTML report placeholder" not in content
+    assert not stale_data.exists()
 
 
 def test_write_report_html_from_json_externalizes_tensor_payloads(tmp_path: Path) -> None:

@@ -615,6 +615,7 @@ def run_torch_case(
     invocation_metadata: dict[str, Any] | None = None,
     rtol: float | None = None,
     atol: float | None = None,
+    save_elementwise_data: bool = False,
 ) -> dict[str, Any]:
     root = Path(out_dir).resolve()
     progress_message("INFO", f"run started model={case.name} device={device} out_dir={root}")
@@ -698,6 +699,7 @@ def run_torch_case(
             npu_manifest,
             rtol=rtol,
             atol=atol,
+            save_elementwise_data=save_elementwise_data,
         )
     with progress_stage("AutoFuse graph collection", detail=f"dump_dir={autofuse_dump}"):
         attach_autofuse_graphs(report, autofuse_dump)
@@ -712,6 +714,7 @@ def run_torch_case(
         "fullgraph": case.fullgraph,
         "dynamic": case.dynamic,
         "rewrite_device_hints": case.rewrite_device_hints,
+        "save_elementwise_data": save_elementwise_data,
         "stage_model_copies": True,
     }
     native_capture["diagnostics"] = {
@@ -766,6 +769,7 @@ def run_torch_model(
     entry: str = "create_case",
     rtol: float | None = None,
     atol: float | None = None,
+    save_elementwise_data: bool = False,
     fullgraph: bool | None = None,
     rewrite_device_hints: bool = False,
 ) -> dict[str, Any]:
@@ -784,6 +788,7 @@ def run_torch_model(
         entry=entry,
         rtol=rtol,
         atol=atol,
+        save_elementwise_data=save_elementwise_data,
     )
 
 
