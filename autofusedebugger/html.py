@@ -552,9 +552,6 @@ def render_report_html(
     .graph-node.lifecycle-related > rect { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 3px rgba(36, 87, 166, 0.4)); }
     .graph-node.first-failure > rect { stroke: #8f1230; stroke-width: 4; filter: drop-shadow(0 0 3px rgba(143, 18, 48, 0.3)); }
     .graph-node.selected > rect { stroke: var(--accent); stroke-width: 4; filter: drop-shadow(0 0 4px rgba(36, 87, 166, 0.35)); }
-    .first-failure-mark { pointer-events: none; }
-    .first-failure-mark rect { fill: #8f1230; stroke: #fff; stroke-width: 1.5; }
-    .first-failure-mark text { fill: #fff; font-size: 8.5px; font-weight: 800; text-anchor: middle; }
     .graph-node .fusion-mark { fill: var(--accent); cursor: pointer; }
     .graph-node .fusion-mark:focus { stroke: #fff; stroke-width: 2; }
     .graph-node .broadcast-cache-mark { fill: #087f8c; stroke: #fff; stroke-width: 2; pointer-events: none; }
@@ -562,7 +559,6 @@ def render_report_html(
     .graph-node .broadcast-cache-label { fill: #087f8c; font-size: 10.5px; font-weight: 700; pointer-events: none; }
     .graph-node .unfused-mark { fill: #b97800; stroke: #fff; stroke-width: 2; pointer-events: none; }
     .graph-node .unfused-mark-text { fill: #fff; font-size: 8px; font-weight: 800; text-anchor: middle; pointer-events: none; }
-    .graph-node .unfused-label { fill: #a66700; font-size: 10.5px; font-weight: 700; pointer-events: none; }
     .graph-node .tensor-mark { fill: #2457a6; stroke: #fff; stroke-width: 2; cursor: pointer; }
     .graph-node .tensor-mark:focus { stroke: #16202a; stroke-width: 2.5; }
     .graph-node .tensor-mark-text { fill: #fff; font-size: 8px; font-weight: 800; text-anchor: middle; pointer-events: none; }
@@ -1710,6 +1706,25 @@ def render_report_html(
     }
     function graphEdges() { return graphContext.edges; }
     function nodeDisplayName(node) { return node.displayName || node.name; }
+    function graphNameLines(value) {
+      const text = String(value ?? '-');
+      const maxChars = graphContext.kind === 'main' ? 31 : 40;
+      const lines = [];
+      let remaining = text || '-';
+      while (remaining.length > maxChars) {
+        let split = remaining.lastIndexOf('_', maxChars);
+        if (split < Math.floor(maxChars * 0.55)) split = maxChars;
+        else split += 1;
+        lines.push(remaining.slice(0, split));
+        remaining = remaining.slice(split);
+      }
+      lines.push(remaining);
+      return lines;
+    }
+    function graphNodeHeight(node) {
+      const base = graphContext.kind === 'main' ? 84 : 136;
+      return base + Math.max(0, graphNameLines(nodeDisplayName(node)).length - 1) * 15;
+    }
     function memoryText(memory) {
       if (!memory) return '?';
       const fields = [];
@@ -1787,22 +1802,28 @@ def render_report_html(
         if (!groups.has(current)) groups.set(current, []);
         groups.get(current).push(node);
       }
-      const nodeW = graphContext.kind === 'autofuse' ? 360 : 300;
-      const nodeH = 136, gapX = 36, gapY = 76;
-      const positions = new Map();
+      const nodeW = graphContext.kind === 'autofuse' ? 360 : (graphContext.kind === 'main' ? 250 : 300);
+      const gapX = graphContext.kind === 'main' ? 28 : 36;
+      const gapY = graphContext.kind === 'main' ? 48 : 76;
       const levels = [...groups.keys()].sort((a, b) => a - b);
+      const levelHeights = new Map(levels.map(current => [
+        current,
+        Math.max(...groups.get(current).map(graphNodeHeight)),
+      ]));
+      const positions = new Map();
       let maxCols = 1;
       for (const current of levels) maxCols = Math.max(maxCols, groups.get(current).length);
+      let y = 30;
       for (const current of levels) {
         groups.get(current).forEach((node, col) => positions.set(node.name, {
-          x: 30 + col * (nodeW + gapX), y: 30 + current * (nodeH + gapY), w: nodeW, h: nodeH,
+          x: 30 + col * (nodeW + gapX), y, w: nodeW, h: graphNodeHeight(node),
         }));
+        y += levelHeights.get(current) + gapY;
       }
-      const maxLevel = Math.max(...levels, 0);
       return {
         nodes, edges: graphEdges, positions,
         width: Math.max(640, 60 + maxCols * nodeW + Math.max(0, maxCols - 1) * gapX),
-        height: Math.max(340, 60 + (maxLevel + 1) * nodeH + maxLevel * gapY),
+        height: Math.max(340, 30 + [...levelHeights.values()].reduce((total, height) => total + height, 0) + Math.max(0, levels.length - 1) * gapY + 30),
       };
     }
     function applyGraphView(targetId) {
@@ -2110,6 +2131,9 @@ def render_report_html(
       renderDetails();
       updateSelectionView();
       updateGraphTabs(true);
+      requestAnimationFrame(() => {
+        if (selection.name === name && graphContext.nodes.has(name)) centerGraphNode(name);
+      });
       if (graphContext.kind === 'autofuse') {
         lifecycleState.currentNode = name;
         lifecycleState.selectedKey = null;
@@ -2802,24 +2826,16 @@ def render_report_html(
         const broadcastCached = graphContext.kind === 'autofuse' && hasBroadcastCache(node);
         const tensorAvailable = graphContext.kind === 'main' && !!metric?.row?.elementwise_data;
         const nodeUnfusedReasons = graphContext.kind === 'main' ? unfusedReasons(node) : [];
-        const detail = graphContext.kind === 'autofuse'
+        const detail = graphContext.kind === 'main'
+          ? '点击节点查看详情'
+          : graphContext.kind === 'autofuse'
           ? `node id=${node.id}`
           : graphContext.kind === 'fusion'
           ? (node.origin === false ? 'compiler inserted' : 'fusion origin')
           : (metric?.compared
             ? `逐元素=${metric.strictPassed ? 'PASS' : 'FAIL'} 整体Tensor=${metric.cannPassed ? 'PASS' : 'FAIL'}`
             : 'no compare result');
-        const precisionLine = graphContext.kind === 'main'
-          ? (metric?.compared
-            ? (propagatedFailureByNode.has(node.name)
-              ? 'Precision: 上游失败传播'
-              : `Precision: 逐元素${metric.strictPassed ? 'pass' : 'fail'}, 整Tensor ${metric.cannPassed ? 'pass' : 'fail'}`)
-            : `Precision: ${metric?.row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'no dump' : 'no map'}`)
-          : `${state.label} · ${detail}`;
         const lineLength = graphContext.kind === 'autofuse' ? 56 : 44;
-        const inputLine = shortText('in: ' + graphInputText(node), lineLength);
-        const outputLine = shortText('out: ' + graphOutputText(node), lineLength);
-        const fusionLine = graphContext.kind === 'main' && isFusionNode(node) ? `FUSED · ${node.origin_ops.length} ops` : '';
         const unfusedTooltip = nodeUnfusedReasons.map(unfusedReasonText).join('\\n');
         const firstFailureTooltip = firstFailure
           ? `${firstFailure.label}: ${firstFailure.reason}\\nPath: ${firstFailure.path.join(' -> ')}`
@@ -2830,28 +2846,29 @@ def render_report_html(
           : '';
         parts.push(`<g class="graph-node${failureClasses}" data-node="${escapeHtml(node.name)}" tabindex="0"><title>${escapeHtml(nodeDisplayName(node))}\n${escapeHtml(node.type || '')}\n${escapeHtml(tooltipDetail)}</title>`);
         parts.push(`<rect x="${position.x}" y="${position.y}" width="${position.w}" height="${position.h}" rx="8" fill="${state.fill}" stroke="${state.stroke}" stroke-width="${state.strokeWidth || 2}"${state.dashed ? ' stroke-dasharray="7 5"' : ''}/>`);
-        parts.push(`<text x="${position.x + 10}" y="${position.y + 20}" font-size="12" font-weight="700" fill="#16202a">${escapeHtml(shortText(nodeDisplayName(node), 36))}</text>`);
-        parts.push(`<text x="${position.x + 10}" y="${position.y + 39}" font-size="11" fill="#5f6b7a">${escapeHtml(shortText(node.type || '-', 36))}</text>`);
-        parts.push(`<text x="${position.x + 10}" y="${position.y + 59}" font-size="10.5" fill="#3d4856">${escapeHtml(inputLine)}</text>`);
-        parts.push(`<text x="${position.x + 10}" y="${position.y + 78}" font-size="10.5" fill="#3d4856">${escapeHtml(outputLine)}</text>`);
-        parts.push(`<text x="${position.x + 10}" y="${position.y + 99}" font-size="11" fill="${state.stroke}">${escapeHtml(shortText(precisionLine, 44))}</text>`);
+        const nameLines = graphNameLines(nodeDisplayName(node));
+        const nameText = nameLines.map((line, index) => `<tspan x="${position.x + 10}" dy="${index ? 15 : 0}">${escapeHtml(line)}</tspan>`).join('');
+        const nameOffset = (nameLines.length - 1) * 15;
+        parts.push(`<text x="${position.x + 10}" y="${position.y + 20}" font-size="12" font-weight="700" fill="#16202a">${nameText}</text>`);
+        parts.push(`<text x="${position.x + 10}" y="${position.y + 39 + nameOffset}" font-size="11" fill="#5f6b7a">${escapeHtml(shortText(node.type || '-', 36))}</text>`);
+        if (graphContext.kind !== 'main') {
+          const inputLine = shortText('in: ' + graphInputText(node), lineLength);
+          const outputLine = shortText('out: ' + graphOutputText(node), lineLength);
+          const detailLine = `${state.label} · ${detail}`;
+          parts.push(`<text x="${position.x + 10}" y="${position.y + 59 + nameOffset}" font-size="10.5" fill="#3d4856">${escapeHtml(inputLine)}</text>`);
+          parts.push(`<text x="${position.x + 10}" y="${position.y + 78 + nameOffset}" font-size="10.5" fill="#3d4856">${escapeHtml(outputLine)}</text>`);
+          parts.push(`<text x="${position.x + 10}" y="${position.y + 99 + nameOffset}" font-size="11" fill="${state.stroke}">${escapeHtml(shortText(detailLine, 44))}</text>`);
+        }
         if (broadcastCached) {
           parts.push(`<circle class="broadcast-cache-mark" cx="${position.x + position.w - 17}" cy="${position.y + 17}" r="11"><title>Broadcast 条件缓存 · ${escapeHtml(node.exec_condition)}</title></circle>`);
           parts.push(`<text class="broadcast-cache-mark-text" x="${position.x + position.w - 17}" y="${position.y + 20}">BC</text>`);
-          parts.push(`<text class="broadcast-cache-label" x="${position.x + 10}" y="${position.y + 119}">BROADCAST CACHE</text>`);
+          parts.push(`<text class="broadcast-cache-label" x="${position.x + 10}" y="${position.y + 119 + nameOffset}">BROADCAST CACHE</text>`);
         }
         if (nodeUnfusedReasons.length) {
-          const firstReason = nodeUnfusedReasons[0]?.reason || 'unknown';
           parts.push(`<circle class="unfused-mark" cx="${position.x + position.w - 17}" cy="${position.y + 17}" r="11"><title>${escapeHtml(unfusedTooltip)}</title></circle>`);
           parts.push(`<text class="unfused-mark-text" x="${position.x + position.w - 17}" y="${position.y + 20}">NF</text>`);
-          parts.push(`<text class="unfused-label" x="${position.x + 10}" y="${position.y + 119}">${escapeHtml(shortText('NOT FUSED · ' + firstReason, 43))}</text>`);
         }
-        if (firstFailure) {
-          const badgeWidth = firstFailure.kind === 'observed' ? 154 : (firstFailure.kind === 'fusion' ? 126 : 76);
-          const badgeX = position.x + position.w - badgeWidth - 8;
-          parts.push(`<g class="first-failure-mark"><rect x="${badgeX}" y="${position.y - 14}" width="${badgeWidth}" height="18" rx="4"/><text x="${badgeX + badgeWidth / 2}" y="${position.y - 1}">${firstFailure.label}</text></g>`);
-        }
-        if (fusionLine) parts.push(`<text x="${position.x + 10}" y="${position.y + 119}" font-size="10.5" fill="#2457a6">${escapeHtml(fusionLine)}</text><circle class="fusion-mark" data-fusion-entry="true" tabindex="0" role="button" aria-label="进入融合子图" cx="${position.x + position.w - 15}" cy="${position.y + 15}" r="8"><title>点击蓝色入口进入融合子图</title></circle>`);
+        if (graphContext.kind === 'main' && isFusionNode(node)) parts.push(`<circle class="fusion-mark" data-fusion-entry="true" tabindex="0" role="button" aria-label="进入融合子图" cx="${position.x + position.w - 15}" cy="${position.y + 15}" r="8"><title>点击蓝色入口进入融合子图</title></circle>`);
         if (tensorAvailable) parts.push(`<circle class="tensor-mark" data-tensor-node="${escapeHtml(node.name)}" tabindex="0" role="button" aria-label="查看输出 Tensor 逐元素精度" cx="${position.x + position.w - 15}" cy="${position.y + position.h - 15}" r="9"><title>查看输出 Tensor 逐元素精度</title></circle><text class="tensor-mark-text" x="${position.x + position.w - 15}" y="${position.y + position.h - 12}">T</text>`);
         parts.push('</g>');
       }

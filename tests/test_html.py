@@ -136,7 +136,11 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "data-highlight-mode=\"depth1\"" in content
     assert "data-highlight-mode=\"depth2\"" in content
     assert "data-highlight-mode=\"all\"" in content
-    assert "FUSED" in content
+    assert "fusion-mark" in content
+    assert "function graphNameLines(value)" in content
+    assert "function graphNodeHeight(node)" in content
+    assert "levelHeights" in content
+    assert "<tspan x=\"${position.x + 10}\"" in content
     assert "graphBack" in content
     assert "fusionDetails" in content
     assert "enterFusionGraph" in content
@@ -253,7 +257,7 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "CosineSimilarity（余弦值相似度）" in content
     assert "RelativeEuclideanDistance（欧氏相对距离）" in content
     assert "KullbackLeiblerDivergence（KL散度）" in content
-    assert "Precision: 逐元素" in content
+    assert "const strictResult =" in content
     assert "metric-group-row" in content
     assert "逐元素精度对比指标" in content
     assert "整 Tensor 精度对比指标" in content
@@ -302,8 +306,7 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "unfusedReasons" in content
     assert "unfusedReasonText" in content
     assert "unfused-mark" in content
-    assert "unfused-label" in content
-    assert "NOT FUSED" in content
+    assert ">NF</text>" in content
     assert "未融合原因" in content
     assert "Lowering fallback" in content
     assert "Implicit fallback" in content
@@ -456,7 +459,7 @@ def test_write_report_html_includes_topological_first_failure_analysis(tmp_path:
     assert "首次整体失败" in content
     assert "FUSION FIRST FAIL" in content
     assert "function upstreamFirstFailures(nodeName)" in content
-    assert "first-failure-mark" in content
+    assert ".graph-node.first-failure > rect" in content
     assert "输入传播路径" in content
     assert "上游失败传播" in content
     assert "当前输出仍未通过，但不能据此判定当前算子新增了精度误差" in content
