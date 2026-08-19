@@ -333,6 +333,57 @@ def test_match_cpu_output_prefers_exact_exit_and_handles_infinity(tmp_path: Path
     assert _match_cpu_output(op, records, cpu_outputs, set()) == "add_3"
 
 
+def test_match_cpu_output_rejects_reordered_shape_with_same_element_count(tmp_path: Path) -> None:
+    npu_path = tmp_path / "npu.npy"
+    cpu_path = tmp_path / "clone_3.npy"
+    np.save(npu_path, np.zeros((3, 2), dtype=np.float32))
+    np.save(cpu_path, np.zeros((2, 3), dtype=np.float32))
+    records = {
+        "clone_3": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (3, 2), "size": 6}],
+        }
+    }
+    cpu_outputs = {
+        "clone_3": {"path": cpu_path, "shape": (2, 3), "size": 6, "type": "clone"},
+    }
+    diagnostics = {}
+
+    origin = _match_cpu_output(
+        {"name": "clone_3", "_exit_name": "clone_3", "_exit_type": "clone"},
+        records,
+        cpu_outputs,
+        set(),
+        diagnostics,
+    )
+
+    assert origin is None
+    assert diagnostics["candidate"] == "clone_3"
+    assert diagnostics["reference_shape"] == [2, 3]
+    assert diagnostics["npu_shape"] == [3, 2]
+
+
+def test_match_cpu_output_accepts_cann_scalar_shape_normalization(tmp_path: Path) -> None:
+    npu_path = tmp_path / "npu.npy"
+    cpu_path = tmp_path / "cpu.npy"
+    np.save(npu_path, np.array([1.0], dtype=np.float32))
+    np.save(cpu_path, np.array(1.0, dtype=np.float32))
+    records = {
+        "scalar_tensor": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (1,), "size": 1}],
+        }
+    }
+    cpu_outputs = {
+        "scalar_tensor": {"path": cpu_path, "shape": (), "size": 1, "type": "scalar_tensor"},
+    }
+
+    assert _match_cpu_output(
+        {"name": "scalar_tensor", "_exit_name": "scalar_tensor", "_exit_type": "scalar_tensor"},
+        records,
+        cpu_outputs,
+        set(),
+    ) == "scalar_tensor"
+
+
 def test_match_cpu_output_maps_baddbmm_exit_to_cpu_add(tmp_path: Path) -> None:
     npu_path = tmp_path / "baddbmm.npy"
     cpu_path = tmp_path / "add_2.npy"

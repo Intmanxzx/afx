@@ -853,7 +853,7 @@ def render_report_html(
             </div>
             <button class="fusion-details-button" id="fusionDetails" type="button" title="查看父融合算子的精度和输入输出详情" hidden>融合详情</button>
             <div class="load-legend" id="loadLegend" aria-label="精度结果分类">
-              <span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">整体 Tensor 失败</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>
+              <span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败 / 映射冲突</span><span class="fail">整体 Tensor 失败</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>
             </div>
           </div>
           <div class="graph-head-right">
@@ -1676,8 +1676,12 @@ def render_report_html(
       if (!metric) return {fill: '#eef1f5', stroke: '#9aa5b1', label: 'NO DATA', metric: null};
       if (!metric.compared) {
         const noDump = metric.row.status === 'NPU_OUTPUT_NOT_CAPTURED';
+        const provenanceConflict = metric.row.status === 'PROVENANCE_CONFLICT';
         if (['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(metric.row.status)) {
           return {fill: '#eaf1ff', stroke: '#7d9dcc', label: 'NOT OBSERVABLE', metric, dashed: true};
+        }
+        if (provenanceConflict) {
+          return {fill: '#fff1d6', stroke: '#b97800', label: 'MAP CONFLICT', metric, dashed: true};
         }
         return {fill: '#eef1f5', stroke: '#9aa5b1', label: noDump ? 'NO DUMP' : 'NO MAP', metric, dashed: noDump};
       }
@@ -2046,7 +2050,7 @@ def render_report_html(
       tensorButton.dataset.tensorNode = row?.elementwise_data ? String(row.npu_op || node.name) : '';
       const grid = document.getElementById('detailsGrid');
       const mapping = row?.compared === false
-        ? (row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(row?.status) ? '不可独立观测' : 'NO MAP'))
+        ? (row?.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (row?.status === 'PROVENANCE_CONFLICT' ? '映射冲突' : (['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(row?.status) ? '不可独立观测' : 'NO MAP')))
         : (row?.cpu_op ? `${row.cpu_op}:${row.cpu_index ?? 0}` : '-');
       const strictResult = row?.compared === false ? '-' : ((row?.strict_passed ?? row?.passed) ? 'PASS' : 'FAIL');
       const cannResult = row?.compared === false ? '-' : ((row?.cann_passed ?? row?.passed) ? 'PASS' : 'FAIL');
@@ -2801,7 +2805,7 @@ def render_report_html(
         analytics.open = false;
         loadLegend.hidden = false;
         loadLegend.setAttribute('aria-label', '精度结果分类');
-        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败</span><span class="fail">首次整体 Tensor 失败</span><span class="propagated">上游失败传播</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
+        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败 / 映射冲突</span><span class="fail">首次整体 Tensor 失败</span><span class="propagated">上游失败传播</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
       }
       updateGraphTabs();
       if (!layout.nodes.length) { target.innerHTML = '<div class="graph-empty">当前图没有可展示的算子拓扑</div>'; return; }
@@ -2894,7 +2898,7 @@ def render_report_html(
       if (!status) return 'status-bad';
       if (status === 'OK') return 'status-ok';
       if (['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(status)) return 'status-neutral';
-      if (status.startsWith('OK_') || status === 'UNMATCHED_CPU_OP') return 'status-warn';
+      if (status.startsWith('OK_') || ['UNMATCHED_CPU_OP', 'PROVENANCE_CONFLICT'].includes(status)) return 'status-warn';
       return 'status-bad';
     }
     function applyFilters() {
@@ -2908,7 +2912,7 @@ def render_report_html(
         if (pass === 'propagated' && !propagatedFailureByNode.has(row.npu_op)) return false;
         if (pass === 'disagreement' && (row.compared === false || strictPassed === cannPassed)) return false;
         if (pass === 'unmatched' && row.compared !== false) return false;
-        if (pass === 'unmapped' && row.status !== 'UNMATCHED_CPU_OP') return false;
+        if (pass === 'unmapped' && !['UNMATCHED_CPU_OP', 'PROVENANCE_CONFLICT'].includes(row.status)) return false;
         if (pass === 'not_captured' && row.status !== 'NPU_OUTPUT_NOT_CAPTURED') return false;
         if (pass === 'not_observable' && !['NOT_OBSERVABLE_ON_NPU', 'NOT_OBSERVABLE_IN_REFERENCE'].includes(row.status)) return false;
         if (type !== 'all' && row.npu_type !== type) return false;
@@ -2939,7 +2943,7 @@ def render_report_html(
         const badgeClass = internalOnly ? 'neutral' : (row.compared === false ? 'warn' : (!cannPassed ? (propagatedFailure ? 'propagated' : 'fail') : (!strictPassed ? 'warn' : 'pass')));
         const alignedNonfinite = !!row.nonfinite_aligned && strictPassed && cannPassed;
         const badgeText = row.compared === false
-          ? (row.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (internalOnly ? 'INTERNAL' : 'NO MAP'))
+          ? (row.status === 'NPU_OUTPUT_NOT_CAPTURED' ? 'NO DUMP' : (row.status === 'PROVENANCE_CONFLICT' ? '映射冲突' : (internalOnly ? 'INTERNAL' : 'NO MAP')))
           : (propagatedFailure ? '上游失败传播' : (alignedNonfinite ? '非有限值一致 · 通过' : (!cannPassed ? (strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败') : (!strictPassed ? '逐元素失败' : '逐元素 + 整体均通过'))));
         const firstFailure = firstFailureByNode.get(row.npu_op);
         const resultText = firstFailure ? `${firstFailure.label} · ${badgeText}` : badgeText;

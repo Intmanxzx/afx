@@ -85,6 +85,15 @@ def _fusion_index(data: dict[str, Any]) -> dict[tuple[str, int], tuple[str, int]
     return result
 
 
+def _provenance_conflict_index(data: dict[str, Any]) -> dict[tuple[str, int], dict[str, Any]]:
+    result = {}
+    for node in data.get("nodes", []):
+        name = str(node.get("name", ""))
+        for item in node.get("provenance_conflicts", []):
+            result[(name, int(item.get("output_index", 0)))] = item
+    return result
+
+
 _EAGER_ALIGNMENT_TYPE_ALIASES = {
     "_softmax": "softmax",
     "view": "reshape",
@@ -115,6 +124,43 @@ def _alignment_outputs(
             key = (str(node.get("name", "")), int(output.get("index", 0)))
             result.append((key, (node_type, shape, str(output.get("dtype") or ""))))
     return result
+
+
+def _compatible_alignment_shape(
+    reference: tuple[Any, ...] | None, actual: tuple[Any, ...] | None
+) -> bool:
+    if reference is None or actual is None or reference == actual:
+        return True
+    return {reference, actual} == {(), (1,)}
+
+
+def _compiler_origin_conflict_reason(
+    cpu_key: tuple[str, int],
+    npu_key: tuple[str, int],
+    cpu_signatures: dict[tuple[str, int], tuple[str, tuple[Any, ...] | None, str]],
+    npu_signatures: dict[tuple[str, int], tuple[str, tuple[Any, ...] | None, str]],
+    cpu_index: dict[tuple[str, int], TensorRef],
+    npu_index: dict[tuple[str, int], TensorRef],
+) -> str | None:
+    cpu_signature = cpu_signatures.get(cpu_key)
+    npu_signature = npu_signatures.get(npu_key)
+    if cpu_signature is None or npu_signature is None:
+        return None
+    cpu_shape = cpu_signature[1]
+    npu_shape = npu_signature[1]
+    cpu_fmt = cpu_index.get(cpu_key).fmt if cpu_key in cpu_index else None
+    npu_fmt = npu_index.get(npu_key).fmt if npu_key in npu_index else None
+    if cpu_fmt and npu_fmt and cpu_fmt != npu_fmt:
+        if (cpu_fmt, npu_fmt) in FORMAT_CONVERSIONS or (npu_fmt, cpu_fmt) in FORMAT_CONVERSIONS:
+            return None
+    if _compatible_alignment_shape(cpu_shape, npu_shape):
+        return None
+    return (
+        "compiler provenance 输出 shape 冲突："
+        f"reference={list(cpu_shape) if cpu_shape is not None else '-'}, "
+        f"NPU={list(npu_shape) if npu_shape is not None else '-'}；"
+        "未按相同元素个数展平比较，避免误报精度失败"
+    )
 
 
 def _eager_topology_mapping(
@@ -188,6 +234,7 @@ def _graph_summary(data: dict[str, Any]) -> dict[str, Any]:
                 "original_aten_types": node.get("original_aten_types", []),
                 "origin_subgraph": node.get("origin_subgraph"),
                 "unfused_reasons": node.get("unfused_reasons", []),
+                "provenance_conflicts": node.get("provenance_conflicts", []),
             }
         )
     node_by_name = {node["name"]: node for node in nodes}
@@ -719,6 +766,7 @@ def compare_manifests(
     cpu_index = _index_manifest(cpu_data)
     npu_index = _index_manifest(npu_data)
     fusions = _fusion_index(npu_data)
+    provenance_conflicts = _provenance_conflict_index(npu_data)
     cpu_signatures = dict(_alignment_outputs(cpu_data))
     npu_signatures = dict(_alignment_outputs(npu_data))
     eager_mapping = (
@@ -783,6 +831,34 @@ def compare_manifests(
         ):
             cpu_key = npu_key
             mapping_method = "same_name"
+        conflict = provenance_conflicts.get(npu_key)
+        if cpu_key is not None and str(mapping_method or "").startswith("compiler_origin"):
+            conflict_reason = _compiler_origin_conflict_reason(
+                cpu_key, npu_key, cpu_signatures, npu_signatures, cpu_index, npu_index
+            )
+            if conflict_reason is not None:
+                conflict = {
+                    "candidate": cpu_key[0],
+                    "candidate_index": cpu_key[1],
+                    "reason": conflict_reason,
+                }
+        if conflict is not None:
+            rows.append(
+                {
+                    "cpu_op": str(conflict.get("candidate") or (cpu_key[0] if cpu_key else "")),
+                    "cpu_index": int(conflict.get("candidate_index", cpu_key[1] if cpu_key else 0)),
+                    "npu_op": npu_key[0],
+                    "npu_index": npu_key[1],
+                    "npu_type": npu_ref.node_type,
+                    "status": "PROVENANCE_CONFLICT",
+                    "unmapped_reason": str(conflict.get("reason") or "compiler provenance 与输出元数据冲突"),
+                    "mapping_method": "provenance_conflict",
+                    "observable": True,
+                    "passed": False,
+                    "compared": False,
+                }
+            )
+            continue
         if cpu_key is None:
             if missing_aliased_origin:
                 rows.append(
@@ -867,7 +943,11 @@ def compare_manifests(
                 ),
                 None,
             )
-            if primary_row is None or not str(primary_row.get("mapping_method", "")).startswith("compiler_origin"):
+            if (
+                primary_row is None
+                or not primary_row.get("compared", False)
+                or not str(primary_row.get("mapping_method", "")).startswith("compiler_origin")
+            ):
                 continue
             for origin_name in origin_ops:
                 original_key = (origin_name, 0)
@@ -896,7 +976,9 @@ def compare_manifests(
     compared = [r for r in rows if r.get("compared", True)]
     unmatched = [r for r in rows if not r.get("compared", True)]
     not_captured = [r for r in unmatched if r.get("status") == "NPU_OUTPUT_NOT_CAPTURED"]
-    unmapped = [r for r in unmatched if r.get("status") == "UNMATCHED_CPU_OP"]
+    unmapped = [
+        r for r in unmatched if r.get("status") in {"UNMATCHED_CPU_OP", "PROVENANCE_CONFLICT"}
+    ]
     not_observable = [
         r
         for r in unmatched

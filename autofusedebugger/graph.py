@@ -167,6 +167,7 @@ def build_manifest(
             "original_aten_types": op.get("original_aten_types", []),
             "origin_subgraph": op.get("origin_subgraph"),
             "unfused_reasons": op.get("unfused_reasons", []),
+            "provenance_conflicts": op.get("provenance_conflicts", []),
         }
         outputs = op.get("output_desc", [])
         for idx, desc in enumerate(outputs):

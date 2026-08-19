@@ -111,7 +111,7 @@ autofused_add_... -> CPU add_15
 
 1. 找到 NPU intermediate hook 采集的输出文件；没有文件时不进入 CPU 映射，最终状态为 `NPU_OUTPUT_NOT_CAPTURED`。
 2. 使用融合出口的 `exit_name/exit_type`；同时从 `benchmark.py` 的 `Original ATen` 注释中提取原始 ATen 类型。未融合或 fallback 节点使用其生成的 kernel/capture 名称和类型。
-3. 遍历尚未使用的 CPU 输出，只保留 `element_count` 相同的候选。
+3. 遍历尚未使用的 CPU 输出，只保留 `element_count` 相同的候选。完整 shape 必须相同才会真正建立 provenance 映射；仅有 `()` 与 CANN 常见的 `(1,)` 这一标量表示差异时视为兼容。元素数相同但维度顺序不同的候选只用于记录冲突，不会被接受。
 4. 候选必须满足下面至少一个条件：
    - CPU 输出名与期望名称相同。
    - CPU 输出名和期望名称规范化后相同。
@@ -120,7 +120,7 @@ autofused_add_... -> CPU add_15
 5. 按以下顺序选择候选，越靠前优先级越高：
 
 ```text
-shape 完全相同
+shape 完全相同或标量 shape 兼容
 Original ATen 名称（含调用序号）相同
 Original ATen 类型相同
 精确名称相同
@@ -129,7 +129,7 @@ Original ATen 类型相同
 CPU FX 拓扑中的稳定顺序更靠前
 ```
 
-6. 一个 CPU 输出只能被使用一次，避免多个 NPU 节点都映射到同一个 CPU 节点。
+6. 如果最高候选仍然存在非标量 shape 冲突，记录 `PROVENANCE_CONFLICT`，不写入 origin 属性，也不在 compare 阶段按相同元素数展平比较。一个 CPU 输出只能被使用一次，避免多个 NPU 节点都映射到同一个 CPU 节点。
 7. 找到候选后，把下面两个属性写到 NPU 图的输出描述中：
 
 ```text
@@ -280,6 +280,7 @@ _datadump_origin_output_index
 |---|---|
 | `NPU_OUTPUT_NOT_CAPTURED` | NPU 图中存在该输出，但没有找到对应 dump 文件；这是采集问题，不一定是映射问题。 |
 | `UNMATCHED_CPU_OP` | NPU 输出 dump 已存在，但没有建立到 CPU 输出的映射。 |
+| `PROVENANCE_CONFLICT` | provenance 候选存在，但 CPU/NPU 完整输出 shape 不兼容；该节点不参与数值比较，避免按相同元素个数展平后误报精度失败。标量 `()` 与 CANN `(1,)` 视为兼容。 |
 | `NOT_OBSERVABLE_ON_NPU` | CPU 节点属于 NPU 融合内部节点，且不是当前 dump 的融合出口；当前 dump 粒度下没有独立 NPU 输出。 |
 | `NOT_OBSERVABLE_IN_REFERENCE` | Autofuse origin 在当前基准图中被 decomposition 合并或消除，没有可独立比较的 NPU eager 输出。 |
 | `CPU_FILE_NOT_FOUND` | 已经有映射，但映射指向的 CPU dump 文件不存在。 |
@@ -298,14 +299,14 @@ _datadump_origin_output_index
 
 报告中的红色首次失败表示当前节点是首个已观测到的整体 Tensor 失败；后续整体失败节点如果已经存在失败祖先，会显示为“上游失败传播”。这表示当前输出确实未通过，但不能据此断言该单算子又新增了精度误差。
 
-对于 native Autofuse 融合节点，报告会根据 `origin_ops` 额外生成 `NOT_OBSERVABLE_ON_NPU` 行。例如 CPU 图中有 `addmm`，而 NPU 将 `mm -> add -> mul -> relu` 融合，并且只 dump `relu` 出口，则 `addmm`/`mm`/`add` 等非出口节点不会被伪造映射到融合最终输出，而会标记为融合内部不可观测。此类行会保留在报告明细中，但不会计入 `coverage` 的可观测分母；只有 `UNMATCHED_CPU_OP` 和 `NPU_OUTPUT_NOT_CAPTURED` 会使总体状态变成 `INCOMPLETE`。
+对于 native Autofuse 融合节点，报告会根据 `origin_ops` 额外生成 `NOT_OBSERVABLE_ON_NPU` 行。例如 CPU 图中有 `addmm`，而 NPU 将 `mm -> add -> mul -> relu` 融合，并且只 dump `relu` 出口，则 `addmm`/`mm`/`add` 等非出口节点不会被伪造映射到融合最终输出，而会标记为融合内部不可观测。此类行会保留在报告明细中，但不会计入 `coverage` 的可观测分母；`UNMATCHED_CPU_OP`、`PROVENANCE_CONFLICT` 和 `NPU_OUTPUT_NOT_CAPTURED` 会使总体状态变成 `INCOMPLETE`。
 
 ## 5. 另一个环境中的排查顺序
 
 建议先判断是“没采到”还是“没映射”：
 
 ```bash
-jq '.summary, .results[] | select(.status == "UNMATCHED_CPU_OP" or .status == "NPU_OUTPUT_NOT_CAPTURED")' \
+jq '.summary, .results[] | select(.status == "UNMATCHED_CPU_OP" or .status == "PROVENANCE_CONFLICT" or .status == "NPU_OUTPUT_NOT_CAPTURED")' \
   /tmp/model_accuracy/report.json
 ```
 

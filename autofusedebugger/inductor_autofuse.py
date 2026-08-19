@@ -920,9 +920,28 @@ def _canonical_match(value: str) -> str:
     return aliases.get(text, text)
 
 
+def _output_shape(info: dict[str, Any]) -> tuple[int, ...] | None:
+    raw_shape = info.get("shape")
+    if raw_shape is None:
+        return None
+    return tuple(int(dim) for dim in raw_shape)
+
+
+def _compatible_output_shape(left: tuple[int, ...] | None, right: tuple[int, ...] | None) -> bool:
+    if left is None or right is None or left == right:
+        return True
+    return {left, right} == {(), (1,)}
+
+
 def _match_cpu_output(
-    op: dict[str, Any], records: dict[str, dict[str, Any]], cpu_outputs: dict[str, dict[str, Any]], used: set[str]
+    op: dict[str, Any],
+    records: dict[str, dict[str, Any]],
+    cpu_outputs: dict[str, dict[str, Any]],
+    used: set[str],
+    diagnostics: dict[str, Any] | None = None,
 ) -> str | None:
+    if diagnostics is not None:
+        diagnostics.clear()
     actual_info = _record_output(records, op["name"], 0)
     if actual_info is None:
         return None
@@ -949,10 +968,13 @@ def _match_cpu_output(
     if not candidates:
         return None
     best = None
-    actual_shape = tuple(int(dim) for dim in actual_info.get("shape", ()))
+    actual_shape = _output_shape(actual_info)
     for name, info, order, exact_name, name_match, type_match, original_name_match, original_type_match in candidates:
-        exact_shape = tuple(int(dim) for dim in info.get("shape", ())) == actual_shape
+        candidate_shape = _output_shape(info)
+        compatible_shape = _compatible_output_shape(candidate_shape, actual_shape)
+        exact_shape = candidate_shape == actual_shape
         score = (
+            0 if compatible_shape else 1,
             0 if exact_shape else 1,
             0 if original_name_match else 1,
             0 if original_type_match else 1,
@@ -962,8 +984,24 @@ def _match_cpu_output(
             order,
         )
         if best is None or score < best[0]:
-            best = (score, name)
+            best = (score, name, candidate_shape, compatible_shape)
     if best is None:
+        return None
+    if not best[3]:
+        if diagnostics is not None:
+            diagnostics.update(
+                {
+                    "output_index": 0,
+                    "candidate": best[1],
+                    "candidate_index": 0,
+                    "reference_shape": list(best[2]) if best[2] is not None else None,
+                    "npu_shape": list(actual_shape) if actual_shape is not None else None,
+                    "reason": (
+                        "provenance 候选的完整 shape 与 NPU 输出不兼容；"
+                        "为避免按元素个数展平后误比较，未建立映射"
+                    ),
+                }
+            )
         return None
     used.add(best[1])
     return best[1]
@@ -1010,7 +1048,8 @@ def build_inductor_autofuse_graph(
     for op in all_ops:
         if op["type"] == "Data":
             continue
-        origin = _match_cpu_output(op, records, cpu_outputs, used_cpu)
+        mapping_diagnostic: dict[str, Any] = {}
+        origin = _match_cpu_output(op, records, cpu_outputs, used_cpu, mapping_diagnostic)
         if origin is not None and op.get("output_desc"):
             op["output_desc"][0].setdefault("attr", []).extend(
                 [
@@ -1018,6 +1057,8 @@ def build_inductor_autofuse_graph(
                     {"key": "_autofusedebugger_cpu_origin_output_index", "value": {"i": 0}},
                 ]
             )
+        elif mapping_diagnostic:
+            op["provenance_conflicts"] = [mapping_diagnostic]
         op.pop("_exit_name", None)
         op.pop("_exit_type", None)
     return {

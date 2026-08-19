@@ -148,6 +148,158 @@ def test_shape_mismatch_is_reported(tmp_path: Path) -> None:
     assert report["results"][0]["status"].startswith("SHAPE_MISMATCH")
 
 
+def test_compiler_origin_shape_conflict_is_not_reported_as_precision_failure(tmp_path: Path) -> None:
+    np.save(tmp_path / "cpu.npy", np.zeros((2, 3), dtype=np.float32))
+    np.save(tmp_path / "npu.npy", np.ones((3, 2), dtype=np.float32))
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "m"},
+        "artifacts": {"root": str(tmp_path)},
+        "edges": [],
+    }
+    cpu = dict(
+        base,
+        side="cpu",
+        nodes=[
+            {
+                "name": "clone_3",
+                "type": "clone",
+                "outputs": [
+                    {"index": 0, "path": "cpu.npy", "dtype": "float32", "shape": [2, 3]}
+                ],
+            }
+        ],
+        fusions=[],
+    )
+    npu = dict(
+        base,
+        side="npu",
+        nodes=[
+            {
+                "name": "clone_3",
+                "type": "clone",
+                "outputs": [
+                    {"index": 0, "path": "npu.npy", "dtype": "float32", "shape": [3, 2]}
+                ],
+            }
+        ],
+        fusions=[
+            {"fused_op": "clone_3", "fused_index": 0, "origin_op": "clone_3", "origin_index": 0}
+        ],
+    )
+    _write_json(tmp_path / "cpu.json", cpu)
+    _write_json(tmp_path / "npu.json", npu)
+
+    report = compare_manifests(tmp_path / "cpu.json", tmp_path / "npu.json", rtol=0, atol=0)
+
+    row = report["results"][0]
+    assert row["status"] == "PROVENANCE_CONFLICT"
+    assert row["mapping_method"] == "provenance_conflict"
+    assert row["compared"] is False
+    assert "reference=[2, 3]" in row["unmapped_reason"]
+    assert report["summary"]["failed"] == 0
+    assert report["summary"]["unmapped"] == 1
+    assert report["summary"]["status"] == "INCOMPLETE"
+
+
+def test_compiler_origin_allows_scalar_shape_normalization(tmp_path: Path) -> None:
+    np.save(tmp_path / "cpu.npy", np.array(1.0, dtype=np.float32))
+    np.save(tmp_path / "npu.npy", np.array([1.0], dtype=np.float32))
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "m"},
+        "artifacts": {"root": str(tmp_path)},
+        "edges": [],
+    }
+    cpu = dict(
+        base,
+        side="cpu",
+        nodes=[
+            {
+                "name": "scalar_tensor",
+                "type": "scalar_tensor",
+                "outputs": [{"index": 0, "path": "cpu.npy", "dtype": "float32", "shape": []}],
+            }
+        ],
+        fusions=[],
+    )
+    npu = dict(
+        base,
+        side="npu",
+        nodes=[
+            {
+                "name": "scalar_tensor",
+                "type": "scalar_tensor",
+                "outputs": [{"index": 0, "path": "npu.npy", "dtype": "float32", "shape": [1]}],
+            }
+        ],
+        fusions=[
+            {
+                "fused_op": "scalar_tensor",
+                "fused_index": 0,
+                "origin_op": "scalar_tensor",
+                "origin_index": 0,
+            }
+        ],
+    )
+    _write_json(tmp_path / "cpu.json", cpu)
+    _write_json(tmp_path / "npu.json", npu)
+
+    report = compare_manifests(tmp_path / "cpu.json", tmp_path / "npu.json", rtol=0, atol=0)
+
+    assert report["summary"]["status"] == "PASS"
+    assert report["results"][0]["compared"] is True
+    assert report["results"][0]["status"] == "OK_SHAPE_FLATTENED"
+
+
+def test_compiler_origin_allows_supported_format_shape_conversion(tmp_path: Path) -> None:
+    np.save(tmp_path / "cpu.npy", np.zeros((1, 2, 2, 4), dtype=np.float32))
+    np.save(tmp_path / "npu.npy", np.zeros((1, 1, 2, 2, 4), dtype=np.float32))
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "m"},
+        "artifacts": {"root": str(tmp_path)},
+        "edges": [],
+    }
+    cpu = dict(
+        base,
+        side="cpu",
+        nodes=[
+            {
+                "name": "relu",
+                "type": "relu",
+                "outputs": [
+                    {"index": 0, "path": "cpu.npy", "format": "NHWC", "dtype": "float32", "shape": [1, 2, 2, 4]}
+                ],
+            }
+        ],
+        fusions=[],
+    )
+    npu = dict(
+        base,
+        side="npu",
+        nodes=[
+            {
+                "name": "relu",
+                "type": "relu",
+                "outputs": [
+                    {"index": 0, "path": "npu.npy", "format": "NC1HWC0", "dtype": "float32", "shape": [1, 1, 2, 2, 4]}
+                ],
+            }
+        ],
+        fusions=[
+            {"fused_op": "relu", "fused_index": 0, "origin_op": "relu", "origin_index": 0}
+        ],
+    )
+    _write_json(tmp_path / "cpu.json", cpu)
+    _write_json(tmp_path / "npu.json", npu)
+
+    report = compare_manifests(tmp_path / "cpu.json", tmp_path / "npu.json", rtol=0, atol=0)
+
+    assert report["results"][0]["status"] == "OK_FORMAT_CONVERTED"
+    assert report["summary"]["status"] == "PASS"
+
+
 def test_graph_summary_includes_input_dtype_and_shape(tmp_path: Path) -> None:
     np.save(tmp_path / "a.npy", np.array([1.0, 2.0], dtype=np.float32))
     np.save(tmp_path / "b.npy", np.array([2.0, 3.0], dtype=np.float32))
