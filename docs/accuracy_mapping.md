@@ -121,6 +121,7 @@ autofused_add_... -> CPU add_15
 
 ```text
 shape 完全相同或标量 shape 兼容
+NPU 上游输出的 compiler origin 与 CPU 候选输入边一致
 Original ATen 名称（含调用序号）相同
 Original ATen 类型相同
 精确名称相同
@@ -129,7 +130,7 @@ Original ATen 类型相同
 CPU FX 拓扑中的稳定顺序更靠前
 ```
 
-6. 如果最高候选仍然存在非标量 shape 冲突，记录 `PROVENANCE_CONFLICT`，不写入 origin 属性，也不在 compare 阶段按相同元素数展平比较。一个 CPU 输出只能被使用一次，避免多个 NPU 节点都映射到同一个 CPU 节点。
+6. 对没有 compiler provenance 的未融合节点，精确名称优先于去掉数字后缀的规范化名称，避免 `clone_6` 被映射到另一个同 shape 的 `clone`。如果最高候选仍然存在非标量 shape 冲突，记录 `PROVENANCE_CONFLICT`，不写入 origin 属性，也不在 compare 阶段按相同元素数展平比较。一个 CPU 输出只能被使用一次，避免多个 NPU 节点都映射到同一个 CPU 节点。
 7. 找到候选后，把下面两个属性写到 NPU 图的输出描述中：
 
 ```text
@@ -298,6 +299,8 @@ _datadump_origin_output_index
 9. **GE provenance 缺失**：旧 GE/Qwen 路径没有 `_fx_tensor_name`、`_datadump_origin_name` 或对应 pre-run 图时，不能可靠地恢复 CPU origin。
 
 报告中的红色首次失败表示当前节点是首个已观测到的整体 Tensor 失败；后续整体失败节点如果已经存在失败祖先，会显示为“上游失败传播”。这表示当前输出确实未通过，但不能据此断言该单算子又新增了精度误差。
+
+报告 JSON 中的 `failure_attribution` 也会记录该归因：`DIRECT_FAILURE` 表示疑似当前节点首次引入失败，`UPSTREAM_FAILURE` 表示已有失败祖先，`UPSTREAM_UNCERTAIN` 表示上游有未映射或不可独立观测节点，无法确认当前节点是否首次引入误差。
 
 对于 native Autofuse 融合节点，报告会根据 `origin_ops` 额外生成 `NOT_OBSERVABLE_ON_NPU` 行。例如 CPU 图中有 `addmm`，而 NPU 将 `mm -> add -> mul -> relu` 融合，并且只 dump `relu` 出口，则 `addmm`/`mm`/`add` 等非出口节点不会被伪造映射到融合最终输出，而会标记为融合内部不可观测。此类行会保留在报告明细中，但不会计入 `coverage` 的可观测分母；`UNMATCHED_CPU_OP`、`PROVENANCE_CONFLICT` 和 `NPU_OUTPUT_NOT_CAPTURED` 会使总体状态变成 `INCOMPLETE`。
 

@@ -670,7 +670,13 @@ def run_torch_case(
         diagnostics = native_capture.pop("diagnostics", {})
         diagnostics_path = root / "autofuse_diagnostics.json"
         _save_json(diagnostics_path, diagnostics)
-        npu_graph_data = build_inductor_autofuse_graph(compile_dir, npu_records, cpu_outputs, diagnostics)
+        npu_graph_data = build_inductor_autofuse_graph(
+            compile_dir,
+            npu_records,
+            cpu_outputs,
+            diagnostics,
+            cpu_graph_data=cpu_graph_data,
+        )
 
     cpu_graph = root / "cpu_graph.json"
     npu_eager_graph = root / "npu_eager_graph.json"

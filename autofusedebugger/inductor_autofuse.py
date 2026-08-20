@@ -620,6 +620,49 @@ def _capture_for_buffers(
     return None
 
 
+def _input_names(op: dict[str, Any]) -> set[str]:
+    names = set()
+    for value in op.get("input", []):
+        source, _, _ = str(value).partition(":")
+        if source:
+            names.add(source)
+    return names
+
+
+def _cpu_graph_inputs(graph_data: dict[str, Any] | None) -> dict[str, set[str]]:
+    if not graph_data:
+        return {}
+    graphs = graph_data.get("graph", [])
+    ops = graphs[0].get("op", []) if graphs else []
+    result = {}
+    for op in ops:
+        name = str(op.get("name", ""))
+        if name:
+            result[name] = _input_names(op)
+    return result
+
+
+def _resolve_input_origins(
+    name: str,
+    npu_inputs: dict[str, set[str]],
+    npu_origins: dict[str, str],
+) -> set[str]:
+    result = set()
+    stack = list(npu_inputs.get(name, set()))
+    visited = set()
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        origin = npu_origins.get(current)
+        if origin is not None:
+            result.add(origin)
+            continue
+        stack.extend(npu_inputs.get(current, set()))
+    return result
+
+
 def _fusion_rejections(
     scheduler_id: str,
     decisions: list[dict[str, Any]],
@@ -939,6 +982,8 @@ def _match_cpu_output(
     cpu_outputs: dict[str, dict[str, Any]],
     used: set[str],
     diagnostics: dict[str, Any] | None = None,
+    cpu_inputs: dict[str, set[str]] | None = None,
+    input_origins: set[str] | None = None,
 ) -> str | None:
     if diagnostics is not None:
         diagnostics.clear()
@@ -969,20 +1014,38 @@ def _match_cpu_output(
         return None
     best = None
     actual_shape = _output_shape(actual_info)
+    has_fusion_provenance = bool(original_types)
+    input_origins = input_origins or set()
     for name, info, order, exact_name, name_match, type_match, original_name_match, original_type_match in candidates:
         candidate_shape = _output_shape(info)
         compatible_shape = _compatible_output_shape(candidate_shape, actual_shape)
         exact_shape = candidate_shape == actual_shape
-        score = (
-            0 if compatible_shape else 1,
-            0 if exact_shape else 1,
-            0 if original_name_match else 1,
-            0 if original_type_match else 1,
-            0 if exact_name else 1,
-            0 if name_match else 1,
-            0 if type_match else 1,
-            order,
-        )
+        upstream_match = bool(input_origins and cpu_inputs and input_origins.intersection(cpu_inputs.get(name, set())))
+        if has_fusion_provenance:
+            score = (
+                0 if compatible_shape else 1,
+                0 if exact_shape else 1,
+                0 if upstream_match else 1,
+                0 if original_name_match else 1,
+                0 if original_type_match else 1,
+                0 if exact_name else 1,
+                0 if name_match else 1,
+                0 if type_match else 1,
+                order,
+            )
+        else:
+            # A non-fused output has no compiler-level semantic alias. Keep an
+            # exact node name ahead of suffix-normalized candidates; otherwise
+            # clone_6 can be incorrectly mapped to an unrelated clone whose
+            # shape happens to match.
+            score = (
+                0 if exact_name else 1,
+                0 if exact_shape else 1,
+                0 if compatible_shape else 1,
+                0 if name_match else 1,
+                0 if type_match else 1,
+                order,
+            )
         if best is None or score < best[0]:
             best = (score, name, candidate_shape, compatible_shape)
     if best is None:
@@ -1012,6 +1075,7 @@ def build_inductor_autofuse_graph(
     records: dict[str, dict[str, Any]],
     cpu_outputs: dict[str, dict[str, Any]],
     diagnostics: dict[str, Any] | None = None,
+    cpu_graph_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = Path(compile_root).resolve()
     traces = sorted({path.parent for path in root.rglob("ir_post_fusion.txt")})
@@ -1045,11 +1109,23 @@ def build_inductor_autofuse_graph(
             all_ops.append(op)
 
     used_cpu: set[str] = set()
+    cpu_inputs = _cpu_graph_inputs(cpu_graph_data)
+    npu_inputs = {op["name"]: _input_names(op) for op in all_ops}
+    npu_origins: dict[str, str] = {}
     for op in all_ops:
         if op["type"] == "Data":
             continue
         mapping_diagnostic: dict[str, Any] = {}
-        origin = _match_cpu_output(op, records, cpu_outputs, used_cpu, mapping_diagnostic)
+        input_origins = _resolve_input_origins(op["name"], npu_inputs, npu_origins)
+        origin = _match_cpu_output(
+            op,
+            records,
+            cpu_outputs,
+            used_cpu,
+            mapping_diagnostic,
+            cpu_inputs,
+            input_origins,
+        )
         if origin is not None and op.get("output_desc"):
             op["output_desc"][0].setdefault("attr", []).extend(
                 [
@@ -1057,6 +1133,7 @@ def build_inductor_autofuse_graph(
                     {"key": "_autofusedebugger_cpu_origin_output_index", "value": {"i": 0}},
                 ]
             )
+            npu_origins[op["name"]] = origin
         elif mapping_diagnostic:
             op["provenance_conflicts"] = [mapping_diagnostic]
         op.pop("_exit_name", None)

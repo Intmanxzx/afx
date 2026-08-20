@@ -202,6 +202,46 @@ def test_compiler_origin_shape_conflict_is_not_reported_as_precision_failure(tmp
     assert report["summary"]["status"] == "INCOMPLETE"
 
 
+def test_failure_attribution_distinguishes_upstream_failure(tmp_path: Path) -> None:
+    np.save(tmp_path / "cpu_a.npy", np.array([1.0], dtype=np.float32))
+    np.save(tmp_path / "cpu_b.npy", np.array([1.0], dtype=np.float32))
+    np.save(tmp_path / "npu_a.npy", np.array([2.0], dtype=np.float32))
+    np.save(tmp_path / "npu_b.npy", np.array([3.0], dtype=np.float32))
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "m"},
+        "artifacts": {"root": str(tmp_path)},
+        "fusions": [],
+    }
+    cpu = dict(
+        base,
+        side="cpu",
+        nodes=[
+            {"name": "a", "type": "Add", "outputs": [{"index": 0, "path": "cpu_a.npy", "shape": [1]}]},
+            {"name": "b", "type": "Add", "outputs": [{"index": 0, "path": "cpu_b.npy", "shape": [1]}]},
+        ],
+        edges=[{"src": "a", "dst": "b", "dst_input": 0}],
+    )
+    npu = dict(
+        base,
+        side="npu",
+        nodes=[
+            {"name": "a", "type": "Add", "outputs": [{"index": 0, "path": "npu_a.npy", "shape": [1]}]},
+            {"name": "b", "type": "Add", "outputs": [{"index": 0, "path": "npu_b.npy", "shape": [1]}]},
+        ],
+        edges=[{"src": "a", "dst": "b", "dst_input": 0}],
+    )
+    _write_json(tmp_path / "cpu.json", cpu)
+    _write_json(tmp_path / "npu.json", npu)
+
+    report = compare_manifests(tmp_path / "cpu.json", tmp_path / "npu.json", rtol=0, atol=0)
+
+    assert [row["failure_attribution"] for row in report["results"]] == [
+        "DIRECT_FAILURE",
+        "UPSTREAM_FAILURE",
+    ]
+
+
 def test_compiler_origin_allows_scalar_shape_normalization(tmp_path: Path) -> None:
     np.save(tmp_path / "cpu.npy", np.array(1.0, dtype=np.float32))
     np.save(tmp_path / "npu.npy", np.array([1.0], dtype=np.float32))

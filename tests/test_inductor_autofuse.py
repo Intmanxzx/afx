@@ -362,6 +362,71 @@ def test_match_cpu_output_rejects_reordered_shape_with_same_element_count(tmp_pa
     assert diagnostics["npu_shape"] == [3, 2]
 
 
+def test_match_cpu_output_does_not_suffix_match_non_fused_exact_name_conflict(tmp_path: Path) -> None:
+    npu_path = tmp_path / "npu.npy"
+    exact_path = tmp_path / "clone_6.npy"
+    normalized_path = tmp_path / "clone.npy"
+    np.save(npu_path, np.zeros((2, 3), dtype=np.float32))
+    np.save(exact_path, np.zeros((3, 2), dtype=np.float32))
+    np.save(normalized_path, np.zeros((2, 3), dtype=np.float32))
+    records = {
+        "clone_6": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (2, 3), "size": 6}],
+        }
+    }
+    cpu_outputs = {
+        "clone_6": {"path": exact_path, "shape": (3, 2), "size": 6, "type": "clone"},
+        "clone": {"path": normalized_path, "shape": (2, 3), "size": 6, "type": "clone"},
+    }
+    diagnostics = {}
+
+    origin = _match_cpu_output(
+        {"name": "clone_6", "_exit_name": "clone_6", "_exit_type": "clone_6"},
+        records,
+        cpu_outputs,
+        set(),
+        diagnostics,
+    )
+
+    assert origin is None
+    assert diagnostics["candidate"] == "clone_6"
+
+
+def test_match_cpu_output_prefers_candidate_with_matching_upstream_origin(tmp_path: Path) -> None:
+    npu_path = tmp_path / "npu.npy"
+    first_path = tmp_path / "native_layer_norm_1.npy"
+    expected_path = tmp_path / "native_layer_norm_5.npy"
+    value = np.zeros((2, 3), dtype=np.float32)
+    np.save(npu_path, value)
+    np.save(first_path, value)
+    np.save(expected_path, value)
+    records = {
+        "fusion__add_14": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (2, 3), "size": 6}],
+        }
+    }
+    cpu_outputs = {
+        "native_layer_norm_1": {"path": first_path, "shape": (2, 3), "size": 6, "type": "native_layer_norm"},
+        "native_layer_norm_5": {"path": expected_path, "shape": (2, 3), "size": 6, "type": "native_layer_norm"},
+    }
+
+    origin = _match_cpu_output(
+        {
+            "name": "fusion__add_14",
+            "_exit_name": "add_14",
+            "_exit_type": "add_14",
+            "original_aten_types": ["native_layer_norm"],
+        },
+        records,
+        cpu_outputs,
+        set(),
+        cpu_inputs={"native_layer_norm_1": {"add_4"}, "native_layer_norm_5": {"add_12"}},
+        input_origins={"add_12"},
+    )
+
+    assert origin == "native_layer_norm_5"
+
+
 def test_match_cpu_output_accepts_cann_scalar_shape_normalization(tmp_path: Path) -> None:
     npu_path = tmp_path / "npu.npy"
     cpu_path = tmp_path / "cpu.npy"

@@ -266,6 +266,43 @@ def _graph_summary(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _annotate_failure_attribution(rows: list[dict[str, Any]], npu_data: dict[str, Any]) -> None:
+    """Distinguish a node's own failure from failure propagated from its inputs."""
+    incoming: dict[str, list[str]] = {}
+    for edge in npu_data.get("edges", []):
+        src = str(edge.get("src", ""))
+        dst = str(edge.get("dst", ""))
+        if src and dst:
+            incoming.setdefault(dst, []).append(src)
+
+    outcomes: dict[str, str] = {}
+    for row in rows:
+        name = str(row.get("npu_op", ""))
+        if not name:
+            continue
+        if row.get("compared", False) and not row.get("cann_passed", row.get("passed", False)):
+            outcomes[name] = "failed"
+        elif not row.get("compared", False) and row.get("observable", True):
+            outcomes.setdefault(name, "unknown")
+
+    for row in rows:
+        if not row.get("compared", False) or row.get("cann_passed", row.get("passed", False)):
+            continue
+        candidate = str(row.get("npu_op", ""))
+        predecessor_outcomes = [outcomes.get(name) for name in incoming.get(candidate, [])]
+        has_failed_ancestor = "failed" in predecessor_outcomes
+        has_unknown_ancestor = "unknown" in predecessor_outcomes
+        if has_failed_ancestor:
+            row["failure_attribution"] = "UPSTREAM_FAILURE"
+            row["failure_reason"] = "存在已确认整体精度失败的上游节点，当前失败属于上游失败传播"
+        elif has_unknown_ancestor:
+            row["failure_attribution"] = "UPSTREAM_UNCERTAIN"
+            row["failure_reason"] = "上游存在未映射或未独立观测节点，无法确认当前节点是否首次引入误差"
+        else:
+            row["failure_attribution"] = "DIRECT_FAILURE"
+            row["failure_reason"] = "可比较的上游节点均未出现整体 Tensor 失败，当前节点疑似首次失败"
+
+
 def _apply_format(golden: np.ndarray, actual: np.ndarray, golden_fmt: str | None, actual_fmt: str | None) -> tuple[np.ndarray, np.ndarray, list[str]]:
     if not golden_fmt or not actual_fmt or golden_fmt == actual_fmt:
         return golden, actual, []
@@ -973,6 +1010,8 @@ def compare_manifests(
                     }
                 )
 
+    _annotate_failure_attribution(rows, npu_data)
+
     compared = [r for r in rows if r.get("compared", True)]
     unmatched = [r for r in rows if not r.get("compared", True)]
     not_captured = [r for r in unmatched if r.get("status") == "NPU_OUTPUT_NOT_CAPTURED"]
@@ -1186,6 +1225,8 @@ def write_report_csv(path: str | Path, report: dict[str, Any]) -> None:
         "first_nonfinite_cpu",
         "first_nonfinite_npu",
         "cann_unavailable_reason",
+        "failure_attribution",
+        "failure_reason",
     ]
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
