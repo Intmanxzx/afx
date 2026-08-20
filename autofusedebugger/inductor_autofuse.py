@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib
 import re
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -976,6 +977,30 @@ def _compatible_output_shape(left: tuple[int, ...] | None, right: tuple[int, ...
     return {left, right} == {(), (1,)}
 
 
+def _upstream_distance(
+    candidate: str,
+    input_origins: set[str],
+    cpu_inputs: dict[str, set[str]],
+) -> int | None:
+    if not input_origins:
+        return None
+    frontier = list(cpu_inputs.get(candidate, set()))
+    visited = set()
+    distance = 1
+    while frontier:
+        next_frontier = []
+        for current in frontier:
+            if current in input_origins:
+                return distance
+            if current in visited:
+                continue
+            visited.add(current)
+            next_frontier.extend(cpu_inputs.get(current, set()))
+        frontier = next_frontier
+        distance += 1
+    return None
+
+
 def _match_cpu_output(
     op: dict[str, Any],
     records: dict[str, dict[str, Any]],
@@ -1012,20 +1037,71 @@ def _match_cpu_output(
             )
     if not candidates:
         return None
-    best = None
     actual_shape = _output_shape(actual_info)
     has_fusion_provenance = bool(original_types)
     input_origins = input_origins or set()
+    ranked_candidates = []
     for name, info, order, exact_name, name_match, type_match, original_name_match, original_type_match in candidates:
         candidate_shape = _output_shape(info)
         compatible_shape = _compatible_output_shape(candidate_shape, actual_shape)
         exact_shape = candidate_shape == actual_shape
-        upstream_match = bool(input_origins and cpu_inputs and input_origins.intersection(cpu_inputs.get(name, set())))
+        upstream_distance = _upstream_distance(name, input_origins, cpu_inputs or {})
+        ranked_candidates.append(
+            (
+                name,
+                order,
+                exact_name,
+                name_match,
+                type_match,
+                original_name_match,
+                original_type_match,
+                candidate_shape,
+                compatible_shape,
+                exact_shape,
+                upstream_distance,
+            )
+        )
+
+    has_topology_candidate = any(item[8] and item[10] is not None for item in ranked_candidates)
+    if input_origins and cpu_inputs and not has_fusion_provenance and not has_topology_candidate:
+        if diagnostics is not None:
+            exact = next((item for item in ranked_candidates if item[2]), ranked_candidates[0])
+            diagnostics.update(
+                {
+                    "output_index": 0,
+                    "candidate": exact[0],
+                    "candidate_index": 0,
+                    "reference_shape": list(exact[7]) if exact[7] is not None else None,
+                    "npu_shape": list(actual_shape) if actual_shape is not None else None,
+                    "reason": (
+                        "NPU 节点已有上游 CPU origin，但候选 CPU 节点均无法从该 origin 拓扑到达；"
+                        "该节点可能由编译器插入，未建立映射"
+                    ),
+                }
+            )
+        return None
+    best = None
+    for (
+        name,
+        order,
+        exact_name,
+        name_match,
+        type_match,
+        original_name_match,
+        original_type_match,
+        candidate_shape,
+        compatible_shape,
+        exact_shape,
+        upstream_distance,
+    ) in ranked_candidates:
         if has_fusion_provenance:
+            source_exit_match = exact_name and expected_name in op.get("origin_ops", [])
             score = (
                 0 if compatible_shape else 1,
                 0 if exact_shape else 1,
-                0 if upstream_match else 1,
+                0 if upstream_distance is not None else 1,
+                0 if source_exit_match else 1,
+                upstream_distance if upstream_distance is not None else sys.maxsize,
                 0 if original_name_match else 1,
                 0 if original_type_match else 1,
                 0 if exact_name else 1,
@@ -1033,11 +1109,21 @@ def _match_cpu_output(
                 0 if type_match else 1,
                 order,
             )
+        elif has_topology_candidate:
+            score = (
+                0 if compatible_shape else 1,
+                0 if upstream_distance is not None else 1,
+                upstream_distance if upstream_distance is not None else sys.maxsize,
+                0 if exact_shape else 1,
+                0 if exact_name else 1,
+                0 if name_match else 1,
+                0 if type_match else 1,
+                order,
+            )
         else:
             # A non-fused output has no compiler-level semantic alias. Keep an
-            # exact node name ahead of suffix-normalized candidates; otherwise
-            # clone_6 can be incorrectly mapped to an unrelated clone whose
-            # shape happens to match.
+            # exact node name ahead of suffix-normalized candidates when no
+            # compatible topology evidence exists.
             score = (
                 0 if exact_name else 1,
                 0 if exact_shape else 1,

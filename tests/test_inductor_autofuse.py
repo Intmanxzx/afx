@@ -406,6 +406,7 @@ def test_match_cpu_output_prefers_candidate_with_matching_upstream_origin(tmp_pa
         }
     }
     cpu_outputs = {
+        "add_14": {"path": first_path, "shape": (2, 3), "size": 6, "type": "add"},
         "native_layer_norm_1": {"path": first_path, "shape": (2, 3), "size": 6, "type": "native_layer_norm"},
         "native_layer_norm_5": {"path": expected_path, "shape": (2, 3), "size": 6, "type": "native_layer_norm"},
     }
@@ -415,16 +416,118 @@ def test_match_cpu_output_prefers_candidate_with_matching_upstream_origin(tmp_pa
             "name": "fusion__add_14",
             "_exit_name": "add_14",
             "_exit_type": "add_14",
+            "origin_ops": ["sub_2", "add_7"],
             "original_aten_types": ["native_layer_norm"],
         },
         records,
         cpu_outputs,
         set(),
-        cpu_inputs={"native_layer_norm_1": {"add_4"}, "native_layer_norm_5": {"add_12"}},
+        cpu_inputs={"add_14": {"mul_4"}, "native_layer_norm_1": {"add_4"}, "native_layer_norm_5": {"add_12"}},
         input_origins={"add_12"},
     )
 
     assert origin == "native_layer_norm_5"
+
+
+def test_match_cpu_output_prefers_transitive_topology_over_exact_non_fused_name(tmp_path: Path) -> None:
+    npu_path = tmp_path / "npu.npy"
+    exact_path = tmp_path / "clone_13.npy"
+    expected_path = tmp_path / "clone_9.npy"
+    value = np.zeros((3, 4), dtype=np.float32)
+    np.save(npu_path, value)
+    np.save(exact_path, value)
+    np.save(expected_path, value)
+    records = {
+        "clone_13": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (3, 4), "size": 12}],
+        }
+    }
+    cpu_outputs = {
+        "clone_9": {"path": expected_path, "shape": (3, 4), "size": 12, "type": "clone"},
+        "clone_13": {"path": exact_path, "shape": (3, 4), "size": 12, "type": "clone"},
+    }
+
+    origin = _match_cpu_output(
+        {"name": "clone_13", "_exit_name": "clone_13", "_exit_type": "clone"},
+        records,
+        cpu_outputs,
+        set(),
+        cpu_inputs={
+            "clone_9": {"squeeze_2"},
+            "squeeze_2": {"permute_26"},
+            "clone_13": {"squeeze_3"},
+            "squeeze_3": {"permute_38"},
+        },
+        input_origins={"permute_26"},
+    )
+
+    assert origin == "clone_9"
+
+
+def test_match_cpu_output_rejects_compiler_inserted_non_fused_node(tmp_path: Path) -> None:
+    npu_path = tmp_path / "clone_66.npy"
+    cpu_path = tmp_path / "clone.npy"
+    value = np.zeros((3, 4), dtype=np.float32)
+    np.save(npu_path, value)
+    np.save(cpu_path, value)
+    records = {
+        "clone_66": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (3, 4), "size": 12}],
+        }
+    }
+    cpu_outputs = {
+        "clone": {"path": cpu_path, "shape": (3, 4), "size": 12, "type": "clone"},
+    }
+    diagnostics = {}
+
+    origin = _match_cpu_output(
+        {"name": "clone_66", "_exit_name": "clone_66", "_exit_type": "clone"},
+        records,
+        cpu_outputs,
+        set(),
+        diagnostics,
+        cpu_inputs={"clone": {"add"}},
+        input_origins={"add_44"},
+    )
+
+    assert origin is None
+    assert "编译器插入" in diagnostics["reason"]
+
+
+def test_match_cpu_output_prefers_exact_fusion_exit_over_nearer_internal_node(tmp_path: Path) -> None:
+    npu_path = tmp_path / "fusion.npy"
+    squeeze_path = tmp_path / "squeeze_16.npy"
+    sigmoid_path = tmp_path / "sigmoid.npy"
+    value = np.zeros((3, 4), dtype=np.float32)
+    np.save(npu_path, value)
+    np.save(squeeze_path, value)
+    np.save(sigmoid_path, value)
+    records = {
+        "fusion__sigmoid": {
+            "outputs": [{"index": 0, "path": npu_path, "shape": (3, 4), "size": 12}],
+        }
+    }
+    cpu_outputs = {
+        "squeeze_16": {"path": squeeze_path, "shape": (3, 4), "size": 12, "type": "squeeze"},
+        "sigmoid": {"path": sigmoid_path, "shape": (3, 4), "size": 12, "type": "sigmoid"},
+    }
+
+    origin = _match_cpu_output(
+        {
+            "name": "fusion__sigmoid",
+            "_exit_name": "sigmoid",
+            "_exit_type": "sigmoid",
+            "origin_ops": ["squeeze_16", "sigmoid"],
+            "original_aten_types": ["squeeze", "sigmoid"],
+        },
+        records,
+        cpu_outputs,
+        set(),
+        cpu_inputs={"squeeze_16": {"view_162"}, "view_162": {"bmm_48"}, "sigmoid": {"squeeze_16"}},
+        input_origins={"bmm_48"},
+    )
+
+    assert origin == "sigmoid"
 
 
 def test_match_cpu_output_accepts_cann_scalar_shape_normalization(tmp_path: Path) -> None:

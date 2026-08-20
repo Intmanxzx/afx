@@ -291,7 +291,7 @@ _datadump_origin_output_index
 1. **编译器版本差异**：不同 `torch/torch_npu/inductor_npu_ext` 版本会改变 decomposition、FX 节点名、`benchmark.py` 结构或 provenance 属性名。
 2. **融合出口不在 CPU dump 中**：融合 kernel 的 `# return` 节点可能在 CPU 侧被进一步 decomposition、被过滤，或不是 `call_function` Tensor 输出。
 3. **输出元素数不同**：native 候选筛选首先要求 CPU/NPU 输出的元素数量相同；broadcast、reshape、动态 shape 或错误的输出序号都会导致候选被排除。
-4. **多个同类型同元素数节点**：当模型中有多个 `add`、`mul`、`matmul` 形状相同且名称已被重写时，候选可能不唯一。工具会使用 provenance、未使用约束和 CPU FX 稳定顺序选择，但当前不会把候选集合完整写进报告。
+4. **多个同类型同元素数节点**：当模型中有多个 `add`、`mul`、`matmul`、`clone` 形状相同且名称已被重写时，候选可能不唯一。工具先要求候选可从已映射的上游 origin 拓扑到达；融合出口优先使用 benchmark 中的精确出口语义，再用最短路径消歧。非融合节点没有可达候选时按编译器插入节点处理，不会强行映射到同类型节点。不能把 Inductor 节点编号与 CPU FX 节点编号视为稳定对应关系。
 5. **多输出算子**：当前 native 自动映射主要以输出 0 为中心，不能保证一个多输出算子的每个输出都有独立 origin 映射。
 6. **图结构发生变化**：`fullgraph`、`dynamic`、graph break、参数常量化、layout/decomposition 变化都可能让 CPU 图和 NPU post-fusion 图不再拥有相同的出口语义。
 7. **hook 没有覆盖该 kernel**：NPU kernel 没有 live output、生成代码格式变化、hook 安装时机不兼容或 dump 转换失败时，会表现为 `NPU_OUTPUT_NOT_CAPTURED`。
