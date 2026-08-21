@@ -32,7 +32,7 @@ Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化
 
 ### 产品环境介绍
 
-工具以独立 Python 包形式放置在 `/home/xingzhixiong/dfx_dir/autofusedebugger`，依赖 Python 3.9+ 和 NumPy。真实环境中 CPU dump 可来自框架侧 hook，NPU dump 可来自 CANN datadump；当前无真实 NPU 卡时，NPU dump 可由 `/home/xingzhixiong/Ascend/cann-9.1.0/x86_64-linux/simulator` 下的 CAModel 仿真命令产生。工具只消费 `.npy` 与 JSON manifest，不调用非开放 runtime 接口。
+工具以独立 Python 包形式放置在 `/home/xingzhixiong/dfx_dir/Autofuse-Debugger`，依赖 Python 3.9+ 和 NumPy。真实环境中 CPU dump 可来自框架侧 hook，NPU dump 可来自 CANN datadump；当前无真实 NPU 卡时，NPU dump 可由 `/home/xingzhixiong/Ascend/cann-9.1.0/x86_64-linux/simulator` 下的 CAModel 仿真命令产生。工具只消费 `.npy` 与 JSON manifest，不调用非开放 runtime 接口。
 
 ## 软件功能
 
@@ -181,11 +181,11 @@ Python 3.9+，仅依赖 NumPy。CAModel 命令、CANN 路径和 simulator 环境
 新增 CLI：
 
 ```bash
-autofusedbg make-manifest --side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse --graph GRAPH --dump-dir DIR --out OUT
-autofusedbg compare --cpu-manifest CPU --npu-manifest NPU [--out JSON] [--csv CSV] [--rtol R] [--atol A]
-autofusedbg compare-npy --golden A.npy --actual B.npy [--rtol R] [--atol A]
-autofusedbg camodel-info --cann-root CANN_ROOT
-autofusedbg run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [--env KEY=VALUE]
+autofusedebugger make-manifest --side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse --graph GRAPH --dump-dir DIR --out OUT
+autofusedebugger compare --cpu-manifest CPU --npu-manifest NPU [--out JSON] [--csv CSV] [--rtol R] [--atol A]
+autofusedebugger compare-npy --golden A.npy --actual B.npy [--rtol R] [--atol A]
+autofusedebugger camodel-info --cann-root CANN_ROOT
+autofusedebugger run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [--env KEY=VALUE]
 ```
 
 ### 接口检查项
@@ -281,7 +281,7 @@ CLI 参数非法由 argparse 报错。manifest schema 不匹配返回错误。�
 ### 测试命令
 
 ```bash
-cd /home/xingzhixiong/dfx_dir/autofusedebugger
+cd /home/xingzhixiong/dfx_dir/Autofuse-Debugger
 PYTHONPATH=. python3 -m pytest tests
 PYTHONPATH=. python3 -m autofusedebugger --help
 PYTHONPATH=. python3 -m autofusedebugger camodel-info --cann-root /home/xingzhixiong/Ascend/cann-9.1.0

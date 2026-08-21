@@ -214,7 +214,7 @@ def cmd_run_script(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="autofusedbg")
+    parser = argparse.ArgumentParser(prog="autofusedebugger")
     sub = parser.add_subparsers(dest="command_name", required=True)
 
     make = sub.add_parser("make-manifest", help="build a manifest from graph JSON and an npy dump directory")
