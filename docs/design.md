@@ -4,13 +4,13 @@
 
 ## 目的
 
-本文档描述 Autofuse 逐算子精度对比工具原型设计。目标读者是 Graph-autofusion/Autofuse 开发与精度定位人员。期望输出是一个可独立运行的 Python 工具，用于比较模型中每个算子在 CPU baseline 和 NPU/CAModel 路径上的输出误差，并对 NPU 侧融合算子按 origin mapping 对齐到 CPU 侧对应单算子输出。
+本文档描述 Autofuse 逐算子精度对比工具设计。目标读者是 Graph-autofusion/Autofuse 开发与精度定位人员。工具比较同一次 Inductor 编译得到的 pre-fusion CPU、pre-fusion NPU eager 和 NPU Autofuse 输出，并对 NPU 侧融合算子按 compiler provenance 对齐到同一张 pre-fusion FX 图中的出口节点。
 
 ## 范围
 
 包含：
 
-- CPU 与 NPU/CAModel dump manifest 约定。
+- Inductor pre-fusion CPU/NPU eager、NPU Autofuse/CAModel dump manifest 约定。
 - GE dump 图中 `AscBackend` / `FusedAscBackend` 输出到原始单算子输出的映射解析。
 - `.npy` tensor 离线加载、format/dtype/shape 容错和误差指标计算。
 - JSON/CSV/控制台报告。
@@ -28,7 +28,7 @@
 
 ### 项目介绍
 
-Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化时，需要快速判断是哪个融合输出与 CPU 单算子语义输出发生偏差。仓内已有 `autofuse/tools/nwa_tool/fusion_precision_analyzer.py` 支持开启/关闭融合后的 datadump 对比，本工具进一步抽象 CPU baseline 与 NPU/CAModel dump，覆盖“每个模型算子 CPU vs NPU 输出”的对齐场景。
+Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化时，需要快速判断是哪个融合输出与 pre-fusion 单算子语义输出发生偏差。仓内已有 `autofuse/tools/nwa_tool/fusion_precision_analyzer.py` 支持开启/关闭融合后的 datadump 对比，本工具进一步抽象同一张 pre-fusion FX 图的 CPU/NPU eager 输出与 NPU/CAModel dump，覆盖单算子执行误差和融合出口误差的对齐场景。
 
 ### 产品环境介绍
 
@@ -36,7 +36,7 @@ Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化
 
 ## 软件功能
 
-- 从 GE dump 图和 `.npy` dump 目录生成 CPU/NPU manifest。
+- 从 pre-fusion FX/post-fusion 图和 `.npy` dump 目录生成 CPU/NPU/Autofuse manifest。
 - 解析 NPU 侧融合算子输出到 CPU 侧原始单算子输出的映射。
 - 逐输出计算 `max_abs_error`、`mean_abs_error`、`max_rel_error`、`rmse`、`cosine_similarity`、不匹配元素数。
 - 支持 JSON、CSV 和控制台摘要。
@@ -53,7 +53,7 @@ Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化
 
 ## 假设和依赖关系
 
-- CPU 与 NPU/CAModel dump 的输入相同，模型版本相同。
+- CPU 与 NPU eager 回放使用同一张 Inductor pre-fusion GraphModule 和同一份真实 AOT 输入；Autofuse 使用同次编译的输出。`ir_pre_fusion.txt` 只作为 SchedulerNode/Buffer 映射和 shape 校验层，不直接构造 eager 图。
 - NPU 侧 GE dump 图保留 `_datadump_origin_name` 和 `_datadump_origin_output_index` 属性。
 - dump tensor 当前主要以 `.npy` 形式提供。
 - CAModel 如何执行模型和 dump tensor 的具体命令待接入环境确认。
@@ -64,11 +64,12 @@ Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化
 
 整体数据流：
 
-1. CPU baseline 执行后产出单算子输出 `.npy`。
-2. NPU/CAModel 执行后产出 NPU 算子或融合算子输出 `.npy`。
-3. `make-manifest` 根据 GE dump 图和 dump 目录生成 manifest。
-4. `compare` 构建 NPU 输出到 CPU 输出的对照关系；融合输出优先使用 `fusions` 映射，普通输出使用同名同 index。
-5. 加载 tensor，处理 format/dtype/shape 差异，输出报告。
+1. Autofuse 编译时截获 pre-fusion GraphModule、真实 AOT 输入和 NPU kernel 输出。
+2. 在 CPU 和 NPU eager 上回放同一张 pre-fusion 图，产出单算子输出 `.npy`。
+3. 解析同一 `model__N` trace 下的 `ir_pre_fusion.txt`，建立 post-fusion SchedulerNode 到 pre-fusion SchedulerNode 的证据链。
+4. `make-manifest` 根据 pre-fusion/post-fusion 图和 dump 目录生成 manifest。
+5. `compare` 构建 NPU 输出到 pre-fusion 输出的对照关系；融合输出优先使用 IR 校验后的 canonical provenance，普通输出优先使用同一 `canonical_id`。
+6. 加载 tensor，处理 format/dtype/shape 差异，输出报告。
 
 ## 功能需求
 
@@ -76,11 +77,11 @@ Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化
 
 1. 介绍
 
-   从 GE dump 图 JSON 和 `.npy` dump 目录生成 CPU 或 NPU manifest。
+   从 pre-fusion/post-fusion 图 JSON 和 `.npy` dump 目录生成 CPU、NPU eager 或 NPU Autofuse manifest。
 
 2. 输入
 
-   `--side cpu|npu`、`--graph`、`--dump-dir`、`--out`。`--graph` 必须存在，`--dump-dir` 必须为目录。
+   `--side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse`、`--graph`、`--dump-dir`、`--out`。`--graph` 必须存在，`--dump-dir` 必须为目录。
 
 3. 处理
 
@@ -180,7 +181,7 @@ Python 3.9+，仅依赖 NumPy。CAModel 命令、CANN 路径和 simulator 环境
 新增 CLI：
 
 ```bash
-autofusedbg make-manifest --side cpu|npu --graph GRAPH --dump-dir DIR --out OUT
+autofusedbg make-manifest --side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse --graph GRAPH --dump-dir DIR --out OUT
 autofusedbg compare --cpu-manifest CPU --npu-manifest NPU [--out JSON] [--csv CSV] [--rtol R] [--atol A]
 autofusedbg compare-npy --golden A.npy --actual B.npy [--rtol R] [--atol A]
 autofusedbg camodel-info --cann-root CANN_ROOT
@@ -295,7 +296,7 @@ sh build.sh -s --module=autofuse_e2e -j 8
 
 ## 验收标准
 
-- 能从 CPU/NPU GE dump 图和 `.npy` 目录生成 manifest。
+- 能从 pre-fusion/post-fusion 图和 CPU/NPU `.npy` 目录生成 manifest。
 - 能对融合输出使用 origin mapping 对齐 CPU 单算子输出。
 - 能输出 JSON/CSV 报告，并在存在失败项时返回非零。
 - 缺失文件、shape mismatch、format 不支持等异常场景有明确状态。

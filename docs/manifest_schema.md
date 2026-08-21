@@ -9,7 +9,7 @@ manifest 用于解耦“如何采集 CPU/NPU/CAModel dump”和“如何逐算�
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `schema` | string | 固定为 `autofusedebugger-manifest/1` |
-| `side` | string | `cpu` 或 `npu` |
+| `side` | string | `cpu`、`npu_eager`、`npu_autofuse`，或 `inductor_prefusion_cpu` / `inductor_prefusion_npu_eager` |
 | `model` | object | 模型名、图文件等描述信息 |
 | `artifacts.root` | string | tensor dump 文件根目录 |
 | `nodes` | array | 图中节点及其输出 tensor |
@@ -33,7 +33,17 @@ manifest 用于解耦“如何采集 CPU/NPU/CAModel dump”和“如何逐算�
 }
 ```
 
-`path` 可为相对路径或绝对路径。相对路径基于 `artifacts.root` 解析。`format`、`dtype`、`shape` 当前用于校验和容错；实际比较以 `.npy` 内容为准。
+`path` 可为相对路径或绝对路径。相对路径基于 `artifacts.root` 解析。`format`、`dtype`、`shape` 当前用于校验和容错；实际比较以 `.npy` 内容为准。Inductor pre-fusion manifest 额外包含 `canonical_id`，格式为 `graph{index}::{fx_node_name}`；CPU 和 NPU eager manifest 来自同一张 transformed FX 图，因此优先按该 ID 映射。
+
+native NPU Autofuse graph node 还可能包含以下映射诊断字段：
+
+| 字段 | 说明 |
+|---|---|
+| `ir_pre_fusion` | 同一 `model__N` trace 的 pre-fusion SchedulerNode、写入 Buffer、输入依赖和匹配状态 |
+| `mapping_method` | `ir_pre_fusion_canonical_id`、`canonical_source_id_ir_unverified` 或 `provenance_conflict` |
+| `provenance_conflicts` | graph、SchedulerNode 或输出 shape 不一致时的详细原因 |
+
+其中 `ir_pre_fusion` 只用于 NPU post-fusion 到 pre-fusion FX 的映射校验，不用于执行 CPU/NPU eager。CPU/NPU eager 节点仍来自同一 transformed FX GraphModule，并通过 `canonical_id` 对齐。
 
 ## fusions
 
@@ -42,11 +52,14 @@ manifest 用于解耦“如何采集 CPU/NPU/CAModel dump”和“如何逐算�
   "fused_op": "autofuse_0_Add_Relu",
   "fused_index": 0,
   "origin_op": "Relu_1",
-  "origin_index": 0
+  "origin_index": 0,
+  "origin_canonical_id": "graph0::relu_1",
+  "mapping_method": "ir_pre_fusion_canonical_id",
+  "prefusion_ir_scheduler_ids": ["op0"]
 }
 ```
 
-比较时，若 NPU 输出 `(fused_op, fused_index)` 命中 `fusions`，则 CPU 对照项使用 `(origin_op, origin_index)`。否则默认使用同名同 index 的 CPU 输出。
+比较时，若 NPU 输出 `(fused_op, fused_index)` 命中 `fusions`，则优先使用 `origin_canonical_id` 找到 pre-fusion 对照项，再回退到 `(origin_op, origin_index)`。普通 pre-fusion 输出优先按 `canonical_id` 映射；没有 canonical provenance 的旧 manifest 才使用同名或拓扑语义对齐。
 
 ## 状态码
 

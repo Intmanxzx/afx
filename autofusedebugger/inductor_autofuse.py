@@ -20,6 +20,8 @@ _CAPTURE_STATE = threading.local()
 _FUSION_DECISION_GROUPS: list[list[dict[str, Any]]] = []
 _LOWERING_FALLBACKS: list[dict[str, Any]] = []
 _IMPLICIT_FALLBACK_TARGETS: set[Any] = set()
+_PREFUSION_GRAPHS: list[dict[str, Any]] = []
+_PREFUSION_GRAPH_IDS: set[int] = set()
 _ASCENDC_PACKAGE_ROOTS = ("torch_npu._inductor.ascendc", "inductor_npu_ext")
 _DTYPE_NAMES = {
     "b1": "bool",
@@ -40,6 +42,8 @@ def reset_autofuse_diagnostics() -> None:
         _FUSION_DECISION_GROUPS.clear()
         _LOWERING_FALLBACKS.clear()
         _IMPLICIT_FALLBACK_TARGETS.clear()
+        _PREFUSION_GRAPHS.clear()
+        _PREFUSION_GRAPH_IDS.clear()
     _CAPTURE_STATE.fusion_group = None
 
 
@@ -49,6 +53,12 @@ def autofuse_diagnostics() -> dict[str, Any]:
             "fusion_decision_groups": [[dict(item) for item in group] for group in _FUSION_DECISION_GROUPS],
             "lowering_fallbacks": [dict(item) for item in _LOWERING_FALLBACKS],
         }
+
+
+def prefusion_graphs() -> list[dict[str, Any]]:
+    """Return transformed FX graphs captured from the active Inductor compile."""
+    with _CAPTURE_LOCK:
+        return [dict(item) for item in _PREFUSION_GRAPHS]
 
 
 def activate_autofuse_backend() -> str:
@@ -88,6 +98,27 @@ def install_autofuse_intermediate_hooks(package_root: str | None = None) -> None
     original_log_can_fuse = NPUScheduling.__dict__["_log_can_fuse_result"].__func__
     original_lowering_fallback = lowering_summary.fallback
     original_graph_call_function = GraphLowering.call_function
+    original_graph_lowering_init = GraphLowering.__init__
+
+    def graph_lowering_init(graph, gm, *args, **kwargs):  # type: ignore[no-untyped-def]
+        original_graph_lowering_init(graph, gm, *args, **kwargs)
+        example_inputs = kwargs.get("example_inputs")
+        if example_inputs is None and args:
+            example_inputs = args[0]
+        if example_inputs is None:
+            return
+        graph_key = id(gm)
+        with _CAPTURE_LOCK:
+            if graph_key in _PREFUSION_GRAPH_IDS:
+                return
+            _PREFUSION_GRAPH_IDS.add(graph_key)
+            _PREFUSION_GRAPHS.append(
+                {
+                    "graph_id": getattr(graph, "graph_id", None),
+                    "gm": gm,
+                    "example_inputs": tuple(example_inputs),
+                }
+            )
 
     def scheduling_init(scheduling, scheduler):  # type: ignore[no-untyped-def]
         original_scheduling_init(scheduling, scheduler)
@@ -185,6 +216,7 @@ def install_autofuse_intermediate_hooks(package_root: str | None = None) -> None
     NPUScheduling._log_can_fuse_result = classmethod(log_can_fuse_result)
     lowering_summary.fallback = lowering_fallback
     GraphLowering.call_function = graph_call_function
+    GraphLowering.__init__ = graph_lowering_init
     NPUScheduling._autofusedebugger_hooks_installed = True
 
 
@@ -547,6 +579,68 @@ def _ir_blocks(text: str) -> list[dict[str, Any]]:
     return blocks
 
 
+def _expand_scheduler_ids(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        for scheduler_id in re.findall(r"op\d+", str(value)):
+            if scheduler_id not in result:
+                result.append(scheduler_id)
+    return result
+
+
+def _load_pre_fusion_ir(trace_dir: Path) -> dict[str, Any]:
+    ir_path = trace_dir / "ir_pre_fusion.txt"
+    if not ir_path.is_file():
+        return {"status": "UNAVAILABLE", "source": str(ir_path), "by_id": {}}
+    try:
+        text = ir_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"status": "READ_ERROR", "source": str(ir_path), "by_id": {}, "error": str(exc)}
+    blocks = _ir_blocks(text)
+    return {"status": "AVAILABLE", "source": str(ir_path), "by_id": {block["id"]: block for block in blocks}}
+
+
+def _pre_fusion_ir_info(
+    ir_index: dict[str, Any],
+    post_scheduler_id: str,
+    required_scheduler_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Describe the pre-fusion SchedulerNodes behind one post-fusion node."""
+    if ir_index["status"] != "AVAILABLE":
+        return {
+            "status": ir_index["status"],
+            "source": ir_index["source"],
+            "post_scheduler_id": post_scheduler_id,
+            "scheduler_ids": [],
+            "writes": [],
+            "dependencies": [],
+            **({"error": ir_index["error"]} if "error" in ir_index else {}),
+        }
+    by_id = ir_index["by_id"]
+    required = _expand_scheduler_ids(required_scheduler_ids or [post_scheduler_id])
+    matched = [scheduler_id for scheduler_id in required if scheduler_id in by_id]
+    missing = [scheduler_id for scheduler_id in required if scheduler_id not in by_id]
+    writes = []
+    dependencies = []
+    for scheduler_id in matched:
+        block = by_id[scheduler_id]
+        for name in block["writes"]:
+            if name not in writes:
+                writes.append(name)
+        for name in block["dependencies"]:
+            if name not in dependencies:
+                dependencies.append(name)
+    return {
+        "status": "MATCHED" if required and not missing else "PARTIAL" if matched else "NOT_FOUND",
+        "source": ir_index["source"],
+        "post_scheduler_id": post_scheduler_id,
+        "scheduler_ids": matched,
+        "missing_scheduler_ids": missing,
+        "writes": writes,
+        "dependencies": dependencies,
+    }
+
+
 def _hook_capture_map(path: Path) -> dict[str, str]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -773,6 +867,7 @@ def _trace_graph(
     for name, layout in fx_layouts.items():
         layouts.setdefault(name, layout)
     blocks = _ir_blocks(text)
+    pre_fusion_ir = _load_pre_fusion_ir(trace_dir)
     fused_component_parents = _fused_component_parents(blocks)
     fused_components = set(fused_component_parents)
     hook_captures = _hook_capture_map(trace_dir / "output_code.py")
@@ -871,6 +966,11 @@ def _trace_graph(
         if not any(origin_ops):
             origin_ops = [name]
         node_by_scheduler[block["id"]] = name
+        ir_pre_fusion = _pre_fusion_ir_info(
+            pre_fusion_ir,
+            block["id"],
+            fusion.get("scheduler_ids") if fusion is not None else None,
+        )
         outputs = []
         captured_outputs = records.get(name, {}).get("outputs", []) if fusion is not None else []
         if captured_outputs:
@@ -896,6 +996,7 @@ def _trace_graph(
             "_scheduler_id": block["id"],
             "_fallback_kernel": "FallbackKernel" in block["kind"],
             "_kernel_target": f"aten.{block['kernel']}" if block["kernel"] else "",
+            "ir_pre_fusion": ir_pre_fusion,
         }
         if name in fx_input_layouts:
             op["input_desc"] = [
@@ -952,6 +1053,19 @@ def _trace_graph(
     return {"ops": [*data_ops, *ops], "source": str(ir_path)}
 
 
+def _trace_graph_id(path: Path) -> int | None:
+    match = re.search(r"model__(\d+)(?:_|$)", path.name)
+    return int(match.group(1)) if match is not None else None
+
+
+def _trace_sort_key(path: Path) -> tuple[int, str]:
+    """Keep post-fusion traces aligned with Inductor's numeric graph order."""
+    graph_id = _trace_graph_id(path)
+    if graph_id is not None:
+        return graph_id, path.as_posix()
+    return sys.maxsize, path.as_posix()
+
+
 def _canonical_match(value: str) -> str:
     text = _canonical_type(re.sub(r"_\d+$", "", value))
     aliases = {
@@ -967,6 +1081,15 @@ def _canonical_match(value: str) -> str:
 def _output_shape(info: dict[str, Any]) -> tuple[int, ...] | None:
     raw_shape = info.get("shape")
     if raw_shape is None:
+        return None
+    return tuple(int(dim) for dim in raw_shape)
+
+
+def _description_shape(desc: dict[str, Any]) -> tuple[int, ...] | None:
+    raw_shape = desc.get("shape")
+    if isinstance(raw_shape, dict):
+        raw_shape = raw_shape.get("dim")
+    if not isinstance(raw_shape, (list, tuple)):
         return None
     return tuple(int(dim) for dim in raw_shape)
 
@@ -1162,9 +1285,10 @@ def build_inductor_autofuse_graph(
     cpu_outputs: dict[str, dict[str, Any]],
     diagnostics: dict[str, Any] | None = None,
     cpu_graph_data: dict[str, Any] | None = None,
+    prefusion_graph_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = Path(compile_root).resolve()
-    traces = sorted({path.parent for path in root.rglob("ir_post_fusion.txt")})
+    traces = sorted({path.parent for path in root.rglob("ir_post_fusion.txt")}, key=_trace_sort_key)
     if not traces:
         raise RuntimeError(f"TorchInductor post-fusion IR was not generated under {root}")
     all_ops = []
@@ -1174,8 +1298,11 @@ def build_inductor_autofuse_graph(
     decision_groups = diagnostics.get("fusion_decision_groups", [])
     decision_offset = max(0, len(decision_groups) - len(traces))
     lowering_fallbacks = diagnostics.get("lowering_fallbacks", [])
-    for graph_index, trace in enumerate(traces):
-        decision_index = decision_offset + graph_index
+    for trace_position, trace in enumerate(traces):
+        graph_index = _trace_graph_id(trace)
+        if graph_index is None:
+            graph_index = trace_position
+        decision_index = decision_offset + trace_position
         decisions = decision_groups[decision_index] if decision_index < len(decision_groups) else []
         parsed = _trace_graph(trace, records, used_captures, decisions, lowering_fallbacks)
         sources.append(parsed["source"])
@@ -1187,12 +1314,58 @@ def build_inductor_autofuse_graph(
         }
         for op in parsed["ops"]:
             op["name"] = rename.get(op["name"], op["name"])
+            op["_prefusion_graph_index"] = graph_index
             rewritten_inputs = []
             for value in op.get("input", []):
                 source, separator, suffix = value.partition(":")
                 rewritten_inputs.append(f"{rename.get(source, source)}{separator}{suffix}")
             op["input"] = rewritten_inputs
             all_ops.append(op)
+
+    prefusion_lookup: dict[tuple[int, str], tuple[str, str]] = {}
+    prefusion_ops: dict[str, dict[str, Any]] = {}
+    if prefusion_graph_data:
+        for op in prefusion_graph_data.get("graph", [{}])[0].get("op", []):
+            canonical_id = op.get("canonical_id")
+            if not canonical_id:
+                continue
+            prefusion_ops[str(canonical_id)] = op
+            match = re.match(r"graph(\d+)::(.+)$", str(canonical_id))
+            if match:
+                prefusion_lookup[(int(match.group(1)), match.group(2))] = (
+                    str(canonical_id),
+                    str(op.get("name", match.group(2))),
+                )
+
+    def resolve_prefusion_name(graph_index: int, name: str) -> tuple[str, str] | None:
+        direct = prefusion_lookup.get((graph_index, name))
+        if direct is not None:
+            return direct
+        suffix = re.sub(r"^graph\d+\.", "", name)
+        return prefusion_lookup.get((graph_index, suffix))
+
+    for op in all_ops:
+        graph_index = int(op.get("_prefusion_graph_index", 0))
+        origin_node_ids = []
+        origin_names = []
+        for source in op.get("origin_ops", []):
+            resolved = resolve_prefusion_name(graph_index, str(source))
+            if resolved is None:
+                continue
+            canonical_id, display_name = resolved
+            origin_node_ids.append(canonical_id)
+            origin_names.append(display_name)
+        if origin_node_ids:
+            op["origin_node_ids"] = list(dict.fromkeys(origin_node_ids))
+            exit_name = str(op.get("_exit_name", ""))
+            exit_resolved = resolve_prefusion_name(graph_index, exit_name)
+            if exit_resolved is not None:
+                op["canonical_id"] = exit_resolved[0]
+                op["_prefusion_origin_name"] = exit_resolved[1]
+            elif len(origin_node_ids) == 1:
+                op["canonical_id"] = origin_node_ids[0]
+                op["_prefusion_origin_name"] = origin_names[0]
+        op.pop("_prefusion_graph_index", None)
 
     used_cpu: set[str] = set()
     cpu_inputs = _cpu_graph_inputs(cpu_graph_data)
@@ -1202,6 +1375,79 @@ def build_inductor_autofuse_graph(
         if op["type"] == "Data":
             continue
         mapping_diagnostic: dict[str, Any] = {}
+        canonical_origin = op.get("_prefusion_origin_name")
+        if canonical_origin is not None and op.get("canonical_id") is not None:
+            canonical_id = str(op["canonical_id"])
+            reference_op = prefusion_ops.get(canonical_id)
+            reference_shape = None
+            if reference_op is not None:
+                reference_outputs = reference_op.get("output_desc", [])
+                if reference_outputs:
+                    reference_shape = _description_shape(reference_outputs[0])
+            npu_shape = _description_shape(op.get("output_desc", [{}])[0]) if op.get("output_desc") else None
+            if reference_shape is not None and npu_shape is not None and not _compatible_output_shape(
+                reference_shape, npu_shape
+            ):
+                reason = (
+                    "IR/pre-fusion canonical 出口 shape 冲突："
+                    f"reference={list(reference_shape)}, NPU={list(npu_shape)}；"
+                    "未建立映射，避免把不同 graph variant 或不同出口误认为同一算子"
+                )
+                op["provenance_conflicts"] = [
+                    {
+                        "output_index": 0,
+                        "candidate": canonical_id,
+                        "candidate_index": 0,
+                        "reference_shape": list(reference_shape),
+                        "npu_shape": list(npu_shape),
+                        "reason": reason,
+                    }
+                ]
+                op["mapping_method"] = "provenance_conflict"
+                op.pop("canonical_id", None)
+                op.pop("_prefusion_origin_name", None)
+                continue
+            ir_status = op.get("ir_pre_fusion", {}).get("status")
+            mapping_method = (
+                "ir_pre_fusion_canonical_id" if ir_status == "MATCHED" else "canonical_source_id_ir_unverified"
+            )
+            op["mapping_method"] = mapping_method
+            if op.get("output_desc"):
+                attrs = [
+                    {"key": "_autofusedebugger_prefusion_origin_id", "value": {"s": op["canonical_id"]}},
+                    {"key": "_autofusedebugger_cpu_origin_name", "value": {"s": canonical_origin}},
+                    {"key": "_autofusedebugger_cpu_origin_output_index", "value": {"i": 0}},
+                    {"key": "_autofusedebugger_mapping_method", "value": {"s": mapping_method}},
+                ]
+                ir_scheduler_ids = op.get("ir_pre_fusion", {}).get("scheduler_ids", [])
+                if ir_scheduler_ids:
+                    attrs.append(
+                        {
+                            "key": "_autofusedebugger_prefusion_ir_scheduler_ids",
+                            "value": {"s": ",".join(ir_scheduler_ids)},
+                        }
+                    )
+                op["output_desc"][0].setdefault("attr", []).extend(attrs)
+            npu_origins[op["name"]] = canonical_origin
+            op.pop("_exit_name", None)
+            op.pop("_exit_type", None)
+            continue
+        if op.get("mapping_method") == "provenance_conflict":
+            op.pop("_exit_name", None)
+            op.pop("_exit_type", None)
+            continue
+        if prefusion_graph_data:
+            op["provenance_conflicts"] = [
+                {
+                    "output_index": 0,
+                    "candidate": op.get("name", ""),
+                    "candidate_index": 0,
+                    "reason": "Inductor post-fusion 节点没有对应的 pre-fusion canonical source，视为编译器插入节点",
+                }
+            ]
+            op.pop("_exit_name", None)
+            op.pop("_exit_type", None)
+            continue
         input_origins = _resolve_input_origins(op["name"], npu_inputs, npu_origins)
         origin = _match_cpu_output(
             op,
@@ -1229,6 +1475,15 @@ def build_inductor_autofuse_graph(
         "metadata": {
             "topology": "TorchInductor post-fusion / inductor_npu_ext Autofuse",
             "inductor_traces": sources,
+            "pre_fusion_ir": sorted(
+                {
+                    str(op.get("ir_pre_fusion", {}).get("source"))
+                    for op in all_ops
+                    if op.get("ir_pre_fusion", {}).get("source")
+                    and op.get("ir_pre_fusion", {}).get("status") != "UNAVAILABLE"
+                }
+            ),
+            "mapping_policy": "pre-fusion IR SchedulerNode -> transformed FX canonical_id -> CPU/NPU eager",
             "lowering_fallbacks": len(diagnostics.get("lowering_fallbacks", [])),
             "fusion_decisions": sum(len(group) for group in decision_groups),
         },

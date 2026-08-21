@@ -314,6 +314,9 @@ def render_report_html(
     strict_failed = int(summary.get("strict_failed", failed) or 0)
     cann_passed = int(summary.get("cann_passed", strict_passed) or 0)
     cann_failed = int(summary.get("cann_failed", strict_failed) or 0)
+    cann_direct_failed = int(summary.get("cann_direct_failed", 0) or 0)
+    cann_propagated_failed = int(summary.get("cann_propagated_failed", 0) or 0)
+    cann_uncertain_failed = int(summary.get("cann_uncertain_failed", 0) or 0)
     disagreements = int(summary.get("standard_disagreements", 0) or 0)
     pass_rate = (passed / compared * 100.0) if compared else 0.0
     cann_pass_rate = (cann_passed / compared * 100.0) if compared else 0.0
@@ -429,6 +432,7 @@ def render_report_html(
     .metric .value.pass { color: var(--good); }
     .metric .value.fail { color: var(--bad); }
     .metric .value.warn { color: var(--warn); }
+    .metric-note { color: var(--muted); font-size: 10px; line-height: 1.35; margin-top: 3px; }
     .app-main {
       flex: 1 1 auto;
       height: auto;
@@ -816,7 +820,7 @@ def render_report_html(
       <h1>__TITLE__</h1>
       <div class="quick-status">
         <span id="resultStatus" class="status-pill __STATUS_CLASS__">__STATUS_TEXT__</span>
-        <span id="comparisonLabel" class="comparison-label">CPU ↔ NPU Autofuse</span>
+        <span id="comparisonLabel" class="comparison-label">Inductor pre-fusion CPU ↔ NPU Autofuse</span>
         <span class="quick-stat">逐元素对比 <strong id="strictQuickValue">__STRICT_PASSED__/__COMPARED__</strong></span>
         <span class="quick-stat">整体 Tensor 对比 <strong id="cannQuickValue">__CANN_PASSED__/__COMPARED__</strong></span>
         <span class="quick-stat">coverage <strong id="coverageQuickValue">__COVERAGE__%</strong></span>
@@ -831,7 +835,7 @@ def render_report_html(
         <div class="metric"><div class="label">Coverage</div><div id="metricCoverage" class="value __COVERAGE_CLASS__">__COVERAGE__%</div></div>
         <div class="metric"><div class="label">逐元素对比通过</div><div id="metricStrict" class="value">__STRICT_PASSED__/__COMPARED__ (__PASS_RATE__%)</div></div>
         <div class="metric"><div class="label">整体 Tensor 对比通过</div><div id="metricCann" class="value">__CANN_PASSED__/__COMPARED__ (__CANN_PASS_RATE__%)</div></div>
-        <div class="metric"><div class="label">逐元素 / 整体 Tensor 失败</div><div id="metricFailed" class="value __FAILED_CLASS__">__STRICT_FAILED__ / __CANN_FAILED__</div></div>
+        <div class="metric"><div class="label">逐元素失败 / 整体 Tensor 失败</div><div id="metricFailed" class="value __FAILED_CLASS__">__STRICT_FAILED__ / __CANN_FAILED__</div><div class="metric-note">整体：直接 __CANN_DIRECT_FAILED__ · 传播 __CANN_PROPAGATED_FAILED__ · 不确定 __CANN_UNCERTAIN_FAILED__</div></div>
         <div class="metric"><div class="label">Standard Disagreements</div><div id="metricDisagreements" class="value __DISAGREEMENT_CLASS__">__DISAGREEMENTS__</div></div>
         <div class="metric"><div class="label">Unmapped / No dump / Internal</div><div id="metricUnmatched" class="value __UNMATCHED_CLASS__">__UNMAPPED__ / __NOT_CAPTURED__ / __NOT_OBSERVABLE__</div></div>
         <div class="metric"><div class="label">Max Abs / Max Rel</div><div id="metricMaxError" class="value">__MAX_ABS__ / __MAX_REL__</div></div>
@@ -1241,7 +1245,12 @@ def render_report_html(
       document.getElementById('metricCoverage').textContent = `${(Number(summary.coverage || 0) * 100).toFixed(1)}%`;
       document.getElementById('metricStrict').textContent = `${strictPassed}/${compared} (${compared ? (strictPassed / compared * 100).toFixed(1) : '0.0'}%)`;
       document.getElementById('metricCann').textContent = `${cannPassed}/${compared} (${compared ? (cannPassed / compared * 100).toFixed(1) : '0.0'}%)`;
-      document.getElementById('metricFailed').textContent = `${summary.strict_failed ?? (compared - strictPassed)} / ${summary.cann_failed ?? (compared - cannPassed)}`;
+      const cannFailed = Number(summary.cann_failed ?? (compared - cannPassed));
+      const directFailed = Number(summary.cann_direct_failed ?? 0);
+      const propagatedFailed = Number(summary.cann_propagated_failed ?? 0);
+      const uncertainFailed = Number(summary.cann_uncertain_failed ?? 0);
+      document.getElementById('metricFailed').textContent = `${summary.strict_failed ?? (compared - strictPassed)} / ${cannFailed}`;
+      document.getElementById('metricFailed').nextElementSibling.textContent = `整体：直接 ${directFailed} · 传播 ${propagatedFailed} · 不确定 ${uncertainFailed}`;
       document.getElementById('metricDisagreements').textContent = String(summary.standard_disagreements ?? 0);
       document.getElementById('metricUnmatched').textContent = `${summary.unmapped ?? 0} / ${summary.not_captured ?? 0} / ${summary.not_observable ?? 0}`;
       document.getElementById('metricMaxError').textContent = `${fmt(summary.max_abs_error)} / ${fmt(summary.max_rel_error)}`;
@@ -1276,7 +1285,7 @@ def render_report_html(
       rows = (comparison.results || []).map((row, idx) => ({...row, _idx: idx}));
       const graphKey = comparison.right_graph_key || 'npu';
       npuGraph = report.graphs?.[graphKey] || {nodes: [], edges: [], fusions: []};
-      const leftGraphKey = comparison.left === 'NPU eager' ? 'npu_eager' : 'cpu';
+      const leftGraphKey = comparison.left === 'Inductor pre-fusion NPU eager' ? 'npu_eager' : 'cpu';
       cpuGraph = report.graphs?.[leftGraphKey] || {nodes: []};
       mainNpuNodes = new Map((npuGraph.nodes || []).map(node => [node.name, node]));
       cpuNodes = new Map((cpuGraph.nodes || []).map(node => [node.name, node]));
@@ -1358,6 +1367,22 @@ def render_report_html(
       if (fullyAligned) return `${nonfiniteCounts(stats.aligned)}（CPU/NPU 同位置）`;
       return `CPU ${nonfiniteCounts(stats.cpu)}; NPU ${nonfiniteCounts(stats.npu)}; 同类型位置 ${nonfiniteCounts(stats.aligned)}; 不同位置 ${stats.different_positions || 0}`;
     }
+    function cannMetricReasonText(row) {
+      const labels = {
+        ALL_APPLICABLE_METRICS: '所有适用整体指标均通过',
+        ELEMENTWISE_WITHIN_TOLERANCE: '逐元素均在容差内，整体指标不反向判失败',
+        COSINE_NEAR_ZERO_VECTOR: '余弦相似度不适用于近零向量',
+        RELATIVE_EUCLIDEAN_NEAR_ZERO_REFERENCE: '欧氏相对距离不适用于近零参考 Tensor',
+        KL_SIGNED_TENSOR: 'KL 散度不适用于包含负值的有符号 Tensor',
+        KL_NEAR_ZERO_DISTRIBUTION: 'KL 散度不适用于近零分布',
+        EXACT_MATCH: '整数或布尔 Tensor 完全一致',
+        EXACT_MISMATCH: '整数或布尔 Tensor 不完全一致',
+        EMPTY_TENSOR: '空 Tensor',
+      };
+      const reason = row?.cann_metric_reason;
+      if (!reason) return '-';
+      return String(reason).split(';').map(item => labels[item] || item).join('；');
+    }
     function firstNonfiniteText(row) {
       const stats = row?.nonfinite;
       if (!stats?.present) return '-';
@@ -1367,6 +1392,8 @@ def render_report_html(
       if (row?.[key] !== undefined && row?.[key] !== null && row?.[key] !== '') return fmt(row[key]);
       if (row?.cann_unavailable_reason === 'ALIGNED_NONFINITE') return `N/A（${nonfiniteBrief(row)}；一致性通过）`;
       if (row?.cann_unavailable_reason === 'NONFINITE_MISMATCH') return `N/A（非有限值不一致）`;
+      const reason = cannMetricReasonText(row);
+      if (reason !== '-') return `N/A（${reason}）`;
       return '-';
     }
     function finiteMetricText(row, key) {
@@ -2090,6 +2117,7 @@ def render_report_html(
       if (row?.compared !== false) detailRows.splice(5, 0,
         ['逐元素对比容差', `${fmt(row?.rtol)} / ${fmt(row?.atol)} (${row?.tolerance_source || '-'})`],
         ['整体 Tensor 指标阈值', 'cos>0.99 / rel_euclid<0.05 / KL<0.005'],
+        ['整体 Tensor 指标说明', cannMetricReasonText(row)],
       );
       if (row?.nonfinite?.present) detailRows.push(
         ['非有限值统计', nonfiniteBrief(row)],
@@ -2977,7 +3005,7 @@ def render_report_html(
       [...new Set(rows.map(row => row.npu_type || '').filter(Boolean))].sort().forEach(type => { const option = document.createElement('option'); option.value = type; option.textContent = type; typeFilter.appendChild(option); });
     }
     function downloadCsv() {
-      const columns = ['compared','passed','strict_passed','cann_passed','status','mapping_method','unmapped_reason','observable','cpu_op','cpu_index','npu_op','npu_index','npu_type','rtol','atol','tolerance_source','shape','dtype','storage_dtype','max_abs_error','mean_abs_error','max_rel_error','rmse','cosine_similarity','cann_cosine_similarity','relative_euclidean_distance','kl_divergence','rmse_mae_ratio','cann_warning','mismatched','num_elements','finite_pair_count','max_error_index','nonfinite_summary','first_nonfinite_index','first_nonfinite_cpu','first_nonfinite_npu','cann_unavailable_reason'];
+      const columns = ['compared','passed','strict_passed','cann_passed','status','mapping_method','unmapped_reason','observable','cpu_op','cpu_index','npu_op','npu_index','npu_type','rtol','atol','tolerance_source','shape','dtype','storage_dtype','max_abs_error','mean_abs_error','max_rel_error','rmse','cosine_similarity','cann_cosine_similarity','relative_euclidean_distance','kl_divergence','rmse_mae_ratio','cann_warning','mismatched','num_elements','finite_pair_count','max_error_index','nonfinite_summary','first_nonfinite_index','first_nonfinite_cpu','first_nonfinite_npu','cann_unavailable_reason','cann_metric_reason'];
       const lines = [columns.join(',')];
       for (const row of state.filtered) lines.push(columns.map(key => { const raw = Array.isArray(row[key]) ? row[key].join('x') : (row[key] ?? ''); return '"' + String(raw).replace(/"/g, '""') + '"'; }).join(','));
       const blob = new Blob([lines.join('\\n') + '\\n'], {type: 'text/csv'}), link = document.createElement('a');
@@ -3088,6 +3116,9 @@ def render_report_html(
         "__FAILED__": str(failed),
         "__STRICT_FAILED__": str(strict_failed),
         "__CANN_FAILED__": str(cann_failed),
+        "__CANN_DIRECT_FAILED__": str(cann_direct_failed),
+        "__CANN_PROPAGATED_FAILED__": str(cann_propagated_failed),
+        "__CANN_UNCERTAIN_FAILED__": str(cann_uncertain_failed),
         "__DISAGREEMENTS__": str(disagreements),
         "__UNMATCHED__": str(unmatched),
         "__UNMAPPED__": str(unmapped),

@@ -19,9 +19,10 @@ def get_ops(graph_data: dict[str, Any]) -> list[dict[str, Any]]:
     return ops if isinstance(ops, list) else []
 
 
-def parse_origin_attrs(attrs: list[dict[str, Any]]) -> tuple[str | None, int | None]:
+def parse_origin_attrs(attrs: list[dict[str, Any]]) -> tuple[str | None, int | None, str | None]:
     origin_name = None
     origin_index = None
+    origin_canonical_id = None
     for attr in attrs:
         key = attr.get("key", "")
         value = attr.get("value", {})
@@ -30,7 +31,9 @@ def parse_origin_attrs(attrs: list[dict[str, Any]]) -> tuple[str | None, int | N
         elif key in {"_autofusedebugger_cpu_origin_output_index", "_datadump_origin_output_index"}:
             raw = value.get("i")
             origin_index = int(raw) if raw is not None else None
-    return origin_name, origin_index
+        elif key == "_autofusedebugger_prefusion_origin_id":
+            origin_canonical_id = value.get("s")
+    return origin_name, origin_index, origin_canonical_id
 
 
 def extract_fusions(ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -38,17 +41,27 @@ def extract_fusions(ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for op in ops:
         fused_op = op.get("name", "")
         for idx, desc in enumerate(op.get("output_desc", [])):
-            origin_op, origin_index = parse_origin_attrs(desc.get("attr", []))
+            attrs = desc.get("attr", [])
+            origin_op, origin_index, origin_canonical_id = parse_origin_attrs(attrs)
             if origin_op is None or origin_index is None:
                 continue
-            fusions.append(
-                {
-                    "fused_op": fused_op,
-                    "fused_index": idx,
-                    "origin_op": origin_op,
-                    "origin_index": origin_index,
-                }
-            )
+            item = {
+                "fused_op": fused_op,
+                "fused_index": idx,
+                "origin_op": origin_op,
+                "origin_index": origin_index,
+                "fused_canonical_id": op.get("canonical_id"),
+                "origin_node_ids": op.get("origin_node_ids", []),
+                "origin_canonical_id": origin_canonical_id,
+            }
+            for attr in attrs:
+                key = attr.get("key", "")
+                value = attr.get("value", {})
+                if key == "_autofusedebugger_mapping_method" and value.get("s"):
+                    item["mapping_method"] = value["s"]
+                elif key == "_autofusedebugger_prefusion_ir_scheduler_ids" and value.get("s"):
+                    item["prefusion_ir_scheduler_ids"] = value["s"].split(",")
+            fusions.append(item)
     return fusions
 
 
@@ -145,8 +158,15 @@ def build_manifest(
     out_path: str | Path,
     model_name: str | None = None,
 ) -> dict[str, Any]:
-    if side not in {"cpu", "npu", "npu_eager", "npu_autofuse"}:
-        raise ValueError("side must be 'cpu', 'npu_eager', or 'npu_autofuse'")
+    if side not in {
+        "cpu",
+        "npu",
+        "npu_eager",
+        "npu_autofuse",
+        "inductor_prefusion_cpu",
+        "inductor_prefusion_npu_eager",
+    }:
+        raise ValueError("unsupported manifest side")
     graph_file = Path(graph_path).resolve()
     root = Path(dump_dir).resolve()
     if not graph_file.is_file():
@@ -161,11 +181,16 @@ def build_manifest(
         name = op.get("name", "")
         node = {
             "name": name,
+            "display_name": op.get("display_name", name),
+            "canonical_id": op.get("canonical_id"),
             "type": op.get("type", ""),
             "outputs": [],
             "origin_ops": op.get("origin_ops", []),
+            "origin_node_ids": op.get("origin_node_ids", []),
             "original_aten_types": op.get("original_aten_types", []),
             "origin_subgraph": op.get("origin_subgraph"),
+            "ir_pre_fusion": op.get("ir_pre_fusion"),
+            "mapping_method": op.get("mapping_method"),
             "unfused_reasons": op.get("unfused_reasons", []),
             "provenance_conflicts": op.get("provenance_conflicts", []),
         }

@@ -6,15 +6,15 @@
 /mnt/workspace/gitCode/cann/graph-autofusion/autofuse/examples/af_qwen/af_qwen.py
 ```
 
-报告由 `CPU`、`NPU eager` 和 `NPU Autofuse` 三条执行路径共同生成。示例截图中的具体数值属于该次运行结果，实际模型和输入变化后会随报告更新。
+报告由 Inductor pre-fusion `CPU`、同一张 pre-fusion FX 图的 `NPU eager` 和 `NPU Autofuse` 三条执行路径共同生成。示例截图中的具体数值属于该次运行结果，实际模型和输入变化后会随报告更新。
 
 ## 1. 三方精度对比
 
 运行 `run-script` 后，报告顶部提供三组对比页签：
 
-- `CPU ↔ NPU Autofuse`：默认视图，用于观察 Autofuse 相对 CPU 的精度结果。
-- `CPU ↔ NPU eager`：用于区分 NPU 原生 eager 执行与 CPU 的差异。
-- `NPU eager ↔ NPU Autofuse`：用于定位误差是否由 Autofuse 融合引入。
+- `Inductor pre-fusion CPU ↔ NPU Autofuse`：默认视图，用于观察 Autofuse 相对 pre-fusion CPU 的精度结果。
+- `Inductor pre-fusion CPU ↔ Inductor pre-fusion NPU eager`：用于区分 NPU 单算子执行与 CPU 的差异。
+- `Inductor pre-fusion NPU eager ↔ NPU Autofuse`：用于定位误差是否由 Autofuse 融合引入。
 
 切换页签时，顶部统计、主图、算子明细表和算子名称会同步切换。
 
@@ -106,8 +106,8 @@ python3 -m autofusedebugger run-script \
 该命令会自动完成：
 
 1. 捕获模型和输入。
-2. 采集 CPU `torch.export`/FX 输出。
-3. 在 NPU 上执行 eager 导出图并采集输出。
+2. 从同一次 Inductor 编译中取得 pre-fusion transformed FX 图及真实 AOT 输入，在 CPU 上回放并采集输出。
+3. 在 NPU eager 上回放同一张 pre-fusion FX 图并采集输出。
 4. 在 NPU 上执行 Inductor + Autofuse 并采集输出。
 5. 采集 `AutoFuseAfterOptimize` 图和 Queue/Buffer 信息。
 6. 生成三方精度 JSON、CSV 和 HTML 报告。

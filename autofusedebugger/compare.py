@@ -53,6 +53,7 @@ class TensorRef:
     fmt: str | None
     node_type: str
     dtype: str | None = None
+    canonical_id: str | None = None
 
 
 def _check_manifest(data: dict[str, Any], path: str | Path) -> None:
@@ -73,16 +74,44 @@ def _index_manifest(data: dict[str, Any]) -> dict[tuple[str, int], TensorRef]:
             raw_path = out.get("path")
             path = resolve_artifact(root, raw_path) if raw_path else None
             index[(name, out_index)] = TensorRef(
-                name, out_index, path, out.get("format"), node_type, out.get("dtype")
+                name,
+                out_index,
+                path,
+                out.get("format"),
+                node_type,
+                out.get("dtype"),
+                node.get("canonical_id"),
             )
     return index
+
+
+def _canonical_index(data: dict[str, Any]) -> dict[tuple[str, int], tuple[str, int]]:
+    result: dict[tuple[str, int], tuple[str, int]] = {}
+    for node in data.get("nodes", []):
+        canonical_id = node.get("canonical_id")
+        if not canonical_id or node.get("type", "") in NON_COMPARABLE_NODE_TYPES:
+            continue
+        name = str(node.get("name", ""))
+        for output in node.get("outputs", []):
+            index = int(output.get("index", 0))
+            result[(str(canonical_id), index)] = (name, index)
+    return result
 
 
 def _fusion_index(data: dict[str, Any]) -> dict[tuple[str, int], tuple[str, int]]:
     result = {}
     for item in data.get("fusions", []):
-        result[(item["fused_op"], int(item["fused_index"]))] = (item["origin_op"], int(item["origin_index"]))
+        origin = item.get("origin_canonical_id") or item["origin_op"]
+        result[(item["fused_op"], int(item["fused_index"]))] = (origin, int(item["origin_index"]))
     return result
+
+
+def _fusion_mapping_method_index(data: dict[str, Any]) -> dict[tuple[str, int], str]:
+    return {
+        (item["fused_op"], int(item["fused_index"])): str(item["mapping_method"])
+        for item in data.get("fusions", [])
+        if item.get("mapping_method")
+    }
 
 
 def _provenance_conflict_index(data: dict[str, Any]) -> dict[tuple[str, int], dict[str, Any]]:
@@ -167,6 +196,16 @@ def _eager_topology_mapping(
     cpu_data: dict[str, Any], eager_data: dict[str, Any]
 ) -> dict[tuple[str, int], tuple[str, int]]:
     """Align device-specific export graphs without trusting shifted FX names."""
+    cpu_canonical = _canonical_index(cpu_data)
+    eager_canonical = _canonical_index(eager_data)
+    if cpu_canonical and eager_canonical:
+        direct = {}
+        for canonical_key, eager_key in eager_canonical.items():
+            cpu_key = cpu_canonical.get(canonical_key)
+            if cpu_key is not None:
+                direct[eager_key] = cpu_key
+        if direct:
+            return direct
     cpu_outputs = _alignment_outputs(cpu_data)
     eager_outputs = _alignment_outputs(eager_data)
     cpu_count = len(cpu_outputs)
@@ -337,6 +376,7 @@ def _cann_metrics(
             "kl_divergence": None,
             "rmse_mae_ratio": None,
             "cann_passed": passed,
+            "cann_metric_reason": "EXACT_MATCH" if passed else "EXACT_MISMATCH",
         }
 
     x = golden_float64 if golden_float64 is not None else np.asarray(golden).astype(np.float64).reshape(-1)
@@ -348,55 +388,62 @@ def _cann_metrics(
             "kl_divergence": 0.0,
             "rmse_mae_ratio": 1.0,
             "cann_passed": True,
+            "cann_metric_reason": "EMPTY_TENSOR",
         }
 
     x_norm = float(np.linalg.norm(x))
     y_norm = float(np.linalg.norm(y))
-    if x_norm <= CANN_EPSILON and y_norm <= CANN_EPSILON:
-        cosine = 1.0
-    elif x_norm <= CANN_EPSILON or y_norm <= CANN_EPSILON:
-        cosine = 0.0
+    vector_epsilon = CANN_EPSILON * max(1.0, float(np.sqrt(x.size)))
+    unavailable_metrics: list[str] = []
+    if x_norm <= vector_epsilon or y_norm <= vector_epsilon:
+        cosine = None
+        unavailable_metrics.append("COSINE_NEAR_ZERO_VECTOR")
     else:
-        cosine = min(float(np.dot(x, y) / (x_norm * y_norm)), 1.0)
+        cosine = min(max(float(np.dot(x, y) / (x_norm * y_norm)), -1.0), 1.0)
 
     diff = difference if difference is not None else x - y
-    relative_euclidean = (
-        0.0
-        if y_norm <= CANN_EPSILON
-        else float(np.sqrt(np.dot(diff, diff)) / y_norm)
-    )
-
-    x_min = float(np.min(x))
-    y_min = float(np.min(y))
-    x_range = float(np.max(x) - x_min)
-    y_range = float(np.max(y) - y_min)
-    x_normalized = (x - x_min) / x_range if x_range > CANN_EPSILON else x
-    y_normalized = (y - y_min) / y_range if y_range > CANN_EPSILON else y
-    x_normalized = np.maximum(x_normalized, CANN_EPSILON)
-    y_normalized = np.maximum(y_normalized, CANN_EPSILON)
-    x_sum = float(np.sum(x_normalized))
-    y_sum = float(np.sum(y_normalized))
-    if x_sum <= CANN_EPSILON or y_sum <= CANN_EPSILON:
-        kl_divergence = 0.0
+    if y_norm <= vector_epsilon:
+        relative_euclidean = None
+        unavailable_metrics.append("RELATIVE_EUCLIDEAN_NEAR_ZERO_REFERENCE")
     else:
-        probability = x_normalized / x_sum
-        reference = y_normalized / y_sum
-        kl_divergence = float(np.sum(probability * np.log(probability / reference)))
-        if abs(kl_divergence) <= CANN_EPSILON:
-            kl_divergence = 0.0
+        relative_euclidean = float(np.sqrt(np.dot(diff, diff)) / y_norm)
+
+    # KL divergence is defined for non-negative distributions. The old
+    # min-max normalization converted signed or nearly constant tensors into
+    # artificial distributions and could report a large KL for a 1e-7 error.
+    if np.min(x) < 0 or np.min(y) < 0:
+        kl_divergence = None
+        unavailable_metrics.append("KL_SIGNED_TENSOR")
+    else:
+        x_sum = float(np.sum(x))
+        y_sum = float(np.sum(y))
+        distribution_epsilon = CANN_EPSILON * max(1.0, float(x.size))
+        if x_sum <= distribution_epsilon or y_sum <= distribution_epsilon:
+            kl_divergence = None
+            unavailable_metrics.append("KL_NEAR_ZERO_DISTRIBUTION")
+        else:
+            smoothing = CANN_EPSILON
+            probability = (x + smoothing) / (x_sum + smoothing * x.size)
+            reference = (y + smoothing) / (y_sum + smoothing * y.size)
+            kl_divergence = float(np.sum(probability * np.log(probability / reference)))
+            if abs(kl_divergence) <= CANN_EPSILON:
+                kl_divergence = 0.0
 
     mae = float(np.mean(np.abs(diff)))
     rmse = float(np.sqrt(np.dot(diff, diff) / diff.size))
     rmse_mae_ratio = rmse / mae if mae > CANN_EPSILON else 1.0
-    passed = bool(
-        np.isfinite(cosine)
-        and np.isfinite(relative_euclidean)
-        and np.isfinite(kl_divergence)
-        and cosine > CANN_COSINE_THRESHOLD
-        and relative_euclidean < CANN_RELATIVE_EUCLIDEAN_THRESHOLD
-        and kl_divergence < CANN_KL_DIVERGENCE_THRESHOLD
-    )
-    def finite_or_none(value: float) -> float | None:
+    checks: list[bool] = []
+    if cosine is not None:
+        checks.append(bool(np.isfinite(cosine) and cosine > CANN_COSINE_THRESHOLD))
+    if relative_euclidean is not None:
+        checks.append(bool(np.isfinite(relative_euclidean) and relative_euclidean < CANN_RELATIVE_EUCLIDEAN_THRESHOLD))
+    if kl_divergence is not None:
+        checks.append(bool(np.isfinite(kl_divergence) and kl_divergence < CANN_KL_DIVERGENCE_THRESHOLD))
+    passed = bool(checks) and all(checks)
+
+    def finite_or_none(value: float | None) -> float | None:
+        if value is None:
+            return None
         return float(value) if np.isfinite(value) else None
 
     return {
@@ -406,6 +453,9 @@ def _cann_metrics(
         "rmse_mae_ratio": finite_or_none(rmse_mae_ratio),
         "cann_warning": bool(np.isfinite(rmse_mae_ratio) and rmse_mae_ratio > CANN_RMSE_MAE_RATIO_WARN),
         "cann_passed": passed,
+        "cann_metric_reason": "ALL_APPLICABLE_METRICS"
+        if not unavailable_metrics
+        else ";".join(unavailable_metrics),
     }
 
 
@@ -597,8 +647,22 @@ def _metrics_with_close(
             "rmse_mae_ratio": None,
             "cann_warning": False,
             "cann_passed": bool(nonfinite_aligned and strict_passed),
+            "cann_metric_reason": "ALIGNED_NONFINITE" if nonfinite_aligned else "NONFINITE_MISMATCH",
         }
         cann_unavailable_reason = "ALIGNED_NONFINITE" if nonfinite_aligned else "NONFINITE_MISMATCH"
+    aggregate_unavailable = bool(
+        cann.get("cann_metric_reason")
+        and cann.get("cann_metric_reason") != "ALL_APPLICABLE_METRICS"
+    )
+    if strict_passed and aggregate_unavailable and (not nonfinite["present"] or nonfinite_aligned):
+        # A tensor that passes every element-wise dtype-aware tolerance cannot
+        # be rejected by an aggregate metric that is undefined or unstable
+        # for near-zero/signed data.
+        cann["cann_passed"] = True
+        if cann.get("cann_metric_reason") != "ELEMENTWISE_WITHIN_TOLERANCE":
+            cann["cann_metric_reason"] = (
+                f"{cann.get('cann_metric_reason', 'AGGREGATE_METRICS')};ELEMENTWISE_WITHIN_TOLERANCE"
+            )
     return {
         "max_abs_error": max_abs,
         "mean_abs_error": mean_abs,
@@ -803,12 +867,16 @@ def compare_manifests(
     cpu_index = _index_manifest(cpu_data)
     npu_index = _index_manifest(npu_data)
     fusions = _fusion_index(npu_data)
+    fusion_mapping_methods = _fusion_mapping_method_index(npu_data)
     provenance_conflicts = _provenance_conflict_index(npu_data)
+    cpu_canonical = _canonical_index(cpu_data)
+    npu_canonical = _canonical_index(npu_data)
     cpu_signatures = dict(_alignment_outputs(cpu_data))
     npu_signatures = dict(_alignment_outputs(npu_data))
     eager_mapping = (
         _eager_topology_mapping(cpu_data, npu_data)
-        if cpu_data.get("side") == "cpu" and npu_data.get("side") == "npu_eager"
+        if cpu_data.get("side") in {"cpu", "inductor_prefusion_cpu"}
+        and npu_data.get("side") in {"npu_eager", "inductor_prefusion_npu_eager"}
         else None
     )
 
@@ -852,10 +920,27 @@ def compare_manifests(
         cpu_key = origin_key
         mapping_method = "compiler_origin" if origin_key is not None else None
         missing_aliased_origin = False
-        if origin_key is not None and origin_aliases is not None:
+        if cpu_key is not None and "::" in cpu_key[0]:
+            canonical_key = cpu_canonical.get(cpu_key)
+            if canonical_key is not None:
+                cpu_key = canonical_key
+                mapping_method = "canonical_source_id"
+            else:
+                cpu_key = None
+                mapping_method = None
+                missing_aliased_origin = True
+        if origin_key is not None and origin_aliases is not None and "::" not in origin_key[0]:
             cpu_key = origin_aliases.get(origin_key)
             missing_aliased_origin = cpu_key is None
             mapping_method = "compiler_origin_via_eager" if cpu_key is not None else None
+        if cpu_key is None:
+            canonical_id = npu_index[npu_key].canonical_id
+            if canonical_id:
+                direct_key = cpu_canonical.get((str(canonical_id), npu_key[1]))
+                if direct_key is not None:
+                    cpu_key = direct_key
+                    mapping_method = "canonical_source_id"
+                    missing_aliased_origin = False
         if cpu_key is None and eager_mapping is not None and npu_key in eager_mapping:
             cpu_key = eager_mapping[npu_key]
             mapping_method = "same_name" if cpu_key == npu_key else "topology_signature"
@@ -868,6 +953,8 @@ def compare_manifests(
         ):
             cpu_key = npu_key
             mapping_method = "same_name"
+        if cpu_key is not None and npu_key in fusion_mapping_methods:
+            mapping_method = fusion_mapping_methods[npu_key]
         conflict = provenance_conflicts.get(npu_key)
         if cpu_key is not None and str(mapping_method or "").startswith("compiler_origin"):
             conflict_reason = _compiler_origin_conflict_reason(
@@ -944,6 +1031,9 @@ def compare_manifests(
         row["mapping_method"] = mapping_method
         row["unmapped_reason"] = {
             "compiler_origin": "",
+            "canonical_source_id": "按同一份 Inductor pre-fusion canonical node ID 映射",
+            "ir_pre_fusion_canonical_id": "先按同一 model__N 的 ir_pre_fusion SchedulerNode 校验，再映射到 transformed FX canonical_id",
+            "canonical_source_id_ir_unverified": "按 canonical_id 映射；当前 trace 缺少可验证的 ir_pre_fusion SchedulerNode 证据",
             "compiler_origin_via_eager": "compiler origin 经 CPU↔NPU eager 语义映射",
             "topology_signature": "按拓扑顺序、算子类型、dtype 和完整 shape 语义对齐",
             "same_name": "按同名同输出序号映射",
@@ -1027,6 +1117,9 @@ def compare_manifests(
     passed = len(compared) - len(failed)
     cann_failed = [r for r in compared if not r.get("cann_passed", False)]
     cann_passed = len(compared) - len(cann_failed)
+    cann_direct_failed = [r for r in cann_failed if r.get("failure_attribution") == "DIRECT_FAILURE"]
+    cann_propagated_failed = [r for r in cann_failed if r.get("failure_attribution") == "UPSTREAM_FAILURE"]
+    cann_uncertain_failed = [r for r in cann_failed if r.get("failure_attribution") == "UPSTREAM_UNCERTAIN"]
     dual_failed = [
         r for r in compared if not r.get("strict_passed", r.get("passed", False)) or not r.get("cann_passed", False)
     ]
@@ -1077,6 +1170,9 @@ def compare_manifests(
             "cann_status": "FAIL" if cann_failed else ("INCOMPLETE" if incomplete else "PASS"),
             "cann_passed": cann_passed,
             "cann_failed": len(cann_failed),
+            "cann_direct_failed": len(cann_direct_failed),
+            "cann_propagated_failed": len(cann_propagated_failed),
+            "cann_uncertain_failed": len(cann_uncertain_failed),
             "dual_status": "FAIL" if dual_failed else ("INCOMPLETE" if incomplete else "PASS"),
             "dual_passed": dual_passed,
             "dual_failed": len(dual_failed),
@@ -1101,7 +1197,7 @@ def compare_three_manifests(
     atol: float | None = None,
     save_elementwise_data: bool = False,
 ) -> dict[str, Any]:
-    """Compare CPU eager/export, NPU eager, and NPU Autofuse outputs pairwise."""
+    """Compare shared Inductor pre-fusion CPU/NPU eager and NPU Autofuse outputs."""
     tensor_payload_cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] | None = (
         {} if save_elementwise_data else None
     )
@@ -1120,7 +1216,7 @@ def compare_three_manifests(
         rtol=rtol,
         atol=atol,
         save_elementwise_data=save_elementwise_data,
-        progress_label="CPU vs NPU eager",
+        progress_label="Inductor pre-fusion CPU vs NPU eager",
         tensor_payload_cache=tensor_payload_cache,
     )
     origin_aliases = {
@@ -1141,13 +1237,22 @@ def compare_three_manifests(
     )
     pairs = {
         "cpu_npu_autofuse": {
-            "left": "CPU", "right": "NPU Autofuse", "right_graph_key": "npu", "report": cpu_autofuse,
+            "left": "Inductor pre-fusion CPU",
+            "right": "NPU Autofuse",
+            "right_graph_key": "npu",
+            "report": cpu_autofuse,
         },
         "cpu_npu_eager": {
-            "left": "CPU", "right": "NPU eager", "right_graph_key": "npu_eager", "report": cpu_eager,
+            "left": "Inductor pre-fusion CPU",
+            "right": "Inductor pre-fusion NPU eager",
+            "right_graph_key": "npu_eager",
+            "report": cpu_eager,
         },
         "npu_eager_npu_autofuse": {
-            "left": "NPU eager", "right": "NPU Autofuse", "right_graph_key": "npu", "report": eager_autofuse,
+            "left": "Inductor pre-fusion NPU eager",
+            "right": "NPU Autofuse",
+            "right_graph_key": "npu",
+            "report": eager_autofuse,
         },
     }
     primary = pairs["cpu_npu_autofuse"]["report"]

@@ -4,7 +4,7 @@
 
 本文描述的是当前代码行为，不是理想化的编译器 IR 对齐方案。对应实现主要位于：
 
-- `autofusedebugger/torch_model.py`：CPU `torch.export` 输出采集，以及 native Inductor 路径的辅助命名匹配。
+- `autofusedebugger/torch_model.py`：从同一次 Inductor 编译截获 pre-fusion transformed FX 图和真实 AOT 输入，并在 CPU/NPU eager 回放。
 - `autofusedebugger/inductor_autofuse.py`：native Inductor + AscendC/Autofuse 路径的 post-fusion 图解析和 CPU origin 匹配。
 - `autofusedebugger/npu_examples.py`：旧 GE/Qwen 适配路径中的 compiler provenance 解析。
 - `autofusedebugger/graph.py`：把 NPU 图输出属性转换为 manifest 的 `fusions` 映射。
@@ -26,22 +26,16 @@ NPU fused_kernel.output.0 -> CPU 融合子图出口单算子.output.0
 
 融合子图内部的 `Add`、`Mul`、`Cast` 等节点不会因为出现在 ASCIR 子图中就被单独加入主精度对比结果。
 
-## 2. 当前推荐路径：native Inductor + Autofuse
+## 2. 当前推荐路径：同一张 pre-fusion FX 图
 
 `run-script` 和 `run-torch-model` 使用以下链路：
 
 ```text
-CPU:
-  torch.export
-    -> run_decompositions()
-    -> ExportedProgram FX Interpreter
-    -> CPU FX/ATen 节点输出 dump
-
-NPU eager:
-  torch.export（NPU 设备语义）
-    -> run_decompositions()
-    -> ExportedProgram FX Interpreter
-    -> NPU eager FX/ATen 节点输出 dump
+Inductor pre-fusion CPU/NPU eager:
+  同一次 torch.compile 的 transformed FX GraphModule
+    -> compiled FX wrapper 真实 boxed AOT 输入
+    -> CPU / NPU eager FX Interpreter 回放
+    -> 两侧共享 canonical_id 的节点输出 dump
 
 NPU Autofuse:
   torch.compile(options={"npu_backend": "ascendc"})
@@ -51,27 +45,28 @@ NPU Autofuse:
     -> intermediate hook 输出 dump
 ```
 
-### 2.1 CPU 节点名从哪里来
+### 2.1 canonical_id 从哪里来
 
-CPU 侧首先执行：
+工具不再分别执行 CPU/NPU `torch.export` 来构造两张基准图。NPU Autofuse 编译时，`GraphLowering` 会截获进入 Inductor 的 transformed FX `GraphModule`；compiled FX wrapper 第一次真实执行时，再截获与该图 placeholder 顺序一致的 boxed AOT 输入。随后对同一份 GraphModule 做独立副本回放：
 
 ```python
-exported = torch.export.export(model, inputs, kwargs)
-exported = exported.run_decompositions()
+runtime_inputs = compiled_fx_wrapper_boxed_inputs
+prefusion_graph = captured_graph_lowering_graph
 ```
 
-随后用 FX `Interpreter` 执行 `ExportedProgram.graph_module`。对于每个 `call_function` 节点，工具保存第一个 Tensor 输出，CPU dump 文件名使用 FX 节点名：
+每张图中的 placeholder 和 `call_function` 节点使用：
 
 ```text
-cpu_dump/<fx_node_name>.output.0.npy
+graph{graph_index}::{fx_node_name}
 ```
 
-因此 CPU 的候选名通常是 `add`、`add_1`、`_to_copy`、`matmul`、`mm` 等 ATen/ExportedProgram 节点名。这个名字受以下因素影响：
+该值是跨 CPU/NPU eager 回放和 Autofuse provenance 的稳定键；节点在不同后端显示名改变时，仍按 canonical ID 映射。显示名仍保留在 `name`/`display_name` 字段中，便于阅读。工具只保存每个 `call_function` 的第一个 Tensor 输出，文件名使用显示名：
 
-- PyTorch 版本和 `torch.export` 命名规则。
-- decomposition 是否把一个高层算子拆成多个 Core ATen 算子。
-- 模型是否产生 graph break、多个编译分区或重复调用。
-- 一个 FX 节点是否返回多个 Tensor；当前采集器主要保存第一个 Tensor。
+```text
+cpu_dump/<display_name>.output.0.npy
+```
+
+编译器删除未使用输入、重命名 placeholder 或产生多个 graph break 时，canonical ID 仍以实际 captured GraphModule 为准；多张图通过 `graph0`、`graph1` 区分。
 
 ### 2.2 NPU 融合节点的出口信息
 
@@ -105,9 +100,19 @@ autofused_add_... -> CPU add_15
 
 而不是把 NPU 融合 kernel 映射到 16 个 CPU 节点。
 
-### 2.3 native 路径的候选筛选和排序
+### 2.3 native Autofuse 的 canonical provenance
 
-实现函数是 `inductor_autofuse._match_cpu_output()`。对每个 NPU 主图节点，目前只尝试其 `output.0`：
+实现函数是 `inductor_autofuse.build_inductor_autofuse_graph()`。当提供 pre-fusion graph data 时，NPU post-fusion 节点的 `origin_ops` 和 `# return` 出口名会解析为 pre-fusion canonical ID：
+
+```text
+NPU Autofuse fused output
+  -> origin_canonical_id = graph0::relu_15
+  -> Inductor pre-fusion CPU graph0::relu_15
+```
+
+普通未融合节点也使用出口节点的 canonical ID。这个映射发生在图构建阶段，不读取 Tensor 数值；因此不会因精度异常而把节点错误地映射到“数值更接近”的候选。每个 post-fusion 输出只关联一个可观测出口，融合内部节点不会伪造独立 NPU 输出。
+
+只有旧环境没有提供 pre-fusion canonical graph 时，才回退到 `inductor_autofuse._match_cpu_output()` 的名称、类型、shape 和拓扑候选规则。回退流程对每个 NPU 主图节点目前只尝试其 `output.0`：
 
 1. 找到 NPU intermediate hook 采集的输出文件；没有文件时不进入 CPU 映射，最终状态为 `NPU_OUTPUT_NOT_CAPTURED`。
 2. 使用融合出口的 `exit_name/exit_type`；同时从 `benchmark.py` 的 `Original ATen` 注释中提取原始 ATen 类型。未融合或 fallback 节点使用其生成的 kernel/capture 名称和类型。
@@ -140,6 +145,59 @@ _autofusedebugger_cpu_origin_output_index
 
 需要特别注意：当前 native 匹配只使用编译器 provenance、名称、类型、shape 和稳定顺序，不读取 CPU/NPU 数值来决定映射。否则真正发生精度错误时，按数值距离选择候选会把失败节点错误映射到数值更接近但拓扑无关的 CPU 节点。该策略仍不是完整的拓扑图同构匹配。
 
+### 2.3.1 FX 执行图与 Inductor IR 映射层
+
+当前 native runner 对 `fx_graph_transformed.py` 和 `ir_pre_fusion.txt` 采用分层职责：
+
+```text
+fx_graph_transformed.py / transformed FX GraphModule
+  -> CPU 回放和 NPU eager 回放
+  -> 采集每个 call_function 的 Tensor 输出
+
+ir_pre_fusion.txt
+  -> 解析 pre-fusion SchedulerNode、写入 Buffer 和依赖
+  -> 校验 post-fusion 节点属于同一个 model__N 编译图
+  -> 为 Autofuse 出口提供 SchedulerNode 级映射证据
+
+ir_post_fusion.txt + benchmark.py
+  -> 解析 post-fusion 调度拓扑、融合 kernel 和融合出口
+  -> 映射到 transformed FX canonical_id
+```
+
+`fx_graph_transformed.py` 是可执行的 FX/ATen 图，适合构造 CPU 和 NPU eager。`ir_pre_fusion.txt` 是 Inductor lower 后的 Scheduler IR，包含 `SchedulerNode`、`ComputedBuffer`、`ExternKernel`、`MemoryDep` 和 Layout 等信息，文本本身不用于回放 eager。两者都处于 scheduler fusion 之前，但抽象层次不同，不能把 IR 文本直接当作 CPU/NPU eager 图执行。
+
+Autofuse 主图构建时使用以下映射链路：
+
+```text
+NPU post-fusion kernel
+  -> ir_post_fusion.txt 中的 post SchedulerNode
+  -> 同一 model__N/ir_pre_fusion.txt 中的 pre SchedulerNode 集合
+  -> benchmark.py 的 origin_ops 和 # return 出口
+  -> 同一 graphN 的 transformed FX canonical_id
+  -> CPU/NPU eager 对应输出 Tensor
+```
+
+具体步骤如下：
+
+1. 从 trace 目录名 `model__N_inference_...` 提取 `N`，同时用于 post-fusion 和 pre-fusion 图的 `graphN`，不再按文件名字典序或 trace 遍历位置重新编号。
+2. 解析同一 trace 目录下的 `ir_pre_fusion.txt`，记录每个 `op0`、`op1` 等 SchedulerNode 的写入 Buffer 和输入依赖。
+3. 对融合 kernel，读取 `benchmark.py` 中的 scheduler ID；对 `FusedSchedulerNode`，展开 `op0_op1` 中的组件 ID，并检查这些 ID 是否都存在于 `ir_pre_fusion.txt`。
+4. 使用 `benchmark.py` 的 `origin_ops` 和 `# return %exit` 找到融合出口，再在同一个 `graphN` 的 transformed FX 图中解析 `graphN::exit`。
+5. 对候选 FX 出口和 NPU dump 输出进行完整 shape 校验。只有 shape 相同，或仅存在标量 `()` 与 `(1,)` 的兼容差异时，才写入 canonical provenance。
+6. 校验通过时，NPU 输出属性会记录 `_autofusedebugger_prefusion_origin_id`、`_autofusedebugger_mapping_method` 和对应的 pre-fusion SchedulerNode ID；CPU/NPU eager 仍通过同一 GraphModule 的 canonical ID 直接映射。
+7. `ir_pre_fusion.txt` 缺失或 SchedulerNode 无法对应时，保留 compiler provenance 作为兼容回退，但将映射方法标记为 `canonical_source_id_ir_unverified`。shape 冲突时标记 `PROVENANCE_CONFLICT`，不建立映射，避免把不同 graph variant 或不同出口按元素个数强行比较。
+
+当前主要 `mapping_method` 含义如下：
+
+| mapping_method | 含义 |
+|---|---|
+| `ir_pre_fusion_canonical_id` | pre-fusion IR SchedulerNode 校验通过，再映射到 transformed FX canonical ID |
+| `canonical_source_id_ir_unverified` | canonical provenance 可以使用，但缺少完整 pre-fusion IR 证据 |
+| `canonical_source_id` | 历史或离线 manifest 按 canonical ID 映射 |
+| `provenance_conflict` | graph、SchedulerNode 或输出 shape 证据冲突，没有建立映射 |
+
+这套设计保留了 CPU/NPU eager 的真实单算子执行语义，同时利用 Inductor IR 约束 Autofuse 的编译拓扑，避免仅按节点名或遍历顺序映射。
+
 ### 2.4 名称规范化规则
 
 native 路径会统一大小写、去掉 `aten.` 前缀和 overload 后缀，并使用以下别名：
@@ -165,9 +223,9 @@ native 路径会统一大小写、去掉 `aten.` 前缀和 overload 后缀，并
 
 `masked_fill -> where` 对应 `torch.export` 将 `masked_fill(self, mask, value)` 分解为 `where(mask, value, self)` 的场景。NPU fallback 可能仍保留 `aten.masked_fill`，两者的可观测出口等价。
 
-### 2.5 CPU 与 NPU eager 的语义对齐
+### 2.5 旧报告的 CPU/NPU eager 语义对齐回退
 
-CPU 和 NPU eager 会分别执行设备相关的 `torch.export + run_decompositions()`。不同设备可能选择不同 decomposition，例如 CPU 图中的：
+旧版本报告没有 canonical ID 时，CPU 和 NPU eager 曾分别执行设备相关的 `torch.export + run_decompositions()`。不同设备可能选择不同 decomposition，例如 CPU 图中的：
 
 ```text
 expand -> view -> bmm -> view -> add
@@ -187,11 +245,11 @@ matmul -> add
 4. 同名只作为对齐加分项，不能覆盖类型、dtype 或 shape 不一致。
 5. 映射过程不读取 Tensor 数值。
 
-此类结果的 `mapping_method` 为 `topology_signature`；语义和名称都相同时仍显示 `same_name`。
+此类旧报告结果的 `mapping_method` 为 `topology_signature`；语义和名称都相同时仍显示 `same_name`。当前 native 三方 runner 优先使用 `canonical_source_id`，只有读取历史 manifest 或 canonical provenance 缺失时才进入此回退。
 
-### 2.6 NPU eager 与 NPU Autofuse 的 provenance 转换
+### 2.6 旧报告的 NPU eager 与 NPU Autofuse provenance 转换
 
-Autofuse compiler provenance 指向 CPU export 节点名，不能直接拿该名称查找设备相关 decomposition 后的 NPU eager 图。三方比较先建立：
+历史 Autofuse compiler provenance 可能只指向 CPU export 节点名，不能直接拿该名称查找设备相关 decomposition 后的 NPU eager 图。旧三方比较先建立：
 
 ```text
 CPU output -> NPU eager semantic output
@@ -203,7 +261,7 @@ CPU output -> NPU eager semantic output
 NPU Autofuse output -> CPU origin -> NPU eager semantic output
 ```
 
-成功转换时 `mapping_method` 为 `compiler_origin_via_eager`。如果 compiler origin 在 NPU eager 图中没有满足类型、dtype、完整 shape 和拓扑约束的语义节点，则记录 `UNMATCHED_CPU_OP`，不会退化为可能错位的同名比较。
+成功转换时旧报告 `mapping_method` 为 `compiler_origin_via_eager`。当前 runner 因 CPU/NPU eager 共享 canonical ID，直接按 `canonical_source_id` 映射，不再依赖这条二段转换。
 
 ### 2.7 compare 阶段的最终规则
 
@@ -214,17 +272,18 @@ NPU Autofuse output -> CPU origin -> NPU eager semantic output
   "fused_op": "autofused_add_...",
   "fused_index": 0,
   "origin_op": "add_15",
-  "origin_index": 0
+  "origin_index": 0,
+  "origin_canonical_id": "graph0::add_15"
 }
 ```
 
 之后 `compare_manifests()` 根据比较组合选择基准输出：
 
-1. CPU ↔ NPU Autofuse：优先使用 `fusions` 中的 `(origin_op, origin_index)`。
-2. CPU ↔ NPU eager：使用 2.5 节的拓扑、类型、dtype 和完整 shape 语义对齐。
-3. NPU eager ↔ NPU Autofuse：使用 2.6 节的 compiler origin 二段转换。
-4. 没有 compiler origin 时，仅在同名节点的语义签名也一致时允许同名回退。
-5. 不能可靠对齐时记录 `UNMATCHED_CPU_OP`。
+1. pre-fusion CPU ↔ NPU Autofuse：优先使用 `fusions.origin_canonical_id`。
+2. pre-fusion CPU ↔ NPU eager：使用同一 GraphModule 的 `canonical_id` 直接映射。
+3. pre-fusion NPU eager ↔ NPU Autofuse：使用同一 `canonical_id` 和 Autofuse 出口 provenance 直接映射。
+4. 历史 manifest 没有 canonical ID 时，才使用 2.5/2.6 节的拓扑、类型、dtype、shape 和名称回退。
+5. 不能可靠对齐时记录 `UNMATCHED_CPU_OP`；不会静默按同名节点强行比较。
 
 最终比较阶段不会再次执行上面的名称候选、误差距离或类型推断；这些工作只发生在 native 图构建阶段。
 
@@ -300,6 +359,10 @@ _datadump_origin_output_index
 
 报告中的红色首次失败表示当前节点是首个已观测到的整体 Tensor 失败；后续整体失败节点如果已经存在失败祖先，会显示为“上游失败传播”。这表示当前输出确实未通过，但不能据此断言该单算子又新增了精度误差。
 
+整体 Tensor 指标还会记录适用性说明：KL 散度仅用于非负、非近零 Tensor；余弦相似度和欧氏相对距离对近零向量不稳定时显示 `N/A`。当所有元素均满足 dtype-aware 的 `rtol/atol` 时，整体判定不会被这些不适用或不稳定的聚合指标反向判失败。这样可以避免 `var_mean`、`getitem` 等输出只有极小误差，却因均值接近零或包含负值而被统计成多个整体 Tensor 失败。
+
+`summary.cann_failed` 是未通过整体判定的结果行总数；`summary.cann_direct_failed` 是没有失败上游的直接失败行，`summary.cann_propagated_failed` 是已有失败上游的传播行，`summary.cann_uncertain_failed` 是上游存在未映射或不可独立观测节点的行。HTML 报告会同时展示这三个分项，避免把一条首失败沿数据依赖链产生的多个传播结果误认为多个独立算子问题。
+
 报告 JSON 中的 `failure_attribution` 也会记录该归因：`DIRECT_FAILURE` 表示疑似当前节点首次引入失败，`UPSTREAM_FAILURE` 表示已有失败祖先，`UPSTREAM_UNCERTAIN` 表示上游有未映射或不可独立观测节点，无法确认当前节点是否首次引入误差。
 
 对于 native Autofuse 融合节点，报告会根据 `origin_ops` 额外生成 `NOT_OBSERVABLE_ON_NPU` 行。例如 CPU 图中有 `addmm`，而 NPU 将 `mm -> add -> mul -> relu` 融合，并且只 dump `relu` 出口，则 `addmm`/`mm`/`add` 等非出口节点不会被伪造映射到融合最终输出，而会标记为融合内部不可观测。此类行会保留在报告明细中，但不会计入 `coverage` 的可观测分母；`UNMATCHED_CPU_OP`、`PROVENANCE_CONFLICT` 和 `NPU_OUTPUT_NOT_CAPTURED` 会使总体状态变成 `INCOMPLETE`。
@@ -317,10 +380,10 @@ jq '.summary, .results[] | select(.status == "UNMATCHED_CPU_OP" or .status == "P
 
 ```text
 cpu_graph.json
-  CPU export 后实际生成的节点名、类型和输出 shape。
+  同次 Inductor 编译截获的 pre-fusion CPU 回放图、canonical ID、类型和输出 shape。
 
 npu_graph.json
-  post-fusion 节点、融合 origin 属性、输出 dtype/shape。
+  post-fusion 节点、融合 origin canonical 属性、输出 dtype/shape。
 
 cpu_manifest.json / npu_manifest.json
   节点输出是否真的关联到了 .npy 文件。

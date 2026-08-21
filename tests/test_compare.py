@@ -57,6 +57,7 @@ def test_compare_fused_output_to_cpu_origin(tmp_path: Path) -> None:
                 "fused_index": 0,
                 "origin_op": "Relu_1",
                 "origin_index": 0,
+                "mapping_method": "ir_pre_fusion_canonical_id",
             }
         ],
     }
@@ -68,8 +69,60 @@ def test_compare_fused_output_to_cpu_origin(tmp_path: Path) -> None:
     report = compare_manifests(cpu_path, npu_path, rtol=1e-2, atol=1e-2)
     assert report["summary"]["failed"] == 0
     assert report["results"][0]["cpu_op"] == "Relu_1"
+    assert report["results"][0]["mapping_method"] == "ir_pre_fusion_canonical_id"
     assert report["graphs"]["cpu"]["nodes"][0]["name"] == "Relu_1"
     assert report["graphs"]["npu"]["fusions"][0]["origin_op"] == "Relu_1"
+
+
+def test_compare_uses_canonical_prefusion_id_when_backend_name_changes(tmp_path: Path) -> None:
+    value = np.array([1.0, 2.0], dtype=np.float32)
+    np.save(tmp_path / "prefusion.npy", value)
+    np.save(tmp_path / "autofuse.npy", value)
+    base = {
+        "schema": "autofusedebugger-manifest/1",
+        "model": {"name": "m"},
+        "artifacts": {"root": str(tmp_path)},
+        "edges": [],
+    }
+    cpu = dict(
+        base,
+        side="inductor_prefusion_cpu",
+        nodes=[
+            {
+                "name": "clone_13",
+                "display_name": "clone_13",
+                "canonical_id": "graph0::clone_13",
+                "type": "clone",
+                "outputs": [{"index": 0, "path": "prefusion.npy", "shape": [2], "dtype": "float32"}],
+            }
+        ],
+        fusions=[],
+    )
+    npu = dict(
+        base,
+        side="npu_autofuse",
+        nodes=[
+            {
+                "name": "clone_19",
+                "display_name": "clone_19",
+                "canonical_id": "graph0::clone_13",
+                "origin_node_ids": ["graph0::clone_13"],
+                "type": "aten.clone",
+                "outputs": [{"index": 0, "path": "autofuse.npy", "shape": [2], "dtype": "float32"}],
+            }
+        ],
+        fusions=[],
+    )
+    _write_json(tmp_path / "cpu.json", cpu)
+    _write_json(tmp_path / "npu.json", npu)
+
+    report = compare_manifests(tmp_path / "cpu.json", tmp_path / "npu.json", rtol=0, atol=0)
+
+    row = report["results"][0]
+    assert row["cpu_op"] == "clone_13"
+    assert row["npu_op"] == "clone_19"
+    assert row["mapping_method"] == "canonical_source_id"
+    assert row["cann_passed"] is True
 
 
 def test_fusion_internal_cpu_outputs_are_not_observable(tmp_path: Path) -> None:
@@ -240,6 +293,10 @@ def test_failure_attribution_distinguishes_upstream_failure(tmp_path: Path) -> N
         "DIRECT_FAILURE",
         "UPSTREAM_FAILURE",
     ]
+    assert report["summary"]["cann_failed"] == 2
+    assert report["summary"]["cann_direct_failed"] == 1
+    assert report["summary"]["cann_propagated_failed"] == 1
+    assert report["summary"]["cann_uncertain_failed"] == 0
 
 
 def test_compiler_origin_allows_scalar_shape_normalization(tmp_path: Path) -> None:
@@ -424,6 +481,9 @@ def test_unmatched_npu_output_is_reported_as_incomplete(tmp_path: Path) -> None:
         "cann_status": "INCOMPLETE",
         "cann_passed": 0,
         "cann_failed": 0,
+        "cann_direct_failed": 0,
+        "cann_propagated_failed": 0,
+        "cann_uncertain_failed": 0,
         "dual_status": "INCOMPLETE",
         "dual_passed": 0,
         "dual_failed": 0,
@@ -577,6 +637,8 @@ def test_compare_three_manifests_returns_all_pairwise_results(tmp_path: Path) ->
     assert report["comparison_mode"] == "three_way"
     assert report["elementwise_data_saved"] is True
     assert report["comparison_order"] == ["cpu_npu_autofuse", "cpu_npu_eager", "npu_eager_npu_autofuse"]
+    assert report["comparisons"]["cpu_npu_autofuse"]["left"] == "Inductor pre-fusion CPU"
+    assert report["comparisons"]["cpu_npu_eager"]["right"] == "Inductor pre-fusion NPU eager"
     assert all(report["comparisons"][key]["summary"]["dual_failed"] == 0 for key in report["comparison_order"])
     cpu_autofuse = report["comparisons"]["cpu_npu_autofuse"]["results"][0]["elementwise_data"]
     cpu_eager = report["comparisons"]["cpu_npu_eager"]["results"][0]["elementwise_data"]
@@ -793,13 +855,41 @@ def test_cann_aggregate_can_pass_when_strict_outlier_check_fails() -> None:
     assert result["kl_divergence"] < 0.005
 
 
-def test_cann_zero_vector_check_can_fail_when_strict_atol_passes() -> None:
+def test_cann_near_zero_tensor_does_not_override_elementwise_pass() -> None:
     golden = np.zeros(1000, dtype=np.float32)
     actual = np.full(1000, 1e-6, dtype=np.float32)
 
     result = _metrics(golden, actual, rtol=1e-5, atol=1e-5)
 
     assert result["strict_passed"] is True
-    assert result["cann_passed"] is False
-    assert result["cann_cosine_similarity"] == 0.0
+    assert result["cann_passed"] is True
+    assert result["cann_cosine_similarity"] is None
     assert result["relative_euclidean_distance"] == 1.0
+    assert result["kl_divergence"] is None
+    assert "ELEMENTWISE_WITHIN_TOLERANCE" in result["cann_metric_reason"]
+
+
+def test_cann_signed_tensor_does_not_use_kl_as_a_failure_signal() -> None:
+    golden = np.array([-2.0, -1.0, 1.0, 2.0], dtype=np.float64)
+    actual = golden.copy()
+    actual[0] += 0.01
+
+    result = _metrics(golden, actual, rtol=1e-5, atol=1e-5)
+
+    assert result["strict_passed"] is False
+    assert result["cann_passed"] is True
+    assert result["cann_cosine_similarity"] > 0.99
+    assert result["relative_euclidean_distance"] < 0.05
+    assert result["kl_divergence"] is None
+    assert "KL_SIGNED_TENSOR" in result["cann_metric_reason"]
+
+
+def test_cann_applicable_metric_failure_is_not_hidden_by_strict_pass() -> None:
+    golden = np.array([1.0, 1.0], dtype=np.float64)
+    actual = np.array([1.1, 1.1], dtype=np.float64)
+
+    result = _metrics(golden, actual, rtol=0.2, atol=0.0)
+
+    assert result["strict_passed"] is True
+    assert result["cann_passed"] is False
+    assert result["cann_metric_reason"] == "ALL_APPLICABLE_METRICS"

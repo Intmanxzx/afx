@@ -218,14 +218,25 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command_name", required=True)
 
     make = sub.add_parser("make-manifest", help="build a manifest from graph JSON and an npy dump directory")
-    make.add_argument("--side", choices=["cpu", "npu"], required=True)
+    make.add_argument(
+        "--side",
+        choices=[
+            "cpu",
+            "npu",
+            "npu_eager",
+            "npu_autofuse",
+            "inductor_prefusion_cpu",
+            "inductor_prefusion_npu_eager",
+        ],
+        required=True,
+    )
     make.add_argument("--graph", required=True)
     make.add_argument("--dump-dir", required=True)
     make.add_argument("--out", required=True)
     make.add_argument("--model-name", default=None)
     make.set_defaults(func=cmd_make_manifest)
 
-    cmp_parser = sub.add_parser("compare", help="compare CPU and NPU manifests")
+    cmp_parser = sub.add_parser("compare", help="compare a reference and NPU manifest")
     cmp_parser.add_argument("--cpu-manifest", required=True)
     cmp_parser.add_argument("--npu-manifest", required=True)
     cmp_parser.add_argument("--out", default=None)
@@ -240,7 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_elementwise_data_option(cmp_parser)
     cmp_parser.set_defaults(func=cmd_compare)
 
-    cmp_three = sub.add_parser("compare-three", help="compare CPU, NPU eager, and NPU Autofuse manifests")
+    cmp_three = sub.add_parser(
+        "compare-three", help="compare Inductor pre-fusion CPU, NPU eager, and NPU Autofuse manifests"
+    )
     cmp_three.add_argument("--cpu-manifest", required=True)
     cmp_three.add_argument("--npu-eager-manifest", required=True)
     cmp_three.add_argument("--npu-autofuse-manifest", required=True)
@@ -271,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     html.set_defaults(func=cmd_report_html)
 
     torch_model = sub.add_parser(
-        "run-torch-model", help="compare CPU export with native Inductor+AscendC Autofuse execution"
+        "run-torch-model", help="compare shared Inductor pre-fusion CPU/NPU eager with native Autofuse execution"
     )
     torch_model.add_argument("--script", required=True, help="python script defining create_case()")
     torch_model.add_argument("--entry", default="create_case", help="case factory function name")

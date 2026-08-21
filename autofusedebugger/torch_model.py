@@ -23,6 +23,7 @@ from autofusedebugger.inductor_autofuse import (
     build_inductor_autofuse_graph,
     capture_inductor_outputs,
     install_autofuse_intermediate_hooks,
+    prefusion_graphs,
     reset_autofuse_diagnostics,
 )
 from autofusedebugger.progress import progress_message, progress_stage
@@ -462,6 +463,242 @@ def export_cpu_graph_and_dump(case: TorchCase, cpu_dump: Path) -> tuple[dict[str
             ) from retry_exc
 
 
+def _prefusion_device_value(value: Any, device: str) -> Any:
+    import torch
+
+    if isinstance(value, torch.device):
+        return torch.device(device)
+    if isinstance(value, tuple):
+        return tuple(_prefusion_device_value(item, device) for item in value)
+    if isinstance(value, list):
+        return [_prefusion_device_value(item, device) for item in value]
+    if isinstance(value, dict):
+        return {key: _prefusion_device_value(item, device) for key, item in value.items()}
+    return value
+
+
+def _prefusion_graph_copy(gm: Any, device: str) -> Any:
+    try:
+        copied = copy.deepcopy(gm)
+    except Exception as exc:
+        raise RuntimeError("failed to copy the Inductor pre-fusion GraphModule") from exc
+    copied.to(device)
+    for node in copied.graph.nodes:
+        node.args = _prefusion_device_value(node.args, device)
+        node.kwargs = _prefusion_device_value(node.kwargs, device)
+    copied.recompile()
+    return copied
+
+
+def _prefusion_display_names(graph_specs: list[dict[str, Any]]) -> dict[tuple[int, str], str]:
+    counts: dict[str, int] = {}
+    for spec in graph_specs:
+        for node in spec["gm"].graph.nodes:
+            if node.op in {"placeholder", "call_function"}:
+                counts[node.name] = counts.get(node.name, 0) + 1
+    result = {}
+    for graph_index, spec in enumerate(graph_specs):
+        for node in spec["gm"].graph.nodes:
+            if node.op not in {"placeholder", "call_function"}:
+                continue
+            name = node.name
+            result[(graph_index, name)] = f"graph{graph_index}.{name}" if counts[name] > 1 else name
+    return result
+
+
+def _install_prefusion_runtime_capture() -> tuple[dict[int, tuple[Any, ...]], Any]:
+    """Capture the real flattened arguments passed to each compiled FX graph."""
+    import importlib
+
+    compile_fx_module = importlib.import_module("torch._inductor.compile_fx")
+    original_compile_fx = compile_fx_module.compile_fx
+    runtime_inputs: dict[int, tuple[Any, ...]] = {}
+
+    def compile_fx_wrapper(model, example_inputs, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if args:
+            inner_compile = args[0]
+            wrapped_args = list(args)
+        else:
+            inner_compile = kwargs.get("inner_compile")
+            wrapped_args = []
+        if inner_compile is None:
+            inner_compile = original_compile_fx.__defaults__[0]
+
+        def capture_inner(gm, inner_inputs, *inner_args, **inner_kwargs):  # type: ignore[no-untyped-def]
+            compiled_code = inner_compile(gm, inner_inputs, *inner_args, **inner_kwargs)
+            if not callable(compiled_code):
+                return compiled_code
+
+            def run_compiled(*runtime_args, **runtime_kwargs):  # type: ignore[no-untyped-def]
+                values = runtime_args
+                if len(runtime_args) == 1 and isinstance(runtime_args[0], (list, tuple)):
+                    values = tuple(runtime_args[0])
+                runtime_inputs[id(gm)] = tuple(values)
+                if len(runtime_args) == 1 and isinstance(runtime_args[0], (list, tuple)):
+                    return compiled_code(*runtime_args, **runtime_kwargs)
+                return compiled_code(list(runtime_args), **runtime_kwargs)
+
+            return run_compiled
+
+        if wrapped_args:
+            wrapped_args[0] = capture_inner
+            return original_compile_fx(model, example_inputs, *wrapped_args, **kwargs)
+        kwargs = dict(kwargs)
+        kwargs["inner_compile"] = capture_inner
+        return original_compile_fx(model, example_inputs, **kwargs)
+
+    compile_fx_module.compile_fx = compile_fx_wrapper
+
+    def restore() -> None:
+        compile_fx_module.compile_fx = original_compile_fx
+
+    return runtime_inputs, restore
+
+
+def _capture_prefusion_graph(
+    gm: Any,
+    example_inputs: tuple[Any, ...],
+    graph_index: int,
+    device: str,
+    dump_dir: Path,
+    display_names: dict[tuple[int, str], str],
+    case: TorchCase,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    import torch
+
+    module = _prefusion_graph_copy(gm, device)
+    inputs = _to_device(_clone_execution_value(example_inputs), device)
+    saved: dict[str, dict[str, Any]] = {}
+
+    class CaptureInterpreter(torch.fx.Interpreter):
+        def run_node(self, node):  # type: ignore[no-untyped-def]
+            result = super().run_node(node)
+            if node.op != "call_function":
+                return result
+            tensor = _first_tensor(result, torch=torch)
+            if tensor is None:
+                return result
+            display_name = display_names[(graph_index, node.name)]
+            array, dtype = tensor_to_numpy(tensor)
+            path = dump_dir / f"{display_name}.output.0.npy"
+            np.save(path, array)
+            saved[display_name] = {
+                "shape": tuple(int(dim) for dim in array.shape),
+                "dtype": dtype,
+                "size": int(array.size),
+                "path": path,
+            }
+            return result
+
+    with _model_device_hints(module, device, enabled=case.rewrite_device_hints):
+        with _execution_context(case, device):
+            CaptureInterpreter(module).run(*inputs)
+
+    ops: list[dict[str, Any]] = []
+    included: set[str] = set()
+    placeholders = [node for node in module.graph.nodes if node.op == "placeholder"]
+    for index, node in enumerate(placeholders):
+        value = inputs[index] if index < len(inputs) else None
+        if hasattr(value, "shape"):
+            shape = tuple(int(dim) for dim in value.shape)
+            dtype = str(value.dtype).removeprefix("torch.")
+        else:
+            shape = ()
+            dtype = type(value).__name__
+        display_name = display_names[(graph_index, node.name)]
+        ops.append(
+            {
+                "name": display_name,
+                "display_name": node.name,
+                "canonical_id": f"graph{graph_index}::{node.name}",
+                "type": "Data",
+                "output_desc": [_desc(dtype, shape)],
+            }
+        )
+        included.add(node.name)
+
+    for node in module.graph.nodes:
+        if node.op != "call_function":
+            continue
+        display_name = display_names[(graph_index, node.name)]
+        info = saved.get(display_name)
+        if info is None:
+            continue
+        inputs_for_node = []
+        seen_inputs = set()
+        for input_name in _iter_fx_inputs((node.args, node.kwargs)):
+            if input_name not in included or input_name in seen_inputs:
+                continue
+            inputs_for_node.append(f"{display_names[(graph_index, input_name)]}:0")
+            seen_inputs.add(input_name)
+        ops.append(
+            {
+                "name": display_name,
+                "display_name": node.name,
+                "canonical_id": f"graph{graph_index}::{node.name}",
+                "type": _target_type(node.target),
+                "input": inputs_for_node,
+                "output_desc": [_desc(info["dtype"], info["shape"])],
+            }
+        )
+        included.add(node.name)
+
+    return {
+        "ops": ops,
+        "metadata": {
+            "graph_index": graph_index,
+            "canonical_graph": "Inductor pre-fusion FX",
+        },
+    }, saved
+
+
+def capture_prefusion_graphs(
+    graph_specs: list[dict[str, Any]],
+    case: TorchCase,
+    cpu_dump: Path,
+    npu_eager_dump: Path,
+    *,
+    device: str,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, Any], dict[str, dict[str, Any]]]:
+    if not graph_specs:
+        raise RuntimeError("Inductor did not expose a transformed pre-fusion FX graph")
+    display_names = _prefusion_display_names(graph_specs)
+    cpu_graphs = []
+    npu_graphs = []
+    cpu_outputs: dict[str, dict[str, Any]] = {}
+    npu_outputs: dict[str, dict[str, Any]] = {}
+    for graph_index, spec in enumerate(graph_specs):
+        cpu_graph, saved_cpu = _capture_prefusion_graph(
+            spec["gm"], tuple(spec["example_inputs"]), graph_index, "cpu", cpu_dump, display_names, case
+        )
+        npu_graph, saved_npu = _capture_prefusion_graph(
+            spec["gm"], tuple(spec["example_inputs"]), graph_index, device, npu_eager_dump, display_names, case
+        )
+        cpu_graphs.append(cpu_graph)
+        npu_graphs.append(npu_graph)
+        cpu_outputs.update(saved_cpu)
+        npu_outputs.update(saved_npu)
+
+    def merge(graphs: list[dict[str, Any]], side: str) -> dict[str, Any]:
+        ops = [op for graph in graphs for op in graph["ops"]]
+        return {
+            "graph": [{"op": ops}],
+            "metadata": {
+                "topology": "Inductor pre-fusion FX",
+                "canonical_graph": True,
+                "side": side,
+                "graph_count": len(graphs),
+            },
+        }
+
+    return (
+        merge(cpu_graphs, "inductor_prefusion_cpu"),
+        cpu_outputs,
+        merge(npu_graphs, "inductor_prefusion_npu_eager"),
+        npu_outputs,
+    )
+
+
 def _cpu_name(prefix: str, suffix: str) -> str:
     return f"{prefix}_{suffix}" if suffix else prefix
 
@@ -586,13 +823,47 @@ def run_npu_model(
     device_inputs = _to_device(case.inputs, device)
     device_kwargs = _to_device(case.kwargs, device)
     records, save_intermediate = capture_inductor_outputs(npu_dump_dir)
+    runtime_prefusion_inputs, restore_prefusion_runtime_capture = _install_prefusion_runtime_capture()
     with _model_device_hints(model, device, enabled=case.rewrite_device_hints):
         with _execution_context(case, device):
-            compiled = torch.compile(model, dynamic=case.dynamic, fullgraph=case.fullgraph, options=compile_options)
-            with intermediate_hook(save_intermediate):
-                out = compiled(*device_inputs, **device_kwargs)
-                torch.npu.synchronize()
+            try:
+                compiled = torch.compile(model, dynamic=case.dynamic, fullgraph=case.fullgraph, options=compile_options)
+                with intermediate_hook(save_intermediate):
+                    out = compiled(*device_inputs, **device_kwargs)
+                    torch.npu.synchronize()
+            finally:
+                restore_prefusion_runtime_capture()
     diagnostics = autofuse_diagnostics()
+    captured_prefusion_graphs = prefusion_graphs()
+    for graph_index, spec in enumerate(captured_prefusion_graphs):
+        placeholders = [node.name for node in spec["gm"].graph.nodes if node.op == "placeholder"]
+        runtime_inputs = runtime_prefusion_inputs.get(id(spec["gm"]))
+        if runtime_inputs is None:
+            candidates = [
+                values for values in runtime_prefusion_inputs.values() if len(values) == len(placeholders)
+            ]
+            if len(candidates) == 1:
+                runtime_inputs = candidates[0]
+                binding_method = "compiled_runtime_shape"
+            elif graph_index < len(candidates):
+                runtime_inputs = candidates[graph_index]
+                binding_method = "compiled_runtime_order"
+            else:
+                binding_method = "compiled_runtime"
+        else:
+            binding_method = "compiled_runtime_id"
+        if runtime_inputs is not None and len(runtime_inputs) == len(placeholders):
+            spec["example_inputs"] = tuple(runtime_inputs)
+            progress_message(
+                "INFO",
+                f"pre-fusion graph={graph_index} runtime binding={binding_method} inputs={len(placeholders)}",
+            )
+            continue
+        else:
+            raise RuntimeError(
+                f"Inductor did not expose real runtime inputs for pre-fusion graph {graph_index} "
+                f"(placeholders={len(placeholders)}, captured={len(runtime_inputs or ())})"
+            )
     return _to_cpu(out), records, {
         "mode": "torch_inductor_npu_ext_autofuse",
         "backend_package": package_root,
@@ -600,6 +871,7 @@ def run_npu_model(
         "autofuse_dump_dir": str(autofuse_dump_dir),
         "captured_nodes": list(records),
         "diagnostics": diagnostics,
+        "prefusion_graphs": captured_prefusion_graphs,
     }
 
 
@@ -632,20 +904,6 @@ def run_torch_case(
     autofuse_dump.mkdir(parents=True, exist_ok=True)
 
     try:
-        with progress_stage("CPU graph capture", detail=f"dump_dir={cpu_dump}"):
-            cpu_graph_data, cpu_outputs = export_cpu_graph_and_dump(_stage_case(case, "CPU graph capture"), cpu_dump)
-    except Exception as exc:
-        raise RuntimeError(f"CPU graph capture failed: {type(exc).__name__}: {exc}") from exc
-    progress_message("INFO", f"CPU graph captured tensors={len(cpu_outputs)}")
-    try:
-        with progress_stage("NPU eager graph capture", detail=f"dump_dir={npu_eager_dump}"):
-            npu_eager_graph_data, npu_eager_outputs = export_graph_and_dump(
-                _stage_case(case, "NPU eager graph capture"), npu_eager_dump, device=device
-            )
-    except Exception as exc:
-        raise RuntimeError(f"NPU eager graph capture failed: {type(exc).__name__}: {exc}") from exc
-    progress_message("INFO", f"NPU eager graph captured tensors={len(npu_eager_outputs)}")
-    try:
         with progress_stage("NPU Autofuse execution", detail=f"dump_dir={npu_dump}"):
             _, npu_records, native_capture = run_npu_model(
                 _stage_case(case, "NPU Autofuse execution"),
@@ -666,6 +924,25 @@ def run_torch_case(
             )
         raise RuntimeError(f"NPU Autofuse execution failed: {type(exc).__name__}: {detail}") from exc
     progress_message("INFO", f"NPU Autofuse captured kernels={len(npu_records)}")
+    prefusion_specs = native_capture.pop("prefusion_graphs", [])
+    try:
+        with progress_stage("Inductor pre-fusion CPU/NPU eager capture", detail="shared transformed FX graph"):
+            (
+                cpu_graph_data,
+                cpu_outputs,
+                npu_eager_graph_data,
+                npu_eager_outputs,
+            ) = capture_prefusion_graphs(
+                prefusion_specs,
+                _stage_case(case, "Inductor pre-fusion capture"),
+                cpu_dump,
+                npu_eager_dump,
+                device=device,
+            )
+    except Exception as exc:
+        raise RuntimeError(f"Inductor pre-fusion capture failed: {type(exc).__name__}: {exc}") from exc
+    progress_message("INFO", f"Inductor pre-fusion CPU captured tensors={len(cpu_outputs)}")
+    progress_message("INFO", f"Inductor pre-fusion NPU eager captured tensors={len(npu_eager_outputs)}")
     with progress_stage("NPU graph reconstruction", detail=f"compile_dir={compile_dir}"):
         diagnostics = native_capture.pop("diagnostics", {})
         diagnostics_path = root / "autofuse_diagnostics.json"
@@ -676,6 +953,7 @@ def run_torch_case(
             cpu_outputs,
             diagnostics,
             cpu_graph_data=cpu_graph_data,
+            prefusion_graph_data=cpu_graph_data,
         )
 
     cpu_graph = root / "cpu_graph.json"
@@ -688,15 +966,21 @@ def run_torch_case(
         cpu_manifest = root / "cpu_manifest.json"
         npu_eager_manifest = root / "npu_eager_manifest.json"
         npu_manifest = root / "npu_manifest.json"
-        build_manifest(side="cpu", graph_path=cpu_graph, dump_dir=cpu_dump, out_path=cpu_manifest, model_name=case.name)
         build_manifest(
-            side="npu_eager",
+            side="inductor_prefusion_cpu",
+            graph_path=cpu_graph,
+            dump_dir=cpu_dump,
+            out_path=cpu_manifest,
+            model_name=case.name,
+        )
+        build_manifest(
+            side="inductor_prefusion_npu_eager",
             graph_path=npu_eager_graph,
             dump_dir=npu_eager_dump,
             out_path=npu_eager_manifest,
             model_name=case.name,
         )
-        build_manifest(side="npu", graph_path=npu_graph, dump_dir=npu_dump, out_path=npu_manifest, model_name=case.name)
+        build_manifest(side="npu_autofuse", graph_path=npu_graph, dump_dir=npu_dump, out_path=npu_manifest, model_name=case.name)
 
     with progress_stage("Three-way tensor comparison", detail="CPU vs NPU eager vs NPU Autofuse"):
         report = compare_three_manifests(
@@ -710,7 +994,10 @@ def run_torch_case(
     with progress_stage("AutoFuse graph collection", detail=f"dump_dir={autofuse_dump}"):
         attach_autofuse_graphs(report, autofuse_dump)
     native_capture["graph_count"] = len(report["graphs"]["autofuse"]["graphs"])
-    native_capture["npu_eager_nodes"] = len(npu_eager_graph_data["graph"][0]["op"])
+    native_capture["prefusion_cpu_nodes"] = len(cpu_graph_data["graph"][0]["op"])
+    native_capture["prefusion_npu_eager_nodes"] = len(npu_eager_graph_data["graph"][0]["op"])
+    native_capture["prefusion_source"] = "same Inductor transformed FX GraphModule as Autofuse compile"
+    native_capture["prefusion_runtime_input_source"] = "compiled FX runtime boxed inputs"
     native_capture["npu_eager_dump_nodes"] = len(npu_eager_outputs)
     native_capture["inductor_traces"] = npu_graph_data["metadata"]["inductor_traces"]
     native_capture["execution_policy"] = {
@@ -745,6 +1032,9 @@ def run_torch_case(
         "cpu_nodes": len(cpu_graph_data["graph"][0]["op"]),
         "npu_eager_nodes": len(npu_eager_graph_data["graph"][0]["op"]),
         "npu_nodes": len(npu_graph_data["graph"][0]["op"]),
+        "prefusion_cpu_nodes": len(cpu_graph_data["graph"][0]["op"]),
+        "prefusion_npu_eager_nodes": len(npu_eager_graph_data["graph"][0]["op"]),
+        "autofuse_nodes": len(npu_graph_data["graph"][0]["op"]),
         "matched_nodes": report["summary"].get("compared", report["summary"]["total"]),
         "unmatched_nodes": report["summary"].get("unmatched", 0),
         "coverage": report["summary"].get("coverage", 1.0),
@@ -810,5 +1100,8 @@ def format_run_summary(summary: dict[str, Any]) -> str:
         f"html: {summary['html']}\n"
         f"out_dir: {summary['out_dir']}\n"
         f"matched_nodes: {summary['matched_nodes']}\n"
+        f"prefusion_nodes: cpu={summary.get('prefusion_cpu_nodes', summary.get('cpu_nodes', 0))} "
+        f"npu_eager={summary.get('prefusion_npu_eager_nodes', summary.get('npu_eager_nodes', 0))} "
+        f"autofuse={summary.get('autofuse_nodes', summary.get('npu_nodes', 0))}\n"
         f"autofuse_graphs: {summary['autofuse_graphs']}"
     )

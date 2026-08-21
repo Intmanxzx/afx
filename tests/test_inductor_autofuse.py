@@ -9,6 +9,7 @@ import autofusedebugger.inductor_autofuse as inductor_autofuse
 from autofusedebugger.graph import extract_edges
 from autofusedebugger.inductor_autofuse import (
     _match_cpu_output,
+    _trace_sort_key,
     activate_autofuse_backend,
     build_inductor_autofuse_graph,
 )
@@ -40,6 +41,22 @@ def test_activate_autofuse_backend_falls_back_to_standalone(monkeypatch) -> None
 
     assert activate_autofuse_backend() == "inductor_npu_ext"
     assert calls == ["torch_npu._inductor.ascendc", "inductor_npu_ext"]
+
+
+def test_trace_sort_key_uses_numeric_inductor_graph_id(tmp_path: Path) -> None:
+    traces = [
+        tmp_path / "model__10_inference_10.10",
+        tmp_path / "model__2_inference_2.2",
+        tmp_path / "model__1_inference_1.1",
+        tmp_path / "other_trace",
+    ]
+
+    assert [path.name for path in sorted(traces, key=_trace_sort_key)] == [
+        "model__1_inference_1.1",
+        "model__2_inference_2.2",
+        "model__10_inference_10.10",
+        "other_trace",
+    ]
 
 
 def test_build_inductor_autofuse_graph_uses_real_ir_and_fusion_exit(tmp_path: Path) -> None:
@@ -132,6 +149,148 @@ arg0_1_layout = FixedLayout('npu:0', torch.float32, size=[2, 4], stride=[4, 1])
     assert fusion["output_desc"][0]["attr"][0]["value"]["s"] == "relu"
     assert [op["name"] for op in fusions] == [capture_name, second_name]
     assert fusions[1]["input"] == ["graph1.Data.arg0_1:0"]
+
+
+def test_build_inductor_graph_attaches_prefusion_canonical_ids(tmp_path: Path) -> None:
+    trace = tmp_path / "compile" / "torchinductor" / "model__0"
+    trace.mkdir(parents=True)
+    (trace / "ir_post_fusion.txt").write_text(
+        """
+op0: FusedSchedulerNode(SchedulerNode,SchedulerNode)
+op0.writes = [MemoryDep('buf0', c0, {c0: 8})]
+op0.unmet_dependencies = [MemoryDep('arg0_1', c0, {c0: 8})]
+    op0.met_dependencies = []
+""",
+        encoding="utf-8",
+    )
+    (trace / "ir_pre_fusion.txt").write_text(
+        """
+op0: SchedulerNode(ComputedBuffer)
+op0.writes = [MemoryDep('buf0', c0, {c0: 8})]
+op0.unmet_dependencies = [MemoryDep('arg0_1', c0, {c0: 8})]
+op0.met_dependencies = []
+""",
+        encoding="utf-8",
+    )
+    kernel = "autofused_add_relu_deadbeef"
+    benchmark = trace / kernel / "benchmark.py"
+    benchmark.parent.mkdir()
+    benchmark.write_text(
+        """
+# Topologically Sorted Source Nodes: [add, relu], Original ATen: [aten.add, aten.relu]
+# Graph fragment:
+#   %arg0_1 : Tensor "f32[2, 4]" = PlaceHolder[target=arg0_1]
+#   %add : Tensor "f32[2, 4]" = call_function[target=torch.ops.aten.add.Tensor](args = (%arg0_1, 1.0), kwargs = {})
+#   %relu : Tensor "f32[2, 4]" = call_function[target=torch.ops.aten.relu.default](args = (%add,), kwargs = {})
+#   return %relu
+op0: SchedulerNode(ComputedBuffer)
+""",
+        encoding="utf-8",
+    )
+    (trace / "output_code.py").write_text(
+        f"run_intermediate_hooks('{kernel}__relu', buf0)\n", encoding="utf-8"
+    )
+    npu_path = tmp_path / "npu.npy"
+    np.save(npu_path, np.ones((2, 4), dtype=np.float32))
+    records = {
+        f"{kernel}__relu": {
+            "outputs": [{"index": 0, "path": npu_path, "dtype": "float32", "shape": (2, 4), "size": 8}]
+        }
+    }
+    prefusion = {
+        "graph": [
+            {
+                "op": [
+                    {"name": "add", "canonical_id": "graph0::add"},
+                    {"name": "relu", "canonical_id": "graph0::relu"},
+                ]
+            }
+        ]
+    }
+
+    graph = build_inductor_autofuse_graph(
+        tmp_path / "compile",
+        records,
+        {},
+        prefusion_graph_data=prefusion,
+        cpu_graph_data=prefusion,
+    )
+    fusion = next(op for op in graph["graph"][0]["op"] if op["type"] == "AutofuseFusion")
+
+    assert fusion["canonical_id"] == "graph0::relu"
+    assert fusion["origin_node_ids"] == ["graph0::add", "graph0::relu"]
+    assert fusion["mapping_method"] == "ir_pre_fusion_canonical_id"
+    assert fusion["ir_pre_fusion"]["status"] == "MATCHED"
+    assert fusion["ir_pre_fusion"]["scheduler_ids"] == ["op0"]
+
+
+def test_build_inductor_graph_rejects_ir_canonical_shape_conflict(tmp_path: Path) -> None:
+    trace = tmp_path / "compile" / "torchinductor" / "model__0"
+    trace.mkdir(parents=True)
+    (trace / "ir_post_fusion.txt").write_text(
+        """
+op0: SchedulerNode(ComputedBuffer)
+op0.writes = [MemoryDep('buf0', c0, {c0: 8})]
+op0.unmet_dependencies = []
+op0.met_dependencies = []
+""",
+        encoding="utf-8",
+    )
+    (trace / "ir_pre_fusion.txt").write_text(
+        """
+op0: SchedulerNode(ComputedBuffer)
+op0.writes = [MemoryDep('buf0', c0, {c0: 6})]
+op0.unmet_dependencies = []
+op0.met_dependencies = []
+""",
+        encoding="utf-8",
+    )
+    kernel = "autofused_relu_deadbeef"
+    benchmark = trace / kernel / "benchmark.py"
+    benchmark.parent.mkdir()
+    benchmark.write_text(
+        """
+# Graph fragment:
+#   %relu : Tensor "f32[2, 4]" = call_function[target=torch.ops.aten.relu.default](args = (%arg0_1,), kwargs = {})
+#   return %relu
+op0: SchedulerNode(ComputedBuffer)
+""",
+        encoding="utf-8",
+    )
+    (trace / "output_code.py").write_text(
+        f"run_intermediate_hooks('{kernel}__relu', buf0)\n", encoding="utf-8"
+    )
+    npu_path = tmp_path / "npu.npy"
+    np.save(npu_path, np.ones((2, 4), dtype=np.float32))
+    graph = build_inductor_autofuse_graph(
+        tmp_path / "compile",
+        {
+            f"{kernel}__relu": {
+                "outputs": [
+                    {"index": 0, "path": npu_path, "dtype": "float32", "shape": (2, 4), "size": 8}
+                ]
+            }
+        },
+        {},
+        prefusion_graph_data={
+            "graph": [
+                {
+                    "op": [
+                        {
+                            "name": "relu",
+                            "canonical_id": "graph0::relu",
+                            "output_desc": [{"shape": {"dim": [2, 3]}, "data_type": "float32"}],
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+    fusion = next(op for op in graph["graph"][0]["op"] if op["type"] == "AutofuseFusion")
+
+    assert "canonical_id" not in fusion
+    assert fusion["mapping_method"] == "provenance_conflict"
+    assert fusion["provenance_conflicts"][0]["reference_shape"] == [2, 3]
 
 
 def test_build_inductor_graph_uniquifies_repeated_uncaptured_nodes(tmp_path: Path) -> None:
