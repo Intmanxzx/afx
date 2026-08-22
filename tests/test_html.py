@@ -70,7 +70,20 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
                         "variant_name": "ascgraph_AutoFuseAfterOptimize_0",
                         "source": "/tmp/autofused_add_ge_0123456789abcdef0123456789abcdef/ascgraph_AutoFuseAfterOptimize_0.txt",
                         "source_relative": "autofused_add_ge_0123456789abcdef0123456789abcdef/ascgraph_AutoFuseAfterOptimize_0.txt",
-                        "nodes": [],
+                        "nodes": [
+                            {
+                                "id": 0,
+                                "name": "graph_hint/data",
+                                "type": "Data",
+                                "inputs": [],
+                                "outputs": [{"place": "GM", "tensor_id": 0}],
+                                "raw_fields": [
+                                    ".ir_attr.index = i: 0",
+                                    ".y: f32",
+                                    "    .mem = GM[tensor_id=0, pos=GM]",
+                                ],
+                            }
+                        ],
                         "edges": [],
                         "queues": [],
                         "buffers": [],
@@ -202,6 +215,15 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "current.depth >= maxDepth" in content
     assert "URLSearchParams" in content
     assert "AutoFuseAfterOptimize" in content
+    assert "function rawAutofuseFields(node)" in content
+    assert "原始图字段" in content
+    assert "raw-node-fields" in content
+    assert "inputItems.concat(outputItems, rawFieldItems)" in content
+    assert "function autofuseFieldLines(node)" not in content
+    assert 'xml:space="preserve"' not in content
+    assert ".ir_attr.index = i: 0" in content
+    assert ".y: f32" in content
+    assert ".mem = GM[tensor_id=0, pos=GM]" in content
     assert "graphTabs" in content
     assert "graph-tab-group" in content
     assert "graph-kernel-tab" in content

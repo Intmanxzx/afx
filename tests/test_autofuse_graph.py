@@ -91,8 +91,15 @@ def test_parse_ascgraph_classifies_load_queue_usage() -> None:
     nodes = {node["name"]: node for node in graph["nodes"]}
     assert nodes["load1"]["exec_condition"] == "cache_block_split_fused_brc_axis"
     assert nodes["load1"]["broadcast_cache"] is True
+    assert nodes["load1"]["raw_fields"] == [
+        ".exec_condition = cache_block_split_fused_brc_axis",
+        ".x = {data.y}",
+        ".y: f32",
+        "    .mem = UB[tensor_id=1, que_id=0, buf_num=2, reuse_id=0, depth=2, pos=VECIN]",
+    ]
     assert nodes["add"]["exec_condition"] == "no_cache"
     assert nodes["add"]["broadcast_cache"] is False
+    assert nodes["add"]["raw_fields"][-1] == "    .tmp_buf = {{ id=1 }}"
 
 
 def test_collect_autofuse_graphs_reads_all_matching_suffixes(tmp_path: Path) -> None:

@@ -707,6 +707,8 @@ def render_report_html(
       overflow-wrap: anywhere;
     }
     .io-item small { display: block; color: var(--muted); margin-top: 2px; }
+    .raw-node-fields { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #3d4856; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: text; }
+    .details-panel.details-wide .raw-node-fields { white-space: pre; overflow-wrap: normal; }
     .tensor-viewer { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; }
     .tensor-viewer[hidden] { display: none; }
     .tensor-viewer-backdrop { position: absolute; inset: 0; background: rgba(22, 32, 42, 0.46); }
@@ -1752,6 +1754,9 @@ def render_report_html(
       lines.push(remaining);
       return lines;
     }
+    function rawAutofuseFields(node) {
+      return Array.isArray(node?.raw_fields) ? node.raw_fields.map(value => String(value)) : [];
+    }
     function graphNodeHeight(node) {
       const base = graphContext.kind === 'main' ? 84 : 136;
       return base + Math.max(0, graphNameLines(nodeDisplayName(node)).length - 1) * 15;
@@ -2147,7 +2152,10 @@ def render_report_html(
       const outputItems = graphContext.kind === 'autofuse'
         ? (node.outputs || []).map((item, index) => `<div class="io-item"><strong>output ${index}</strong><small>${escapeHtml(memoryText(item))}</small></div>`)
         : (node.outputs || []).map((item, index) => `<div class="io-item"><strong>output ${item.index ?? index}</strong><small>${escapeHtml(tensorText(item))}</small></div>`);
-      io.innerHTML = inputItems.concat(outputItems).join('') || '<div class="io-item">无输入输出描述</div>';
+      const rawFieldItems = graphContext.kind === 'autofuse' && rawAutofuseFields(node).length
+        ? [`<div class="io-item"><strong>原始图字段</strong><pre class="raw-node-fields">${escapeHtml(rawAutofuseFields(node).join('\\n'))}</pre></div>`]
+        : [];
+      io.innerHTML = inputItems.concat(outputItems, rawFieldItems).join('') || '<div class="io-item">无输入输出描述</div>';
       for (const button of document.querySelectorAll('[data-highlight-mode]')) {
         button.classList.toggle('active', button.dataset.highlightMode === selection.mode && selection.mode !== 'clear');
       }

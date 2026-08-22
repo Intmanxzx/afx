@@ -29,6 +29,14 @@ def _memory_item(place: str, attrs: str) -> dict[str, Any]:
     return item
 
 
+def _raw_fields(lines: list[str]) -> list[str]:
+    fields = [line.rstrip() for line in lines if line.strip()]
+    if not fields:
+        return []
+    indent = min(len(line) - len(line.lstrip()) for line in fields)
+    return [line[indent:] for line in fields]
+
+
 def _finish_node(node: dict[str, Any], lines: list[str]) -> dict[str, Any]:
     inputs: list[str] = []
     memories: list[dict[str, Any]] = []
@@ -46,6 +54,7 @@ def _finish_node(node: dict[str, Any], lines: list[str]) -> dict[str, Any]:
     node["outputs"] = memories
     node["exec_condition"] = exec_condition
     node["broadcast_cache"] = exec_condition in _BROADCAST_CACHE_CONDITIONS
+    node["raw_fields"] = _raw_fields(lines)
     return node
 
 
