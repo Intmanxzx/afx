@@ -466,7 +466,11 @@ def test_write_report_html_includes_topological_first_failure_analysis(tmp_path:
 
     content = target.read_text(encoding="utf-8")
     assert "function rebuildFirstFailureAnalysis()" in content
-    assert "hasFailedAncestor.get(predecessor)" in content
+    assert "const hasFailedInput = new Map();" in content
+    assert "precisionNodeStatus(mainNpuNodes.get(predecessor)) === 'fail'" in content
+    assert "hasFailedAncestor.get(predecessor)" not in content
+    assert "|| hasFailedInput.get(predecessor)" not in content
+    assert "所有可比较直接输入" in content
     assert "const hasUnknownInput = new Map();" in content
     assert "const observed = !!hasUnknownInput.get(name);" in content
     assert "hasUnknownAncestor.get(predecessor)" not in content

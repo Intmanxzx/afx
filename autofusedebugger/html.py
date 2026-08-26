@@ -1159,14 +1159,14 @@ def render_report_html(
       const ordered = new Set(topological);
       for (const node of nodes) if (!ordered.has(node.name)) topological.push(node.name);
 
-      const hasFailedAncestor = new Map();
+      const hasFailedInput = new Map();
       const hasUnknownInput = new Map();
       const depth = new Map();
       const longestParent = new Map();
       for (const name of topological) {
         const predecessors = incoming.get(name) || [];
-        hasFailedAncestor.set(name, predecessors.some(predecessor =>
-          precisionNodeStatus(mainNpuNodes.get(predecessor)) === 'fail' || hasFailedAncestor.get(predecessor)
+        hasFailedInput.set(name, predecessors.some(predecessor =>
+          precisionNodeStatus(mainNpuNodes.get(predecessor)) === 'fail'
         ));
         hasUnknownInput.set(name, predecessors.some(predecessor =>
           precisionNodeStatus(mainNpuNodes.get(predecessor)) === 'unknown'
@@ -1186,7 +1186,7 @@ def render_report_html(
 
       for (const name of topological) {
         const node = mainNpuNodes.get(name);
-        if (precisionNodeStatus(node) !== 'fail' || hasFailedAncestor.get(name)) continue;
+        if (precisionNodeStatus(node) !== 'fail' || hasFailedInput.get(name)) continue;
         const unknowns = upstreamUnknownNodes(name, incoming);
         const observed = !!hasUnknownInput.get(name);
         const fusion = isFusionNode(node);
@@ -1194,14 +1194,14 @@ def render_report_html(
         const label = observed ? 'FIRST OBSERVED FAIL' : (fusion ? 'FUSION FIRST FAIL' : 'FIRST FAIL');
         const reason = observed
           ? `当前输出已确认整体 Tensor 精度失败；上游存在 ${unknowns.length} 个未比较节点，无法排除更早失败`
-          : (fusion ? '所有可比较上游均未发生整体 Tensor 失败，首次失败位于融合算子出口' : '所有可比较上游均未发生整体 Tensor 失败，当前节点首次失败');
+          : (fusion ? '所有可比较直接输入均未发生整体 Tensor 失败，失败边界位于融合算子出口' : '所有可比较直接输入均未发生整体 Tensor 失败，当前节点为新的失败边界');
         firstFailureByNode.set(name, {
           kind, label, reason, unknowns,
           path: firstFailurePath(name, incoming, longestParent, observed),
         });
       }
       for (const name of topological) {
-        if (precisionNodeStatus(mainNpuNodes.get(name)) === 'fail' && hasFailedAncestor.get(name)) {
+        if (precisionNodeStatus(mainNpuNodes.get(name)) === 'fail' && hasFailedInput.get(name)) {
           propagatedFailureByNode.add(name);
         }
       }
