@@ -506,13 +506,19 @@ def _prefusion_display_names(graph_specs: list[dict[str, Any]]) -> dict[tuple[in
     return result
 
 
-def _install_prefusion_runtime_capture() -> tuple[dict[int, tuple[Any, ...]], Any]:
+def _install_prefusion_runtime_capture(
+    runtime_context: dict[str, Any] | None = None,
+) -> tuple[dict[int, tuple[Any, ...]], Any]:
     """Capture the real flattened arguments passed to each compiled FX graph."""
     import importlib
 
     compile_fx_module = importlib.import_module("torch._inductor.compile_fx")
     original_compile_fx = compile_fx_module.compile_fx
     runtime_inputs: dict[int, tuple[Any, ...]] = {}
+    runtime_call_counts: dict[int, int] = {}
+    if runtime_context is None:
+        runtime_context = {}
+    runtime_context["runtime_call_counts"] = runtime_call_counts
 
     def compile_fx_wrapper(model, example_inputs, *args, **kwargs):  # type: ignore[no-untyped-def]
         if args:
@@ -533,10 +539,21 @@ def _install_prefusion_runtime_capture() -> tuple[dict[int, tuple[Any, ...]], An
                 values = runtime_args
                 if len(runtime_args) == 1 and isinstance(runtime_args[0], (list, tuple)):
                     values = tuple(runtime_args[0])
+                gm_id = id(gm)
+                call_index = runtime_call_counts.get(gm_id, 0)
+                runtime_call_counts[gm_id] = call_index + 1
                 runtime_inputs[id(gm)] = tuple(values)
-                if len(runtime_args) == 1 and isinstance(runtime_args[0], (list, tuple)):
-                    return compiled_code(*runtime_args, **runtime_kwargs)
-                return compiled_code(list(runtime_args), **runtime_kwargs)
+                previous = runtime_context.get("current")
+                runtime_context["current"] = {"gm_id": gm_id, "call_index": call_index}
+                try:
+                    if len(runtime_args) == 1 and isinstance(runtime_args[0], (list, tuple)):
+                        return compiled_code(*runtime_args, **runtime_kwargs)
+                    return compiled_code(list(runtime_args), **runtime_kwargs)
+                finally:
+                    if previous is None:
+                        runtime_context.pop("current", None)
+                    else:
+                        runtime_context["current"] = previous
 
             return run_compiled
 
@@ -822,8 +839,11 @@ def run_npu_model(
     compile_options = {"npu_backend": "ascendc"} if package_root.startswith("torch_npu.") else None
     device_inputs = _to_device(case.inputs, device)
     device_kwargs = _to_device(case.kwargs, device)
-    records, save_intermediate = capture_inductor_outputs(npu_dump_dir)
-    runtime_prefusion_inputs, restore_prefusion_runtime_capture = _install_prefusion_runtime_capture()
+    runtime_context: dict[str, Any] = {}
+    records, save_intermediate = capture_inductor_outputs(npu_dump_dir, runtime_context)
+    runtime_prefusion_inputs, restore_prefusion_runtime_capture = _install_prefusion_runtime_capture(
+        runtime_context
+    )
     with _model_device_hints(model, device, enabled=case.rewrite_device_hints):
         with _execution_context(case, device):
             try:
@@ -835,9 +855,18 @@ def run_npu_model(
                 restore_prefusion_runtime_capture()
     diagnostics = autofuse_diagnostics()
     captured_prefusion_graphs = prefusion_graphs()
+    runtime_call_counts = runtime_context.get("runtime_call_counts", {})
+    prefusion_runtime_selection: dict[int, dict[str, Any]] = {}
     for graph_index, spec in enumerate(captured_prefusion_graphs):
         placeholders = [node.name for node in spec["gm"].graph.nodes if node.op == "placeholder"]
-        runtime_inputs = runtime_prefusion_inputs.get(id(spec["gm"]))
+        gm_id = id(spec["gm"])
+        call_count = int(runtime_call_counts.get(gm_id, 0))
+        if call_count:
+            prefusion_runtime_selection[graph_index] = {
+                "gm_id": gm_id,
+                "call_index": call_count - 1,
+            }
+        runtime_inputs = runtime_prefusion_inputs.get(gm_id)
         if runtime_inputs is None:
             candidates = [
                 values for values in runtime_prefusion_inputs.values() if len(values) == len(placeholders)
@@ -872,6 +901,7 @@ def run_npu_model(
         "captured_nodes": list(records),
         "diagnostics": diagnostics,
         "prefusion_graphs": captured_prefusion_graphs,
+        "prefusion_runtime_selection": prefusion_runtime_selection,
     }
 
 
@@ -954,6 +984,7 @@ def run_torch_case(
             diagnostics,
             cpu_graph_data=cpu_graph_data,
             prefusion_graph_data=cpu_graph_data,
+            prefusion_runtime_selection=native_capture.get("prefusion_runtime_selection"),
         )
 
     cpu_graph = root / "cpu_graph.json"

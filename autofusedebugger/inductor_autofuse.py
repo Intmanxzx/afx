@@ -243,7 +243,7 @@ def _capture_name(raw_name: str) -> tuple[str, int]:
     return name, int(raw_index)
 
 
-def capture_inductor_outputs(dump_dir: Path):
+def capture_inductor_outputs(dump_dir: Path, runtime_context: dict[str, Any] | None = None):
     import torch
 
     records: dict[str, dict[str, Any]] = {}
@@ -259,6 +259,10 @@ def capture_inductor_outputs(dump_dir: Path):
                 call_index += 1
             name = f"{name}__call{call_index}"
         record = records.setdefault(name, {"name": name, "outputs": []})
+        if runtime_context is not None and "current" in runtime_context:
+            current = runtime_context["current"]
+            record.setdefault("runtime_gm_id", int(current["gm_id"]))
+            record.setdefault("runtime_call_index", int(current["call_index"]))
         for offset, tensor in enumerate(tensors):
             index = base_index + offset
             array, dtype = tensor_to_numpy(tensor)
@@ -677,20 +681,51 @@ def _record_output(records: dict[str, dict[str, Any]], name: str, index: int = 0
     return None
 
 
-def _fusion_capture_name(base: str, records: dict[str, dict[str, Any]], used: set[str]) -> str:
+def _capture_base_name(name: str) -> str:
+    return re.sub(r"__call\d+$", "", name)
+
+
+def _record_matches_runtime(
+    record: dict[str, Any], runtime_selection: dict[str, Any] | None
+) -> bool:
+    if runtime_selection is None:
+        return True
+    return (
+        int(record.get("runtime_gm_id", -1)) == int(runtime_selection.get("gm_id", -2))
+        and int(record.get("runtime_call_index", -1)) == int(runtime_selection.get("call_index", -2))
+    )
+
+
+def _fusion_capture_name(
+    base: str,
+    records: dict[str, dict[str, Any]],
+    used: set[str],
+    runtime_selection: dict[str, Any] | None = None,
+) -> str:
     for name in records:
-        if name not in used and (name == base or re.fullmatch(re.escape(base) + r"__call\d+", name)):
+        if (
+            name not in used
+            and _record_matches_runtime(records[name], runtime_selection)
+            and (name == base or re.fullmatch(re.escape(base) + r"__call\d+", name))
+        ):
             used.add(name)
             return name
     return base
 
 
-def _fallback_capture_name(kernel: str, records: dict[str, dict[str, Any]], used: set[str]) -> str:
+def _fallback_capture_name(
+    kernel: str,
+    records: dict[str, dict[str, Any]],
+    used: set[str],
+    runtime_selection: dict[str, Any] | None = None,
+) -> str:
     base = kernel.split(".", 1)[0]
     aliases = {"mm": {"mm", "matmul"}, "bmm": {"bmm", "matmul"}}
     candidates = aliases.get(base, {base})
     for name in records:
-        if name in used or name.startswith("autofused_"):
+        if name in used or name.startswith("autofused_") or not _record_matches_runtime(
+            records[name], runtime_selection
+        ):
             continue
         canonical = re.sub(r"__call\d+$", "", name)
         canonical = re.sub(r"_\d+$", "", canonical)
@@ -701,14 +736,22 @@ def _fallback_capture_name(kernel: str, records: dict[str, dict[str, Any]], used
 
 
 def _capture_for_buffers(
-    buffers: list[str], hook_captures: dict[str, str], records: dict[str, dict[str, Any]], used: set[str]
+    buffers: list[str],
+    hook_captures: dict[str, str],
+    records: dict[str, dict[str, Any]],
+    used: set[str],
+    runtime_selection: dict[str, Any] | None = None,
 ) -> str | None:
     for buffer_name in buffers:
         base = hook_captures.get(buffer_name)
         if base is None:
             continue
         for name in records:
-            if name in used or (name != base and not re.fullmatch(re.escape(base) + r"__call\d+", name)):
+            if (
+                name in used
+                or not _record_matches_runtime(records[name], runtime_selection)
+                or (name != base and not re.fullmatch(re.escape(base) + r"__call\d+", name))
+            ):
                 continue
             used.add(name)
             return name
@@ -858,6 +901,7 @@ def _trace_graph(
     used_captures: set[str],
     fusion_decisions: list[dict[str, Any]],
     lowering_fallbacks: list[dict[str, Any]],
+    runtime_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ir_path = trace_dir / "ir_post_fusion.txt"
     text = ir_path.read_text(encoding="utf-8")
@@ -918,7 +962,9 @@ def _trace_graph(
         if "MultiOutput" in block["kind"] or "NopKernelSchedulerNode" in block["kind"]:
             continue
         fusion = fusion_by_scheduler.get(block["id"])
-        captured_name = _capture_for_buffers(block["writes"], hook_captures, records, used_captures)
+        captured_name = _capture_for_buffers(
+            block["writes"], hook_captures, records, used_captures, runtime_selection
+        )
         if fusion is None and captured_name is not None:
             fusion = next(
                 (
@@ -931,23 +977,31 @@ def _trace_graph(
         if fusion is not None:
             name = captured_name
             if name is None:
-                name = _fusion_capture_name(fusion["capture_name"], records, used_captures)
+                name = _fusion_capture_name(
+                    fusion["capture_name"], records, used_captures, runtime_selection
+                )
             node_type = "AutofuseFusion"
             origin_ops = fusion["origin_ops"]
             original_aten_types = fusion["original_aten_types"]
             origin_subgraph = fusion["origin_subgraph"]
             prefix = fusion["kernel_name"] + "__"
-            exit_name = name[len(prefix):] if name.startswith(prefix) else fusion["exit_name"]
+            exit_name = (
+                _capture_base_name(name[len(prefix):])
+                if name.startswith(prefix)
+                else fusion["exit_name"]
+            )
             exit_type = exit_name
         else:
             name = captured_name
             if name is None:
-                name = _fallback_capture_name(block["kernel"], records, used_captures)
+                name = _fallback_capture_name(
+                    block["kernel"], records, used_captures, runtime_selection
+                )
             node_type = f"aten.{block['kernel'].split('.', 1)[0]}" if block["kernel"] else block["kind"]
-            origin_ops = [name]
+            origin_ops = [_capture_base_name(name)]
             original_aten_types = []
             origin_subgraph = None
-            exit_name = name
+            exit_name = _capture_base_name(name)
             exit_type = block["kernel"].split(".", 1)[0] if block["kernel"] else name
         if not name:
             name = f"inductor_{block['id']}"
@@ -1286,6 +1340,7 @@ def build_inductor_autofuse_graph(
     diagnostics: dict[str, Any] | None = None,
     cpu_graph_data: dict[str, Any] | None = None,
     prefusion_graph_data: dict[str, Any] | None = None,
+    prefusion_runtime_selection: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = Path(compile_root).resolve()
     traces = sorted({path.parent for path in root.rglob("ir_post_fusion.txt")}, key=_trace_sort_key)
@@ -1304,7 +1359,14 @@ def build_inductor_autofuse_graph(
             graph_index = trace_position
         decision_index = decision_offset + trace_position
         decisions = decision_groups[decision_index] if decision_index < len(decision_groups) else []
-        parsed = _trace_graph(trace, records, used_captures, decisions, lowering_fallbacks)
+        parsed = _trace_graph(
+            trace,
+            records,
+            used_captures,
+            decisions,
+            lowering_fallbacks,
+            (prefusion_runtime_selection or {}).get(graph_index),
+        )
         sources.append(parsed["source"])
         existing_names = {item["name"] for item in all_ops}
         rename = {
@@ -1484,6 +1546,7 @@ def build_inductor_autofuse_graph(
                 }
             ),
             "mapping_policy": "pre-fusion IR SchedulerNode -> transformed FX canonical_id -> CPU/NPU eager",
+            "runtime_capture_selection": prefusion_runtime_selection or {},
             "lowering_fallbacks": len(diagnostics.get("lowering_fallbacks", [])),
             "fusion_decisions": sum(len(group) for group in decision_groups),
         },

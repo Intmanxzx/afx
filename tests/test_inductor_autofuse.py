@@ -9,10 +9,92 @@ import autofusedebugger.inductor_autofuse as inductor_autofuse
 from autofusedebugger.graph import extract_edges
 from autofusedebugger.inductor_autofuse import (
     _match_cpu_output,
+    _fallback_capture_name,
     _trace_sort_key,
     activate_autofuse_backend,
     build_inductor_autofuse_graph,
 )
+
+
+def test_capture_name_selects_the_runtime_graph_invocation() -> None:
+    records = {
+        "transpose": {"runtime_gm_id": 7, "runtime_call_index": 0, "outputs": []},
+        "transpose__call1": {"runtime_gm_id": 7, "runtime_call_index": 1, "outputs": []},
+        "transpose__call2": {"runtime_gm_id": 8, "runtime_call_index": 0, "outputs": []},
+    }
+
+    selected = _fallback_capture_name(
+        "transpose.default",
+        records,
+        set(),
+        {"gm_id": 7, "call_index": 1},
+    )
+
+    assert selected == "transpose__call1"
+
+
+def test_selected_runtime_capture_keeps_prefusion_canonical_mapping(tmp_path: Path) -> None:
+    trace = tmp_path / "compile" / "torchinductor" / "model__0"
+    trace.mkdir(parents=True)
+    (trace / "ir_post_fusion.txt").write_text(
+        """
+op0: ExternKernelSchedulerNode(FallbackKernel)
+op0.writes = [StarDep(name='buf0', mode=None)]
+op0.unmet_dependencies = [StarDep(name='arg0_1', mode=None)]
+op0.met_dependencies = []
+op0.outputs = [
+    buf0: FallbackKernel
+    buf0.layout = FixedLayout('npu:0', torch.bfloat16, size=[2, 3], stride=[3, 1])
+]
+op0.node.kernel = torch.ops.aten.transpose.int
+arg0_1_layout = FixedLayout('npu:0', torch.bfloat16, size=[2, 3], stride=[3, 1])
+""",
+        encoding="utf-8",
+    )
+    (trace / "output_code.py").write_text("run_intermediate_hooks('transpose', buf0)\n", encoding="utf-8")
+    output_path = tmp_path / "transpose.npy"
+    np.save(output_path, np.ones((2, 3), dtype=np.float32))
+
+    graph = build_inductor_autofuse_graph(
+        tmp_path / "compile",
+        {
+            "transpose__call1": {
+                "runtime_gm_id": 7,
+                "runtime_call_index": 1,
+                "outputs": [
+                    {
+                        "index": 0,
+                        "path": output_path,
+                        "dtype": "bfloat16",
+                        "shape": (2, 3),
+                        "size": 6,
+                    }
+                ],
+            }
+        },
+        {},
+        prefusion_graph_data={
+            "graph": [
+                {
+                    "op": [
+                        {
+                            "name": "transpose",
+                            "canonical_id": "graph0::transpose",
+                            "output_desc": [
+                                {"shape": {"dim": [2, 3]}, "data_type": "bfloat16"}
+                            ],
+                        }
+                    ]
+                }
+            ]
+        },
+        prefusion_runtime_selection={0: {"gm_id": 7, "call_index": 1}},
+    )
+    op = next(op for op in graph["graph"][0]["op"] if op["type"] != "Data")
+
+    assert op["name"] == "transpose__call1"
+    assert op["origin_ops"] == ["transpose"]
+    assert op["canonical_id"] == "graph0::transpose"
 
 
 def test_activate_autofuse_backend_prefers_torch_npu_bundle(monkeypatch) -> None:
@@ -193,7 +275,7 @@ op0: SchedulerNode(ComputedBuffer)
     npu_path = tmp_path / "npu.npy"
     np.save(npu_path, np.ones((2, 4), dtype=np.float32))
     records = {
-        f"{kernel}__relu": {
+        f"{kernel}__relu__call1": {
             "outputs": [{"index": 0, "path": npu_path, "dtype": "float32", "shape": (2, 4), "size": 8}]
         }
     }
