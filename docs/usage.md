@@ -142,6 +142,8 @@ autofusedebugger run-torch-model \
 - 逐元素指标：`max abs`、`max rel`、`RMSE`、`rtol/atol`、`mismatch`、有限值和非有限值位置。
 - 整 Tensor 指标：`CosineSimilarity（余弦值相似度）`、`RelativeEuclideanDistance（欧氏相对距离）`、`KullbackLeiblerDivergence（KL散度）`。
 
+主图中同一精度结果类别使用渐变色表示误差严重度：颜色越深表示最大逐元素误差相对于该位置 `rtol/atol` 容差的倍数越大。颜色采用对数尺度，达到 `1000x` 及以上按最深色显示，避免极端异常节点压低其他节点的颜色差异；节点详情和悬浮提示中的“相对容差误差倍数”仍显示具体值。整体 Tensor 指标单独失败且逐元素通过时，会使用整体指标相对于对应阈值的倍数参与颜色计算。未映射、未采集和融合内部不可观测节点不参与该颜色计算。
+
 默认不会保存每个 Tensor 位置的 CPU/NPU 原值和 PASS/FAIL mask，以避免整网 HTML 和中间数据过大；逐元素判定、mismatch 数和汇总指标仍会正常计算。需要打开 HTML 的 Tensor 逐位置查看器时，在工具参数中增加：
 
 ```bash

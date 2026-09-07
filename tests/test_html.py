@@ -302,6 +302,12 @@ def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     assert "cannMetricText" in content
     assert "mismatchText" in content
     assert "maxIndexText" in content
+    assert "max_tolerance_ratio" in content
+    assert "precisionSeverityValue" in content
+    assert "precisionSeverityLevel" in content
+    assert "precisionNodeColors" in content
+    assert "相对容差误差倍数" in content
+    assert "precision-scale" in content
     assert "-Inf" in content
     assert "value === undefined || value === null || value === ''" in content
     assert "strict_passed" in content

@@ -825,6 +825,23 @@ def test_compare_pair_uses_lower_precision_dtype_and_allows_override(tmp_path: P
     assert (overridden["rtol"], overridden["atol"], overridden["tolerance_source"]) == (2e-2, 3e-2, "override")
 
 
+def test_metrics_reports_max_error_as_tolerance_ratio() -> None:
+    golden = np.array([1.0, 2.0], dtype=np.float32)
+    actual = np.array([1.02, 2.0], dtype=np.float32)
+
+    result = _metrics(golden, actual, rtol=1e-2, atol=0.0)
+
+    assert result["max_tolerance_ratio"] > 1.9
+    assert result["strict_passed"] is False
+
+
+def test_metrics_marks_mismatched_nonfinite_values_as_infinite_severity() -> None:
+    result = _metrics(np.array([np.nan]), np.array([np.inf]), rtol=0.0, atol=0.0)
+
+    assert result["max_tolerance_ratio"] is None
+    assert result["tolerance_ratio_unbounded"] is True
+
+
 def test_integer_outputs_require_exact_match(tmp_path: Path) -> None:
     cpu_path = tmp_path / "cpu.npy"
     npu_path = tmp_path / "npu.npy"

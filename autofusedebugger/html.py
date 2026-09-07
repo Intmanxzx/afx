@@ -653,6 +653,7 @@ def render_report_html(
     .load-legend .shared::before { background: #fff; border: 2px solid #2f8f62; }
     .load-legend .reused::before { background: #fff; border: 2px dashed #b97800; }
     .load-legend .single::before { background: #fff; border: 2px solid #2457a6; }
+    .load-legend .precision-scale::before { width: 48px; height: 9px; border-radius: 2px; background: linear-gradient(90deg, #f4f8fb, #536273); border: 1px solid #9aa5b1; }
     .details-panel {
       --details-width: 360px;
       flex: 0 0 var(--details-width);
@@ -1315,6 +1316,18 @@ def render_report_html(
       single: {fill: '#eaf1ff', stroke: '#2457a6'},
     };
     const queueClassLabels = {shared: 'QUE SHARED', reused: 'QUE REUSED', single: 'QUE SINGLE'};
+    const precisionSeverityConfig = {
+      maxToleranceRatio: 1000,
+      cosineThreshold: Number(report.cann_thresholds?.cosine_similarity ?? 0.99),
+      relativeEuclideanThreshold: Number(report.cann_thresholds?.relative_euclidean_distance ?? 0.05),
+      klDivergenceThreshold: Number(report.cann_thresholds?.kl_divergence ?? 0.005),
+    };
+    const precisionColorPalettes = {
+      pass: {fill: ['#f4fbf7', '#78bf98'], stroke: ['#8cc9a8', '#147a4d']},
+      warning: {fill: ['#fffaf0', '#e4a72f'], stroke: ['#d0a457', '#8a5a00']},
+      fail: {fill: ['#fff6f6', '#e16464'], stroke: ['#df9292', '#a52020']},
+      propagated: {fill: ['#fff8f4', '#d8895e'], stroke: ['#d48867', '#8f4121']},
+    };
     const broadcastCacheConditions = new Set([
       'cache_block_split_fused_brc_axis', 'cache_block_split_origin_brc_axis',
     ]);
@@ -1415,6 +1428,72 @@ def render_report_html(
     }
     function dtypeText(dtype) {
       return dtype ? String(dtype).replace('float', 'f').replace('int', 'i') : '?';
+    }
+    function precisionSeverityValue(row) {
+      if (!row || row.compared === false) return null;
+      const strictPassed = row.strict_passed ?? row.passed;
+      const cannPassed = row.cann_passed ?? row.passed;
+      const unbounded = row.tolerance_ratio_unbounded === true
+        || Number(row.nonfinite?.different_positions || 0) > 0;
+      let severity = unbounded ? Infinity : Number(row.max_tolerance_ratio);
+      if (!unbounded && Number.isNaN(severity)) {
+        const fallbackRatios = [];
+        const maxAbs = Number(row.max_abs_error), maxRel = Number(row.max_rel_error);
+        const atol = Number(row.atol), rtol = Number(row.rtol);
+        if (Number.isFinite(maxAbs) && Number.isFinite(atol) && atol > 0) fallbackRatios.push(maxAbs / atol);
+        if (Number.isFinite(maxRel) && Number.isFinite(rtol) && rtol > 0) fallbackRatios.push(maxRel / rtol);
+        severity = fallbackRatios.length ? Math.max(...fallbackRatios) : (Number(row.mismatched || 0) ? Infinity : 0);
+      }
+      if (cannPassed === false && strictPassed !== false) {
+        const aggregateRatios = [];
+        const cosine = Number(row.cann_cosine_similarity);
+        const relativeEuclidean = Number(row.relative_euclidean_distance);
+        const klDivergence = Number(row.kl_divergence);
+        if (Number.isFinite(cosine) && precisionSeverityConfig.cosineThreshold > 0) {
+          aggregateRatios.push(precisionSeverityConfig.cosineThreshold / Math.max(cosine, 1e-12));
+        }
+        if (Number.isFinite(relativeEuclidean) && precisionSeverityConfig.relativeEuclideanThreshold > 0) {
+          aggregateRatios.push(relativeEuclidean / precisionSeverityConfig.relativeEuclideanThreshold);
+        }
+        if (Number.isFinite(klDivergence) && precisionSeverityConfig.klDivergenceThreshold > 0) {
+          aggregateRatios.push(klDivergence / precisionSeverityConfig.klDivergenceThreshold);
+        }
+        severity = Math.max(severity, aggregateRatios.length ? Math.max(...aggregateRatios) : 1);
+      }
+      return Number.isFinite(severity) ? Math.max(0, severity) : Infinity;
+    }
+    function nodePrecisionSeverity(name) {
+      const values = (resultRowsByNpu.get(name) || []).map(precisionSeverityValue).filter(value => value !== null);
+      return values.length ? Math.max(...values) : null;
+    }
+    function precisionSeverityLevel(value) {
+      if (value === null || value === undefined) return 0;
+      if (value === Infinity) return 1;
+      const ceiling = Math.max(1, precisionSeverityConfig.maxToleranceRatio);
+      return Math.max(0, Math.min(1, Math.log10(1 + value) / Math.log10(1 + ceiling)));
+    }
+    function hexToRgb(value) {
+      const match = String(value).match(/^#([0-9a-f]{6})$/i);
+      return match ? [0, 2, 4].map(index => parseInt(match[1].slice(index, index + 2), 16)) : [0, 0, 0];
+    }
+    function mixHex(light, dark, amount) {
+      const left = hexToRgb(light), right = hexToRgb(dark);
+      const channels = left.map((value, index) => Math.round(value + (right[index] - value) * amount));
+      return '#' + channels.map(value => value.toString(16).padStart(2, '0')).join('');
+    }
+    function precisionNodeColors(kind, name) {
+      const palette = precisionColorPalettes[kind] || precisionColorPalettes.pass;
+      const level = precisionSeverityLevel(nodePrecisionSeverity(name));
+      return {
+        fill: mixHex(palette.fill[0], palette.fill[1], level),
+        stroke: mixHex(palette.stroke[0], palette.stroke[1], level),
+      };
+    }
+    function precisionSeverityText(name) {
+      const value = nodePrecisionSeverity(name);
+      if (value === null || value === undefined) return '-';
+      if (value === Infinity) return '∞（存在不一致的非有限值）';
+      return value < 1000 ? `${value.toFixed(2)}×` : value.toExponential(2) + '×';
     }
     function tensorText(tensor) {
       if (!tensor) return '?';
@@ -1716,15 +1795,15 @@ def render_report_html(
       }
       if (!metric.cannPassed) {
         if (propagatedFailureByNode.has(node.name)) {
-          return {fill: '#fbece5', stroke: '#b5643d', label: '上游失败传播', metric, dashed: true};
+          return {...precisionNodeColors('propagated', node.name), label: '上游失败传播', metric, dashed: true};
         }
         const label = metric.strictPassed ? '整体 Tensor 失败' : '逐元素 + 整体均失败';
-        return {fill: '#fde2e2', stroke: '#d34a4a', label, metric};
+        return {...precisionNodeColors('fail', node.name), label, metric};
       }
-      if (!metric.strictPassed) return {fill: '#fff1d6', stroke: '#b97800', label: '逐元素失败', metric};
-      if (metric.row.nonfinite_aligned) return {fill: '#dff3e9', stroke: '#2f8f62', label: '非有限值一致 · 通过', metric};
-      if (metric.row.status && metric.row.status !== 'OK') return {fill: '#fff1d6', stroke: '#b97800', label: 'WARN', metric};
-      return {fill: '#dff3e9', stroke: '#2f8f62', label: '逐元素 + 整体均通过', metric};
+      if (!metric.strictPassed) return {...precisionNodeColors('warning', node.name), label: '逐元素失败', metric};
+      if (metric.row.nonfinite_aligned) return {...precisionNodeColors('pass', node.name), label: '非有限值一致 · 通过', metric};
+      if (metric.row.status && metric.row.status !== 'OK') return {...precisionNodeColors('warning', node.name), label: 'WARN', metric};
+      return {...precisionNodeColors('pass', node.name), label: '逐元素 + 整体均通过', metric};
     }
     function isFusionNode(node) {
       const origins = Array.isArray(node?.origin_ops) ? node.origin_ops : [];
@@ -2090,7 +2169,7 @@ def render_report_html(
       const propagatedFailure = propagatedFailureByNode.has(node.name);
       const detailRows = [
         ['结果', state.label], ['逐元素对比', strictResult], ['整体 Tensor 对比', cannResult], ['状态', row?.status || '-'],
-        ['映射说明', row?.unmapped_reason || row?.mapping_method || '-'], ['CPU 对照', mapping], ['max abs（有限值）', finiteMetricText(row, 'max_abs_error')],
+        ['映射说明', row?.unmapped_reason || row?.mapping_method || '-'], ['CPU 对照', mapping], ['相对容差误差倍数', precisionSeverityText(node.name)], ['max abs（有限值）', finiteMetricText(row, 'max_abs_error')],
         ['max rel（有限值）', finiteMetricText(row, 'max_rel_error')], ['rmse（有限值）', finiteMetricText(row, 'rmse')],
         ['CosineSimilarity（余弦值相似度）', cannMetricText(row, 'cann_cosine_similarity')],
         ['RelativeEuclideanDistance（欧氏相对距离）', cannMetricText(row, 'relative_euclidean_distance')],
@@ -2841,7 +2920,7 @@ def render_report_html(
         analytics.open = false;
         loadLegend.hidden = false;
         loadLegend.setAttribute('aria-label', '精度结果分类');
-        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败 / 映射冲突</span><span class="fail">首次整体 Tensor 失败</span><span class="propagated">上游失败传播</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>';
+        loadLegend.innerHTML = '<span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败 / 映射冲突</span><span class="fail">首次整体 Tensor 失败</span><span class="propagated">上游失败传播</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span><span class="precision-scale">同类颜色由浅到深表示误差增大</span>';
       }
       updateGraphTabs();
       if (!layout.nodes.length) { target.innerHTML = '<div class="graph-empty">当前图没有可展示的算子拓扑</div>'; return; }
@@ -2880,7 +2959,10 @@ def render_report_html(
         const firstFailureTooltip = firstFailure
           ? `${firstFailure.label}: ${firstFailure.reason}\\nPath: ${firstFailure.path.join(' -> ')}`
           : '';
-        const tooltipDetail = [detail, firstFailureTooltip, broadcastCached ? `Broadcast cache: ${node.exec_condition}` : '', unfusedTooltip].filter(Boolean).join('\\n');
+        const precisionTooltip = graphContext.kind === 'main' && metric?.compared
+          ? `相对容差误差倍数: ${precisionSeverityText(node.name)}`
+          : '';
+        const tooltipDetail = [detail, precisionTooltip, firstFailureTooltip, broadcastCached ? `Broadcast cache: ${node.exec_condition}` : '', unfusedTooltip].filter(Boolean).join('\\n');
         const failureClasses = firstFailure
           ? ' first-failure'
           : '';

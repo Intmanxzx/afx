@@ -595,14 +595,28 @@ def _metrics_with_close(
         cosine = float(dot / (norm + 1e-12))
         max_flat_index = int(np.argmax(abs_err if all_finite else np.where(finite, abs_err, -np.inf)))
         max_index = tuple(int(i) for i in np.unravel_index(max_flat_index, golden.shape))
+        tolerance = atol + rtol * np.maximum(np.abs(finite_golden), np.abs(finite_actual))
+        tolerance_ratio = np.zeros_like(fe, dtype=np.float64)
+        np.divide(fe, tolerance, out=tolerance_ratio, where=tolerance > 0)
+        zero_tolerance_error = (tolerance <= 0) & (fe > 0)
+        tolerance_ratio[zero_tolerance_error] = np.inf
+        max_tolerance_ratio = float(tolerance_ratio.max())
+        tolerance_ratio_unbounded = bool(zero_tolerance_error.any())
+        if tolerance_ratio_unbounded:
+            max_tolerance_ratio = None
     else:
         max_abs = mean_abs = max_rel = rmse = cosine = 0.0
         max_index = ()
+        max_tolerance_ratio = 0.0
+        tolerance_ratio_unbounded = False
     same_nonfinite = (
         (np.isnan(gf) & np.isnan(af))
         | (np.isposinf(gf) & np.isposinf(af))
         | (np.isneginf(gf) & np.isneginf(af))
     )
+    if np.any((~finite) & ~same_nonfinite):
+        max_tolerance_ratio = None
+        tolerance_ratio_unbounded = True
     close = np.isclose(gf, af, rtol=rtol, atol=atol, equal_nan=False) | same_nonfinite
     strict_passed = bool(close.all())
     nonfinite = (
@@ -668,6 +682,8 @@ def _metrics_with_close(
         "mean_abs_error": mean_abs,
         "max_rel_error": max_rel,
         "rmse": rmse,
+        "max_tolerance_ratio": max_tolerance_ratio,
+        "tolerance_ratio_unbounded": tolerance_ratio_unbounded,
         "cosine_similarity": cosine,
         "mismatched": int((~close).sum()),
         "num_elements": int(gf.size),
@@ -1308,6 +1324,8 @@ def write_report_csv(path: str | Path, report: dict[str, Any]) -> None:
         "rtol",
         "atol",
         "tolerance_source",
+        "max_tolerance_ratio",
+        "tolerance_ratio_unbounded",
         "shape",
         "dtype",
         "storage_dtype",
