@@ -257,6 +257,30 @@ def test_cli_has_run_script_with_script_arguments() -> None:
     assert explicit.save_elementwise_data is True
 
 
+def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autofusedebugger import cli
+
+    script = tmp_path / "model.py"
+    script.write_text("# test\n", encoding="utf-8")
+    received = {}
+
+    def fake_run_framework_script(**kwargs):
+        received.update(kwargs)
+        return {"passed": True, "summary": {"status": "PASS", "passed": 0, "total": 0}}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run_framework_script", fake_run_framework_script)
+    monkeypatch.setattr(cli, "format_torch_run_summary", lambda summary: "summary")
+
+    assert cli.main(["python3", str(script), "--device", "npu", "--custom-flag"]) == 0
+    assert received["script"] == script.resolve()
+    assert received["script_args"] == ("--device", "npu", "--custom-flag")
+    assert received["out_dir"] == tmp_path / "model_autofusedebugger"
+    assert received["html_path"] == tmp_path / "model_autofusedebugger.html"
+
+
 def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None:
     torch = pytest.importorskip("torch")
 

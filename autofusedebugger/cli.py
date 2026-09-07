@@ -12,7 +12,11 @@ from autofusedebugger.graph import build_manifest
 from autofusedebugger.html import write_report_html, write_report_html_from_json
 from autofusedebugger.progress import progress_stage
 from autofusedebugger.runner import run_camodel_command, run_command, run_debug_cpu_command
-from autofusedebugger.script_runner import run_framework_script
+from autofusedebugger.script_runner import (
+    default_direct_output_paths,
+    parse_python_script_invocation,
+    run_framework_script,
+)
 from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
 from autofusedebugger.torch_model import run_torch_model
 
@@ -213,8 +217,28 @@ def cmd_run_script(args: argparse.Namespace) -> int:
     return 0 if summary["passed"] else 1
 
 
+def cmd_run_direct(script: Path, script_args: tuple[str, ...]) -> int:
+    out_dir, html_path = default_direct_output_paths(script)
+    print(f"AutofuseDebugger direct mode: script={script}")
+    print(f"AutofuseDebugger outputs: out_dir={out_dir} html={html_path}")
+    summary = run_framework_script(
+        script=script,
+        out_dir=out_dir,
+        framework="auto",
+        backend="inductor_autofuse",
+        script_args=script_args,
+        html_path=html_path,
+    )
+    print(format_torch_run_summary(summary))
+    return 0 if summary["passed"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="autofusedebugger")
+    parser = argparse.ArgumentParser(
+        prog="autofusedebugger",
+        description="CPU/NPU eager/NPU Autofuse 精度对比和图分析工具",
+        epilog="快捷模式：autofusedebugger python3 model.py [模型脚本参数...]",
+    )
     sub = parser.add_subparsers(dest="command_name", required=True)
 
     make = sub.add_parser("make-manifest", help="build a manifest from graph JSON and an npy dump directory")
@@ -360,9 +384,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     try:
+        direct = parse_python_script_invocation(raw_argv)
+        if direct is not None:
+            return cmd_run_direct(*direct)
+        parser = build_parser()
+        args = parser.parse_args(raw_argv)
         return int(args.func(args))
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

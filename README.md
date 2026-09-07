@@ -15,6 +15,25 @@ python3 -m pip install -e .
 
 ## 使用
 
+对于已有的 PyTorch 推理脚本，最简单的方式是在原始 `python3` 命令前加上
+`autofusedebugger`。工具会自动识别脚本路径，原样传递脚本参数，并在当前执行目录生成报告：
+
+```bash
+autofusedebugger python3 /path/to/model.py \
+    --device npu \
+    --device_id 0
+```
+
+默认输出为：
+
+```text
+./model_autofusedebugger/
+./model_autofusedebugger.html
+```
+
+其中 `model` 是脚本文件名（不含 `.py`）。该快捷方式默认执行三方精度采集；需要指定
+`--capture-call`、`--save-elementwise-data`、输出目录或其他工具参数时，使用下面的完整命令。
+
 直接运行一个会构造模型、输入并执行推理的 PyTorch 脚本：
 
 ```bash

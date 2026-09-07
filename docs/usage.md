@@ -29,6 +29,33 @@ TensorFlow 和 JAX adapter 目前只保留接口，尚未实现执行和精度�
 
 ## 一键运行模型脚本
 
+### 直接在原始命令前加工具名
+
+对于已有的模型启动脚本，不需要改动模型脚本内容或为 `autofusedebugger` 手工填写模型入口，
+可以将原来的：
+
+```bash
+python3 sasrec.py --device npu --device_id 0
+```
+
+改为：
+
+```bash
+autofusedebugger python3 sasrec.py --device npu --device_id 0
+```
+
+工具会把 `sasrec.py` 识别为目标脚本，将它后面的参数原样传给脚本，并继续使用当前目录作为
+报告输出位置。对于 `/path/to/model.py`，默认产物为：
+
+```text
+./model_autofusedebugger/       # dump、图、manifest、JSON/CSV 等中间产物
+./model_autofusedebugger.html   # 最终 HTML 报告
+```
+
+再次执行会清理并重新生成同名中间产物目录，同时覆盖同名 HTML。快捷模式固定使用
+`pytorch + inductor_autofuse`，默认捕获第一个顶层 `torch.nn.Module` 调用；需要调整捕获调用、
+保存逐元素数据、阈值或输出路径时，使用下面的完整 `run-script` 命令。
+
 `run-script` 面向用户已有的推理脚本。脚本不需要实现 `create_case()`，工具会捕获目标 `torch.nn.Module` 的一次调用，并使用捕获到的模型和输入完成三条路径的采集。
 
 ```bash

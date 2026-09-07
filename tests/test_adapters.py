@@ -179,3 +179,28 @@ def test_run_script_keeps_script_directory_importable_during_backend_execution(
 
     assert result == {"local_output": 1, "child_output": 2}
     assert received["save_elementwise_data"] is True
+
+
+def test_parse_python_script_invocation_preserves_script_arguments(tmp_path: Path) -> None:
+    script = tmp_path / "model.py"
+    script.write_text("# test\n", encoding="utf-8")
+
+    parsed = script_runner.parse_python_script_invocation(
+        ["python3", "-u", str(script), "--device", "npu", "--batch-size", "2"]
+    )
+
+    assert parsed == (script.resolve(), ("--device", "npu", "--batch-size", "2"))
+
+
+def test_parse_python_script_invocation_rejects_module_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not -c or -m"):
+        script_runner.parse_python_script_invocation(["python3", "-m", "some_module"])
+
+
+def test_default_direct_output_paths_use_current_working_directory(tmp_path: Path) -> None:
+    script = tmp_path / "sasrec.py"
+
+    out_dir, html_path = script_runner.default_direct_output_paths(script, tmp_path)
+
+    assert out_dir == tmp_path / "sasrec_autofusedebugger"
+    assert html_path == tmp_path / "sasrec_autofusedebugger.html"

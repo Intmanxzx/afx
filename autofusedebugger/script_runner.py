@@ -1,11 +1,60 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from autofusedebugger.adapters import get_backend_adapter, get_framework_adapter
+
+
+_PYTHON_EXECUTABLE_RE = re.compile(r"python(?:\d+(?:\.\d+)*)?$")
+_PYTHON_OPTIONS_WITH_VALUE = {"-W", "-X"}
+
+
+def parse_python_script_invocation(argv: Sequence[str]) -> tuple[Path, tuple[str, ...]] | None:
+    """Parse the convenience form: ``autofusedebugger python3 model.py ...``."""
+    if not argv or not _PYTHON_EXECUTABLE_RE.fullmatch(Path(argv[0]).name):
+        return None
+
+    tokens = list(argv[1:])
+    script_index: int | None = None
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {"-c", "-m"}:
+            raise ValueError("direct mode accepts a Python script path, not -c or -m")
+        if token == "--":
+            index += 1
+            if index < len(tokens):
+                script_index = index
+            break
+        if token in _PYTHON_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(tokens):
+                raise ValueError(f"Python option {token} requires a value")
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        script_index = index
+        break
+
+    if script_index is None:
+        raise ValueError("direct mode requires a Python script, for example: python3 model.py")
+
+    script = Path(tokens[script_index]).expanduser().resolve()
+    if not script.is_file():
+        raise FileNotFoundError(f"Python script not found: {script}")
+    return script, tuple(tokens[script_index + 1 :])
+
+
+def default_direct_output_paths(script: str | Path, cwd: str | Path | None = None) -> tuple[Path, Path]:
+    """Return the artifact directory and HTML path for direct mode."""
+    root = Path(cwd or Path.cwd()).resolve()
+    stem = Path(script).stem or "model"
+    return root / f"{stem}_autofusedebugger", root / f"{stem}_autofusedebugger.html"
 
 
 def run_framework_script(
