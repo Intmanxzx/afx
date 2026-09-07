@@ -5,12 +5,29 @@
 
 ## 安装
 
-在已经准备好 PyTorch、torch_npu 和 CANN 的环境中执行：
+请先准备好 PyTorch、torch_npu 和 CANN 环境，再选择以下一种方式安装。
+
+### 方式一：源码安装
 
 ```bash
 git clone https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
 cd ${HOME}/Autofuse-Debugger    # ${HOME}表示用户拉取工具代码的目录
 python3 -m pip install -e .
+```
+
+### 方式二：wheel 包安装
+
+进入 [v0.1.0 发行版](https://gitcode.com/xingzhixiong/Autofuse-Debugger/releases/v0.1.0)，下载
+`autofusedebugger-0.1.0-py3-none-any.whl`，然后在 wheel 所在目录执行：
+
+```bash
+python3 -m pip install ./autofusedebugger-0.1.0-py3-none-any.whl
+```
+
+安装完成后可以执行以下命令验证：
+
+```bash
+autofusedebugger --help
 ```
 
 ## 使用
@@ -71,7 +88,9 @@ OUT_DIR/
 
 启用 `--save-elementwise-data` 后，还会生成 HTML 使用的逐元素数据目录。完整的执行阶段、算子映射、精度指标、报告字段和离线命令见：
 
-- [docs/usage.md](docs/usage.md)
-- [docs/accuracy_mapping.md](docs/accuracy_mapping.md)
-- [docs/manifest_schema.md](docs/manifest_schema.md)
-- [docs/feature_gallery.md](docs/feature_gallery.md)
+| 文档 | 说明 |
+|---|---|
+| [docs/usage.md](docs/usage.md) | 工具使用方式、执行阶段、输出目录和离线分析命令 |
+| [docs/accuracy_mapping.md](docs/accuracy_mapping.md) | CPU、NPU eager 和 NPU Autofuse 之间的算子映射策略 |
+| [docs/manifest_schema.md](docs/manifest_schema.md) | manifest 文件的字段、数据格式和状态码说明 |
+| [docs/feature_gallery.md](docs/feature_gallery.md) | 精度对比、图展示和生命周期分析等功能示例 |
