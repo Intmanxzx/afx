@@ -31,7 +31,9 @@ autofusedebugger python3 /path/to/model.py \
 ./model_autofusedebugger.html
 ```
 
-其中 `model` 是脚本文件名（不含 `.py`）。该快捷方式默认执行三方精度采集；需要指定
+其中 `model` 是脚本文件名（不含 `.py`）。该快捷方式会根据脚本中的框架导入自动选择
+`pytorch`、`tensorflow` 或 `jax`；当前只有 PyTorch + Inductor Autofuse 路径可执行，TF/JAX
+识别结果会给出明确的未实现提示。快捷方式默认执行三方精度采集；需要指定
 `--capture-call`、`--save-elementwise-data`、输出目录或其他工具参数时，使用下面的完整命令。
 
 直接运行一个会构造模型、输入并执行推理的 PyTorch 脚本：

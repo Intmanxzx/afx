@@ -13,6 +13,7 @@ from autofusedebugger.adapters import (
     JaxAdapter,
     PyTorchAdapter,
     TensorFlowAdapter,
+    detect_framework,
     get_framework_adapter,
 )
 
@@ -92,6 +93,33 @@ def test_reserved_framework_adapters_fail_explicitly() -> None:
         JaxAdapter().capture(script="unused.py")
     assert InductorAutofuseBackend().supports("pytorch")
     assert not InductorAutofuseBackend().supports("tensorflow")
+
+
+def test_detect_framework_from_script_imports(tmp_path: Path) -> None:
+    cases = {
+        "torch_case.py": ("from torch import nn\n", "pytorch"),
+        "tf_case.py": ("import tensorflow as tf\n", "tensorflow"),
+        "jax_case.py": ("import jax.numpy as jnp\n", "jax"),
+    }
+    for name, (source, expected) in cases.items():
+        script = tmp_path / name
+        script.write_text(source, encoding="utf-8")
+        assert detect_framework(script) == expected
+
+
+def test_detect_framework_rejects_multiple_frameworks(tmp_path: Path) -> None:
+    script = tmp_path / "mixed.py"
+    script.write_text("import torch\nimport tensorflow\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="multiple frameworks"):
+        detect_framework(script)
+
+
+def test_detect_framework_falls_back_to_pytorch_for_indirect_model_import(tmp_path: Path) -> None:
+    script = tmp_path / "indirect.py"
+    script.write_text("from model_package import Model\n", encoding="utf-8")
+
+    assert detect_framework(script) == "pytorch"
 
 
 def test_inductor_backend_preserves_captured_execution_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

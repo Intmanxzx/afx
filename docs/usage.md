@@ -52,9 +52,12 @@ autofusedebugger python3 sasrec.py --device npu --device_id 0
 ./model_autofusedebugger.html   # 最终 HTML 报告
 ```
 
-再次执行会清理并重新生成同名中间产物目录，同时覆盖同名 HTML。快捷模式固定使用
-`pytorch + inductor_autofuse`，默认捕获第一个顶层 `torch.nn.Module` 调用；需要调整捕获调用、
-保存逐元素数据、阈值或输出路径时，使用下面的完整 `run-script` 命令。
+再次执行会清理并重新生成同名中间产物目录，同时覆盖同名 HTML。快捷模式会先静态扫描脚本的
+`import`，识别 `torch`、`tensorflow` 或 `jax`，再选择对应的 framework adapter；不会执行脚本来
+判断框架，也不会修改脚本。当前只有 `pytorch + inductor_autofuse` 路径可执行，TF/JAX 会被识别后
+明确提示对应 adapter/backend 尚未实现。未识别到框架时为兼容从其他模块导入模型的旧脚本，回退到
+PyTorch；同时识别到多个框架时会报歧义并要求显式传入 `--framework`。需要调整捕获调用、保存逐
+元素数据、阈值或输出路径时，使用下面的完整 `run-script` 命令。
 
 `run-script` 面向用户已有的推理脚本。脚本不需要实现 `create_case()`，工具会捕获目标 `torch.nn.Module` 的一次调用，并使用捕获到的模型和输入完成三条路径的采集。
 
@@ -76,6 +79,7 @@ autofusedebugger run-script \
 - `--out-dir` 是中间产物、dump、manifest 和 JSON/CSV 结果目录。
 - `--html` 是最终 HTML 文件路径；不传时默认写到 `OUT_DIR/report.html`。
 - `--framework pytorch` 选择 PyTorch adapter。
+- `--framework auto` 根据脚本导入自动识别框架；这是默认值。
 - `--backend inductor_autofuse` 选择原生 Inductor + AscendC/Autofuse 后端。
 - 最后的 `--` 是工具参数和模型脚本参数的分隔符，后面的内容原样传给模型脚本。
 - `--capture-call` 选择匹配模块调用中的第几个调用，序号从 `0` 开始。

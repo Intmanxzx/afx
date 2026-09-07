@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from autofusedebugger.adapters.base import BackendAdapter, CapturedInvocation, FrameworkAdapter
+from autofusedebugger.adapters.detection import detect_framework
 from autofusedebugger.adapters.jax import JaxAdapter
 from autofusedebugger.adapters.inductor_autofuse import InductorAutofuseBackend
 from autofusedebugger.adapters.pytorch import PyTorchAdapter
@@ -50,6 +51,7 @@ __all__ = [
     "PyTorchAdapter",
     "TensorFlowAdapter",
     "backend_names",
+    "detect_framework",
     "framework_names",
     "get_backend_adapter",
     "get_framework_adapter",

@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from autofusedebugger.adapters import get_backend_adapter, get_framework_adapter
+from autofusedebugger.adapters import detect_framework, get_backend_adapter, get_framework_adapter
+from autofusedebugger.progress import progress_message
 
 
 _PYTHON_EXECUTABLE_RE = re.compile(r"python(?:\d+(?:\.\d+)*)?$")
@@ -87,8 +88,17 @@ def run_framework_script(
         [script_dir, *(item for item in pythonpath_items if item != script_dir)]
     )
     try:
-        frontend = get_framework_adapter(framework)
+        resolved_framework = framework
+        if framework == "auto":
+            resolved_framework = detect_framework(path)
+            progress_message("INFO", f"framework auto-detected: {resolved_framework} script={path}")
+        frontend = get_framework_adapter(resolved_framework)
         target = get_backend_adapter(backend)
+        if not target.supports(resolved_framework):
+            raise ValueError(
+                f"backend {backend} does not support framework {resolved_framework} "
+                f"(detected from {path}); choose a compatible backend or pass --framework explicitly"
+            )
         invocation = frontend.capture(
             script=path,
             script_args=script_args,
