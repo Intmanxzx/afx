@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import subprocess
 import sys
 from pathlib import Path
@@ -118,6 +119,153 @@ def tc_case(kernel_path, case_path, case_name, soc_version, device_id):
     assert captured.name == "StaticGraphModel"
     assert captured.args[0].tolist() == [1.0, 1.0]
     assert captured.metadata["script"] == str(script.resolve())
+    pickle.dumps(captured.model)
+
+
+def test_pytorch_adapter_passes_cann_ge_arguments_through_opaque_decorator(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+    root = tmp_path / "cann-ge"
+    (root / "libs").mkdir(parents=True)
+    (root / "libs" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "feature").mkdir()
+    script = root / "feature" / "AutoFuse" / "PyTorch" / "Inductor" / "tc_decorated.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        """
+import torch
+
+def set_timeout(_seconds):
+    def decorate(func):
+        def wrapped(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapped
+    return decorate
+
+class StaticGraphModel(torch.nn.Module):
+    def forward(self, x):
+        return x + 1
+
+@set_timeout(600)
+def tc_decorated(kernel_path, case_path, case_name, soc_version, device_id):
+    assert kernel_path
+    assert case_path
+    assert case_name == "tc_decorated"
+    assert soc_version
+    assert device_id == "0"
+    StaticGraphModel().eval()(torch.ones(2))
+""",
+        encoding="utf-8",
+    )
+
+    captured = PyTorchAdapter().capture(script=script)
+
+    assert captured.name == "StaticGraphModel"
+    assert captured.args[0].tolist() == [1.0, 1.0]
+    pickle.dumps(captured.model)
+
+
+def test_pytorch_adapter_captures_before_cann_ge_run_af_benchmark(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+    root = tmp_path / "cann-ge"
+    (root / "libs" / "autofuse_gen").mkdir(parents=True)
+    (root / "libs" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "libs" / "autofuse_gen" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "libs" / "autofuse_gen" / "autofuse_tools.py").write_text(
+        """
+import numpy as np
+
+def gen_inputs(inputs_param, framework='tensorflow'):
+    assert framework == 'pytorch'
+    return [
+        [np.ones(value['shape'], dtype=value['dtype']) for value in inputs_param.values()],
+        [np.full(value['shape'], 2, dtype=value['dtype']) for value in inputs_param.values()],
+    ]
+
+def run_af(*args, **kwargs):
+    raise AssertionError('the debugger must not enter the Baize benchmark')
+""",
+        encoding="utf-8",
+    )
+    (root / "feature").mkdir()
+    script = root / "feature" / "tc_run_af.py"
+    script.write_text(
+        """
+from libs.autofuse_gen.autofuse_tools import run_af
+import torch
+
+def set_timeout(_seconds):
+    def decorate(func):
+        def wrapped(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapped
+    return decorate
+
+class StaticGraphModel(torch.nn.Module):
+    def forward(self, x):
+        return x + 1
+
+@set_timeout(600)
+def tc_run_af(kernel_path, case_path, case_name, soc_version, device_id):
+    del kernel_path, case_path, case_name, soc_version, device_id
+    run_af(
+        {'data1': {'shape': (2,), 'dtype': 'float32'}},
+        StaticGraphModel().eval(),
+        '0',
+        '/tmp/case',
+        'tc_run_af',
+        'Ascend910B1',
+        framework='pytorch',
+    )
+""",
+        encoding="utf-8",
+    )
+
+    captured = PyTorchAdapter().capture(script=script)
+
+    assert captured.name == "StaticGraphModel"
+    assert captured.args[0].tolist() == [2.0, 2.0]
+    assert captured.metadata["capture_method"] == "cann_ge_run_af_boundary"
+    assert captured.metadata["capture_process"] == "parent"
+    assert captured.model(torch.ones(2)).tolist() == [2.0, 2.0]
+
+
+def test_pytorch_adapter_captures_model_from_cann_ge_fork_worker(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+    root = tmp_path / "cann-ge"
+    (root / "libs").mkdir(parents=True)
+    (root / "libs" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "feature").mkdir()
+    script = root / "feature" / "AutoFuse" / "PyTorch" / "Inductor" / "tc_forked.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        """
+import multiprocessing as mp
+import torch
+
+class StaticGraphModel(torch.nn.Module):
+    def forward(self, x):
+        return x + 1
+
+def worker(model):
+    model(torch.ones(2))
+
+def tc_forked(kernel_path, case_path, case_name, soc_version, device_id):
+    del kernel_path, case_path, case_name, soc_version, device_id
+    model = StaticGraphModel().eval()
+    process = mp.get_context("fork").Process(target=worker, args=(model,))
+    process.start()
+    process.join()
+    assert process.exitcode == 0
+""",
+        encoding="utf-8",
+    )
+
+    captured = PyTorchAdapter().capture(script=script)
+
+    assert captured.name == "StaticGraphModel"
+    assert captured.args[0].tolist() == [1.0, 1.0]
+    assert captured.metadata["capture_process"] == "fork_child"
+    pickle.dumps(captured.model)
 
 
 def test_pytorch_adapter_prefers_cann_ge_entry_matching_script_name(tmp_path: Path) -> None:
@@ -137,6 +285,49 @@ def test_pytorch_adapter_prefers_cann_ge_entry_matching_script_name(tmp_path: Pa
 
     assert selected is not None
     assert selected[0] == "tc_selected"
+
+
+def test_cann_ge_run_af_parts_supports_keyword_and_config_calls() -> None:
+    from autofusedebugger.adapters.pytorch import _cann_ge_run_af_parts
+
+    def run_af(
+        inputs_param=None,
+        build_graph=None,
+        device_id=None,
+        case_path=None,
+        case_name=None,
+        framework="tensorflow",
+        config=None,
+    ):
+        del inputs_param, build_graph, device_id, case_path, case_name, framework, config
+
+    keyword_parts = _cann_ge_run_af_parts(
+        run_af,
+        (),
+        {
+            "inputs_param": {"x": {"shape": (2,), "dtype": "float32"}},
+            "build_graph": object(),
+            "case_path": "/tmp/case",
+            "case_name": "example",
+            "framework": "pytorch",
+        },
+    )
+    assert keyword_parts is not None
+    assert keyword_parts[2] == "pytorch"
+    assert keyword_parts[3] == Path("/tmp/case")
+    assert keyword_parts[4] == "example"
+
+    class Config:
+        inputs_param = {"x": {"shape": (2,), "dtype": "float32"}}
+        build_graph = object()
+        framework = "pytorch"
+        case_path = "/tmp/config-case"
+        case_name = "config-example"
+
+    config_parts = _cann_ge_run_af_parts(run_af, (Config(),), {})
+    assert config_parts is not None
+    assert config_parts[3] == Path("/tmp/config-case")
+    assert config_parts[4] == "config-example"
 
 
 def test_reserved_framework_adapters_fail_explicitly() -> None:
@@ -212,19 +403,27 @@ def test_inductor_backend_preserves_captured_execution_defaults(monkeypatch: pyt
 def test_run_script_keeps_script_directory_importable_during_backend_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "libs.py").write_text(
+    root = tmp_path / "Baize-master"
+    (root / "libs").mkdir(parents=True)
+    (root / "libs" / "__init__.py").write_text(
         "def add_one(value):\n    return value + 1\n",
         encoding="utf-8",
     )
-    script = tmp_path / "model.py"
+    script = root / "feature" / "AutoFuse_torch" / "model.py"
+    script.parent.mkdir(parents=True)
+    (script.parent / "local_helper.py").write_text(
+        "def double(value):\n    return value * 2\n",
+        encoding="utf-8",
+    )
     script.write_text("# Captured by the fake frontend.\n", encoding="utf-8")
     received = {}
 
     class LazyModel:
         def __call__(self, value):
             from libs import add_one
+            from local_helper import double
 
-            return add_one(value)
+            return double(add_one(value))
 
     class FakeFrontend:
         def capture(self, **kwargs):
@@ -245,7 +444,11 @@ def test_run_script_keeps_script_directory_importable_during_backend_execution(
             received.update(kwargs)
             local_output = invocation.model(*invocation.args)
             child_output = subprocess.check_output(
-                [sys.executable, "-c", "from libs import add_one; print(add_one(1))"],
+                [
+                    sys.executable,
+                    "-c",
+                    "from libs import add_one; from local_helper import double; print(double(add_one(1)))",
+                ],
                 text=True,
             )
             return {"local_output": local_output, "child_output": int(child_output)}
@@ -259,7 +462,7 @@ def test_run_script_keeps_script_directory_importable_during_backend_execution(
         save_elementwise_data=True,
     )
 
-    assert result == {"local_output": 1, "child_output": 2}
+    assert result == {"local_output": 2, "child_output": 4}
     assert received["save_elementwise_data"] is True
 
 

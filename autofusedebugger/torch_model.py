@@ -490,6 +490,94 @@ def _prefusion_graph_copy(gm: Any, device: str) -> Any:
     return copied
 
 
+def _attention_argument(args: tuple[Any, ...], kwargs: dict[str, Any], index: int, name: str, default: Any = None) -> Any:
+    if name in kwargs:
+        return kwargs[name]
+    return args[index] if index < len(args) else default
+
+
+def _cpu_npu_fusion_attention(*args: Any, **kwargs: Any) -> Any:
+    """Replay the common inference form of torch_npu's fused attention on CPU."""
+    import torch.nn.functional as functional
+
+    if len(args) < 3:
+        raise NotImplementedError("npu_fusion_attention requires query, key and value")
+
+    query, key, value = args[:3]
+    head_num = _attention_argument(args, kwargs, 3, "head_num")
+    input_layout = _attention_argument(args, kwargs, 4, "input_layout", "BNSD")
+    pse = _attention_argument(args, kwargs, 5, "pse")
+    padding_mask = _attention_argument(args, kwargs, 6, "padding_mask")
+    atten_mask = _attention_argument(args, kwargs, 7, "atten_mask")
+    scale = _attention_argument(args, kwargs, 8, "scale")
+    keep_prob = _attention_argument(args, kwargs, 9, "keep_prob", 1.0)
+
+    if pse is not None:
+        raise NotImplementedError("CPU replay does not support npu_fusion_attention pse")
+    if keep_prob != 1.0:
+        raise NotImplementedError("CPU replay only supports inference npu_fusion_attention with keep_prob=1.0")
+
+    layout = str(input_layout).upper()
+    original_shape = tuple(query.shape)
+    if layout == "BNSD":
+        to_sdpa = lambda tensor: tensor
+        from_sdpa = lambda tensor: tensor
+    elif layout == "BSND":
+        to_sdpa = lambda tensor: tensor.transpose(1, 2)
+        from_sdpa = lambda tensor: tensor.transpose(1, 2)
+    elif layout == "BSH":
+        if head_num is None or query.dim() != 3 or query.shape[-1] % int(head_num) != 0:
+            raise NotImplementedError("CPU replay cannot infer head dimensions for BSH attention")
+        head_dim = query.shape[-1] // int(head_num)
+
+        def to_sdpa(tensor):
+            return tensor.reshape(tensor.shape[0], tensor.shape[1], int(head_num), head_dim).transpose(1, 2)
+
+        def from_sdpa(tensor):
+            return tensor.transpose(1, 2).reshape(original_shape)
+
+    else:
+        raise NotImplementedError(f"CPU replay does not support npu_fusion_attention layout={input_layout!r}")
+
+    attention_mask = atten_mask if atten_mask is not None else padding_mask
+    sdpa_kwargs: dict[str, Any] = {
+        "attn_mask": attention_mask,
+        "dropout_p": 0.0,
+        "is_causal": False,
+    }
+    if scale is not None:
+        sdpa_kwargs["scale"] = scale
+    result = functional.scaled_dot_product_attention(to_sdpa(query), to_sdpa(key), to_sdpa(value), **sdpa_kwargs)
+    # torch_npu exposes attention output as the first item of a seven-item result tuple.
+    return from_sdpa(result), None, None, None, 0, 0, 0
+
+
+def _cpu_mm_dtype_fallback(*args: Any, **kwargs: Any) -> Any:
+    import torch
+
+    if len(args) < 2 or kwargs:
+        raise NotImplementedError("CPU replay only supports positional aten.mm arguments")
+    lhs, rhs = args[:2]
+    if not isinstance(lhs, torch.Tensor) or not isinstance(rhs, torch.Tensor):
+        raise NotImplementedError("CPU replay aten.mm dtype fallback requires Tensor operands")
+    return torch.mm(lhs, rhs.to(dtype=lhs.dtype))
+
+
+def _cpu_prefusion_fallback(target: Any, args: tuple[Any, ...] | None = None) -> Any:
+    if "npu_fusion_attention" in str(target):
+        return _cpu_npu_fusion_attention
+    if "aten.mm" in str(target) and args is not None and len(args) >= 2:
+        try:
+            import torch
+
+            lhs, rhs = args[:2]
+            if isinstance(lhs, torch.Tensor) and isinstance(rhs, torch.Tensor) and lhs.dtype != rhs.dtype:
+                return _cpu_mm_dtype_fallback
+        except Exception:
+            pass
+    return None
+
+
 def _prefusion_display_names(graph_specs: list[dict[str, Any]]) -> dict[tuple[int, str], str]:
     counts: dict[str, int] = {}
     for spec in graph_specs:
@@ -586,10 +674,30 @@ def _capture_prefusion_graph(
     module = _prefusion_graph_copy(gm, device)
     inputs = _to_device(_clone_execution_value(example_inputs), device)
     saved: dict[str, dict[str, Any]] = {}
+    cpu_replay_fallbacks: list[dict[str, str]] = []
 
     class CaptureInterpreter(torch.fx.Interpreter):
         def run_node(self, node):  # type: ignore[no-untyped-def]
-            result = super().run_node(node)
+            node_args = node_kwargs = None
+            if device == "cpu" and node.op == "call_function":
+                node_args, node_kwargs = self.fetch_args_kwargs_from_env(node)
+            fallback = (
+                _cpu_prefusion_fallback(node.target, node_args)
+                if device == "cpu" and node.op == "call_function"
+                else None
+            )
+            if fallback is None:
+                result = super().run_node(node)
+            else:
+                try:
+                    result = fallback(*node_args, **node_kwargs)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"CPU pre-fusion replay fallback failed for {node.name} target={node.target}: {exc}"
+                    ) from exc
+                cpu_replay_fallbacks.append(
+                    {"node": node.name, "target": str(node.target), "fallback": fallback.__name__}
+                )
             if node.op != "call_function":
                 return result
             tensor = _first_tensor(result, torch=torch)
@@ -665,6 +773,7 @@ def _capture_prefusion_graph(
         "metadata": {
             "graph_index": graph_index,
             "canonical_graph": "Inductor pre-fusion FX",
+            "cpu_replay_fallbacks": cpu_replay_fallbacks,
         },
     }, saved
 
@@ -698,6 +807,11 @@ def capture_prefusion_graphs(
 
     def merge(graphs: list[dict[str, Any]], side: str) -> dict[str, Any]:
         ops = [op for graph in graphs for op in graph["ops"]]
+        cpu_replay_fallbacks = [
+            fallback
+            for graph in graphs
+            for fallback in graph["metadata"].get("cpu_replay_fallbacks", [])
+        ]
         return {
             "graph": [{"op": ops}],
             "metadata": {
@@ -705,6 +819,7 @@ def capture_prefusion_graphs(
                 "canonical_graph": True,
                 "side": side,
                 "graph_count": len(graphs),
+                "cpu_replay_fallbacks": cpu_replay_fallbacks,
             },
         }
 

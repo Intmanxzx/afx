@@ -93,7 +93,7 @@ autofusedebugger run-script \
 
 ### `cann-ge` 测试框架脚本
 
-`feature/AutoFuse/PyTorch/Inductor/` 下的 `tc_*.py` 用例由 `xfusion_fmk.py` 调用，通常不在脚本顶层执行模型，也不提供 `create_case()`。工具会根据脚本向上查找同时包含 `libs/__init__.py` 和 `feature/` 的 `cann-ge` 根目录，将该目录加入导入路径并临时作为工作目录；如果顶层没有捕获到模块调用，再调用脚本中与文件同名的 `tc_*` 函数，截获其第一次模型调用。
+`feature/AutoFuse/PyTorch/Inductor/` 下的 `tc_*.py` 用例由 `xfusion_fmk.py` 调用，通常不在脚本顶层执行模型，也不提供 `create_case()`。工具会根据脚本向上查找同时包含 `libs/__init__.py` 和 `feature/` 的 `cann-ge` 根目录，将该目录加入导入路径并临时作为工作目录；如果顶层没有捕获到模块调用，再调用脚本中与文件同名的 `tc_*` 函数。
 
 因此可以直接使用快捷模式：
 
@@ -103,7 +103,7 @@ autofusedebugger python3 \
     feature/AutoFuse/PyTorch/Inductor/tc_af_torch_inductor_codegen_0001.py
 ```
 
-适配调用只使用 `kernel_path`、`case_path`、`case_name`、`soc_version` 和 `device_id` 这五个框架参数启动用例，并在捕获到模型调用后立即停止该测试函数；框架原有的性能测试、SLOG 检查和结果校验不会作为报告执行流程的一部分。`soc_version` 和 `device_id` 优先读取当前进程的 `SOC_VERSION`、`ASCEND_DEVICE_ID`/`DEVICE_ID` 环境变量。该适配仍要求在与框架一致的 Python、PyTorch、torch_npu 和 CANN 环境中执行。
+对于 PyTorch 用例，如果 `tc_*` 调用了 `run_af(..., framework="pytorch")`，工具会在 `run_af` 的模型/输入边界截获 `Model` 和 Baize 的 `gen_inputs` 生成的最后一组输入，并保持 Baize 的 `eval()`、`no_grad()` 语义，然后立即停止用例，由工具自己执行 CPU pre-fusion、NPU eager pre-fusion 和 NPU Autofuse 三条路径。因此不会启动 Baize 自己的 benchmark 子进程，也不会让工具的捕获 hook 泄漏到 Baize worker。未使用 `run_af` 而是在 `tc_*` 内直接调用模型的用例，继续使用模型调用捕获作为兼容路径。适配调用只使用 `kernel_path`、`case_path`、`case_name`、`soc_version` 和 `device_id` 这五个框架参数启动用例；框架原有的性能测试、SLOG 检查和结果校验不会作为报告执行流程的一部分。`soc_version` 和 `device_id` 优先读取当前进程的 `SOC_VERSION`、`ASCEND_DEVICE_ID`/`DEVICE_ID` 环境变量。该适配仍要求在与框架一致的 Python、PyTorch、torch_npu 和 CANN 环境中执行。
 
 ## 兼容 `create_case()` 用例
 

@@ -6,7 +6,12 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from autofusedebugger.adapters import detect_framework, get_backend_adapter, get_framework_adapter
+from autofusedebugger.adapters import (
+    detect_framework,
+    find_cann_ge_root,
+    get_backend_adapter,
+    get_framework_adapter,
+)
 from autofusedebugger.progress import progress_message
 
 
@@ -82,10 +87,15 @@ def run_framework_script(
     old_path = list(sys.path)
     old_pythonpath = os.environ.get("PYTHONPATH")
     pythonpath_items = [item for item in (old_pythonpath or "").split(os.pathsep) if item]
-    script_dir = str(path.parent)
-    sys.path.insert(0, str(path.parent))
+    import_roots = [str(path.parent)]
+    cann_ge_root = find_cann_ge_root(path)
+    if cann_ge_root is not None and str(cann_ge_root) not in import_roots:
+        import_roots.append(str(cann_ge_root))
+    for import_root in reversed(import_roots):
+        if import_root not in sys.path:
+            sys.path.insert(0, import_root)
     os.environ["PYTHONPATH"] = os.pathsep.join(
-        [script_dir, *(item for item in pythonpath_items if item != script_dir)]
+        [*import_roots, *(item for item in pythonpath_items if item not in import_roots)]
     )
     try:
         resolved_framework = framework

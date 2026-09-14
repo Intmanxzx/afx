@@ -14,6 +14,15 @@ _FRAMEWORK_MODULES = {
 }
 
 
+def find_cann_ge_root(script: str | Path) -> Path | None:
+    """Find the repository root that provides a cann-ge/Baize ``libs`` package."""
+    path = Path(script).resolve()
+    for candidate in (path.parent, *path.parents):
+        if (candidate / "libs" / "__init__.py").is_file() and (candidate / "feature").is_dir():
+            return candidate
+    return None
+
+
 def _import_roots(tree: ast.AST) -> set[str]:
     roots: set[str] = set()
     for node in ast.walk(tree):

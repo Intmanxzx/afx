@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autofusedebugger.adapters.base import BackendAdapter, CapturedInvocation, FrameworkAdapter
-from autofusedebugger.adapters.detection import detect_framework
+from autofusedebugger.adapters.detection import detect_framework, find_cann_ge_root
 from autofusedebugger.adapters.jax import JaxAdapter
 from autofusedebugger.adapters.inductor_autofuse import InductorAutofuseBackend
 from autofusedebugger.adapters.pytorch import PyTorchAdapter
@@ -52,6 +52,7 @@ __all__ = [
     "TensorFlowAdapter",
     "backend_names",
     "detect_framework",
+    "find_cann_ge_root",
     "framework_names",
     "get_backend_adapter",
     "get_framework_adapter",

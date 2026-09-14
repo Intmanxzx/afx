@@ -15,6 +15,8 @@ from autofusedebugger.torch_model import (
     _model_device_hints,
     _stage_case,
     _to_device,
+    _cpu_npu_fusion_attention,
+    _cpu_mm_dtype_fallback,
     cpu_candidates_for_npu,
     export_cpu_graph_and_dump,
     load_torch_case,
@@ -75,6 +77,35 @@ def test_model_device_hints_are_preserved_by_default() -> None:
 
     with _model_device_hints(model, "npu:0"):
         assert model.device == "cpu"
+
+
+def test_cpu_npu_fusion_attention_fallback_matches_sdpa() -> None:
+    torch = pytest.importorskip("torch")
+    query = torch.randn(1, 2, 4, 8)
+    key = torch.randn(1, 2, 4, 8)
+    value = torch.randn(1, 2, 4, 8)
+    scale = 0.25
+
+    actual = _cpu_npu_fusion_attention(query, key, value, 2, "BNSD", None, None, None, scale)
+    expected = torch.nn.functional.scaled_dot_product_attention(
+        query, key, value, dropout_p=0.0, is_causal=False, scale=scale
+    )
+
+    assert isinstance(actual, tuple)
+    assert len(actual) == 7
+    torch.testing.assert_close(actual[0], expected)
+
+
+def test_cpu_mm_dtype_fallback_matches_npu_promotion() -> None:
+    torch = pytest.importorskip("torch")
+    lhs = torch.randn(2, 4, dtype=torch.float32)
+    rhs = torch.randn(4, 3, dtype=torch.bfloat16)
+
+    actual = _cpu_mm_dtype_fallback(lhs, rhs)
+    expected = torch.mm(lhs, rhs.to(dtype=lhs.dtype))
+
+    assert actual.dtype == torch.float32
+    torch.testing.assert_close(actual, expected)
 
 
 def test_stage_case_uses_independent_model_and_inputs() -> None:

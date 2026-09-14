@@ -198,6 +198,12 @@ NPU post-fusion kernel
 
 这套设计保留了 CPU/NPU eager 的真实单算子执行语义，同时利用 Inductor IR 约束 Autofuse 的编译拓扑，避免仅按节点名或遍历顺序映射。
 
+### 2.3.2 CPU 回放中的 NPU 专用算子
+
+部分 `torch_npu` lowering 会把原始 ATen 算子替换为 CPU 不具备 kernel 的 NPU 专用算子。例如，`scaled_dot_product_attention` 可能在 transformed FX 图中表现为 `npu_fusion_attention`。为保证同一张 pre-fusion FX 图仍能在 CPU 回放，工具对常见的推理形式注册语义回退：将 `BNSD`、`BSND` 或 `BSH` 布局的 `npu_fusion_attention` 回放为 CPU `scaled_dot_product_attention`。
+
+回退只作用于 CPU Interpreter，不修改原始 FX 节点 target；NPU eager 仍执行原始 NPU 算子，Autofuse 仍走原始编译路径。当前 attention 回退要求 `pse=None`、`keep_prob=1.0`。另外，NPU `mm` 接受混合 dtype 而 CPU `mm` 不接受时，CPU 回放会将右矩阵转换为左矩阵 dtype，以匹配 NPU 的输出 dtype 规则；输入 dtype 已一致时不介入。不支持的布局或参数会明确报告为 CPU pre-fusion 回放失败。实际发生的回退会记录在 `cpu_graph.json` 的 `metadata.cpu_replay_fallbacks` 中。
+
 ### 2.4 名称规范化规则
 
 native 路径会统一大小写、去掉 `aten.` 前缀和 overload 后缀，并使用以下别名：
