@@ -85,6 +85,60 @@ Target()(x)
     assert captured.args[0].tolist() == [2.0, 2.0]
 
 
+def test_pytorch_adapter_invokes_cann_ge_case_entry_when_script_only_defines_case(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+    root = tmp_path / "cann-ge"
+    (root / "libs").mkdir(parents=True)
+    (root / "libs" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "feature").mkdir()
+    script = root / "feature" / "AutoFuse" / "PyTorch" / "Inductor" / "tc_case.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        """
+import torch
+
+def check_torch_version_for_inductor():
+    return False
+
+class StaticGraphModel(torch.nn.Module):
+    def forward(self, x):
+        return x + 1
+
+def tc_case(kernel_path, case_path, case_name, soc_version, device_id):
+    del kernel_path, case_path, case_name, soc_version, device_id
+    if not check_torch_version_for_inductor():
+        return
+    StaticGraphModel().eval()(torch.ones(2))
+""",
+        encoding="utf-8",
+    )
+
+    captured = PyTorchAdapter().capture(script=script)
+
+    assert captured.name == "StaticGraphModel"
+    assert captured.args[0].tolist() == [1.0, 1.0]
+    assert captured.metadata["script"] == str(script.resolve())
+
+
+def test_pytorch_adapter_prefers_cann_ge_entry_matching_script_name(tmp_path: Path) -> None:
+    from autofusedebugger.adapters.pytorch import _select_cann_ge_entry
+
+    script = tmp_path / "tc_selected.py"
+
+    def tc_other(*args):
+        del args
+
+    def tc_selected(*args):
+        del args
+
+    selected = _select_cann_ge_entry(
+        {"tc_other": tc_other, "tc_selected": tc_selected}, script
+    )
+
+    assert selected is not None
+    assert selected[0] == "tc_selected"
+
+
 def test_reserved_framework_adapters_fail_explicitly() -> None:
     assert get_framework_adapter("auto").name == "pytorch"
     with pytest.raises(NotImplementedError, match="TensorFlowAdapter"):

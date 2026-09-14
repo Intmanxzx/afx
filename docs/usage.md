@@ -91,6 +91,20 @@ autofusedebugger run-script \
 
 工具不会修改模型脚本文件，也不会改变脚本中模型的 forward 逻辑。默认只将模型参数和 Tensor 输入迁移到当前比较路径的目标设备，不强制调用 `eval()` 或 `no_grad()`。如果模型依赖普通属性 `dev/device` 创建张量，才需要显式使用 `--rewrite-device-hints`。
 
+### `cann-ge` 测试框架脚本
+
+`feature/AutoFuse/PyTorch/Inductor/` 下的 `tc_*.py` 用例由 `xfusion_fmk.py` 调用，通常不在脚本顶层执行模型，也不提供 `create_case()`。工具会根据脚本向上查找同时包含 `libs/__init__.py` 和 `feature/` 的 `cann-ge` 根目录，将该目录加入导入路径并临时作为工作目录；如果顶层没有捕获到模块调用，再调用脚本中与文件同名的 `tc_*` 函数，截获其第一次模型调用。
+
+因此可以直接使用快捷模式：
+
+```bash
+cd /workspace/xingzhixiong/test-dev/smoke-testing/cann-ge
+autofusedebugger python3 \
+    feature/AutoFuse/PyTorch/Inductor/tc_af_torch_inductor_codegen_0001.py
+```
+
+适配调用只使用 `kernel_path`、`case_path`、`case_name`、`soc_version` 和 `device_id` 这五个框架参数启动用例，并在捕获到模型调用后立即停止该测试函数；框架原有的性能测试、SLOG 检查和结果校验不会作为报告执行流程的一部分。`soc_version` 和 `device_id` 优先读取当前进程的 `SOC_VERSION`、`ASCEND_DEVICE_ID`/`DEVICE_ID` 环境变量。该适配仍要求在与框架一致的 Python、PyTorch、torch_npu 和 CANN 环境中执行。
+
 ## 兼容 `create_case()` 用例
 
 不执行推理、而是通过工厂函数返回模型和输入的用例可以使用 `run-torch-model`：

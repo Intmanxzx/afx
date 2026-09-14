@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -99,6 +100,7 @@ arg0_1_layout = FixedLayout('npu:0', torch.bfloat16, size=[2, 3], stride=[3, 1])
 
 def test_activate_autofuse_backend_prefers_torch_npu_bundle(monkeypatch) -> None:
     calls = []
+    monkeypatch.delenv("TORCHINDUCTOR_NPU_BACKEND", raising=False)
 
     def import_module(name):
         calls.append(name)
@@ -108,6 +110,7 @@ def test_activate_autofuse_backend_prefers_torch_npu_bundle(monkeypatch) -> None
 
     assert activate_autofuse_backend() == "torch_npu._inductor.ascendc"
     assert calls == ["torch_npu._inductor.ascendc"]
+    assert os.environ["TORCHINDUCTOR_NPU_BACKEND"] == "ascendc"
 
 
 def test_activate_autofuse_backend_falls_back_to_standalone(monkeypatch) -> None:

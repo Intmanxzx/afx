@@ -808,6 +808,7 @@ def run_npu_model(
     device: str,
 ) -> tuple[Any, dict[str, dict[str, Any]], dict[str, Any]]:
     enable_autofuse_graph_dump(autofuse_dump_dir)
+    os.environ["TORCHINDUCTOR_NPU_BACKEND"] = "ascendc"
     import torch
 
     for candidate in _candidate_cann_roots(cann_root):

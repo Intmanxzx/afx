@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import os
 import re
 import sys
 import threading
@@ -62,6 +63,7 @@ def prefusion_graphs() -> list[dict[str, Any]]:
 
 
 def activate_autofuse_backend() -> str:
+    os.environ["TORCHINDUCTOR_NPU_BACKEND"] = "ascendc"
     errors = []
     for package_root in _ASCENDC_PACKAGE_ROOTS:
         try:
