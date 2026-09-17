@@ -105,6 +105,38 @@ autofusedebugger python3 \
 
 对于 PyTorch 用例，如果 `tc_*` 调用了 `run_af(..., framework="pytorch")`，工具会在 `run_af` 的模型/输入边界截获 `Model` 和 Baize 的 `gen_inputs` 生成的最后一组输入，并保持 Baize 的 `eval()`、`no_grad()` 语义，然后立即停止用例，由工具自己执行 CPU pre-fusion、NPU eager pre-fusion 和 NPU Autofuse 三条路径。因此不会启动 Baize 自己的 benchmark 子进程，也不会让工具的捕获 hook 泄漏到 Baize worker。未使用 `run_af` 而是在 `tc_*` 内直接调用模型的用例，继续使用模型调用捕获作为兼容路径。适配调用只使用 `kernel_path`、`case_path`、`case_name`、`soc_version` 和 `device_id` 这五个框架参数启动用例；框架原有的性能测试、SLOG 检查和结果校验不会作为报告执行流程的一部分。`soc_version` 和 `device_id` 优先读取当前进程的 `SOC_VERSION`、`ASCEND_DEVICE_ID`/`DEVICE_ID` 环境变量。该适配仍要求在与框架一致的 Python、PyTorch、torch_npu 和 CANN 环境中执行。
 
+### Agent 归一化和失败诊断
+
+复杂 PyTorch/Baize 脚本可以先交给可配置的 Agent 生成固定格式的归一化 JSON：
+
+```bash
+export AUTOFUSEDEBUGGER_AGENT_ENDPOINT=https://agent.example.com/v1/chat/completions
+export AUTOFUSEDEBUGGER_AGENT_API_KEY='your-api-key'
+export AUTOFUSEDEBUGGER_AGENT_MODEL='your-model-name'
+
+autofusedebugger normalize-script \
+    --script /path/to/model.py \
+    --framework pytorch \
+    --out /tmp/model_accuracy/agent_normalization.json
+```
+
+需要与执行联动时使用：
+
+```bash
+autofusedebugger run-script \
+    --script /path/to/model.py \
+    --out-dir /tmp/model_accuracy \
+    --html /tmp/model_accuracy.html \
+    --agent-normalize \
+    --agent-recover
+```
+
+`--agent-normalize` 会把入口、模型、图阶段、输入、权重和执行约束保存为 `agent_normalization.json`，并只将入口筛选建议交给现有 PyTorch adapter。`--agent-recover` 在执行失败后生成 `agent_recovery.json`，其中包含失败阶段、证据和用户可审阅的修复建议。Agent 不执行用户源码、命令或补丁，也不静默修改模型逻辑；完整 schema 和安全边界见 [agent_normalization.md](agent_normalization.md)。
+
+Agent 的 HTTP、CANNBot、Codex/Claude/OpenCode CLI 配置，以及各环境变量的含义和默认值，见
+[agent_normalization.md](agent_normalization.md)。工具只接收归一化结果和诊断结果，实际模型执行仍由
+AutofuseDebugger 完成。
+
 ## 兼容 `create_case()` 用例
 
 不执行推理、而是通过工厂函数返回模型和输入的用例可以使用 `run-torch-model`：

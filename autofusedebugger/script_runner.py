@@ -3,15 +3,19 @@ from __future__ import annotations
 import os
 import re
 import sys
+import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
 
+from autofusedebugger.agent import AgentConfig
 from autofusedebugger.adapters import (
     detect_framework,
     find_cann_ge_root,
     get_backend_adapter,
     get_framework_adapter,
 )
+from autofusedebugger.normalization import normalize_script, recover_script_error
 from autofusedebugger.progress import progress_message
 
 
@@ -70,7 +74,7 @@ def run_framework_script(
     framework: str = "auto",
     backend: str = "inductor_autofuse",
     script_args: tuple[str, ...] = (),
-    capture_call: int = 0,
+    capture_call: int | None = None,
     module_pattern: str | None = None,
     name: str | None = None,
     fullgraph: bool = False,
@@ -82,8 +86,26 @@ def run_framework_script(
     rtol: float | None = None,
     atol: float | None = None,
     save_elementwise_data: bool = False,
+    agent_normalize: bool = False,
+    agent_recover: bool = False,
+    agent_endpoint: str | None = None,
+    agent_transport: str | None = None,
+    agent_command: str | None = None,
+    agent_model: str | None = None,
+    agent_timeout: float | None = None,
+    agent_output: str | Path | None = None,
 ) -> dict[str, Any]:
     path = Path(script).resolve()
+    output_root = Path(out_dir).resolve()
+    effective_capture_call = 0 if capture_call is None else capture_call
+    effective_module_pattern = module_pattern
+    normalized: dict[str, Any] | None = None
+    resolved_framework = framework
+    agent_config: AgentConfig | None = None
+    cann_ge_mode = find_cann_ge_root(path) is not None
+    normalization_path = Path(agent_output).resolve() if agent_output else output_root / "agent_normalization.json"
+    recovery_path = output_root / "agent_recovery.json"
+    phase = "framework detection"
     old_path = list(sys.path)
     old_pythonpath = os.environ.get("PYTHONPATH")
     pythonpath_items = [item for item in (old_pythonpath or "").split(os.pathsep) if item]
@@ -98,10 +120,41 @@ def run_framework_script(
         [*import_roots, *(item for item in pythonpath_items if item not in import_roots)]
     )
     try:
-        resolved_framework = framework
         if framework == "auto":
             resolved_framework = detect_framework(path)
             progress_message("INFO", f"framework auto-detected: {resolved_framework} script={path}")
+        if agent_normalize or agent_recover:
+            phase = "Agent normalization"
+            agent_config = AgentConfig.from_env(
+                endpoint=agent_endpoint,
+                transport=agent_transport,
+                command=agent_command,
+                model=agent_model,
+                timeout=agent_timeout,
+            )
+            normalized = normalize_script(
+                script=path,
+                framework=resolved_framework,
+                script_args=script_args,
+                config=agent_config,
+                output=normalization_path,
+            )
+            progress_message(
+                "INFO",
+                f"Agent normalization saved: {normalization_path} "
+                f"status={normalized['status']} confidence={normalized['diagnostics'].get('confidence', '-')}",
+            )
+            if normalized["status"] == "needs_user_input":
+                progress_message("WARNING", "Agent normalization requires user input; continue with local capture fallback")
+            entrypoint = normalized["source"].get("entrypoint", {})
+            # CANN GE has a native run_af boundary. Keep its adapter-owned
+            # entry selection instead of applying a static Agent guess.
+            if capture_call is None and not cann_ge_mode:
+                suggested_call = normalized["execution"].get("capture_call", entrypoint.get("capture_call"))
+                if isinstance(suggested_call, int) and suggested_call >= 0:
+                    effective_capture_call = suggested_call
+            if not cann_ge_mode and module_pattern is None and isinstance(entrypoint.get("module_pattern"), str):
+                effective_module_pattern = entrypoint["module_pattern"]
         frontend = get_framework_adapter(resolved_framework)
         target = get_backend_adapter(backend)
         if not target.supports(resolved_framework):
@@ -109,14 +162,27 @@ def run_framework_script(
                 f"backend {backend} does not support framework {resolved_framework} "
                 f"(detected from {path}); choose a compatible backend or pass --framework explicitly"
             )
+        phase = "framework adapter capture"
         invocation = frontend.capture(
+            # The Agent may select an entry among several module calls, but
+            # the adapter remains responsible for actually executing it.
             script=path,
             script_args=script_args,
-            capture_call=capture_call,
-            module_pattern=module_pattern,
+            capture_call=effective_capture_call,
+            module_pattern=effective_module_pattern,
         )
+        if normalized is not None:
+            metadata = dict(invocation.metadata)
+            metadata["agent_normalization"] = {
+                "path": str(normalization_path),
+                "status": normalized["status"],
+                "confidence": normalized["diagnostics"].get("confidence"),
+                "entrypoint": normalized["source"].get("entrypoint", {}),
+            }
+            invocation = replace(invocation, metadata=metadata)
         if not target.supports(invocation.framework):
             raise ValueError(f"backend {backend} does not support framework {invocation.framework}")
+        phase = "backend execution"
         return target.run(
             invocation,
             out_dir=out_dir,
@@ -131,6 +197,32 @@ def run_framework_script(
             atol=atol,
             save_elementwise_data=save_elementwise_data,
         )
+    except Exception as exc:
+        if agent_recover:
+            try:
+                if agent_config is None:
+                    agent_config = AgentConfig.from_env(
+                        endpoint=agent_endpoint,
+                        transport=agent_transport,
+                        command=agent_command,
+                        model=agent_model,
+                        timeout=agent_timeout,
+                    )
+                recover_script_error(
+                    script=path,
+                    framework=resolved_framework,
+                    phase=phase,
+                    error=exc,
+                    normalized=normalized,
+                    config=agent_config,
+                    output=recovery_path,
+                    traceback_text=traceback.format_exc(),
+                )
+                progress_message("INFO", f"Agent recovery plan saved: {recovery_path}")
+            except Exception as recovery_exc:
+                progress_message("WARNING", f"Agent recovery request failed: {recovery_exc}")
+            raise RuntimeError(f"{exc}; see Agent recovery plan: {recovery_path}") from exc
+        raise
     finally:
         sys.path[:] = old_path
         if old_pythonpath is None:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
+from autofusedebugger.agent import AgentConfig
 from autofusedebugger.adapters import backend_names, framework_names
 from autofusedebugger.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
 from autofusedebugger.camodel import camodel_info, format_info
@@ -19,6 +21,29 @@ from autofusedebugger.script_runner import (
 )
 from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
 from autofusedebugger.torch_model import run_torch_model
+
+
+def _add_agent_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--agent-normalize",
+        action="store_true",
+        help="call the configured Agent and save a validated model normalization JSON before execution",
+    )
+    parser.add_argument(
+        "--agent-recover",
+        action="store_true",
+        help="ask the configured Agent for a structured recovery plan when execution fails",
+    )
+    parser.add_argument("--agent-endpoint", default=None, help="OpenAI-compatible Agent HTTP endpoint")
+    parser.add_argument("--agent-transport", choices=("auto", "http", "cannbot"), default=None)
+    parser.add_argument("--agent-command", default=None, help="local Agent command, for example /path/to/cannbot")
+    parser.add_argument("--agent-model", default=None, help="Agent model name; defaults to environment configuration")
+    parser.add_argument("--agent-timeout", type=float, default=None, help="Agent HTTP timeout in seconds")
+    parser.add_argument(
+        "--agent-output",
+        default=None,
+        help="normalization JSON path; defaults to OUT_DIR/agent_normalization.json",
+    )
 
 
 def _add_common_thresholds(parser: argparse.ArgumentParser) -> None:
@@ -171,6 +196,43 @@ def cmd_report_html(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_normalize_script(args: argparse.Namespace) -> int:
+    script_args = tuple(args.script_args)
+    if script_args[:1] == ("--",):
+        script_args = script_args[1:]
+    script = Path(args.script).resolve()
+    output = (
+        Path(args.out).resolve()
+        if args.out
+        else Path.cwd() / f"{script.stem}_autofusedebugger" / "agent_normalization.json"
+    )
+    from autofusedebugger.normalization import normalize_script
+
+    framework = args.framework
+    if framework == "auto":
+        framework = detect_framework(script)
+    config = AgentConfig.from_env(
+        endpoint=args.agent_endpoint,
+        model=args.agent_model,
+        timeout=args.agent_timeout,
+        transport=args.agent_transport,
+        command=args.agent_command,
+    )
+    result = normalize_script(
+        script=script,
+        framework=framework,
+        script_args=script_args,
+        config=config,
+        output=output,
+    )
+    print(
+        f"Agent normalization written: {output} "
+        f"framework={result['framework']} status={result['status']} "
+        f"confidence={result['diagnostics'].get('confidence', '-')}",
+    )
+    return 0 if result["status"] == "ready" else 1
+
+
 def cmd_run_torch_model(args: argparse.Namespace) -> int:
     enable_autofuse_graph_dump(Path(args.out_dir).resolve() / "autofuse_dump")
     summary = run_torch_model(
@@ -212,6 +274,14 @@ def cmd_run_script(args: argparse.Namespace) -> int:
         rtol=args.rtol,
         atol=args.atol,
         save_elementwise_data=args.save_elementwise_data,
+        agent_normalize=args.agent_normalize,
+        agent_recover=args.agent_recover,
+        agent_endpoint=args.agent_endpoint,
+        agent_transport=args.agent_transport,
+        agent_command=args.agent_command,
+        agent_model=args.agent_model,
+        agent_timeout=args.agent_timeout,
+        agent_output=args.agent_output,
     )
     print(format_torch_run_summary(summary))
     return 0 if summary["passed"] else 1
@@ -228,6 +298,10 @@ def cmd_run_direct(script: Path, script_args: tuple[str, ...]) -> int:
         backend="inductor_autofuse",
         script_args=script_args,
         html_path=html_path,
+        agent_normalize=os.environ.get("AUTOFUSEDEBUGGER_AGENT_NORMALIZE", "0").lower()
+        in {"1", "true", "yes"},
+        agent_recover=os.environ.get("AUTOFUSEDEBUGGER_AGENT_RECOVER", "0").lower()
+        in {"1", "true", "yes"},
     )
     print(format_torch_run_summary(summary))
     return 0 if summary["passed"] else 1
@@ -307,6 +381,22 @@ def build_parser() -> argparse.ArgumentParser:
     html.add_argument("--title", default="Autofuse Accuracy Report")
     html.set_defaults(func=cmd_report_html)
 
+    normalize = sub.add_parser(
+        "normalize-script",
+        help="use an Agent to analyze a model script and write a validated normalization JSON",
+    )
+    normalize.add_argument("--script", required=True, help="model script to analyze")
+    normalize.add_argument("--framework", choices=("auto", *framework_names()), default="auto")
+    normalize.add_argument("--out", default=None, help="normalization JSON path")
+    normalize.add_argument("--agent-endpoint", default=None, help="OpenAI-compatible Agent HTTP endpoint")
+    normalize.add_argument("--agent-transport", choices=("auto", "http", "cannbot"), default=None)
+    normalize.add_argument("--agent-command", default=None, help="local Agent command, for example /path/to/cannbot")
+    normalize.add_argument("--agent-model", default=None)
+    normalize.add_argument("--agent-timeout", type=float, default=None)
+    normalize.add_argument("script_args", nargs=argparse.REMAINDER, help="arguments used by the model script")
+
+    normalize.set_defaults(func=cmd_normalize_script)
+
     torch_model = sub.add_parser(
         "run-torch-model", help="compare shared Inductor pre-fusion CPU/NPU eager with native Autofuse execution"
     )
@@ -336,7 +426,9 @@ def build_parser() -> argparse.ArgumentParser:
     script_runner.add_argument("--out-dir", required=True)
     script_runner.add_argument("--framework", choices=("auto", *framework_names()), default="auto")
     script_runner.add_argument("--backend", choices=backend_names(), default="inductor_autofuse")
-    script_runner.add_argument("--capture-call", type=int, default=0, help="zero-based matching top-level model call")
+    script_runner.add_argument(
+        "--capture-call", type=int, default=None, help="zero-based matching top-level model call; defaults to 0"
+    )
     script_runner.add_argument("--module-pattern", default=None, help="regex matched against module class name")
     script_runner.add_argument("--name", default=None, help="report model name; defaults to captured module class")
     graph_mode = script_runner.add_mutually_exclusive_group()
@@ -354,6 +446,7 @@ def build_parser() -> argparse.ArgumentParser:
     script_runner.add_argument("--device", default="npu:0")
     _add_common_thresholds(script_runner)
     _add_elementwise_data_option(script_runner)
+    _add_agent_options(script_runner)
     script_runner.add_argument("script_args", nargs=argparse.REMAINDER, help="arguments passed after -- to the script")
     script_runner.set_defaults(func=cmd_run_script)
 

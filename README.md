@@ -69,6 +69,64 @@ python3 -m autofusedebugger run-script \
 
 `--` 后面的参数会原样传给模型脚本。如需在 HTML 中查看输出 Tensor 的逐元素数据时，增加 `--save-elementwise-data`；不指定时仍会正常进行逐元素精度对比，但不保存逐元素数据。
 
+### 可选 Agent 配置
+
+Agent 只在显式启用归一化或失败诊断时调用：
+
+```bash
+export AUTOFUSEDEBUGGER_AGENT_NORMALIZE=1
+export AUTOFUSEDEBUGGER_AGENT_RECOVER=1
+autofusedebugger python3 /path/to/model.py --device npu
+```
+
+等价地，也可以在 `run-script` 中增加 `--agent-normalize --agent-recover`，或使用
+`normalize-script` 单独生成归一化 JSON。Agent 只做静态分析和失败诊断，不执行、修改或自动修补模型脚本。
+
+工具通过传输通道连接 Agent，不绑定某一个模型厂商或客户端。目前支持：
+
+| 通道 | 含义 | 适用场景 |
+|---|---|---|
+| `http` | 调用 OpenAI-compatible Chat Completions HTTP endpoint | 推荐；适用于任何能提供兼容 HTTP 接口的 Agent 服务 |
+| `cannbot` | 启动本地 CANNBot CLI | 当前工具内置的本地 CLI 适配 |
+| `auto` | 优先选择 HTTP；否则选择本地 CANNBot | 不确定通道时使用，默认值 |
+
+HTTP Agent 的通用配置如下，`endpoint`、`model` 的具体值由 Agent 服务提供方决定：
+
+```bash
+export AUTOFUSEDEBUGGER_AGENT_TRANSPORT=http
+export AUTOFUSEDEBUGGER_AGENT_ENDPOINT=https://agent.example.com/v1/chat/completions
+export AUTOFUSEDEBUGGER_AGENT_API_KEY='your-api-key'
+export AUTOFUSEDEBUGGER_AGENT_MODEL='your-model-name'
+```
+
+各环境变量的含义如下：
+
+| 环境变量 | 含义 | 默认值 |
+|---|---|---|
+| `AUTOFUSEDEBUGGER_AGENT_TRANSPORT` | Agent 连接通道：`auto`、`http` 或 `cannbot` | `auto` |
+| `AUTOFUSEDEBUGGER_AGENT_ENDPOINT` | OpenAI-compatible HTTP POST 地址；使用 `http` 时必填 | 空 |
+| `AUTOFUSEDEBUGGER_AGENT_API_KEY` | HTTP 请求的 Bearer API key；不需要鉴权时可不设置 | 空 |
+| `AUTOFUSEDEBUGGER_AGENT_MODEL` | 传给 Agent 服务的模型标识，不是工具内部固定枚举 | `default` |
+| `AUTOFUSEDEBUGGER_AGENT_COMMAND` | CANNBot 可执行文件路径；例如 CANNBot 不在 `PATH` 时使用 | 自动查找 `cannbot` |
+| `AUTOFUSEDEBUGGER_AGENT_TIMEOUT` | 单次 Agent 请求超时时间，单位为秒 | `90` |
+| `AUTOFUSEDEBUGGER_AGENT_JSON_MODE` | 是否请求服务端返回 JSON：`1/true` 开启，`0/false` 关闭 | 开启 |
+| `AUTOFUSEDEBUGGER_AGENT_NORMALIZE` | 快捷模式是否执行脚本归一化：`1/true` 开启 | 关闭 |
+| `AUTOFUSEDEBUGGER_AGENT_RECOVER` | 快捷模式失败后是否请求诊断建议：`1/true` 开启 | 关闭 |
+
+如果使用的是 Codex、Claude、OpenCode 等非 CANNBot 工具，有两种方式：
+
+1. 如果它们通过网关或服务提供 OpenAI-compatible HTTP 接口，按上面的 `http` 方式设置
+   `ENDPOINT/API_KEY/MODEL`；工具不需要知道 Agent 的品牌名称。
+2. 如果只有本地 CLI，当前版本不能把 `codex`、`claude` 或 `opencode` 直接填入
+   `AUTOFUSEDEBUGGER_AGENT_COMMAND`。该变量当前只适用于内置的 CANNBot 调用格式
+   `cannbot run --format json --model MODEL PROMPT`。此时应提供一个兼容包装器，将工具传入的
+   prompt 转交给本地 CLI，并让标准输出只返回一个 JSON 对象；或者将该 CLI 暴露为 HTTP
+   endpoint，再使用 `http` 通道。不能只把 `AUTOFUSEDEBUGGER_AGENT_MODEL` 设置为 `codex` 或
+   `claude` 来完成切换。
+
+完整的请求格式、归一化 JSON、失败诊断和本地 CLI 包装器约定见
+[docs/agent_normalization.md](docs/agent_normalization.md)。
+
 ## 输出
 
 `--out-dir` 保存运行中间产物和 JSON/CSV 数据，`--html` 保存可视化报告。常见文件包括：
@@ -94,3 +152,4 @@ OUT_DIR/
 | [docs/accuracy_mapping.md](docs/accuracy_mapping.md) | CPU、NPU eager 和 NPU Autofuse 之间的算子映射策略 |
 | [docs/manifest_schema.md](docs/manifest_schema.md) | manifest 文件的字段、数据格式和状态码说明 |
 | [docs/feature_gallery.md](docs/feature_gallery.md) | 精度对比、图展示和生命周期分析等功能示例 |
+| [docs/agent_normalization.md](docs/agent_normalization.md) | Agent 归一化协议、配置方式和失败诊断流程 |
