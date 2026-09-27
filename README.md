@@ -7,21 +7,21 @@
 
 请先准备好 PyTorch、torch_npu 和 CANN 环境，再选择以下一种方式安装。
 
-### 方式一：源码安装
+### 方式一：wheel 包安装
+
+进入 [v0.1.1 发行版](https://gitcode.com/xingzhixiong/Autofuse-Debugger/releases/v0.1.1)，下载
+`autofusedebugger-0.1.1-py3-none-any.whl`，然后在 wheel 所在目录执行：
+
+```bash
+python3 -m pip install ./autofusedebugger-0.1.1-py3-none-any.whl
+```
+
+### 方式二：源码安装
 
 ```bash
 git clone https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
 cd ${HOME}/Autofuse-Debugger    # ${HOME}表示用户拉取工具代码的目录
 python3 -m pip install -e .
-```
-
-### 方式二：wheel 包安装
-
-进入 [v0.1.0 发行版](https://gitcode.com/xingzhixiong/Autofuse-Debugger/releases/v0.1.0)，下载
-`autofusedebugger-0.1.0-py3-none-any.whl`，然后在 wheel 所在目录执行：
-
-```bash
-python3 -m pip install ./autofusedebugger-0.1.0-py3-none-any.whl
 ```
 
 安装完成后可以执行以下命令验证：
