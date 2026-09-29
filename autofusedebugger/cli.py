@@ -19,6 +19,12 @@ from autofusedebugger.script_runner import (
     parse_python_script_invocation,
     run_framework_script,
 )
+from autofusedebugger.shell_entry import (
+    apply_env_overrides,
+    apply_plan_env,
+    is_shell_script_invocation,
+    parse_shell_script,
+)
 from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
 from autofusedebugger.torch_model import run_torch_model
 
@@ -256,6 +262,8 @@ def cmd_run_script(args: argparse.Namespace) -> int:
     script_args = tuple(args.script_args)
     if script_args[:1] == ("--",):
         script_args = script_args[1:]
+    if getattr(args, "env_file", None) or getattr(args, "env", None):
+        apply_env_overrides(getattr(args, "env", None), getattr(args, "env_file", None))
     summary = run_framework_script(
         script=args.script,
         out_dir=args.out_dir,
@@ -287,6 +295,25 @@ def cmd_run_script(args: argparse.Namespace) -> int:
     return 0 if summary["passed"] else 1
 
 
+def cmd_run_direct_shell(argv: list[str]) -> int:
+    """Convenience form: ``autofusedebugger bash launch.sh`` or ``autofusedebugger ./launch.sh``."""
+    script_index = 0
+    if Path(argv[0]).name in {"bash", "sh", "zsh", "dash", "ksh"}:
+        if len(argv) < 2:
+            raise ValueError("shell launcher mode requires a script path, for example: autofusedebugger bash launch.sh")
+        script_index = 1
+    plan = parse_shell_script(argv[script_index])
+    apply_plan_env(plan)
+    python_script = plan.python_script
+    if python_script is None:
+        raise ValueError(
+            f"no .py entry found in the python invocation of {plan.script}; "
+            "use 'autofusedebugger python3 model.py' instead"
+        )
+    script_args = tuple(plan.python_tokens[plan.python_tokens.index(str(python_script)) + 1 :])
+    return cmd_run_direct(python_script, script_args)
+
+
 def cmd_run_direct(script: Path, script_args: tuple[str, ...]) -> int:
     out_dir, html_path = default_direct_output_paths(script)
     print(f"AutofuseDebugger direct mode: script={script}")
@@ -311,7 +338,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="autofusedebugger",
         description="CPU/NPU eager/NPU Autofuse 精度对比和图分析工具",
-        epilog="快捷模式：autofusedebugger python3 model.py [模型脚本参数...]",
+        epilog="快捷模式：autofusedebugger python3 model.py [模型脚本参数...]；"
+    "或 autofusedebugger bash launch.sh / autofusedebugger ./launch.sh 解析启动脚本继承环境变量",
     )
     sub = parser.add_subparsers(dest="command_name", required=True)
 
@@ -444,6 +472,12 @@ def build_parser() -> argparse.ArgumentParser:
     script_runner.add_argument("--html", default=None, help="write HTML path; defaults to OUT_DIR/report.html")
     script_runner.add_argument("--cann-root", default=None, help="CANN installation root")
     script_runner.add_argument("--device", default="npu:0")
+    script_runner.add_argument(
+        "--env-file",
+        default=None,
+        help="shell file whose export KEY=VALUE lines are applied before execution (not executed)",
+    )
+    script_runner.add_argument("--env", action="append", default=[], help="extra KEY=VALUE env, repeatable")
     _add_common_thresholds(script_runner)
     _add_elementwise_data_option(script_runner)
     _add_agent_options(script_runner)
@@ -482,6 +516,8 @@ def main(argv: list[str] | None = None) -> int:
         direct = parse_python_script_invocation(raw_argv)
         if direct is not None:
             return cmd_run_direct(*direct)
+        if raw_argv and is_shell_script_invocation(raw_argv):
+            return cmd_run_direct_shell(raw_argv)
         parser = build_parser()
         args = parser.parse_args(raw_argv)
         return int(args.func(args))

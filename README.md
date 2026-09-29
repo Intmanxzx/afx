@@ -53,6 +53,40 @@ autofusedebugger python3 /path/to/model.py \
 识别结果会给出明确的未实现提示。快捷方式默认执行三方精度采集；需要指定
 `--capture-call`、`--save-elementwise-data`、输出目录或其他工具参数时，使用下面的完整命令。
 
+### 通过 shell 启动脚本运行
+
+很多网络通过 shell 脚本启动：脚本里 export 一批环境变量，再调用 python。此时可以直接把
+启动脚本交给工具：
+
+```bash
+autofusedebugger bash launch.sh
+# 或
+autofusedebugger ./launch.sh
+```
+
+工具静态解析启动脚本（不执行它）：提取 `export KEY=VALUE` 注入当前进程环境，找到
+`python xxx.py ...` 命令行作为模型入口（`for` 循环变量取第一项展开），然后进入正常的采集
+流程。启动脚本中的 `rm`/`mkdir`/`source` 等语句不会执行，缓存清理由用户自行决定；
+`source` 的外部脚本（如 CANN `set_env.sh`）不会被展开，需要先在 shell 中 source 后再运行
+工具。`TORCHINDUCTOR_NPU_BACKEND` 等少量由工具管理的变量以工具为准，脚本中的同名值会被
+忽略并提示。
+
+也可以只继承环境文件而不改变入口方式：
+
+```bash
+autofusedebugger run-script \
+    --script /path/to/model.py \
+    --env-file /path/to/launch.sh \
+    --env EXTRA_KEY=VALUE \
+    --out-dir /tmp/model_accuracy \
+    -- \
+    --device npu
+```
+
+`--env-file` 只读取文件中的 export 行（同样不执行），`--env KEY=VALUE` 可重复使用。
+先在 shell 中 `export` 再直接运行 `autofusedebugger python3 model.py` 时，这些变量天然
+生效（工具与模型同进程执行）。
+
 直接运行一个会构造模型、输入并执行推理的 PyTorch 脚本：
 
 ```bash

@@ -59,6 +59,42 @@ autofusedebugger python3 sasrec.py --device npu --device_id 0
 PyTorch；同时识别到多个框架时会报歧义并要求显式传入 `--framework`。需要调整捕获调用、保存逐
 元素数据、阈值或输出路径时，使用下面的完整 `run-script` 命令。
 
+### 通过 shell 启动脚本运行
+
+网络的启动方式是 shell 脚本（内部 export 环境变量、调用 python）时，直接把脚本交给工具：
+
+```bash
+autofusedebugger bash launch.sh     # 或 autofusedebugger ./launch.sh
+```
+
+工具对启动脚本做静态解析（不执行）：
+
+- 提取所有 `export KEY=VALUE` 行（含变量引用展开与数组变量第一项），注入当前进程环境。
+- 定位 `python xxx.py ...` 命令行作为模型入口；`for model in ${MODELS[@]}` 之类的循环变量按
+  第一项展开，续行（反斜杠）自动拼接；`.py` 路径按启动脚本所在目录解析。
+- `rm`、`mkdir`、`cd`、`source` 等语句不会执行；`source` 的外部脚本（如 CANN `set_env.sh`）
+  不会被展开，需要先在 shell 中 source 后再运行工具。缓存清理等副作用由用户自行决定。
+- `TORCHINDUCTOR_NPU_BACKEND`、`TORCH_COMPILE_DEBUG`、`TORCHINDUCTOR_FORCE_DISABLE_CACHES`
+  由工具管理，脚本中的同名值会被忽略并打印提示。
+
+只继承环境文件、不改入口方式时使用 `run-script` 的环境参数：
+
+```bash
+autofusedebugger run-script \
+    --script /path/to/model.py \
+    --env-file /path/to/launch.sh \
+    --env EXTRA_KEY=VALUE \
+    --out-dir /tmp/model_accuracy \
+    -- \
+    --device npu
+```
+
+- `--env-file` 读取 shell 文件中的 `export` 行并注入（不执行文件），适合复用 launch.sh 或
+  单独的 env 文件。
+- `--env KEY=VALUE` 直接注入单个变量，可重复。
+- 先在 shell 中 `export` 再运行 `autofusedebugger python3 model.py` 时变量天然生效：工具与
+  模型同进程执行，继承当前 shell 的全部环境。
+
 `run-script` 面向用户已有的推理脚本。脚本不需要实现 `create_case()`，工具会捕获目标 `torch.nn.Module` 的一次调用，并使用捕获到的模型和输入完成三条路径的采集。
 
 ```bash
@@ -88,6 +124,8 @@ autofusedebugger run-script \
 - `--dynamic` 开启动态 shape 编译。
 - `--rewrite-device-hints` 是兼容旧模型的显式开关，用于临时改写模型的 `dev/device` 属性，默认关闭。
 - `--save-elementwise-data` 保存 HTML 中逐位置查看所需的 Tensor 数据，默认关闭。
+- `--env-file` 从 shell 文件读取 export 行注入环境（见上文"通过 shell 启动脚本运行"）。
+- `--env KEY=VALUE` 注入单个环境变量，可重复。
 
 工具不会修改模型脚本文件，也不会改变脚本中模型的 forward 逻辑。默认只将模型参数和 Tensor 输入迁移到当前比较路径的目标设备，不强制调用 `eval()` 或 `no_grad()`。如果模型依赖普通属性 `dev/device` 创建张量，才需要显式使用 `--rewrite-device-hints`。
 
