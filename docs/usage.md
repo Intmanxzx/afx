@@ -189,15 +189,17 @@ autofusedebugger run-torch-model \
 
 `create_case()` 返回 `(model, inputs)`，或包含 `model`、`inputs` 以及可选 `kwargs`、`fullgraph`、`dynamic`、`name`、`rewrite_device_hints` 的字典。这个入口主要用于 functional API 用例或自动捕获目标调用存在歧义的脚本。
 
-## 三条执行路径与图阶段
+## 执行路径与图阶段
 
-一次 `run-script` 或 `run-torch-model` 运行会围绕同一次 Inductor 编译建立三条数据路径：
+一次 `run-script` 或 `run-torch-model` 运行会围绕同一次 Inductor 编译建立数据路径。**默认只执行
+NPU eager pre-fusion 回放和 NPU Autofuse 执行，生成两方比较**；大网络下 CPU 回放（逐节点 CPU 参考计
+算）是最耗时的部分，默认跳过可显著缩短采集时间。需要三方 CPU 对比时增加 `--with-cpu`：
 
 ```text
 模型脚本
   -> torch.compile + torch_npu._inductor.ascendc
   -> transformed FX GraphModule / ir_pre_fusion.txt
-  -> CPU pre-fusion 回放
+  -> [--with-cpu] CPU pre-fusion 回放
   -> NPU eager pre-fusion 回放
   -> NPU Autofuse post-fusion 执行
   -> manifest / compare / HTML
@@ -205,19 +207,20 @@ autofusedebugger run-torch-model \
 
 具体含义如下：
 
-1. **Inductor pre-fusion CPU**：从 Autofuse 编译过程中截获实际进入 Inductor 的 transformed FX `GraphModule`，使用真实的 AOT 扁平化输入在 CPU 上回放，采集每个 pre-fusion 节点输出。
+1. **Inductor pre-fusion CPU**（仅 `--with-cpu`）：从 Autofuse 编译过程中截获实际进入 Inductor 的 transformed FX `GraphModule`，使用真实的 AOT 扁平化输入在 CPU 上回放，采集每个 pre-fusion 节点输出。
 2. **Inductor pre-fusion NPU eager**：使用同一个 transformed FX `GraphModule` 和同一份 AOT 输入，在 NPU eager 上回放，采集未融合算子输出。CPU 与 NPU eager 共享 `canonical_id`，用于确认单算子 CPU/NPU 执行是否存在差异。
 3. **NPU Autofuse**：执行原生 `torch.compile(..., options={"npu_backend": "ascendc"})`，采集 post-fusion 调度 kernel 输出。融合 kernel 只比较其出口输出节点；融合内部节点不作为主精度明细中的独立输出。
 4. **`ir_pre_fusion.txt`**：只用于解析 Inductor pre-fusion 的 SchedulerNode、Buffer、依赖和图 ID，校验 post-fusion kernel 与 pre-fusion 图的关系，不直接作为 CPU/NPU eager 的执行输入。
 5. **post-fusion 图**：主 HTML 图来自真实的 Inductor post-fusion 拓扑；融合子图来自对应 kernel 的 ASCIR `graph_hint`。`AutoFuseAfterOptimize` 图来自同一次 AscendC 编译生成的 DFX dump。
 
-因此报告不是简单比较一张 CPU export 图和一张 NPU dump 图，而是：
+默认报告是 **NPU eager ↔ NPU Autofuse** 两方比较（单页签），直接回答"Autofuse 融合是否引入精度
+差异"。开启 `--with-cpu` 后报告包含三组比较，在 HTML 顶部的页签中切换：
 
 - `Inductor pre-fusion CPU ↔ NPU Autofuse`
 - `Inductor pre-fusion CPU ↔ Inductor pre-fusion NPU eager`
 - `Inductor pre-fusion NPU eager ↔ NPU Autofuse`
 
-三组比较结果会在 HTML 顶部的页签中切换。算子映射规则和未映射原因见 [accuracy_mapping.md](accuracy_mapping.md)。
+算子映射规则和未映射原因见 [accuracy_mapping.md](accuracy_mapping.md)。
 
 ## 精度结果与逐元素数据
 
@@ -256,12 +259,12 @@ autofusedebugger run-script \
 
 ```text
 OUT_DIR/
-  cpu_dump/              Inductor pre-fusion FX 在 CPU 上的节点输出
+  cpu_dump/              Inductor pre-fusion FX 在 CPU 上的节点输出（仅 --with-cpu）
   npu_eager_dump/        同一张 pre-fusion FX 在 NPU eager 上的节点输出
   npu_dump/              NPU Autofuse/fallback kernel 输出
   inductor_compile/      transformed FX、pre/post-fusion IR 和编译产物
   autofuse_dump/         AutoFuseAfterOptimize 等 AscendC DFX 图
-  cpu_graph.json         CPU pre-fusion 图描述
+  cpu_graph.json         CPU pre-fusion 图描述（仅 --with-cpu）
   npu_eager_graph.json   NPU eager pre-fusion 图描述
   npu_graph.json         NPU Autofuse post-fusion 图描述
   *_manifest.json        各路径的 dump 清单

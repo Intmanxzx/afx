@@ -50,8 +50,10 @@ autofusedebugger python3 /path/to/model.py \
 
 其中 `model` 是脚本文件名（不含 `.py`）。该快捷方式会根据脚本中的框架导入自动选择
 `pytorch`、`tensorflow` 或 `jax`；当前只有 PyTorch + Inductor Autofuse 路径可执行，TF/JAX
-识别结果会给出明确的未实现提示。快捷方式默认执行三方精度采集；需要指定
-`--capture-call`、`--save-elementwise-data`、输出目录或其他工具参数时，使用下面的完整命令。
+识别结果会给出明确的未实现提示。快捷方式默认只执行 **NPU eager ↔ NPU Autofuse 两方精度
+采集与比较**（大网络下更快）；需要三方 CPU 对比时增加 `--with-cpu`（完整命令
+`run-script`/`run-torch-model` 同名参数）。需要指定 `--capture-call`、
+`--save-elementwise-data`、输出目录或其他工具参数时，使用下面的完整命令。
 
 ### 通过 shell 启动脚本运行
 

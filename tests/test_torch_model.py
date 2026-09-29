@@ -406,3 +406,50 @@ def test_export_cpu_graph_uses_inductor_level_decomposition(tmp_path: Path) -> N
     assert "linear" not in types
     assert "mm" in types
     assert any(info["shape"] == (6, 5) for name, info in outputs.items() if name.startswith("mm"))
+
+
+def test_capture_prefusion_graphs_skips_cpu_replay_by_default(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+
+    model = torch.nn.Linear(4, 5, bias=False).eval()
+    inputs = (torch.ones(2, 3, 4),)
+    spec = {"gm": model, "example_inputs": inputs}
+
+    cpu_graph, cpu_outputs, eager_graph, eager_outputs = torch_model.capture_prefusion_graphs(
+        [spec],
+        TorchCase(model=model, inputs=inputs, name="linear"),
+        tmp_path / "cpu_dump",
+        tmp_path / "npu_eager_dump",
+        device="cpu",
+        with_cpu=False,
+    )
+
+    assert cpu_graph is None
+    assert cpu_outputs == {}
+    assert not (tmp_path / "cpu_dump").exists()
+    assert eager_graph is not None
+    assert eager_graph["metadata"]["side"] == "inductor_prefusion_npu_eager"
+    assert eager_outputs
+
+
+def test_capture_prefusion_graphs_with_cpu_captures_both_sides(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+
+    model = torch.nn.Linear(4, 5, bias=False).eval()
+    inputs = (torch.ones(2, 3, 4),)
+    spec = {"gm": model, "example_inputs": inputs}
+
+    cpu_graph, cpu_outputs, eager_graph, eager_outputs = torch_model.capture_prefusion_graphs(
+        [spec],
+        TorchCase(model=model, inputs=inputs, name="linear"),
+        tmp_path / "cpu_dump",
+        tmp_path / "npu_eager_dump",
+        device="cpu",
+        with_cpu=True,
+    )
+
+    assert cpu_graph is not None
+    assert cpu_graph["metadata"]["side"] == "inductor_prefusion_cpu"
+    assert cpu_outputs
+    assert eager_graph is not None
+    assert eager_outputs

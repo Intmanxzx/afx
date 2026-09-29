@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from autofusedebugger.autofuse_graph import attach_autofuse_graphs, collect_autofuse_graphs, enable_autofuse_graph_dump
-from autofusedebugger.compare import compare_three_manifests, save_report
+from autofusedebugger.compare import compare_manifests, compare_three_manifests, save_report
 from autofusedebugger.graph import build_manifest
 from autofusedebugger.html import write_report_html
 from autofusedebugger.artifact_io import tensor_to_numpy
@@ -785,24 +785,26 @@ def capture_prefusion_graphs(
     npu_eager_dump: Path,
     *,
     device: str,
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, Any], dict[str, dict[str, Any]]]:
+    with_cpu: bool = False,
+) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]], dict[str, Any], dict[str, dict[str, Any]]]:
     if not graph_specs:
         raise RuntimeError("Inductor did not expose a transformed pre-fusion FX graph")
     display_names = _prefusion_display_names(graph_specs)
-    cpu_graphs = []
+    cpu_graphs: list[dict[str, Any]] = []
     npu_graphs = []
     cpu_outputs: dict[str, dict[str, Any]] = {}
     npu_outputs: dict[str, dict[str, Any]] = {}
     for graph_index, spec in enumerate(graph_specs):
-        cpu_graph, saved_cpu = _capture_prefusion_graph(
-            spec["gm"], tuple(spec["example_inputs"]), graph_index, "cpu", cpu_dump, display_names, case
-        )
+        if with_cpu:
+            cpu_graph, saved_cpu = _capture_prefusion_graph(
+                spec["gm"], tuple(spec["example_inputs"]), graph_index, "cpu", cpu_dump, display_names, case
+            )
+            cpu_graphs.append(cpu_graph)
+            cpu_outputs.update(saved_cpu)
         npu_graph, saved_npu = _capture_prefusion_graph(
             spec["gm"], tuple(spec["example_inputs"]), graph_index, device, npu_eager_dump, display_names, case
         )
-        cpu_graphs.append(cpu_graph)
         npu_graphs.append(npu_graph)
-        cpu_outputs.update(saved_cpu)
         npu_outputs.update(saved_npu)
 
     def merge(graphs: list[dict[str, Any]], side: str) -> dict[str, Any]:
@@ -824,7 +826,7 @@ def capture_prefusion_graphs(
         }
 
     return (
-        merge(cpu_graphs, "inductor_prefusion_cpu"),
+        merge(cpu_graphs, "inductor_prefusion_cpu") if with_cpu else None,
         cpu_outputs,
         merge(npu_graphs, "inductor_prefusion_npu_eager"),
         npu_outputs,
@@ -1034,16 +1036,21 @@ def run_torch_case(
     rtol: float | None = None,
     atol: float | None = None,
     save_elementwise_data: bool = False,
+    with_cpu: bool = False,
 ) -> dict[str, Any]:
     root = Path(out_dir).resolve()
-    progress_message("INFO", f"run started model={case.name} device={device} out_dir={root}")
+    progress_message(
+        "INFO",
+        f"run started model={case.name} device={device} out_dir={root} with_cpu={with_cpu}",
+    )
     _clean_dir(root)
     cpu_dump = root / "cpu_dump"
     npu_eager_dump = root / "npu_eager_dump"
     npu_dump = root / "npu_dump"
     compile_dir = root / "inductor_compile"
     autofuse_dump = root / "autofuse_dump"
-    cpu_dump.mkdir(parents=True, exist_ok=True)
+    if with_cpu:
+        cpu_dump.mkdir(parents=True, exist_ok=True)
     npu_eager_dump.mkdir(parents=True, exist_ok=True)
     npu_dump.mkdir(parents=True, exist_ok=True)
     compile_dir.mkdir(parents=True, exist_ok=True)
@@ -1072,7 +1079,10 @@ def run_torch_case(
     progress_message("INFO", f"NPU Autofuse captured kernels={len(npu_records)}")
     prefusion_specs = native_capture.pop("prefusion_graphs", [])
     try:
-        with progress_stage("Inductor pre-fusion CPU/NPU eager capture", detail="shared transformed FX graph"):
+        with progress_stage(
+            "Inductor pre-fusion NPU eager capture",
+            detail=f"shared transformed FX graph with_cpu={with_cpu}",
+        ):
             (
                 cpu_graph_data,
                 cpu_outputs,
@@ -1084,22 +1094,28 @@ def run_torch_case(
                 cpu_dump,
                 npu_eager_dump,
                 device=device,
+                with_cpu=with_cpu,
             )
     except Exception as exc:
         raise RuntimeError(f"Inductor pre-fusion capture failed: {type(exc).__name__}: {exc}") from exc
-    progress_message("INFO", f"Inductor pre-fusion CPU captured tensors={len(cpu_outputs)}")
+    if with_cpu:
+        progress_message("INFO", f"Inductor pre-fusion CPU captured tensors={len(cpu_outputs)}")
     progress_message("INFO", f"Inductor pre-fusion NPU eager captured tensors={len(npu_eager_outputs)}")
     with progress_stage("NPU graph reconstruction", detail=f"compile_dir={compile_dir}"):
         diagnostics = native_capture.pop("diagnostics", {})
         diagnostics_path = root / "autofuse_diagnostics.json"
         _save_json(diagnostics_path, diagnostics)
+        # The canonical pre-fusion mapping uses the shared FX graph structure; the
+        # eager replay graph is the same GraphModule, so it can serve as the
+        # canonical reference when CPU replay was skipped.
+        canonical_graph_data = cpu_graph_data if with_cpu else npu_eager_graph_data
         npu_graph_data = build_inductor_autofuse_graph(
             compile_dir,
             npu_records,
             cpu_outputs,
             diagnostics,
             cpu_graph_data=cpu_graph_data,
-            prefusion_graph_data=cpu_graph_data,
+            prefusion_graph_data=canonical_graph_data,
             prefusion_runtime_selection=native_capture.get("prefusion_runtime_selection"),
         )
 
@@ -1107,19 +1123,20 @@ def run_torch_case(
     npu_eager_graph = root / "npu_eager_graph.json"
     npu_graph = root / "npu_graph.json"
     with progress_stage("Graph manifest generation", detail=f"out_dir={root}"):
-        _save_json(cpu_graph, cpu_graph_data)
-        _save_json(npu_eager_graph, npu_eager_graph_data)
-        _save_json(npu_graph, npu_graph_data)
-        cpu_manifest = root / "cpu_manifest.json"
         npu_eager_manifest = root / "npu_eager_manifest.json"
         npu_manifest = root / "npu_manifest.json"
-        build_manifest(
-            side="inductor_prefusion_cpu",
-            graph_path=cpu_graph,
-            dump_dir=cpu_dump,
-            out_path=cpu_manifest,
-            model_name=case.name,
-        )
+        if with_cpu:
+            _save_json(cpu_graph, cpu_graph_data)
+            cpu_manifest = root / "cpu_manifest.json"
+            build_manifest(
+                side="inductor_prefusion_cpu",
+                graph_path=cpu_graph,
+                dump_dir=cpu_dump,
+                out_path=cpu_manifest,
+                model_name=case.name,
+            )
+        _save_json(npu_eager_graph, npu_eager_graph_data)
+        _save_json(npu_graph, npu_graph_data)
         build_manifest(
             side="inductor_prefusion_npu_eager",
             graph_path=npu_eager_graph,
@@ -1129,19 +1146,45 @@ def run_torch_case(
         )
         build_manifest(side="npu_autofuse", graph_path=npu_graph, dump_dir=npu_dump, out_path=npu_manifest, model_name=case.name)
 
-    with progress_stage("Three-way tensor comparison", detail="CPU vs NPU eager vs NPU Autofuse"):
-        report = compare_three_manifests(
-            cpu_manifest,
-            npu_eager_manifest,
-            npu_manifest,
-            rtol=rtol,
-            atol=atol,
-            save_elementwise_data=save_elementwise_data,
-        )
+    if with_cpu:
+        with progress_stage("Three-way tensor comparison", detail="CPU vs NPU eager vs NPU Autofuse"):
+            report = compare_three_manifests(
+                cpu_manifest,
+                npu_eager_manifest,
+                npu_manifest,
+                rtol=rtol,
+                atol=atol,
+                save_elementwise_data=save_elementwise_data,
+            )
+    else:
+        with progress_stage("Two-way tensor comparison", detail="NPU eager vs NPU Autofuse"):
+            report = compare_manifests(
+                npu_eager_manifest,
+                npu_manifest,
+                rtol=rtol,
+                atol=atol,
+                save_elementwise_data=save_elementwise_data,
+                progress_label="NPU eager vs NPU Autofuse",
+            )
+            report["comparison_mode"] = "two_way"
+            report["comparisons"] = {
+                "npu_eager_npu_autofuse": {
+                    "left": "Inductor pre-fusion NPU eager",
+                    "right": "NPU Autofuse",
+                    "left_graph_key": "npu_eager",
+                    "right_graph_key": "npu",
+                    "summary": report["summary"],
+                    "results": report["results"],
+                    "graphs": report["graphs"],
+                }
+            }
+            report["comparison_order"] = ["npu_eager_npu_autofuse"]
+            report["graphs"]["npu_eager"] = report["graphs"].pop("cpu")
     with progress_stage("AutoFuse graph collection", detail=f"dump_dir={autofuse_dump}"):
         attach_autofuse_graphs(report, autofuse_dump)
     native_capture["graph_count"] = len(report["graphs"]["autofuse"]["graphs"])
-    native_capture["prefusion_cpu_nodes"] = len(cpu_graph_data["graph"][0]["op"])
+    if with_cpu:
+        native_capture["prefusion_cpu_nodes"] = len(cpu_graph_data["graph"][0]["op"])
     native_capture["prefusion_npu_eager_nodes"] = len(npu_eager_graph_data["graph"][0]["op"])
     native_capture["prefusion_source"] = "same Inductor transformed FX GraphModule as Autofuse compile"
     native_capture["prefusion_runtime_input_source"] = "compiled FX runtime boxed inputs"
@@ -1176,10 +1219,10 @@ def run_torch_case(
         "backend": "inductor_autofuse",
         "out_dir": str(root),
         "html": str(html),
-        "cpu_nodes": len(cpu_graph_data["graph"][0]["op"]),
+        "cpu_nodes": len(cpu_graph_data["graph"][0]["op"]) if with_cpu else 0,
         "npu_eager_nodes": len(npu_eager_graph_data["graph"][0]["op"]),
         "npu_nodes": len(npu_graph_data["graph"][0]["op"]),
-        "prefusion_cpu_nodes": len(cpu_graph_data["graph"][0]["op"]),
+        "prefusion_cpu_nodes": len(cpu_graph_data["graph"][0]["op"]) if with_cpu else 0,
         "prefusion_npu_eager_nodes": len(npu_eager_graph_data["graph"][0]["op"]),
         "autofuse_nodes": len(npu_graph_data["graph"][0]["op"]),
         "matched_nodes": report["summary"].get("compared", report["summary"]["total"]),
@@ -1215,6 +1258,7 @@ def run_torch_model(
     save_elementwise_data: bool = False,
     fullgraph: bool | None = None,
     rewrite_device_hints: bool = False,
+    with_cpu: bool = False,
 ) -> dict[str, Any]:
     case = load_torch_case(script, entry)
     if fullgraph is not None:
@@ -1232,6 +1276,7 @@ def run_torch_model(
         rtol=rtol,
         atol=atol,
         save_elementwise_data=save_elementwise_data,
+        with_cpu=with_cpu,
     )
 
 

@@ -86,6 +86,7 @@ def run_framework_script(
     rtol: float | None = None,
     atol: float | None = None,
     save_elementwise_data: bool = False,
+    with_cpu: bool = False,
     agent_normalize: bool = False,
     agent_recover: bool = False,
     agent_endpoint: str | None = None,
@@ -196,6 +197,7 @@ def run_framework_script(
             rtol=rtol,
             atol=atol,
             save_elementwise_data=save_elementwise_data,
+            with_cpu=with_cpu,
         )
     except Exception as exc:
         if agent_recover:

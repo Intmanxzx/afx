@@ -65,6 +65,15 @@ def _add_elementwise_data_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_with_cpu_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--with-cpu",
+        action="store_true",
+        help="also capture the Inductor pre-fusion CPU replay and run the three-way comparison; "
+        "default compares only NPU eager vs NPU Autofuse",
+    )
+
+
 def cmd_make_manifest(args: argparse.Namespace) -> int:
     manifest = build_manifest(
         side=args.side,
@@ -253,6 +262,7 @@ def cmd_run_torch_model(args: argparse.Namespace) -> int:
         save_elementwise_data=args.save_elementwise_data,
         fullgraph=args.fullgraph,
         rewrite_device_hints=args.rewrite_device_hints,
+        with_cpu=args.with_cpu,
     )
     print(format_torch_run_summary(summary))
     return 0 if summary["passed"] else 1
@@ -282,6 +292,7 @@ def cmd_run_script(args: argparse.Namespace) -> int:
         rtol=args.rtol,
         atol=args.atol,
         save_elementwise_data=args.save_elementwise_data,
+        with_cpu=args.with_cpu,
         agent_normalize=args.agent_normalize,
         agent_recover=args.agent_recover,
         agent_endpoint=args.agent_endpoint,
@@ -445,6 +456,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_thresholds(torch_model)
     _add_elementwise_data_option(torch_model)
+    _add_with_cpu_option(torch_model)
     torch_model.set_defaults(func=cmd_run_torch_model)
 
     script_runner = sub.add_parser(
@@ -480,6 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
     script_runner.add_argument("--env", action="append", default=[], help="extra KEY=VALUE env, repeatable")
     _add_common_thresholds(script_runner)
     _add_elementwise_data_option(script_runner)
+    _add_with_cpu_option(script_runner)
     _add_agent_options(script_runner)
     script_runner.add_argument("script_args", nargs=argparse.REMAINDER, help="arguments passed after -- to the script")
     script_runner.set_defaults(func=cmd_run_script)
