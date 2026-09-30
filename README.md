@@ -9,11 +9,11 @@
 
 ### 方式一：wheel 包安装
 
-进入 [v0.1.1 发行版](https://gitcode.com/xingzhixiong/Autofuse-Debugger/releases/v0.1.1)，下载
-`autofusedebugger-0.1.1-py3-none-any.whl`，然后在 wheel 所在目录执行：
+进入 [v0.1.2 发行版](https://gitcode.com/xingzhixiong/Autofuse-Debugger/releases/v0.1.2)，下载
+`autofusedebugger-0.1.2-py3-none-any.whl`，然后在 wheel 所在目录执行：
 
 ```bash
-python3 -m pip install ./autofusedebugger-0.1.1-py3-none-any.whl
+python3 -m pip install ./autofusedebugger-0.1.2-py3-none-any.whl
 ```
 
 ### 方式二：源码安装
