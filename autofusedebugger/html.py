@@ -860,7 +860,7 @@ def render_report_html(
             </div>
             <button class="fusion-details-button" id="fusionDetails" type="button" title="查看父融合算子的精度和输入输出详情" hidden>融合详情</button>
             <div class="load-legend" id="loadLegend" aria-label="精度结果分类">
-              <span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败 / 映射冲突</span><span class="fail">整体 Tensor 失败</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合原因</span>
+              <span class="pass">逐元素 / 整体均通过</span><span class="warning">仅逐元素失败 / 映射冲突</span><span class="fail">整体 Tensor 失败</span><span class="first-fail">首次 / 首个已观测整体失败</span><span class="unmapped">未映射 / 未采集</span><span class="internal">融合内部不可观测</span><span class="unfused">未融合 / 融合间未合并原因</span>
             </div>
           </div>
           <div class="graph-head-right">
@@ -1855,6 +1855,9 @@ def render_report_html(
     function unfusedReasons(node) {
       return Array.isArray(node?.unfused_reasons) ? node.unfused_reasons : [];
     }
+    function fusionRejections(node) {
+      return Array.isArray(node?.fusion_rejections) ? node.fusion_rejections : [];
+    }
     function unfusedReasonText(item) {
       if (!item) return '';
       const stage = item.category === 'lowering_fallback'
@@ -2221,6 +2224,9 @@ def render_report_html(
       if (graphContext.kind === 'main') {
         unfusedReasons(node).forEach((item, index) => {
           detailRows.push([`未融合原因 ${index + 1}`, unfusedReasonText(item)]);
+        });
+        fusionRejections(node).forEach((item, index) => {
+          detailRows.push([`融合间未合并 ${index + 1}`, unfusedReasonText(item)]);
         });
       }
       grid.innerHTML = detailRows.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join('');
@@ -2944,7 +2950,9 @@ def render_report_html(
         const firstFailure = graphContext.kind === 'main' ? firstFailureByNode.get(node.name) : null;
         const broadcastCached = graphContext.kind === 'autofuse' && hasBroadcastCache(node);
         const tensorAvailable = graphContext.kind === 'main' && !!metric?.row?.elementwise_data;
-        const nodeUnfusedReasons = graphContext.kind === 'main' ? unfusedReasons(node) : [];
+        const nodeUnfusedReasons = graphContext.kind === 'main'
+          ? unfusedReasons(node).concat(fusionRejections(node))
+          : [];
         const detail = graphContext.kind === 'main'
           ? '点击节点查看详情'
           : graphContext.kind === 'autofuse'

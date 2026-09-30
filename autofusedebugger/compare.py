@@ -273,6 +273,7 @@ def _graph_summary(data: dict[str, Any]) -> dict[str, Any]:
                 "original_aten_types": node.get("original_aten_types", []),
                 "origin_subgraph": node.get("origin_subgraph"),
                 "unfused_reasons": node.get("unfused_reasons", []),
+                "fusion_rejections": node.get("fusion_rejections", []),
                 "provenance_conflicts": node.get("provenance_conflicts", []),
             }
         )

@@ -192,6 +192,7 @@ def build_manifest(
             "ir_pre_fusion": op.get("ir_pre_fusion"),
             "mapping_method": op.get("mapping_method"),
             "unfused_reasons": op.get("unfused_reasons", []),
+            "fusion_rejections": op.get("fusion_rejections", []),
             "provenance_conflicts": op.get("provenance_conflicts", []),
         }
         outputs = op.get("output_desc", [])

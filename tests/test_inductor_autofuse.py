@@ -939,3 +939,92 @@ op0: SchedulerNode(ComputedBuffer)
     assert [op["name"] for op in fusions] == [first, second]
     assert all(len(op["output_desc"]) == 1 for op in fusions)
     assert [op["output_desc"][0]["attr"][0]["value"]["s"] for op in fusions] == ["add", "add_1"]
+
+
+def test_build_inductor_graph_attaches_fusion_rejections_to_fused_nodes(tmp_path: Path) -> None:
+    trace = tmp_path / "compile" / "torchinductor" / "model__0"
+    trace.mkdir(parents=True)
+    (trace / "ir_post_fusion.txt").write_text(
+        """
+op0_op1: FusedSchedulerNode(ComputedBuffer)
+op0_op1.writes = [MemoryDep('buf0', c0, {c0: 8})]
+op0_op1.unmet_dependencies = []
+op0_op1.met_dependencies = [MemoryDep('arg0_1', c0, {c0: 8})]
+
+op2: SchedulerNode(ComputedBuffer)
+op2.writes = [MemoryDep('buf1', c0, {c0: 8})]
+op2.unmet_dependencies = [MemoryDep('buf0', c0, {c0: 8})]
+op2.met_dependencies = []
+""",
+        encoding="utf-8",
+    )
+    (trace / "fx_graph_readable.py").write_text(
+        'def forward(self, arg0_1: "f32[2, 4]"):\n    return arg0_1\n', encoding="utf-8"
+    )
+    kernel = "autofused_add_relu_deadbeef"
+    benchmark = trace / kernel / "benchmark.py"
+    benchmark.parent.mkdir()
+    benchmark.write_text(
+        """
+        # Graph fragment:
+        #   %arg0_1 : Tensor "f32[2, 4][4, 1]npu:0" = PlaceHolder[target=arg0_1]
+        #   %add : Tensor "f32[2, 4][4, 1]npu:0" = call_function[target=torch.ops.aten.add.Tensor](args = (%arg0_1, 1.0), kwargs = {})
+        #   %relu : Tensor "f32[2, 4][4, 1]npu:0" = call_function[target=torch.ops.aten.relu.default](args = (%add,), kwargs = {})
+        #   return %relu
+        op0: SchedulerNode(ComputedBuffer)
+        op1: SchedulerNode(ComputedBuffer)
+        graph_hint = ascir.HintGraph('graph_hint')
+        data = ascir.ops.Data('graph_hint/data', graph_hint)
+        data.attr.ir_attr.index = 0
+        add = ascir.ops.Add('graph_hint/add', graph_hint)
+        relu = ascir.ops.Relu('graph_hint/relu', graph_hint)
+        output = ascir.ops.Output('graph_hint/output', graph_hint)
+        output.x = relu.y
+        graph_hint.infer_dtypes()
+""",
+        encoding="utf-8",
+    )
+    npu_path = tmp_path / "npu.npy"
+    values = np.arange(8, dtype=np.float32).reshape(2, 4)
+    np.save(npu_path, values)
+    capture_name = f"{kernel}__relu"
+    records = {
+        capture_name: {
+            "name": capture_name,
+            "outputs": [{"index": 0, "path": npu_path, "dtype": "float32", "shape": (2, 4), "size": 8}],
+        },
+        "exp_1": {
+            "name": "exp_1",
+            "outputs": [{"index": 0, "path": npu_path, "dtype": "float32", "shape": (2, 4), "size": 8}],
+        },
+    }
+    cpu_outputs = {"relu": {"path": npu_path, "dtype": "float32", "shape": (2, 4), "size": 8, "type": "relu"}}
+    diagnostics = {
+        "lowering_fallbacks": [],
+        "fusion_decision_groups": [
+            [
+                {
+                    "kind": "vertical",
+                    "node1": ["op0", "op1"],
+                    "node2": ["op2"],
+                    "result": False,
+                    "reason": "cannot fuse: mixed dtype in fusion",
+                    "triton_can_fuse": True,
+                }
+            ]
+        ],
+    }
+
+    graph = build_inductor_autofuse_graph(tmp_path / "compile", records, cpu_outputs, diagnostics)
+    ops = graph["graph"][0]["op"]
+    fusion = next(op for op in ops if op["type"] == "AutofuseFusion")
+
+    assert fusion["fusion_rejections"], "fused kernel should carry further-fusion rejections"
+    rejection = fusion["fusion_rejections"][0]
+    assert rejection["category"] == "fusion_rejection"
+    assert rejection["kind"] == "vertical"
+    assert rejection["direction"] == "output"
+    assert "cannot fuse" in rejection["reason"]
+    assert rejection["peer"] == "inductor_op2"
+    # unfused_reasons stays reserved for non-fused nodes
+    assert "unfused_reasons" not in fusion or not fusion["unfused_reasons"]

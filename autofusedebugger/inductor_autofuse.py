@@ -1070,14 +1070,16 @@ def _trace_graph(
         for component in re.findall(r"op\d+", op["_scheduler_id"])
     }
     for op in ops:
-        if op["type"] == "AutofuseFusion":
-            op.pop("_scheduler_id", None)
-            op.pop("_fallback_kernel", None)
-            op.pop("_kernel_target", None)
-            continue
-        rejections = _fusion_rejections(op["_scheduler_id"], fusion_decisions, node_by_component)
-        if rejections:
-            op.setdefault("unfused_reasons", []).extend(rejections)
+        if op["type"] != "AutofuseFusion":
+            rejections = _fusion_rejections(op["_scheduler_id"], fusion_decisions, node_by_component)
+            if rejections:
+                op.setdefault("unfused_reasons", []).extend(rejections)
+        else:
+            # Fused kernels participate in further-fusion attempts as a whole;
+            # their rejection records explain why two fusion groups did not merge.
+            rejections = _fusion_rejections(op["_scheduler_id"], fusion_decisions, node_by_component)
+            if rejections:
+                op["fusion_rejections"] = rejections
         op.pop("_scheduler_id", None)
         op.pop("_fallback_kernel", None)
         op.pop("_kernel_target", None)
