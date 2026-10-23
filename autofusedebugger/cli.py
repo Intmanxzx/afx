@@ -205,6 +205,50 @@ def cmd_run_camodel(args: argparse.Namespace) -> int:
     return ret
 
 
+def cmd_af_fuzz(args: argparse.Namespace) -> int:
+    if args.repro_seed is not None:
+        from autofusedebugger.nnsmith_integration.fuzz_loop import run_repro_case
+
+        result = run_repro_case(
+            out_dir=args.out_dir,
+            repro_seed=args.repro_seed,
+            max_nodes=args.max_nodes,
+            timeout_ms=args.timeout_ms,
+            method=args.method,
+            max_elem_per_tensor=args.max_elem_per_tensor,
+            target=args.target,
+            debug=True if args.debug is None else args.debug,
+            soc_tier=args.soc_tier,
+        )
+        print(
+            f"case_id={result.case_id} status={result.status} "
+            f"symptom={result.symptom} stage={result.stage}"
+        )
+        if result.bug_dir:
+            print(f"artifacts: {result.bug_dir}")
+        return 0 if result.status == "pass" else 1
+
+    from autofusedebugger.nnsmith_integration.fuzz_loop import run_fuzz_session_parallel
+
+    summary = run_fuzz_session_parallel(
+        out_dir=args.out_dir,
+        n_cases=args.n_cases,
+        max_nodes=args.max_nodes,
+        timeout_ms=args.timeout_ms,
+        method=args.method,
+        max_elem_per_tensor=args.max_elem_per_tensor,
+        seed=args.seed,
+        target=args.target,
+        jobs=args.jobs,
+        soc_tier=args.soc_tier,
+    )
+    print(
+        f"total={summary.total} passed={summary.passed} failed={summary.failed} "
+        f"gen_errors={summary.gen_errors}; summary: {args.out_dir}/summary.html"
+    )
+    return 0 if summary.failed == 0 else 1
+
+
 def cmd_report_html(args: argparse.Namespace) -> int:
     write_report_html_from_json(args.report, args.out, args.title)
     print(f"wrote {args.out}")
@@ -520,6 +564,43 @@ def build_parser() -> argparse.ArgumentParser:
     camodel.add_argument("--command", required=True, help="shell command; supports {out_dir} placeholder")
     camodel.add_argument("--env", action="append", default=[], help="extra KEY=VALUE env, repeatable")
     camodel.set_defaults(func=cmd_run_camodel)
+
+    fuzz = sub.add_parser(
+        "af-fuzz", help="generate NNSmith cases and verify them end-to-end against the autofuse backend"
+    )
+    fuzz.add_argument("--out-dir", required=True)
+    fuzz.add_argument("--n-cases", type=int, default=100)
+    fuzz.add_argument("--max-nodes", type=int, default=5)
+    fuzz.add_argument("--timeout-ms", type=int, default=10000)
+    fuzz.add_argument("--method", default="symbolic-cinit")
+    fuzz.add_argument("--max-elem-per-tensor", type=int, default=2**16)
+    fuzz.add_argument("--seed", type=int, default=None)
+    fuzz.add_argument("--target", default="npu")
+    fuzz.add_argument("--jobs", type=int, default=1, help="shard case generation/verification across N processes")
+    fuzz.add_argument(
+        "--soc-tier",
+        choices=("A3", "A5"),
+        default="A3",
+        help="narrow the generated op catalog to ops ascendc registers a fused lowering for on this "
+        "NPU generation (see ascendc_opset.py); use A5 once validating on A5 hardware",
+    )
+    fuzz.add_argument(
+        "--repro-seed",
+        type=int,
+        default=None,
+        help="re-run exactly one case (its recorded `case_seed`, e.g. from summary.json's case_id "
+        "suffix or CaseResult.seed) instead of a batch; implies --debug unless --no-debug is passed",
+    )
+    fuzz.add_argument(
+        "--debug",
+        dest="debug",
+        action="store_true",
+        default=None,
+        help="dump torch_compile_debug/ + inductor cache + model/oracle/repro.py for the reproduced "
+        "case, pass or fail (only applies with --repro-seed)",
+    )
+    fuzz.add_argument("--no-debug", dest="debug", action="store_false")
+    fuzz.set_defaults(func=cmd_af_fuzz, debug=None)
     return parser
 
 

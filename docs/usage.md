@@ -12,7 +12,13 @@
 - CANN
 - 可执行 NPU kernel 的真实 NPU 环境
 
-`inductor_npu_ext` 如果已经随 `torch_npu` 打包，无需再次安装。安装工具：
+`inductor_npu_ext` 如果已经随 `torch_npu` 打包，无需再次安装。
+
+在 A3 类 NPU pod 上运行 `af-fuzz` 前，需要先排除几个环境层面的坑（libpython
+ABI 不匹配、CANN 环境变量未加载等），详见
+[af_fuzz_npu_env.md](af_fuzz_npu_env.md)。
+
+安装工具：
 
 ```bash
 cd /home/xingzhixiong/dfx_dir/Autofuse-Debugger
