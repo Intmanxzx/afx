@@ -21,3 +21,12 @@ autofusedbg = "autofusedebugger.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["autofusedebugger*"]
+
+[tool.setuptools.package-data]
+# Non-.py data the package reads at runtime (not auto-included by
+# setuptools): the ascendc NNSmith patch, applied transparently on first use
+# by nnsmith_integration/_nnsmith_patch.py. Editable installs (`pip install
+# -e .`, the way this project is always deployed so far) find this file via
+# its real on-disk path regardless of this declaration, but a non-editable
+# build (wheel/sdist) would silently drop it without this.
+autofusedebugger = ["nnsmith_integration/patches/*.patch"]

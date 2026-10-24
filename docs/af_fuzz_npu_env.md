@@ -101,6 +101,36 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_big --n-cases 200 --jobs 8 --target n
 上互相踩，多进程则每个进程天然拿到自己独立的一份，对并发跑多个 NPU
 compile/execute 也更安全。`--repro-seed` 单 case 路径不受 `--jobs` 影响。
 
+### 内存与并发配置（`--jobs` 和 `--compile-threads`）
+
+两个旋钮是两层不同的并发，都要按机器内存调：
+
+- `--jobs N`（默认 2）：分片进程数，每个进程各自加载 torch/torch_npu，
+  冷启动时单进程约 2GB。
+- `--compile-threads M`（默认 4，等价于环境变量 `TORCHINDUCTOR_COMPILE_THREADS`）：
+  **每个进程**内部 inductor 并行编译 worker 池的大小。每个 worker 是一个完整的
+  python 进程（import torch），约 0.7~1.5GB。inductor 自己的默认值是
+  `min(32, 宿主机 CPU 核数)`，容器里 `os.cpu_count()` 报的是宿主机核数而不是
+  cgroup 配额，所以冷编译缓存时会起 32 个 worker，在 32GB 容器里直接 OOM。
+
+峰值内存粗略估算：`1.3GB(基线) + jobs × (2GB + compile-threads × 1.5GB)`。
+优先级：`--compile-threads` > 环境变量 `TORCHINDUCTOR_COMPILE_THREADS` > 默认 4。
+
+A5 实测（32GB cgroup、1 块 NPU、**冷编译缓存**、20 个 case；热缓存时基本不再起
+编译 worker，内存会低得多）：
+
+| jobs | compile-threads | 耗时 | 内存峰值 |
+|---|---|---|---|
+| 1 | 4 | 211s | 11.0GB |
+| 1 | 8 | 188s | 15.9GB |
+| 1 | 32（inductor 默认） | 116s 时 OOM | 32GB |
+| 2 | 4 | 81s | 17.4GB |
+| 4 | 1 | 147s | 11.7GB |
+| 4 | 4 | 74s | 28.1GB |
+
+换到内存更大的机器时，可以按上面的公式提高两个值；`jobs` 从 2 提到 4 在只有
+1 块 NPU 的机器上收益很小（81s → 74s），换成多卡或更大内存机器后需要重新实测。
+
 ## 6. 已观察到的 flaky 现象（记录，未定位根因）
 
 第一次在某个 pod 上用 `--seed 1 --n-cases 2` 跑出过 2/2 失败（ascendc 输出

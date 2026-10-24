@@ -228,6 +228,13 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
             print(f"artifacts: {result.bug_dir}")
         return 0 if result.status == "pass" else 1
 
+    # Must be set before fuzz_loop (and with it torch/inductor) is imported:
+    # torch._inductor.config reads this env var once at import time. Spawned
+    # --jobs workers inherit it. Overrides the package-level default of 4
+    # (see autofusedebugger/__init__.py).
+    if args.compile_threads is not None:
+        os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(args.compile_threads)
+
     from autofusedebugger.nnsmith_integration.fuzz_loop import run_fuzz_session_parallel
 
     summary = run_fuzz_session_parallel(
@@ -576,7 +583,31 @@ def build_parser() -> argparse.ArgumentParser:
     fuzz.add_argument("--max-elem-per-tensor", type=int, default=2**16)
     fuzz.add_argument("--seed", type=int, default=None)
     fuzz.add_argument("--target", default="npu")
-    fuzz.add_argument("--jobs", type=int, default=1, help="shard case generation/verification across N processes")
+    fuzz.add_argument(
+        "--jobs",
+        type=int,
+        default=2,
+        help="shard case generation/verification across N processes "
+        "(each worker compiles on real NPU hardware, which is memory/CPU "
+        "heavy -- start low and watch system load before raising this; "
+        "jobs=8 has been observed to crash a 40-core/229GB instance). "
+        "Default 2: on A5 (32GB cgroup, 1 NPU, cold compile cache, inductor "
+        "compile pool 4) jobs=2 ran 20 cases in 81s / 17GB peak vs 211s / "
+        "11GB at jobs=1, while jobs=4 only reached 74s at 28GB peak. Raise "
+        "it on machines with more memory; peak memory is roughly "
+        "jobs * (~2GB + compile-threads * ~1.5GB)",
+    )
+    fuzz.add_argument(
+        "--compile-threads",
+        type=int,
+        default=None,
+        help="size of each process's inductor parallel-compile worker pool "
+        "(sets TORCHINDUCTOR_COMPILE_THREADS). Each worker is a full python "
+        "process importing torch (~0.7-1.5GB RSS) and every --jobs process "
+        "gets its own pool. Default: the TORCHINDUCTOR_COMPILE_THREADS env "
+        "var if set, else 4. Inductor's own default is min(32, host cpu "
+        "count), which OOM-kills a 32GB container on a cold compile cache",
+    )
     fuzz.add_argument(
         "--soc-tier",
         choices=("A3", "A5"),

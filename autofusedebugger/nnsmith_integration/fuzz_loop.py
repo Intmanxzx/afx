@@ -392,6 +392,25 @@ def run_fuzz_session(
             out_dir=out_dir,
             debug=False,
         )
+        # Cheap per-case safety net; it is NOT what bounds memory in a batch.
+        # Measured on A5 across 20 real cases (run_single_case in a loop):
+        # torch.npu.memory_allocated() stayed at 0 and memory_reserved() at
+        # 0-2MB, so there is almost nothing here for empty_cache() to give
+        # back. The cold-compile-cache OOM seen on a 32GB cgroup (exit 137
+        # at ~116s of a 20-case batch) came from inductor's parallel-compile
+        # worker pool instead: TORCHINDUCTOR_COMPILE_THREADS defaults to
+        # min(32, host cpu count) and a container reports the host's cores,
+        # so ~33 python processes (0.7-1.5GB each, ~24GB total) were spawned.
+        # They are child processes, so they are invisible to this process's
+        # own RSS and only show up in the cgroup. Bounded in
+        # autofusedebugger/__init__.py (default 4) and tunable via
+        # `af-fuzz --compile-threads` / `--jobs`; see docs/af_fuzz_npu_env.md.
+        try:
+            import torch
+
+            torch.npu.empty_cache()
+        except Exception:
+            pass
         summary.cases.append(result)
         summary.total += 1
         if result.status == "pass":

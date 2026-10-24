@@ -39,6 +39,22 @@ from __future__ import annotations
 import os
 from typing import List, Type
 
+from autofusedebugger.nnsmith_integration._nnsmith_patch import (
+    ensure_ascendc_patch_applied,
+)
+
+# Redundant safety net, not the primary guarantee: `autofusedebugger`'s own
+# __init__.py already calls this before any submodule (including this one)
+# gets imported, which is the earliest point that's actually early enough
+# (see that file's comment for why -- a later call site, including this
+# one, can be too late if some other nnsmith-importing module got imported
+# first and bound now-stale names from nnsmith.abstract.op). Calling it
+# again here is a no-op once already applied, kept only in case this module
+# is ever imported through a path that somehow bypasses the package's own
+# __init__ (shouldn't happen under normal Python import semantics, but the
+# cost of this extra call is negligible either way).
+ensure_ascendc_patch_applied()
+
 from nnsmith.abstract.op import AbsOpBase
 
 # NNSmith op class names (as returned by `AbsOpBase.name()`, e.g. "core.Add")
@@ -90,6 +106,18 @@ ASCENDC_OPSET_A3: List[str] = [
     "core.Squeeze",  # aten.squeeze, float_dtypes()
     "core.Concat",  # aten.cat, float_dtypes() (custom NPUConcatBuffer lowering)
     "core.Cast",  # -> prims.convert_element_type, float_dtypes()+bool+int32+uint8
+    # core.Slice -> aten.slice, exclude(uint64) with no since= gate (A5 widens
+    # to exclude() i.e. everything) -- fusable on A3 already.
+    "core.Slice",
+    # core.Expand has no single materializable class: NNSmith only registers
+    # the four concrete ExpandLast1..4 subclasses (each its own op.name()).
+    # aten.expand is registered exclude(int64) with no since= gate -- fusable
+    # on A3 already (A5 additionally excludes bfloat16 instead of int64).
+    "core.ExpandLast1",
+    "core.ExpandLast2",
+    "core.ExpandLast3",
+    "core.ExpandLast4",
+    "core.Sqrt",  # aten.sqrt, float_dtypes(), no since= gate.
 ]
 
 # Additional NNSmith op class names that map to an aten target registered
@@ -127,6 +155,37 @@ _ASCENDC_A5_ONLY_ADDITIONS: List[str] = [
     # only; on A3 it's a sealed single fallback op either way.
     "core.LeakyReLU",  # same situation as GELU: decomposition only kept for A5+
     # (`decomposition.py`'s A5-only block appends aten.leaky_relu).
+    "core.Tril",  # aten.tril, since=Soc.A5 -- absent from A3's _LoweringGuard.
+    "core.Triu",  # aten.triu, since=Soc.A5 -- absent from A3's _LoweringGuard.
+    # core.IndexSelect -- NNSmith has no native op for aten.gather/
+    # aten.index_select/aten.embedding/aten.index.Tensor at all; this class
+    # is added via patches/ascendc_index_select.patch (auto-applied, see
+    # _nnsmith_patch.py). All four of ascendc's gather-family registrations
+    # in gather_lowering.py are since=Soc.A5 with NO A3 entry whatsoever, so
+    # this only belongs in the A5 tier.
+    #
+    # CONFIRMED on real A5 hardware (previously an open question): the
+    # gather-family dtype tuple in `_LoweringGuard.support()` describes the
+    # *data* tensor's dtype, matching this op's in_dtypes[0] slot as
+    # modeled here -- not a dtype requirement on the index tensor.
+    #
+    # ALSO CONFIRMED (and NOT something this op's modeling needed to
+    # account for): `gather_lowering.py` itself is only imported, and its
+    # `_LoweringGuard.support(aten.index_select, ...)` call only ever runs,
+    # when `TORCHINDUCTOR_ASCENDC_DEBUG` contains "gather" -- a debug-named
+    # but side-effect-free-when-irrelevant opt-in flag gated at
+    # ascendc/__init__.py's `_finetune_lowering()`
+    # (`if config.enable_gather_fuse: from .lowering import
+    # gather_lowering`), computed once from this env var at import time.
+    # Without it, `_LoweringGuard.has(aten.index_select.default)` is False
+    # -- not because of a dtype mismatch or a missing registration, but
+    # because the module containing that registration call is never
+    # imported at all. `autofusedebugger/__init__.py` sets this
+    # unconditionally (before any torch_npu import can happen) precisely
+    # because this op exists in the allowlist; see that file's comment.
+    # Verified end to end: a graph combining `index_select` with downstream
+    # elementwise ops produces zero `lowering_fallbacks` with the flag set.
+    "core.IndexSelect",
     "torch.MatMul",  # aten.mm/addmm/bmm/baddbmm: _LoweringGuard.support() call
     # itself has no since= gate, but mm_lowering.py's custom lowering
     # functions call _is_matmul_supported_on_soc(), which requires
@@ -160,12 +219,13 @@ ASCENDC_OPSET_A5: List[str] = ASCENDC_OPSET_A3 + _ASCENDC_A5_ONLY_ADDITIONS
 #   dynamic-shape-only -- doesn't widen the registered-primitive set),
 #   pooling (MaxPool2d/AvgPool2d), conv (Conv1d/NCHWConv2d), BatchNorm2d,
 #   interpolation (NearestInterp/LinearInterp/BilinearInterp/BicubicInterp/
-#   TrilinearInterp), Pad, Expand, Tril/Triu (A5-only: aten.tril/triu
-#   since=Soc.A5, so these belong in neither tier below A5 and weren't
-#   independently re-verified for the "registered dtype tuple actually
-#   matches real output dtype" pitfall above A5 split, the way gt/lt were)
+#   TrilinearInterp), Pad
 #   -- no entry found anywhere across aten_lowering.py / cat_lowering.py /
 #   gather_lowering.py / mm_lowering.py / npu_lowering.py / decomposition.py.
+#   (core.Slice/core.ExpandLast1-4/core.Sqrt were previously miscategorized
+#   here -- they ARE registered with no since= gate and now live in
+#   ASCENDC_OPSET_A3 above; core.Tril/core.Triu are registered since=Soc.A5
+#   and now live in _ASCENDC_A5_ONLY_ADDITIONS.)
 
 
 def filter_ascendc_opset(
@@ -258,8 +318,30 @@ def probe_ascendc_opset(
     if os.path.exists(cache_path):
         topset_config = load_topset(cache_path)
     else:
+        import gc
+        import shutil
+        import tempfile
+
+        import torch
+        import torch._dynamo as _dynamo
+
         topset_config: dict = {}
         for op in candidate_ops:
+            # Give this op's own torch.compile() calls (inside
+            # infer_topset_from_scratch -> factory.make_testcase ->
+            # AscendC.make_backend) an isolated TORCHINDUCTOR_CACHE_DIR
+            # instead of the process-wide default. Without this, every
+            # candidate op's inductor-generated artifacts (FX graph
+            # codegen, AscendC kernel sources/binaries) pile up on disk
+            # under the same shared cache dir for the lifetime of this
+            # loop, and -- more importantly for the OOM this is fixing --
+            # torch._inductor's own in-memory indices over that cache
+            # directory's contents grow right along with it. Pointing each
+            # op at a throwaway dir and deleting it immediately after
+            # bounds that growth to one op's worth of artifacts.
+            op_cache_dir = tempfile.mkdtemp(prefix="af_ascendc_probe_")
+            prev_cache_dir = os.environ.get("TORCHINDUCTOR_CACHE_DIR")
+            os.environ["TORCHINDUCTOR_CACHE_DIR"] = op_cache_dir
             try:
                 probed = infer_topset_from_scratch(
                     model_cls, factory, op_types=[op], grad=grad
@@ -269,6 +351,56 @@ def probe_ascendc_opset(
                 # (observed for core.Reshape -- see docstring above). Skip
                 # just this op rather than losing every op queued after it.
                 continue
+            finally:
+                # infer_topset_from_scratch() calls factory.make_testcase()
+                # once per (dtype combo) candidate for this op, and each
+                # call constructs a fresh TorchModel -> torch.compile(...)
+                # (AscendC.make_backend) -- confirmed by reading both: there
+                # is no cleanup anywhere in that chain. torch._dynamo keeps
+                # a process-lifetime cache of compiled artifacts/guards per
+                # distinct traced module object, which accumulates forever
+                # across this loop's ~20 probed ops (each with several
+                # dtype combos) since nothing ever evicts it. Confirmed on
+                # real A5 hardware: this loop's RSS grows smoothly from
+                # ~41GB to 72GB+ over its ~5 minute run with no plateau,
+                # which exceeded that environment's 32GB cgroup memory
+                # limit and got the process OOM-killed. Resetting dynamo's
+                # cache after each op bounds the accumulation to roughly
+                # one op's worth of compiled artifacts at a time instead of
+                # all ~20+.
+                _dynamo.reset()
+                gc.collect()
+                if prev_cache_dir is None:
+                    os.environ.pop("TORCHINDUCTOR_CACHE_DIR", None)
+                else:
+                    os.environ["TORCHINDUCTOR_CACHE_DIR"] = prev_cache_dir
+                shutil.rmtree(op_cache_dir, ignore_errors=True)
+
+                # Cheap safety net; do not rely on it to bound memory.
+                # An earlier profiling pass saw cgroup memory climb ~24GB
+                # over a 42-op probe while this process's own RSS moved only
+                # +336MB (gc-object census also too small to explain it),
+                # and everything dropped when the process exited. That
+                # attributed the growth to the NPU-side memory pool and
+                # added this call, after which one re-run stayed flat at
+                # ~6GB. Later A5 measurements point at a different cause for
+                # that same signature: inductor's parallel-compile worker
+                # pool. TORCHINDUCTOR_COMPILE_THREADS defaults to
+                # min(32, host cpu count), a container reports the host's
+                # cores, and the ~33 resulting worker processes (0.7-1.5GB
+                # each) are children, so they never show up in this
+                # process's RSS but count against the cgroup. In the fuzz
+                # loop, torch.npu.memory_reserved() was only 0-2MB, i.e.
+                # empty_cache() had nothing to free. Whether this call
+                # contributed to the flat ~6GB re-run here was NOT isolated
+                # (that re-run may simply have had a warm compile cache, in
+                # which case no workers are spawned). The worker pool is
+                # bounded in autofusedebugger/__init__.py (default 4);
+                # see docs/af_fuzz_npu_env.md.
+                try:
+                    torch.npu.empty_cache()
+                except Exception:
+                    pass
             topset_config.update(probed)
         os.makedirs(NNSMITH_CACHE_DIR, exist_ok=True)
         dump_topset(topset_config, cache_path)
