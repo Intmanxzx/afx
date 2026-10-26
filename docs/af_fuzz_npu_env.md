@@ -2,6 +2,28 @@
 
 记录在 A3 NPU pod 上实际跑通 `af-fuzz` 时踩到的环境问题，方便下次连到新 pod（pod 是动态分配的，`remote_tool.sh connect` 每次可能给不同实例）时直接照做，不用重新排查。
 
+## 0. 最简调用——先看这个
+
+`af-fuzz` 子命令一共 14 个参数，但只有 `--out-dir` 是真正必填的，剩下 13
+个（包括下面几节示例里反复出现的 `--n-cases`/`--target`/`--jobs` 等）全部
+已经有默认值。日常跑一批用例，最简单的写法就是：
+
+```bash
+autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
+```
+
+这一条命令等价于显式写出：`--n-cases 100 --max-nodes 5 --method
+symbolic-cinit --tensor-scale small --value-dist-mode uniform --target npu
+--jobs 2 --soc-tier A3`——这些默认值本来就是最常用、最保守的配置（和改动
+前的硬编码行为完全一致），**不是因为懒省略了什么，是真的不需要写**。
+
+下面各节示例命令里出现的 `--target npu`/`--n-cases 200` 这类参数，都是在
+演示"这个参数**可以**怎么用"，不代表你每次都要写这些——只有当你明确需要
+偏离默认值时（比如想跑 A5 而不是 A3、想换一种输入分布、想调大并发）才需要
+显式加对应参数，具体每个参数的含义/取值范围见
+`docs/af_fuzz_randomization.md`（用例生成的随机变量）和下面各节（环境/
+并发配置）。
+
 ## 1. 启动前必须 source 的环境
 
 ```bash

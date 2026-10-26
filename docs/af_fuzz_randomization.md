@@ -196,8 +196,45 @@ rng` 真正生效，`max_elem_per_tensor`/`timeout_ms` 这两项实际不受影�
 `CaseResult.seed`（或 `case_id` 里 `-` 后面的数字）对应的那一个 case，
 默认打开 debug dump。
 
+## 结果报告字段说明
+
+`--out-dir` 下会生成 `summary.json`（结构化数据，`FuzzSummary.to_dict()`
+的直接产出）和 `summary.html`（基于 `summary.json` 渲染出的可排序/
+可筛选表格，`autofusedebugger/nnsmith_integration/summary_html.py`）。
+两者字段含义一致，HTML 只是对 JSON 的可视化封装，少数字段（比如
+`n_vars`）只出现在 JSON 里，HTML 表格没有单独展示列。
+
+批次级汇总（`summary.json` 顶层）：
+
+| 字段 | 含义 |
+|---|---|
+| `total` | 本次批次的 case 总数 |
+| `passed` | 通过验证的 case 数（`status == "pass"`） |
+| `failed` | 验证不一致/异常的 case 数（`status == "fail"`） |
+| `gen_errors` | 生成阶段本身失败的 case 数（`status == "gen_error"`） |
+
+每个 case 的字段（`summary.json` 的 `cases` 数组元素，对应
+`fuzz_loop.py` 的 `CaseResult` dataclass）：
+
+| 字段 | HTML 列名 | 含义 |
+|---|---|---|
+| `index` | `#` | case 在本批次里的序号（从 0 开始），和 `seed` 一起构成 `case_id`（格式 `{index:05d}-{seed}`） |
+| `status` | 状态 | 三态之一：`pass`（通过验证）/ `fail`（生成成功但验证不一致或执行异常）/ `gen_error`（图生成阶段本身就失败，没能走到验证这一步） |
+| `seed` | Seed | 这个 case 的 `case_seed`，决定性地控制它的全部随机内容（见上面"用例生成的随机变量"各节）。用 `--repro-seed <这个值>` 可以单独复现这一个 case |
+| `n_nodes` | 节点数 | 生成完成后图里**真实的**计算节点数（`ir.n_compute_inst()`），不是 `--max-nodes` 这个上限本身——节点数本身是 `[2, max_nodes]` 区间内随机抽取的（见"节点数"一节）。`gen_error` case 没有真正生成出图，这个字段保持默认值 `0`，不代表节点数随机化出了问题 |
+| `n_vars` | （HTML 未展示列，仅 JSON 有） | 图里的变量（张量）总数（`ir.n_var()`），通常比 `n_nodes` 大（每个节点可能产生多个输出张量，加上输入占位符） |
+| `duration_s` | 耗时(s) | 这个 case 从开始生成到验证完成（或失败）的总耗时 |
+| `symptom` | Symptom | **只有 `status == "fail"` 时才有值**，取自 nnsmith 的 `Symptom` 枚举：`exception`（执行时抛异常）/ `segfault`（进程崩溃）/ `inconsistency`（NPU 和 CPU eager 的输出数值不一致，超出容忍度）/ `timeout`（执行超时）/ `worse_perf`（性能回退，当前 af-fuzz 流程不会触发这个）。`pass`/`gen_error` 的 case 这个字段是 `null`，HTML 里显示为 `-`，这是正常行为，不代表字段没用 |
+| `stage` | Stage | **只有 `status == "fail"` 时才有值**，取自 nnsmith 的 `Stage` 枚举：`compilation`（编译阶段）/ `execution`（执行阶段）/ `verification`（数值校验阶段）——结合 `symptom` 能快速定位"错在哪一步、错成什么样"，不用每次都打开 `err.log` |
+| `op_types` | 算子集合 | 这个 case 用到的全部算子类名去重排序后的列表（如 `["core.Add", "core.Gather"]`），注意这是"用到了哪些种类"，不是"用了几次"——同一种算子在图里出现多次只算一条 |
+| `input_shapes` | Input Shape | `{输入张量名: shape}` 的映射，比如 `{"v0_0": [2, 3, 4]}`。张量名是 nnsmith 内部按 `v{指令id}_{返回值序号}` 规则生成的（不是用户可读的语义名），多个张量在单元格内换行列出，鼠标悬停可看完整内容。`gen_error` case 这个字段是空对象 `{}`，HTML 显示为 `-` |
+| `output_shapes` | Output Shape | 同 `input_shapes`，针对输出张量 |
+| `bug_dir` | 复现路径 | 只有触发了落盘（失败 case，或 `--debug`/`--repro-seed` 模式下的 pass case）才有值，指向一个含 `model.pth`/`gir.pkl`/`oracle.pkl`/`err.log`/`repro.py` 的目录，`repro.py` 可以直接 `python3 repro.py` 独立重跑这一个 case。没有落盘的 case（批量模式下的 pass case）这个字段是 `null`，HTML 里这一列显示为 `-` |
+| `error_summary` | （HTML 未展示列，仅 JSON 有） | `fail` case 的报错堆栈/不一致详情的截断文本（完整内容在 `bug_dir/err.log` 里），`pass`/`gen_error` case 是 `null` |
+
 ## 和 `af_fuzz_npu_env.md` 的关系
 
-这份文档讲"生成算法层面有哪些可调的随机维度"；`af_fuzz_npu_env.md` 讲
-"怎么在 A3/A5 NPU pod 上把 `af-fuzz` 跑起来"（环境变量、入口点、并发/
-内存配置、已知 flaky 现象）。两者独立，互不重复。
+这份文档讲"生成算法层面有哪些可调的随机维度"以及"结果报告里每个字段是
+什么意思"；`af_fuzz_npu_env.md` 讲"怎么在 A3/A5 NPU pod 上把 `af-fuzz`
+跑起来"（环境变量、入口点、并发/内存配置、已知 flaky 现象）。两者独立，
+互不重复。

@@ -21,7 +21,7 @@ def _json_for_script(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
 
 
-def render_summary_html(summary: dict[str, Any], title: str = "NNSmith Fuzz Summary") -> str:
+def render_summary_html(summary: dict[str, Any], title: str = "AF Fuzz Summary") -> str:
     cases = summary.get("cases", [])
     payload = _json_for_script(cases)
     total = summary.get("total", 0)
@@ -57,6 +57,7 @@ def render_summary_html(summary: dict[str, Any], title: str = "NNSmith Fuzz Summ
   .badge.fail {{ color: #bd2b2b; background: #fdecec; }}
   .badge.gen_error {{ color: #a66700; background: #fff1d6; }}
   .ops {{ color: #617083; font-size: 12px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .shapes {{ color: #617083; font-size: 12px; max-width: 220px; white-space: pre-line; overflow-y: auto; max-height: 72px; }}
   a {{ color: #2457a6; text-decoration: none; }}
   a:hover {{ text-decoration: underline; }}
 </style>
@@ -93,6 +94,8 @@ def render_summary_html(summary: dict[str, Any], title: str = "NNSmith Fuzz Summ
         <th data-key="symptom">Symptom</th>
         <th data-key="stage">Stage</th>
         <th data-key="op_types">算子集合</th>
+        <th data-key="input_shapes">Input Shape</th>
+        <th data-key="output_shapes">Output Shape</th>
         <th>复现路径</th>
       </tr>
     </thead>
@@ -103,6 +106,12 @@ def render_summary_html(summary: dict[str, Any], title: str = "NNSmith Fuzz Summ
 const CASES = {payload};
 const tbody = document.querySelector('#caseTable tbody');
 let sortKey = 'index', sortAsc = true;
+
+function formatShapes(shapes) {{
+  const entries = Object.entries(shapes || {{}});
+  if (entries.length === 0) return '-';
+  return entries.map(([name, dims]) => `${{name}}: [${{dims.join(', ')}}]`).join('\\n');
+}}
 
 function render() {{
   const opsFilter = document.querySelector('#filterOps').value.toLowerCase();
@@ -127,6 +136,8 @@ function render() {{
       <td>${{c.symptom || '-'}}</td>
       <td>${{c.stage || '-'}}</td>
       <td class="ops" title="${{(c.op_types || []).join(', ')}}">${{(c.op_types || []).join(', ') || '-'}}</td>
+      <td class="shapes" title="${{formatShapes(c.input_shapes)}}">${{formatShapes(c.input_shapes)}}</td>
+      <td class="shapes" title="${{formatShapes(c.output_shapes)}}">${{formatShapes(c.output_shapes)}}</td>
       <td>${{c.bug_dir ? `<a href="${{c.bug_dir}}/repro.py">repro.py</a>` : '-'}}</td>
     </tr>
   `).join('');
@@ -149,7 +160,7 @@ render();
 """
 
 
-def write_summary_html(summary: dict[str, Any], out_path: str | Path, title: str = "NNSmith Fuzz Summary") -> None:
+def write_summary_html(summary: dict[str, Any], out_path: str | Path, title: str = "AF Fuzz Summary") -> None:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render_summary_html(summary, title=title), encoding="utf-8")

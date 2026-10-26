@@ -99,6 +99,8 @@ class CaseResult:
     stage: Optional[str] = None
     bug_dir: Optional[str] = None
     error_summary: Optional[str] = None
+    input_shapes: dict[str, list[int]] = field(default_factory=dict)
+    output_shapes: dict[str, list[int]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.case_id:
@@ -365,6 +367,8 @@ def run_single_case(
             n_vars=ir.n_var(),
             op_types=op_types,
             bug_dir=str(case_dir) if (debug and case_dir is not None) else None,
+            input_shapes={name: list(t.shape) for name, t in model.input_like.items()},
+            output_shapes={name: list(t.shape) for name, t in model.output_like.items()},
         )
 
     target_dir = case_dir if (debug and case_dir is not None) else dump_dir
@@ -384,6 +388,8 @@ def run_single_case(
         stage=bug.stage.value,
         bug_dir=str(target_dir) if target_dir is not None else None,
         error_summary=_truncate(bug.log or ""),
+        input_shapes={name: list(t.shape) for name, t in model.input_like.items()},
+        output_shapes={name: list(t.shape) for name, t in model.output_like.items()},
     )
 
 
