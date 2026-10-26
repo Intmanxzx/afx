@@ -5,13 +5,18 @@
 ## 1. 最小跑通路径
 
 ```bash
-pip install git+https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
+git clone https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
+cd Autofuse-Debugger
+bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh   # 一次性装好 Autofuse-Debugger 和配套的 nnsmith
+
 source autofusedebugger/nnsmith_integration/npu_env.sh # 需将其中的python库路径 和 cann包路径换成用例执行环境对应路径
 autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 ```
 
-- 第一条命令 **每次新开 shell / 新连 pod 都要重新 source**（见第 2 节，不 source 会在 import 阶段报错）。
-- 第二条命令就是一次完整的默认批次：`--n-cases 100 --max-nodes 5 --method symbolic-cinit --tensor-scale small --value-dist-mode uniform --target npu --jobs 2 --soc-tier A3`。这些默认值已经是最常用、最保守的配置，日常跑批次不需要显式写。
+- `install_af_fuzz.sh` 把两步装机合并成一个脚本：`pip install -e` 当前这份 Autofuse-Debugger checkout，再把 nnsmith（不在 PyPI 上，且必须是打了 ascendc 专用补丁基线的版本）clone 到同级目录 `../nnsmith` 并固定到补丁对应的 commit（`bc0af42`），`pip install -e` 装上。补丁在 import 时自动生效，不需要手动 `git apply`。
+- 这个脚本只要在当前 venv/环境里跑过一次就够了，不需要每次新开 shell 重跑（nnsmith 目录已存在时会跳过 clone，重复执行安全）；但 pod 是动态分配的（见第 3 节），换到新 pod、新 venv 时要重新跑一遍。
+- `source npu_env.sh` 这条 **每次新开 shell / 新连 pod 都要重新执行一遍**（见第 2 节，不 source 会在 import 阶段报错）。
+- 后面的命令就是一次完整的默认批次：`--n-cases 100 --max-nodes 5 --method symbolic-cinit --tensor-scale small --value-dist-mode uniform --target npu --jobs 2 --soc-tier A3`。这些默认值已经是最常用、最保守的配置，日常跑批次不需要显式写。
 - 只有当你明确要偏离默认值时才加对应参数（比如跑 A5、换输入分布、调并发）。参数含义和取值范围见 `docs/af_fuzz_randomization.md`；并发调优见本文档第 5 节。
 - **调用方式只能用 `autofusedbg af-fuzz ...` 或 `python3 -m autofusedebugger af-fuzz ...`**。不要用 `python3 -m autofusedebugger.cli af-fuzz ...` —— `cli.py` 没有 `__main__` 入口，这种调法只会 import 一遍就退出（退出码 0、无输出、`--out-dir` 是空目录），容易被误判为"跑完了但没生成用例"。
 

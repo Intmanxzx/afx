@@ -5,11 +5,16 @@
 ### 1.1 执行命令
 
 ```bash
-pip install git+https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
+git clone https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
+cd Autofuse-Debugger
+bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh   # 一次性装好 Autofuse-Debugger 和配套的 nnsmith
+
 source autofusedebugger/nnsmith_integration/npu_env.sh  # 需将其中的 python 库路径和 CANN 包路径换成用例执行环境对应路径
 autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 ```
 
+- `install_af_fuzz.sh` 做两件事：`pip install -e` 当前这份 Autofuse-Debugger checkout；再把 nnsmith（af-fuzz 依赖的图生成库，不在 PyPI 上，且必须是打了 ascendc 专用补丁基线的版本）clone 到同级目录 `../nnsmith` 并固定到补丁所对应的 commit（`bc0af42`，不要用更新的版本），然后 `pip install -e`。补丁在 import 时自动生效（见 `_nnsmith_patch.py`），不需要手动 `git apply`。
+- 这个脚本只需要跑一次（`pip install -e` 是可编辑安装，装到对应 venv/环境后长期有效）；如果 nnsmith 目录已存在会跳过 clone，重复执行是安全的。但如果 pod 实例本身是动态分配的、配置好的 venv 不持久化，就要在新 pod 上重新跑一遍这个脚本（细节见 `docs/af_fuzz_npu_env.md` 第 3 节）。
 - `source npu_env.sh` 每次新开 shell / 新连环境都要重新执行一遍（解决 `import torch`/`torch_npu` 时的库路径问题，环境排坑细节见 `docs/af_fuzz_npu_env.md`）。
 - 跑完会在终端打印一行汇总，例如：
   ```
