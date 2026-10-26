@@ -6,8 +6,11 @@ are not touching (see `ascendc_backend.py`). This loop re-implements only the
 generate -> end-to-end-verify -> record steps of that machinery, directly
 against `AscendC`.
 
-Phase 1 PoC scope (see conversation history for the full rationale):
-- fp32 only, default NNSmith shape ranges.
+Phase 2 scope (see conversation history for the full rationale):
+- dtype is not locked to fp32 -- `BaseGen.__init__` intersects whatever
+  dtype_choices we pass (here, nnsmith's own default) with the probed
+  opset's real dtype union, so every dtype this ascendc opset snapshot
+  actually supports can appear.
 - Op catalog is restricted to `ascendc_opset.probe_ascendc_opset()`'s
   allowlist: ops ascendc's Inductor backend actually registers a *fused*
   lowering for on the target SoC tier (`--soc-tier`), with each op's real
@@ -18,9 +21,11 @@ Phase 1 PoC scope (see conversation history for the full rationale):
   optional: most of NNSmith's default catalog has no ascendc lowering at all,
   so graphs built from the unfiltered catalog essentially never produce a
   fusable node pair -- see ascendc_opset.py.
-- NNSmith's fixed difftest tolerance (rtol=1e-2, atol=1e-3), not the
-  Autofuse-Debugger dtype-aware tolerances -- those come in once bf16/fp16 are
-  wired in.
+- Dtype-aware difftest tolerance (`_tolerance_for_ir`): fp32/fp64/int graphs
+  keep NNSmith's original fixed tolerance (rtol=1e-2, atol=1e-3); graphs
+  using a low-precision float dtype get a looser one. fp16 is wired in now;
+  bf16 will be added to the low-precision set once its own nnsmith patch
+  lands (see `_tolerance_for_ir`'s TODO).
 - Passing cases are *not* dumped to disk (only a summary row is kept) to avoid
   unbounded disk growth; only failing cases get the full NNSmith
   `BugReport.dump()` artifact set (model.pth / gir.pkl / oracle.pkl / err.log /
@@ -65,13 +70,14 @@ from nnsmith.graph_gen import model_gen
 from nnsmith.materialize import Model, TestCase
 from nnsmith.util import set_seed
 
-# Phase 1 PoC scope is fp32 only (see module docstring). NNSmith's own
-# DTYPE_GEN_ALL/DTYPE_GEN_FLOATS defaults include float64/float16/int*, which
-# routes straight into ascendc/inductor's per-op dtype whitelists as fallback
-# -- dtype mismatch, not op-type unfusability, was why every pre-fix fuzz case
-# produced zero fusion decisions (each candidate node got kicked to fallback
-# codegen before the scheduler ever got to ask "can these two fuse").
-_FP32_ONLY_DTYPE_CHOICES = [DType.float32]
+# Phase 2: dtype is no longer locked to fp32. BaseGen.__init__ (graph_gen.py)
+# already intersects whatever dtype_choices we pass with the opset's own
+# dtype union, and probe_ascendc_opset() rewrites each op's in_dtypes/
+# out_dtypes to the dtype combos it confirmed actually compile+run on real
+# A5 hardware -- so passing dtype_choices=None (nnsmith's own default,
+# DTYPE_GEN_ALL) and letting that intersection do the work automatically
+# yields "every dtype this ascendc opset snapshot really supports", with no
+# separate per-op mapping table to maintain.
 
 from autofusedebugger.nnsmith_integration.ascendc_backend import AscendC
 from autofusedebugger.nnsmith_integration.ascendc_opset import probe_ascendc_opset
@@ -179,6 +185,56 @@ class _DebugDumpEnv:
                 os.environ[key] = value
 
 
+def _tolerance_for_ir(ir) -> tuple[float, float]:
+    """Loosen rtol/atol when any variable in this graph is a low-precision
+    float dtype. PyTorch's own torch.testing.assert_close defaults widen by
+    roughly 10x per halving of mantissa bits going fp32 -> fp16/bf16 (both
+    have a 7-8 bit mantissa vs fp32's 23), so rtol=1e-1/atol=1e-2 (10x
+    nnsmith's fp32 defaults) is the right order of magnitude, not a number
+    pulled from nowhere. Pure-fp32/fp64/int graphs are unaffected (same
+    constants nnsmith always used), so this is a no-op for the regression
+    batches already validated under the old fp32-only lock.
+    """
+    # TODO(bf16 task): this nnsmith snapshot's DType enum has no `bfloat16`
+    # member yet (verified: hasattr(DType, "bfloat16") is False here) -- bf16
+    # support is a separate follow-up task that patches nnsmith's DType enum
+    # to add it. Once that patch lands, add DType.bfloat16 to this set too.
+    low_precision = {DType.float16}
+    dtypes_used = {var.dtype for var in ir.vars.values()}
+    if dtypes_used & low_precision:
+        return 1e-1, 1e-2
+    return 1e-2, 1e-3
+
+
+# "scale" controls max_elem_per_tensor (total tensor size), concr_ph_dim_rng
+# (per-dim range), and timeout_ms together: these all answer the same
+# underlying question ("how big/slow are generated cases allowed to be"),
+# so one --tensor-scale flag drives all three rather than three
+# independently-settable, easily-inconsistent flags (e.g. a large
+# max_elem_per_tensor paired with a tiny concr_ph_dim_rng just gets spent on
+# more dims of size 1, not genuinely larger tensors).
+TENSOR_SCALE_PROFILES: dict[str, dict[str, object]] = {
+    # small: unchanged from the original hardcoded defaults -- kept as the
+    # regression baseline so existing --repro-seed batches stay reproducible
+    # unless --tensor-scale is explicitly set to something else.
+    "small": {
+        "max_elem_per_tensor": 2**16,
+        "concr_ph_dim_rng": (1, 64),
+        "timeout_ms": 10000,
+    },
+    "medium": {
+        "max_elem_per_tensor": 2**20,
+        "concr_ph_dim_rng": (8, 4096),
+        "timeout_ms": 30000,
+    },
+    "large": {
+        "max_elem_per_tensor": 2**24,
+        "concr_ph_dim_rng": (8, 8192),
+        "timeout_ms": 60000,
+    },
+}
+
+
 def run_single_case(
     *,
     factory: AscendC,
@@ -187,20 +243,49 @@ def run_single_case(
     case_seed: int,
     index: int = 0,
     max_nodes: int = 5,
-    timeout_ms: int = 10000,
+    timeout_ms: Optional[int] = None,
     method: str = "symbolic-cinit",
-    max_elem_per_tensor: int = 2**16,
+    max_elem_per_tensor: Optional[int] = None,
+    concr_ph_dim_rng: Optional[tuple[int, int]] = None,
+    tensor_scale: str = "small",
     out_dir: Optional[str | Path] = None,
     debug: bool = False,
+    value_dist_mode: str = "uniform",
 ) -> CaseResult:
     """Generate and verify exactly one case, identified solely by `case_seed`
     (plus the generation knobs) -- deterministic and independent of any prior
     batch run or dumped file. Used both by `run_fuzz_session`'s loop body and
     by the `--repro-seed` CLI path.
     """
+    if tensor_scale not in TENSOR_SCALE_PROFILES:
+        raise ValueError(
+            f"Unknown tensor_scale {tensor_scale!r}; expected one of "
+            f"{sorted(TENSOR_SCALE_PROFILES.keys())}"
+        )
+    profile = TENSOR_SCALE_PROFILES[tensor_scale]
+    if timeout_ms is None:
+        timeout_ms = profile["timeout_ms"]
+    if max_elem_per_tensor is None:
+        max_elem_per_tensor = profile["max_elem_per_tensor"]
+    if concr_ph_dim_rng is None:
+        concr_ph_dim_rng = profile["concr_ph_dim_rng"]
+
     t0 = time.time()
     case_id = f"{index:05d}-{case_seed}"
     out_dir = Path(out_dir) if out_dir is not None else None
+
+    # Randomize the actual node-count ceiling within [2, max_nodes] so
+    # generated graphs vary in size instead of every case landing on
+    # exactly max_nodes nodes (abstract_gen's loop condition is
+    # `num_op() < max_node_size`, so it always inserts up to the ceiling
+    # it's given -- the ceiling itself needs to vary, not the loop).
+    # set_seed(case_seed) here, before consuming this random draw, keeps
+    # it reproducible under --repro-seed: model_gen(seed=case_seed, ...)
+    # below does its own set_seed(case_seed) again (a full, idempotent
+    # reset, not an incremental draw), so this draw doesn't perturb the
+    # RNG state the graph-structure search consumes afterwards.
+    set_seed(case_seed)
+    actual_max_nodes = random.randint(2, max_nodes) if max_nodes >= 2 else max_nodes
 
     try:
         # model_gen -> BaseGen.__init__ already calls nnsmith.util.set_seed(seed)
@@ -220,20 +305,25 @@ def run_single_case(
             method=method,
             seed=case_seed,
             max_elem_per_tensor=max_elem_per_tensor,
-            max_nodes=max_nodes,
+            concr_ph_dim_rng=concr_ph_dim_rng,
+            max_nodes=actual_max_nodes,
             timeout_ms=timeout_ms,
-            dtype_choices=_FP32_ONLY_DTYPE_CHOICES,
+            # dtype_choices intentionally omitted: passing dtype_choices=None
+            # lets BaseGen intersect nnsmith's full dtype set (DTYPE_GEN_ALL)
+            # with the opset's own supported dtypes, so every dtype this
+            # ascendc opset snapshot actually supports can appear, instead of
+            # locking generation to fp32 only.
+            init_fp=True,
             # dtype_choices alone only constrains *later* nodes' dtype pool --
             # SymbolicGen's very first placeholder ignores it and is fp32 only
             # when init_fp=True is passed explicitly (default False lets the
             # entry node roll any dtype, which then propagates downstream).
-            init_fp=True,
         )
         ir = gen.make_concrete()
         set_seed(case_seed)
         model = model_cls.from_gir(ir)
         model.refine_weights()
-        oracle = model.make_oracle()
+        oracle = model.make_oracle(mode=value_dist_mode)
         testcase = TestCase(model, oracle)
     except InternalError:
         raise
@@ -252,18 +342,19 @@ def run_single_case(
     case_dir = (out_dir / f"case-{case_id}") if (out_dir is not None and debug) else None
     dump_dir = (out_dir / f"bug-{index}-{case_seed}") if out_dir is not None else None
 
+    rtol, atol = _tolerance_for_ir(ir)
     if debug and case_dir is not None:
         with _DebugDumpEnv(case_dir):
-            bug = factory.verify_testcase(testcase, equal_nan=True)
+            bug = factory.verify_testcase(testcase, equal_nan=True, rtol=rtol, atol=atol)
     else:
-        bug = factory.verify_testcase(testcase, equal_nan=True)
+        bug = factory.verify_testcase(testcase, equal_nan=True, rtol=rtol, atol=atol)
 
     duration = time.time() - t0
 
     if bug is None:
         if debug and case_dir is not None:
             testcase.dump(str(case_dir))
-            write_repro_script(case_dir, target=factory.target)
+            write_repro_script(case_dir, target=factory.target, rtol=rtol, atol=atol)
         return CaseResult(
             seed=case_seed,
             index=index,
@@ -279,7 +370,7 @@ def run_single_case(
     target_dir = case_dir if (debug and case_dir is not None) else dump_dir
     if target_dir is not None:
         bug.dump(str(target_dir))
-        write_repro_script(target_dir, target=factory.target)
+        write_repro_script(target_dir, target=factory.target, rtol=rtol, atol=atol)
     return CaseResult(
         seed=case_seed,
         index=index,
@@ -301,12 +392,15 @@ def run_repro_case(
     out_dir: str | Path,
     repro_seed: int,
     max_nodes: int = 5,
-    timeout_ms: int = 10000,
+    timeout_ms: Optional[int] = None,
     method: str = "symbolic-cinit",
-    max_elem_per_tensor: int = 2**16,
+    max_elem_per_tensor: Optional[int] = None,
+    concr_ph_dim_rng: Optional[tuple[int, int]] = None,
+    tensor_scale: str = "small",
     target: str = "npu",
     debug: bool = True,
     soc_tier: str = "A3",
+    value_dist_mode: str = "uniform",
 ) -> CaseResult:
     """Re-run exactly one case identified by its original `case_seed`
     (`--repro-seed`), with debug dumping on by default -- the "give me this
@@ -330,8 +424,11 @@ def run_repro_case(
         timeout_ms=timeout_ms,
         method=method,
         max_elem_per_tensor=max_elem_per_tensor,
+        concr_ph_dim_rng=concr_ph_dim_rng,
+        tensor_scale=tensor_scale,
         out_dir=out_dir,
         debug=debug,
+        value_dist_mode=value_dist_mode,
     )
 
 
@@ -340,14 +437,17 @@ def run_fuzz_session(
     out_dir: str | Path,
     n_cases: int = 100,
     max_nodes: int = 5,
-    timeout_ms: int = 10000,
+    timeout_ms: Optional[int] = None,
     method: str = "symbolic-cinit",
-    max_elem_per_tensor: int = 2**16,
+    max_elem_per_tensor: Optional[int] = None,
+    concr_ph_dim_rng: Optional[tuple[int, int]] = None,
+    tensor_scale: str = "small",
     seed: Optional[int] = None,
     target: str = "npu",
     index_offset: int = 0,
     write_outputs: bool = True,
     soc_tier: str = "A3",
+    value_dist_mode: str = "uniform",
 ) -> FuzzSummary:
     """Generate `n_cases` NNSmith torch models, run each end-to-end against the
     autofuse backend, verify against the CPU/eager oracle NNSmith itself
@@ -389,8 +489,11 @@ def run_fuzz_session(
             timeout_ms=timeout_ms,
             method=method,
             max_elem_per_tensor=max_elem_per_tensor,
+            concr_ph_dim_rng=concr_ph_dim_rng,
+            tensor_scale=tensor_scale,
             out_dir=out_dir,
             debug=False,
+            value_dist_mode=value_dist_mode,
         )
         # Cheap per-case safety net; it is NOT what bounds memory in a batch.
         # Measured on A5 across 20 real cases (run_single_case in a loop):
@@ -441,6 +544,9 @@ def _run_shard(args: tuple) -> FuzzSummary:
         target,
         index_offset,
         soc_tier,
+        concr_ph_dim_rng,
+        tensor_scale,
+        value_dist_mode,
     ) = args
     return run_fuzz_session(
         out_dir=shard_out_dir,
@@ -449,11 +555,14 @@ def _run_shard(args: tuple) -> FuzzSummary:
         timeout_ms=timeout_ms,
         method=method,
         max_elem_per_tensor=max_elem_per_tensor,
+        concr_ph_dim_rng=concr_ph_dim_rng,
+        tensor_scale=tensor_scale,
         seed=shard_seed,
         target=target,
         index_offset=index_offset,
         write_outputs=False,
         soc_tier=soc_tier,
+        value_dist_mode=value_dist_mode,
     )
 
 
@@ -462,13 +571,16 @@ def run_fuzz_session_parallel(
     out_dir: str | Path,
     n_cases: int = 100,
     max_nodes: int = 5,
-    timeout_ms: int = 10000,
+    timeout_ms: Optional[int] = None,
     method: str = "symbolic-cinit",
-    max_elem_per_tensor: int = 2**16,
+    max_elem_per_tensor: Optional[int] = None,
+    concr_ph_dim_rng: Optional[tuple[int, int]] = None,
+    tensor_scale: str = "small",
     seed: Optional[int] = None,
     target: str = "npu",
     jobs: int = 1,
     soc_tier: str = "A3",
+    value_dist_mode: str = "uniform",
 ) -> FuzzSummary:
     """Shard `n_cases` across `jobs` worker processes, each with its own
     disjoint seed sub-stream (derived from the top-level `seed` so the whole
@@ -485,9 +597,12 @@ def run_fuzz_session_parallel(
             timeout_ms=timeout_ms,
             method=method,
             max_elem_per_tensor=max_elem_per_tensor,
+            concr_ph_dim_rng=concr_ph_dim_rng,
+            tensor_scale=tensor_scale,
             seed=seed,
             target=target,
             soc_tier=soc_tier,
+            value_dist_mode=value_dist_mode,
         )
 
     out_dir = Path(out_dir)
@@ -519,6 +634,9 @@ def run_fuzz_session_parallel(
                 target,
                 index_offset,
                 soc_tier,
+                concr_ph_dim_rng,
+                tensor_scale,
+                value_dist_mode,
             )
         )
         index_offset += shard_n_cases

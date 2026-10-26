@@ -216,9 +216,11 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
             timeout_ms=args.timeout_ms,
             method=args.method,
             max_elem_per_tensor=args.max_elem_per_tensor,
+            tensor_scale=args.tensor_scale,
             target=args.target,
             debug=True if args.debug is None else args.debug,
             soc_tier=args.soc_tier,
+            value_dist_mode=args.value_dist_mode,
         )
         print(
             f"case_id={result.case_id} status={result.status} "
@@ -244,10 +246,12 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         timeout_ms=args.timeout_ms,
         method=args.method,
         max_elem_per_tensor=args.max_elem_per_tensor,
+        tensor_scale=args.tensor_scale,
         seed=args.seed,
         target=args.target,
         jobs=args.jobs,
         soc_tier=args.soc_tier,
+        value_dist_mode=args.value_dist_mode,
     )
     print(
         f"total={summary.total} passed={summary.passed} failed={summary.failed} "
@@ -581,6 +585,32 @@ def build_parser() -> argparse.ArgumentParser:
     fuzz.add_argument("--timeout-ms", type=int, default=10000)
     fuzz.add_argument("--method", default="symbolic-cinit")
     fuzz.add_argument("--max-elem-per-tensor", type=int, default=2**16)
+    fuzz.add_argument(
+        "--tensor-scale",
+        # Hardcoded literal, not derived from fuzz_loop.TENSOR_SCALE_PROFILES:
+        # build_parser() runs on every CLI invocation regardless of which
+        # subcommand is selected, so computing this from fuzz_loop would force
+        # fuzz_loop's heavy nnsmith/torch imports (and autofusedebugger's
+        # nnsmith patch side effect) on every invocation, not just af-fuzz.
+        # Keep in sync with the keys of TENSOR_SCALE_PROFILES in fuzz_loop.py.
+        choices=["large", "medium", "small"],
+        default="small",
+        help="Controls max_elem_per_tensor + concr_ph_dim_rng + timeout_ms "
+        "together (see TENSOR_SCALE_PROFILES in fuzz_loop.py). 'small' "
+        "matches the original hardcoded defaults for regression "
+        "compatibility.",
+    )
+    fuzz.add_argument(
+        "--value-dist-mode",
+        choices=["log_scale", "uniform"],
+        default="uniform",
+        help="Input/weight value sampling mode (see "
+        "nnsmith.materialize.torch.symbolnet.random_tensor). 'uniform' "
+        "matches the original behavior. Only takes effect when "
+        "model.refine_weights() didn't already cache a fixed input "
+        "(see run_single_case's model.make_oracle call) -- NOT guaranteed "
+        "to always apply.",
+    )
     fuzz.add_argument("--seed", type=int, default=None)
     fuzz.add_argument("--target", default="npu")
     fuzz.add_argument(

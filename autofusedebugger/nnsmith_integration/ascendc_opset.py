@@ -186,6 +186,23 @@ _ASCENDC_A5_ONLY_ADDITIONS: List[str] = [
     # Verified end to end: a graph combining `index_select` with downstream
     # elementwise ops produces zero `lowering_fallbacks` with the flag set.
     "core.IndexSelect",
+    # core.Gather -- aten.gather, a SEPARATE _LoweringGuard.support() entry
+    # from aten.index_select in gather_lowering.py (both since=Soc.A5, both
+    # float_dtypes()+(int32,int64) -- per static reading of the source,
+    # describing the `data` operand's dtype, same as core.IndexSelect above,
+    # but this reading is NOT yet confirmed for Gather the way it was for
+    # IndexSelect -- see below). Per the same static reading, covered by the
+    # same TORCHINDUCTOR_ASCENDC_DEBUG="gather" opt-in flag and the same
+    # unconditional env var set in `autofusedebugger/__init__.py`.
+    #
+    # NOT YET CONFIRMED on real A5 hardware (unlike core.IndexSelect above,
+    # which went through that confirmation already) -- added here on the
+    # strength of the registration call alone. Needs the same end-to-end
+    # verification (dtype tuple applies to `data` not `index`, debug flag
+    # reaches this registration, zero lowering_fallbacks on a real device)
+    # before this entry can be considered as trustworthy as the others in
+    # this list.
+    "core.Gather",
     "torch.MatMul",  # aten.mm/addmm/bmm/baddbmm: _LoweringGuard.support() call
     # itself has no since= gate, but mm_lowering.py's custom lowering
     # functions call _is_matmul_supported_on_soc(), which requires
@@ -287,6 +304,34 @@ def probe_ascendc_opset(
     order. Caches results itself (keyed by soc_tier, separate from NNSmith's
     own `auto_opconfig()` cache file, to avoid the two caching paths
     clobbering each other) under NNSmith's own cache directory.
+
+    The on-disk cache is updated incrementally, not all-or-nothing: on every
+    call, any `candidate_op` (from `ASCENDC_OPSET_A3`/`_A5_ONLY_ADDITIONS`)
+    whose name is missing from an existing cache file is probed -- only
+    those missing ops go through the per-op probe loop below, the rest are
+    served straight from the cache -- and the merged (old + newly-probed)
+    result is written back as the new, complete cache file. This means
+    appending a newly-registered op to the allowlist is picked up on the
+    very next call without deleting the cache: only the new op(s) get
+    probed, not all ~47. If the cache file doesn't exist yet, every
+    candidate op is "missing" and this degenerates to the original
+    from-scratch probe.
+
+    Known limitation this carries over unchanged from the pre-existing
+    behavior: an op whose probe raises `InternalError` (or otherwise finds
+    no working dtype combo) is *not* recorded in the cache -- there is no
+    "confirmed failing" sentinel, only "present" or "absent" -- so it is
+    indistinguishable from an op that was never probed at all. Concretely,
+    this means a genuinely-broken op (e.g. a real NNSmith bug, not a
+    transient environment issue) gets re-probed on every single call to this
+    function, every time, even though the outcome is deterministic and will
+    not change. This was already true before this change (a cold cache
+    always re-"tries" every op), so incremental caching does not make it
+    worse, but it also does not fix it: it was judged not worth adding a
+    failure sentinel to `OpConfig`'s dataclass shape (owned by NNSmith, a
+    dependency we don't patch) or bolting on a side-channel file, for a
+    allowlist of ~47 ops where the wasted time from re-probing a handful of
+    permanently-broken ops is small relative to the complexity/compat risk.
     """
     from nnsmith.error import InternalError
     from nnsmith.narrow_spec import (
@@ -315,9 +360,10 @@ def probe_ascendc_opset(
         NNSMITH_CACHE_DIR,
         get_cache_name(model_cls, factory, grad) + f"_ascendc_{soc_tier}.yaml",
     )
-    if os.path.exists(cache_path):
-        topset_config = load_topset(cache_path)
-    else:
+    topset_config: dict = load_topset(cache_path) if os.path.exists(cache_path) else {}
+    missing_ops = [op for op in candidate_ops if op.name() not in topset_config]
+
+    if missing_ops:
         import gc
         import shutil
         import tempfile
@@ -325,8 +371,7 @@ def probe_ascendc_opset(
         import torch
         import torch._dynamo as _dynamo
 
-        topset_config: dict = {}
-        for op in candidate_ops:
+        for op in missing_ops:
             # Give this op's own torch.compile() calls (inside
             # infer_topset_from_scratch -> factory.make_testcase ->
             # AscendC.make_backend) an isolated TORCHINDUCTOR_CACHE_DIR
