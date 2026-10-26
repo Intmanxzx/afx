@@ -203,6 +203,19 @@ _ASCENDC_A5_ONLY_ADDITIONS: List[str] = [
     # before this entry can be considered as trustworthy as the others in
     # this list.
     "core.Gather",
+    # core.LayerNorm -- aten.native_layer_norm has no direct
+    # _LoweringGuard.support() registration; it only fuses via
+    # decomposition.py's _layer_norm_decompose override into already-
+    # registered primitives (pow/mean/add/rsqrt/mul/sub/div/sum/cast), and
+    # that decomposition path is only taken when the input's numel is a
+    # static int (not a SymInt) -- true for af-fuzz's SymbolicGen after
+    # make_concrete(). Previously left out of every allowlist pending this
+    # confirmation (see the design history).
+    #
+    # CONFIRMED on real A5 hardware (2026-10-26): probe_ascendc_opset()
+    # recognized it via the decomposition path and recorded a non-empty
+    # dtype combo set -- same trust level as core.IndexSelect above.
+    "core.LayerNorm",
     "torch.MatMul",  # aten.mm/addmm/bmm/baddbmm: _LoweringGuard.support() call
     # itself has no since= gate, but mm_lowering.py's custom lowering
     # functions call _is_matmul_supported_on_soc(), which requires
@@ -332,6 +345,20 @@ def probe_ascendc_opset(
     dependency we don't patch) or bolting on a side-channel file, for a
     allowlist of ~47 ops where the wasted time from re-probing a handful of
     permanently-broken ops is small relative to the complexity/compat risk.
+
+    Concrete symptom of this limitation observed on real A5 hardware
+    (2026-10-26): `core.Reshape` was absent from the probed opset in one
+    run, then present after a later incremental re-probe triggered by
+    adding `core.LayerNorm` to the allowlist -- not because Reshape's
+    underlying support changed, but because the known NNSmith bug in
+    `Reshape.type_transfer()` (see the module docstring above:
+    `SanityCheck.eq(auto_dim, -1)` tripping when a z3 model assigns -1 to
+    more than one `target_shape` slot) only fires for *some* of the probe's
+    randomly-constructed single-op IRs, not deterministically every call.
+    If an op flips between present/absent across runs with no allowlist or
+    environment change, suspect this kind of solver-dependent flakiness in
+    the op's own `type_transfer()` before assuming the cache or this
+    function is broken.
     """
     from nnsmith.error import InternalError
     from nnsmith.narrow_spec import (

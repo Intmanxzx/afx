@@ -582,9 +582,24 @@ def build_parser() -> argparse.ArgumentParser:
     fuzz.add_argument("--out-dir", required=True)
     fuzz.add_argument("--n-cases", type=int, default=100)
     fuzz.add_argument("--max-nodes", type=int, default=5)
-    fuzz.add_argument("--timeout-ms", type=int, default=10000)
+    fuzz.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=None,
+        help="Per-case generation timeout. Default: None, so --tensor-scale's "
+        "profile value takes effect; passing this explicitly overrides the "
+        "profile's timeout_ms (see TENSOR_SCALE_PROFILES in fuzz_loop.py).",
+    )
     fuzz.add_argument("--method", default="symbolic-cinit")
-    fuzz.add_argument("--max-elem-per-tensor", type=int, default=2**16)
+    fuzz.add_argument(
+        "--max-elem-per-tensor",
+        type=int,
+        default=None,
+        help="Per-tensor element-count cap. Default: None, so --tensor-scale's "
+        "profile value takes effect; passing this explicitly overrides the "
+        "profile's max_elem_per_tensor (see TENSOR_SCALE_PROFILES in "
+        "fuzz_loop.py).",
+    )
     fuzz.add_argument(
         "--tensor-scale",
         # Hardcoded literal, not derived from fuzz_loop.TENSOR_SCALE_PROFILES:
@@ -604,12 +619,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--value-dist-mode",
         choices=["log_scale", "uniform"],
         default="uniform",
-        help="Input/weight value sampling mode (see "
+        help="Input value sampling mode (see "
         "nnsmith.materialize.torch.symbolnet.random_tensor). 'uniform' "
-        "matches the original behavior. Only takes effect when "
-        "model.refine_weights() didn't already cache a fixed input "
-        "(see run_single_case's model.make_oracle call) -- NOT guaranteed "
-        "to always apply.",
+        "matches the original behavior. Applies both to make_oracle's "
+        "fallback random inputs and to the inputs model.refine_weights() "
+        "pre-samples as PracticalHybridSearch's search starting points, "
+        "so the cached sat_inputs it may settle on also reflects this "
+        "mode instead of silently reverting to uniform.",
     )
     fuzz.add_argument("--seed", type=int, default=None)
     fuzz.add_argument("--target", default="npu")

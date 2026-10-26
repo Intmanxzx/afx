@@ -322,7 +322,7 @@ def run_single_case(
         ir = gen.make_concrete()
         set_seed(case_seed)
         model = model_cls.from_gir(ir)
-        model.refine_weights()
+        model.refine_weights(value_dist_mode=value_dist_mode)
         oracle = model.make_oracle(mode=value_dist_mode)
         testcase = TestCase(model, oracle)
     except InternalError:

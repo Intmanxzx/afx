@@ -196,6 +196,20 @@ _ASCENDC_PATCHES: tuple[_AscendcPatch, ...] = (
             "nnsmith.materialize.torch", "TorchModel.make_oracle"
         ),
     ),
+    _AscendcPatch(
+        filename="ascendc_refine_weights_value_dist.patch",
+        # Same base/override situation as ascendc_make_oracle_kwargs.patch
+        # above: this patch touches both the abstract Model.refine_weights
+        # (adds a **kwargs catch-all) and the concrete
+        # TorchModel.refine_weights (adds a specific, named
+        # `value_dist_mode` parameter it actually consumes) -- probe the
+        # concrete class, and use _function_has_param_probe (not the
+        # var-keyword probe) since `value_dist_mode` is a real named
+        # parameter here, not a **kwargs catch-all.
+        probe=_function_has_param_probe(
+            "nnsmith.materialize.torch", "TorchModel.refine_weights", "value_dist_mode"
+        ),
+    ),
 )
 
 
