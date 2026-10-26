@@ -617,15 +617,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fuzz.add_argument(
         "--value-dist-mode",
-        choices=["log_scale", "uniform"],
+        choices=["llm", "log_scale", "recommendation", "uniform"],
         default="uniform",
         help="Input value sampling mode (see "
         "nnsmith.materialize.torch.symbolnet.random_tensor). 'uniform' "
-        "matches the original behavior. Applies both to make_oracle's "
-        "fallback random inputs and to the inputs model.refine_weights() "
-        "pre-samples as PracticalHybridSearch's search starting points, "
-        "so the cached sat_inputs it may settle on also reflects this "
-        "mode instead of silently reverting to uniform.",
+        "(default) matches the original [3,7) behavior; 'log_scale' spans "
+        "+-10^-4..10^4 magnitudes; 'llm' mimics LLM activations (mostly "
+        "N(0, 0.2^2), with 5%% of elements amplified 100x-10000x as "
+        "'massive activations'); 'recommendation' mimics min-max "
+        "normalized recommendation-system features (uniform [0,1)). "
+        "Applies both to make_oracle's fallback random inputs and to the "
+        "inputs model.refine_weights() pre-samples as PracticalHybridSearch's "
+        "search starting points, so the cached sat_inputs it may settle on "
+        "also reflects this mode instead of silently reverting to uniform. "
+        "Does not affect PracticalHybridSearch's internal weight sampling, "
+        "which remains fixed at uniform.",
     )
     fuzz.add_argument("--seed", type=int, default=None)
     fuzz.add_argument("--target", default="npu")

@@ -31,6 +31,21 @@ Call `ensure_ascendc_patch_applied()` before importing anything from
 `nnsmith.abstract.op` that depends on these ops existing. It is a no-op
 if all patches are already applied (idempotent -- safe to call on every
 import).
+
+Known limitation for whoever edits an *existing* patch file's content
+(not just adds a new one): every probe here answers "does the installed
+NNSmith look like this patch landed," not "does it match this *exact
+version* of the patch file." If you change what a patch file does (e.g.
+add a new mode/parameter to a function that already had some other
+mode/parameter the probe was already satisfied by), the probe keeps
+returning True against an installation that only has the *old* version
+applied -- `ensure_ascendc_patch_applied()` will skip it, and the
+installed NNSmith silently keeps running the stale code. There is no
+content-hash or version check, only a structural probe (symbol exists /
+parameter exists / etc). After editing a patch file's content, manually
+verify (or force-reapply) the installed NNSmith yourself; don't trust
+this module to detect that the file's content changed underneath an
+already-satisfied probe.
 """
 
 from __future__ import annotations
