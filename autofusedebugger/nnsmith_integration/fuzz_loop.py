@@ -79,6 +79,11 @@ from nnsmith.util import set_seed
 # yields "every dtype this ascendc opset snapshot really supports", with no
 # separate per-op mapping table to maintain.
 
+from autofusedebugger.inductor_autofuse import (
+    autofuse_diagnostics,
+    install_autofuse_intermediate_hooks,
+    reset_autofuse_diagnostics,
+)
 from autofusedebugger.nnsmith_integration.ascendc_backend import AscendC
 from autofusedebugger.nnsmith_integration.ascendc_opset import probe_ascendc_opset
 from autofusedebugger.nnsmith_integration.repro import write_repro_script
@@ -101,6 +106,11 @@ class CaseResult:
     error_summary: Optional[str] = None
     input_shapes: dict[str, list[int]] = field(default_factory=dict)
     output_shapes: dict[str, list[int]] = field(default_factory=dict)
+    # Number of kernels inductor/autofuse actually generated and ran on NPU
+    # for this case (len(generated_kernels) from autofuse_diagnostics()).
+    # Left at the default 0 for "gen_error" cases, which never reach
+    # compilation.
+    n_kernels: int = 0
 
     def __post_init__(self) -> None:
         if not self.case_id:
@@ -345,11 +355,28 @@ def run_single_case(
     dump_dir = (out_dir / f"bug-{index}-{case_seed}") if out_dir is not None else None
 
     rtol, atol = _tolerance_for_ir(ir)
+
+    # Lightweight fusion-outcome bookkeeping, independent of the heavy
+    # per-case `debug`/`_DebugDumpEnv` dump path above: install_autofuse_
+    # intermediate_hooks() is idempotent (a no-op after its first call), so
+    # calling it unconditionally here is safe and self-contained -- it also
+    # self-activates the ascendc backend if needed (its own first line is
+    # `package_root = package_root or activate_autofuse_backend()`), so no
+    # separate activate_autofuse_backend() call is needed here. reset before
+    # the compile+run so only this case's kernels are counted; collect after,
+    # regardless of pass/fail, since a failed case's fusion outcome is
+    # diagnostic too.
+    install_autofuse_intermediate_hooks()
+    reset_autofuse_diagnostics()
+
     if debug and case_dir is not None:
         with _DebugDumpEnv(case_dir):
             bug = factory.verify_testcase(testcase, equal_nan=True, rtol=rtol, atol=atol)
     else:
         bug = factory.verify_testcase(testcase, equal_nan=True, rtol=rtol, atol=atol)
+
+    diagnostics = autofuse_diagnostics()
+    n_kernels = len(diagnostics.get("generated_kernels", []))
 
     duration = time.time() - t0
 
@@ -369,6 +396,7 @@ def run_single_case(
             bug_dir=str(case_dir) if (debug and case_dir is not None) else None,
             input_shapes={name: list(t.shape) for name, t in model.input_like.items()},
             output_shapes={name: list(t.shape) for name, t in model.output_like.items()},
+            n_kernels=n_kernels,
         )
 
     target_dir = case_dir if (debug and case_dir is not None) else dump_dir
@@ -390,6 +418,7 @@ def run_single_case(
         error_summary=_truncate(bug.log or ""),
         input_shapes={name: list(t.shape) for name, t in model.input_like.items()},
         output_shapes={name: list(t.shape) for name, t in model.output_like.items()},
+        n_kernels=n_kernels,
     )
 
 

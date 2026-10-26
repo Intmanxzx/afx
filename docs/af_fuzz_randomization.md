@@ -54,6 +54,7 @@
 | `status` | 状态 | 三态之一：`pass`（通过验证）/ `fail`（生成成功但验证不一致或执行异常）/ `gen_error`（图生成阶段本身就失败，没能走到验证这一步） |
 | `seed` | Seed | 这个 case 的 `case_seed`，决定性地控制它的全部随机内容（见上面"用例生成的随机变量"总览表）。用 `--repro-seed <这个值>` 可以单独复现这一个 case |
 | `n_nodes` | 节点数 | 生成完成后图里**真实的**计算节点数（`ir.n_compute_inst()`），不是 `--max-nodes` 这个上限本身——节点数本身是 `[2, max_nodes]` 区间内随机抽取的。`gen_error` case 没有真正生成出图，这个字段保持默认值 `0`，不代表节点数随机化出了问题 |
+| `n_kernels` | Kernel数 | 这个 case 最终真正生成并在 NPU 上执行的 kernel 总数（`len(generated_kernels)`，来自 `autofusedebugger/inductor_autofuse.py` 的 `codegen_nodes` 钩子：调度器每次真正产出一个 kernel 就记一条，`fuzz_loop.py` 的 `run_single_case` 在每个 case 编译+执行前后调用 `reset_autofuse_diagnostics()`/`autofuse_diagnostics()` 采集）。这个数字本身不能单独说明"融合了几次"——`n_nodes`（计算节点数，不含 `Input` 占位符，且不去重）比 `n_kernels` 大，说明至少有节点被融合进了同一个 kernel；`n_nodes == n_kernels` 通常意味着没有发生融合，但也可能是节点本身就没有互相融合的条件，具体原因要看调度器的融合决策记录，不能只凭这一个数字下结论。`gen_error` case 没有走到编译这一步，保持默认值 `0` |
 | `n_vars` | （HTML 未展示列，仅 JSON 有） | 图里的变量（张量）总数（`ir.n_var()`），通常比 `n_nodes` 大（每个节点可能产生多个输出张量，加上输入占位符） |
 | `duration_s` | 耗时(s) | 这个 case 从开始生成到验证完成（或失败）的总耗时 |
 | `symptom` | Symptom | **只有 `status == "fail"` 时才有值**，取自 nnsmith 的 `Symptom` 枚举：`exception`（执行时抛异常）/ `segfault`（进程崩溃）/ `inconsistency`（NPU 和 CPU eager 的输出数值不一致，超出容忍度）/ `timeout`（执行超时）/ `worse_perf`（性能回退，当前 af-fuzz 流程不会触发这个）。`pass`/`gen_error` 的 case 这个字段是 `null`，HTML 里显示为 `-`，这是正常行为，不代表字段没用 |

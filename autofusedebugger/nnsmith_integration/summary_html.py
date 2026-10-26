@@ -90,6 +90,7 @@ def render_summary_html(summary: dict[str, Any], title: str = "AF Fuzz Summary")
         <th data-key="status">状态</th>
         <th data-key="seed">Seed</th>
         <th data-key="n_nodes">节点数</th>
+        <th data-key="n_kernels">Kernel数</th>
         <th data-key="duration_s">耗时(s)</th>
         <th data-key="symptom">Symptom</th>
         <th data-key="stage">Stage</th>
@@ -132,6 +133,7 @@ function render() {{
       <td><span class="badge ${{c.status}}">${{c.status}}</span></td>
       <td>${{c.seed}}</td>
       <td>${{c.n_nodes || '-'}}</td>
+      <td>${{c.n_kernels || '-'}}</td>
       <td>${{c.duration_s.toFixed(2)}}</td>
       <td>${{c.symptom || '-'}}</td>
       <td>${{c.stage || '-'}}</td>

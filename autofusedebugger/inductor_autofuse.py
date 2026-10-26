@@ -23,6 +23,7 @@ _LOWERING_FALLBACKS: list[dict[str, Any]] = []
 _IMPLICIT_FALLBACK_TARGETS: set[Any] = set()
 _PREFUSION_GRAPHS: list[dict[str, Any]] = []
 _PREFUSION_GRAPH_IDS: set[int] = set()
+_GENERATED_KERNELS: list[dict[str, Any]] = []
 _ASCENDC_PACKAGE_ROOTS = ("torch_npu._inductor.ascendc", "inductor_npu_ext")
 _DTYPE_NAMES = {
     "b1": "bool",
@@ -45,6 +46,7 @@ def reset_autofuse_diagnostics() -> None:
         _IMPLICIT_FALLBACK_TARGETS.clear()
         _PREFUSION_GRAPHS.clear()
         _PREFUSION_GRAPH_IDS.clear()
+        _GENERATED_KERNELS.clear()
     _CAPTURE_STATE.fusion_group = None
 
 
@@ -53,6 +55,7 @@ def autofuse_diagnostics() -> dict[str, Any]:
         return {
             "fusion_decision_groups": [[dict(item) for item in group] for group in _FUSION_DECISION_GROUPS],
             "lowering_fallbacks": [dict(item) for item in _LOWERING_FALLBACKS],
+            "generated_kernels": [dict(item) for item in _GENERATED_KERNELS],
         }
 
 
@@ -211,6 +214,32 @@ def install_autofuse_intermediate_hooks(package_root: str | None = None) -> None
             hook_name = f"{capture_name}{_FUSION_OUTPUT_MARKER}{output_index}"
             V.graph.wrapper_code.writeline(f"run_intermediate_hooks({hook_name!r}, {buffer_name})")
             output_index += 1
+
+        # Record every atomic op this generated kernel fused, independent of the
+        # live-output filtering above. `nodes` is the full set of scheduler nodes
+        # that went into this one kernel; the live-output filter above only decides
+        # which node's buffer gets an intermediate capture hook and would otherwise
+        # make us undercount fused ops by dropping all non-output (intermediate)
+        # nodes in the fusion group.
+        fused_ops: list[dict[str, Any]] = []
+        for node in nodes:
+            if node.node is None:
+                continue
+            origin = node.node.get_origin_node()
+            fused_ops.append(
+                {
+                    "buffer_name": node.node.get_name(),
+                    "target": str(origin.target) if origin is not None else None,
+                }
+            )
+        with _CAPTURE_LOCK:
+            _GENERATED_KERNELS.append(
+                {
+                    "kernel_name": str(kernel.kernel_name),
+                    "fused_ops": fused_ops,
+                    "op_count": len(fused_ops),
+                }
+            )
 
     NPUKernel.tracing_asc = tracing_asc
     NPUScheduling.codegen_nodes = codegen_nodes
