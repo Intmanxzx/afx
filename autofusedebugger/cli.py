@@ -206,6 +206,12 @@ def cmd_run_camodel(args: argparse.Namespace) -> int:
 
 
 def cmd_af_fuzz(args: argparse.Namespace) -> int:
+    op_categories = (
+        [c.strip() for c in args.op_categories.split(",") if c.strip()]
+        if args.op_categories
+        else None
+    )
+
     if args.repro_seed is not None:
         from autofusedebugger.nnsmith_integration.fuzz_loop import run_repro_case
 
@@ -221,6 +227,7 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
             debug=True if args.debug is None else args.debug,
             soc_tier=args.soc_tier,
             value_dist_mode=args.value_dist_mode,
+            op_categories=op_categories,
         )
         print(
             f"case_id={result.case_id} status={result.status} "
@@ -252,6 +259,7 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         jobs=args.jobs,
         soc_tier=args.soc_tier,
         value_dist_mode=args.value_dist_mode,
+        op_categories=op_categories,
     )
     print(
         f"total={summary.total} passed={summary.passed} failed={summary.failed} "
@@ -666,6 +674,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="A3",
         help="narrow the generated op catalog to ops ascendc registers a fused lowering for on this "
         "NPU generation (see ascendc_opset.py); use A5 once validating on A5 hardware",
+    )
+    fuzz.add_argument(
+        "--op-categories",
+        default=None,
+        help="comma-separated subset of op categories to generate cases from (e.g. "
+        "'elewise,reduce'), replacing the default full op catalog entirely -- not "
+        "additionally restricting it. Choices: elewise, reduce, view, gather, norm, "
+        "matmul (see OP_CATEGORIES in ascendc_opset.py for which ops belong to each). "
+        "Applied after --soc-tier's own hardware-support filtering, so it can only "
+        "narrow further, never add back an op the soc_tier doesn't support. Default: "
+        "unset, meaning no restriction beyond --soc-tier.",
     )
     fuzz.add_argument(
         "--repro-seed",

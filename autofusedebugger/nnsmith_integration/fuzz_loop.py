@@ -62,7 +62,7 @@ import time
 import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from nnsmith.abstract.dtype import DType
 from nnsmith.error import InternalError
@@ -436,6 +436,7 @@ def run_repro_case(
     debug: bool = True,
     soc_tier: str = "A3",
     value_dist_mode: str = "uniform",
+    op_categories: Optional[Sequence[str]] = None,
 ) -> CaseResult:
     """Re-run exactly one case identified by its original `case_seed`
     (`--repro-seed`), with debug dumping on by default -- the "give me this
@@ -447,7 +448,9 @@ def run_repro_case(
     factory = AscendC(target=target)
     model_cls = Model.init("torch", backend_target=target)
     model_cls.add_seed_setter()
-    opset = probe_ascendc_opset(model_cls, factory, soc_tier=soc_tier, grad=False)
+    opset = probe_ascendc_opset(
+        model_cls, factory, soc_tier=soc_tier, grad=False, op_categories=op_categories
+    )
 
     return run_single_case(
         factory=factory,
@@ -483,6 +486,7 @@ def run_fuzz_session(
     write_outputs: bool = True,
     soc_tier: str = "A3",
     value_dist_mode: str = "uniform",
+    op_categories: Optional[Sequence[str]] = None,
 ) -> FuzzSummary:
     """Generate `n_cases` NNSmith torch models, run each end-to-end against the
     autofuse backend, verify against the CPU/eager oracle NNSmith itself
@@ -507,7 +511,9 @@ def run_fuzz_session(
     # intolerant loop, and a single op's probe-time crash silently discards
     # every op queued after it, which is how an earlier run ended up with a
     # topset cache containing zero fp32 combinations for Add/Sub/Mul/etc).
-    opset = probe_ascendc_opset(model_cls, factory, soc_tier=soc_tier, grad=False)
+    opset = probe_ascendc_opset(
+        model_cls, factory, soc_tier=soc_tier, grad=False, op_categories=op_categories
+    )
 
     summary = FuzzSummary()
 
@@ -582,6 +588,7 @@ def _run_shard(args: tuple) -> FuzzSummary:
         concr_ph_dim_rng,
         tensor_scale,
         value_dist_mode,
+        op_categories,
     ) = args
     return run_fuzz_session(
         out_dir=shard_out_dir,
@@ -598,6 +605,7 @@ def _run_shard(args: tuple) -> FuzzSummary:
         write_outputs=False,
         soc_tier=soc_tier,
         value_dist_mode=value_dist_mode,
+        op_categories=op_categories,
     )
 
 
@@ -616,6 +624,7 @@ def run_fuzz_session_parallel(
     jobs: int = 1,
     soc_tier: str = "A3",
     value_dist_mode: str = "uniform",
+    op_categories: Optional[Sequence[str]] = None,
 ) -> FuzzSummary:
     """Shard `n_cases` across `jobs` worker processes, each with its own
     disjoint seed sub-stream (derived from the top-level `seed` so the whole
@@ -638,6 +647,7 @@ def run_fuzz_session_parallel(
             target=target,
             soc_tier=soc_tier,
             value_dist_mode=value_dist_mode,
+            op_categories=op_categories,
         )
 
     out_dir = Path(out_dir)
@@ -672,6 +682,7 @@ def run_fuzz_session_parallel(
                 concr_ph_dim_rng,
                 tensor_scale,
                 value_dist_mode,
+                op_categories,
             )
         )
         index_offset += shard_n_cases

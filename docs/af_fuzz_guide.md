@@ -39,6 +39,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--jobs` | `2` | 按进程切分 `--n-cases`，并行跑 N 个进程。每个 worker 真实占用 NPU 编译/执行资源，偏重 CPU+内存，建议先用低值观察负载再往上调；并发调优细节和实测数据见 `docs/af_fuzz_npu_env.md` 第 5 节 |
 | `--compile-threads` | `None`（跟随环境变量 `TORCHINDUCTOR_COMPILE_THREADS`，否则 `4`） | **每个** `--jobs` 进程内部 inductor 并行编译 worker 池大小。inductor 自身默认值是 `min(32, 宿主机 CPU 核数)`，在容器里容易把内存撑爆，所以这里改成了偏保守的默认 `4` |
 | `--soc-tier` | `"A3"` | `A3` / `A5` 二选一，决定用哪一代 NPU 的融合算子白名单来约束图生成（见 `ascendc_opset.py`）；在 A5 硬件上验证时要显式传 `A5` |
+| `--op-categories` | `None`（不限制，用 `--soc-tier` 对应的全量算子集合） | 逗号分隔的算子分类子集，比如 `elewise,reduce`；传了之后**完全替换**默认的全量算子集合（不是在默认集合基础上再收窄），只会从这些分类里的算子生成用例。可选分类及具体数值见本表后面的"`--op-categories` 分类明细"表。会在 `--soc-tier` 过滤之后再应用，所以只能让生成范围变得更窄，不会出现某个分类在当前 soc-tier 上本来不支持却被生成出来的情况；如果选的分类在当前 soc-tier 上一个算子都没有（比如 A3 下选 `matmul`），会直接报错 |
 | `--repro-seed` | `None` | 只跑这一个 `case_seed`，不跑整批（见第 3 节） |
 | `--debug` / `--no-debug` | 不传（`None`） | 是否开启调试落盘。只在配合 `--repro-seed` 时生效：不传时 `--repro-seed` 自动当作开了 `--debug`；显式 `--no-debug` 可以在单 case 复现时关掉落盘，只看 pass/fail（见第 3 节） |
 
@@ -51,6 +52,23 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `large` | `2^24` ≈ 16,777,216 | `(8, 8192)` | `60000`（60s） |
 
 `concr_ph_dim_rng=(l, r)` 是输入占位符**每一维**大小的随机区间（`random.randint(l, r)`），各维连乘得到总元素数；一旦某一维累乘会超过 `max_elem_per_tensor`，那一维会退化成 `1` 而不是真的生成超大张量。档位越大，单 case 生成的张量可能越大、形状越多样，但耗时和显存/内存占用也越高——批量跑时优先用 `small`，确认要测大 shape 场景时再切 `medium`/`large`。
+
+`--op-categories` 分类明细（具体算子列表以 `autofusedebugger/nnsmith_integration/ascendc_opset.py` 的 `OP_CATEGORIES` 为准，这里列的是分类含义和代表性算子；每个分类都已限定在 `--soc-tier` 对应的融合算子白名单内，不含白名单之外的算子）：
+
+| 分类 | 含义 | 代表算子（不含 `Input`/`Constant` 这类图生成器自带的叶子节点，它们不受 `--op-categories` 限制） |
+|---|---|---|
+| `elewise` | 逐元素算子：输出每个位置只依赖输入同位置的值，二元广播算子（Add/Sub/...）也算在内 | `Add`/`Sub`/`Mul`/`Div`/`Pow`/`Abs`/`Neg`/`Sigmoid`/`Clip`/`Sqrt`/`Equal`/`And`/`Or`/`Where`/`Sin`/`Cos`/`Tan`/`GELU` 等 |
+| `reduce` | 归约算子：按某个轴把多个位置合并成更少的输出 | `TorchReduceSum`/`ReduceMean` |
+| `view` | 纯形状/布局变换，不做算术运算 | `Reshape`/`Transpose`/`Squeeze`/`Concat`/`Cast`/`Slice`/`ExpandLast1~4`/`Tril`/`Triu` |
+| `gather` | 索引/查表类算子，输出位置由单独的 index 张量决定 | `IndexSelect`/`Gather` |
+| `norm` | 归一化复合算子，内部是 reduce+elewise 的组合，单独归一类 | `LayerNorm` |
+| `matmul` | 矩阵乘法类，只在 A5 上才会真正融合（A3 上 ascendc 的 matmul lowering 内部会判断 SoC 版本直接 fallback） | `MatMul`/`Linear` |
+
+用户场景示例：只想生成"elewise + reduce"组合的用例，用：
+
+```bash
+autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
+```
 
 ## 2. 输出结果
 

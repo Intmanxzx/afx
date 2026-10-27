@@ -37,7 +37,7 @@ live `torch_npu` installation when available.
 from __future__ import annotations
 
 import os
-from typing import List, Type
+from typing import Dict, List, Optional, Sequence, Set, Type
 
 from autofusedebugger.nnsmith_integration._nnsmith_patch import (
     ensure_ascendc_patch_applied,
@@ -226,6 +226,96 @@ _ASCENDC_A5_ONLY_ADDITIONS: List[str] = [
 
 ASCENDC_OPSET_A5: List[str] = ASCENDC_OPSET_A3 + _ASCENDC_A5_ONLY_ADDITIONS
 
+# Semantic grouping of every op name in ASCENDC_OPSET_A5 (which already
+# contains ASCENDC_OPSET_A3), so callers can ask for e.g. "only elewise and
+# reduce" instead of the full allowlist. Purely a classification on top of
+# the allowlists above -- it does not add or remove any op from either
+# tier, and every op name here must already appear in ASCENDC_OPSET_A3 or
+# _ASCENDC_A5_ONLY_ADDITIONS (checked by the assertion right below the
+# table) so the two can never silently drift apart.
+OP_CATEGORIES: Dict[str, Set[str]] = {
+    # Per-element ops: output[i] depends only on input[i] (same position),
+    # never on other positions of the same tensor. Binary broadcast ops
+    # (Add/Sub/...) are included here too -- broadcasting still computes
+    # each output position from a fixed combination of input positions, it
+    # never mixes positions together the way a reduce/view op does.
+    "elewise": {
+        "core.Add", "core.Sub", "core.Mul", "core.Max", "core.Min",
+        "core.Div", "core.Pow", "core.Abs", "core.Neg", "core.Sigmoid",
+        "core.Clip", "core.Sqrt", "core.Equal", "core.And", "core.Or",
+        "core.Where", "core.Greater", "core.Less", "core.Ceil",
+        "core.Floor", "core.Round", "core.Sin", "core.Cos", "core.Tan",
+        "core.Atan", "core.Asin", "core.Acos", "core.GELU",
+        "core.LeakyReLU",
+    },
+    # Ops that combine multiple positions along some axis into fewer
+    # outputs (sum/mean over a dim).
+    "reduce": {
+        "torch.TorchReduceSum", "core.ReduceMean",
+    },
+    # Shape/layout-only ops: no arithmetic, just which position holds which
+    # value (or how many positions exist).
+    "view": {
+        "core.Reshape", "core.Transpose", "core.Squeeze", "core.Concat",
+        "core.Cast", "core.Slice", "core.ExpandLast1", "core.ExpandLast2",
+        "core.ExpandLast3", "core.ExpandLast4", "core.Tril", "core.Triu",
+    },
+    # Index/lookup ops: output positions are selected by a separate index
+    # tensor rather than computed arithmetically or reduced.
+    "gather": {
+        "core.IndexSelect", "core.Gather",
+    },
+    # Compound normalization op: internally a reduce (mean/var) fused with
+    # elementwise rescaling -- kept as its own category rather than forced
+    # into "elewise" or "reduce" since it is neither alone.
+    "norm": {
+        "core.LayerNorm",
+    },
+    # Matrix-multiply family.
+    "matmul": {
+        "torch.MatMul", "core.Linear",
+    },
+}
+
+_categorized = set().union(*OP_CATEGORIES.values())
+_allowlisted = set(ASCENDC_OPSET_A5)
+assert _categorized == _allowlisted, (
+    "OP_CATEGORIES must exactly partition ASCENDC_OPSET_A5 -- "
+    f"in allowlist but uncategorized: {_allowlisted - _categorized}; "
+    f"categorized but not in allowlist: {_categorized - _allowlisted}"
+)
+del _categorized, _allowlisted
+
+
+def filter_opset_by_categories(
+    opset: List[Type[AbsOpBase]], categories: Optional[Sequence[str]]
+) -> List[Type[AbsOpBase]]:
+    """Narrow `opset` down to ops belonging to one of `categories` (see
+    `OP_CATEGORIES`, e.g. `["elewise", "reduce"]`). `categories=None` (the
+    default everywhere this is called from) is a no-op returning `opset`
+    unchanged -- user-provided categories replace the default full opset,
+    they don't additionally restrict some other default subset.
+    """
+    if categories is None:
+        return opset
+    unknown = set(categories) - set(OP_CATEGORIES)
+    if unknown:
+        raise ValueError(
+            f"Unknown op categor{'y' if len(unknown) == 1 else 'ies'} "
+            f"{sorted(unknown)!r}; expected a subset of "
+            f"{sorted(OP_CATEGORIES)!r}"
+        )
+    allow = set().union(*(OP_CATEGORIES[c] for c in categories))
+    filtered = [op for op in opset if op.name() in allow]
+    if not filtered:
+        raise RuntimeError(
+            f"filter_opset_by_categories(categories={list(categories)!r}) "
+            f"matched zero ops against the input opset ({len(opset)} "
+            "candidates) -- check that the requested categories actually "
+            "have any op probed as supported on this soc_tier."
+        )
+    return filtered
+
 # Ops NNSmith's default catalog contains that are intentionally excluded from
 # *both* tiers above:
 #
@@ -286,10 +376,21 @@ def filter_ascendc_opset(
 
 
 def probe_ascendc_opset(
-    model_cls, factory, *, soc_tier: str = "A3", grad: bool = False
+    model_cls,
+    factory,
+    *,
+    soc_tier: str = "A3",
+    grad: bool = False,
+    op_categories: Optional[Sequence[str]] = None,
 ) -> List[Type[AbsOpBase]]:
     """The actual entry point `fuzz_loop.py` should call instead of
     `auto_opset()` + `filter_ascendc_opset()`.
+
+    `op_categories` (default `None`, meaning "no restriction beyond the
+    soc_tier allowlist") narrows the result further to only the given
+    `OP_CATEGORIES` keys (e.g. `["elewise", "reduce"]`) -- applied *after*
+    the soc_tier probe below, so it can only ever remove ops the hardware
+    doesn't support anyway, never add ops back in.
 
     Does NOT call `nnsmith.narrow_spec.auto_opset()` / `auto_opconfig()`:
     those probe every op in `model_cls.operators()` (NNSmith's full ~67-op
@@ -493,4 +594,4 @@ def probe_ascendc_opset(
             f"{cache_path} for per-op failure details, or delete it to "
             "force a fresh probe."
         )
-    return opset
+    return filter_opset_by_categories(opset, op_categories)
