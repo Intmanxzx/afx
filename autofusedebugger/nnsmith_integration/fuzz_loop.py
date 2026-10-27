@@ -106,6 +106,13 @@ class CaseResult:
     error_summary: Optional[str] = None
     input_shapes: dict[str, list[int]] = field(default_factory=dict)
     output_shapes: dict[str, list[int]] = field(default_factory=dict)
+    # DType.short() string (e.g. "f32", "bf16") per tensor name, same keys as
+    # input_shapes/output_shapes -- kept as separate dicts rather than
+    # merging into the shape dicts so existing readers of input_shapes/
+    # output_shapes (e.g. any external script parsing summary.json) don't
+    # need to change how they index into those two fields.
+    input_dtypes: dict[str, str] = field(default_factory=dict)
+    output_dtypes: dict[str, str] = field(default_factory=dict)
     # Number of kernels inductor/autofuse actually generated and ran on NPU
     # for this case (len(generated_kernels) from autofuse_diagnostics()).
     # Left at the default 0 for "gen_error" cases, which never reach
@@ -219,30 +226,80 @@ def _tolerance_for_ir(ir) -> tuple[float, float]:
 
 
 # "scale" controls max_elem_per_tensor (total tensor size), concr_ph_dim_rng
-# (per-dim range), and timeout_ms together: these all answer the same
-# underlying question ("how big/slow are generated cases allowed to be"),
-# so one --tensor-scale flag drives all three rather than three
-# independently-settable, easily-inconsistent flags (e.g. a large
+# (per-dim range), timeout_ms, and dim_dist_mode together: these all answer
+# the same underlying question ("how big/slow/how-distributed are generated
+# cases allowed to be"), so one --tensor-scale flag drives all four rather
+# than independently-settable, easily-inconsistent flags (e.g. a large
 # max_elem_per_tensor paired with a tiny concr_ph_dim_rng just gets spent on
 # more dims of size 1, not genuinely larger tensors).
 TENSOR_SCALE_PROFILES: dict[str, dict[str, object]] = {
-    # small: unchanged from the original hardcoded defaults -- kept as the
-    # regression baseline so existing --repro-seed batches stay reproducible
-    # unless --tensor-scale is explicitly set to something else.
+    # small/medium/large: unchanged from the original hardcoded defaults
+    # (including dim_dist_mode="uniform", nnsmith's own pre-existing
+    # behavior) -- kept as the regression baseline so existing --repro-seed
+    # batches stay reproducible unless --tensor-scale is explicitly set to
+    # something else.
     "small": {
         "max_elem_per_tensor": 2**16,
         "concr_ph_dim_rng": (1, 64),
         "timeout_ms": 10000,
+        "dim_dist_mode": "uniform",
     },
     "medium": {
         "max_elem_per_tensor": 2**20,
         "concr_ph_dim_rng": (8, 4096),
         "timeout_ms": 30000,
+        "dim_dist_mode": "uniform",
     },
     "large": {
         "max_elem_per_tensor": 2**24,
         "concr_ph_dim_rng": (8, 8192),
         "timeout_ms": 60000,
+        "dim_dist_mode": "uniform",
+    },
+    # 16k/32k/64k/128k: concr_ph_dim_rng's upper bound is the actual target
+    # (seq_len-style long-context scenarios, see docs/af_fuzz_randomization.md's
+    # "业界典型数值参考" -- large-model seq_len commonly reaches 4K~128K).
+    # max_elem_per_tensor is set to 4x that upper bound: enough for ~2 dims to
+    # both land near the upper bound at once (their product ~= upper_bound^2
+    # would blow the budget immediately, so this is deliberately NOT upper_bound
+    # squared) while every other dim in the same tensor gets squeezed down to 1
+    # by graph_gen.py's existing total-nelement clamp -- not a guess at "how
+    # large a tensor should be allowed to get" from scratch, since the dim
+    # upper bound is the thing actually being stress-tested here, not the
+    # overall tensor size.
+    #
+    # dim_dist_mode="log_normal" (unlike the three profiles above, which keep
+    # nnsmith's original uniform sampling): at these upper bounds, sampling
+    # every size in [8, upper_bound] with equal probability means most
+    # generated dims land nowhere near the business-relevant small/medium
+    # range -- log_normal instead skews each dim toward smaller values while
+    # still letting a (deliberately small) fraction of draws reach the full
+    # upper bound, matching the request that "large shapes should be rarer,
+    # not equally likely". See _sample_dim_size()'s docstring in the
+    # ascendc_dim_size_distribution.patch for the exact mu/sigma and why.
+    "16k": {
+        "max_elem_per_tensor": 16384 * 4,
+        "concr_ph_dim_rng": (8, 16384),
+        "timeout_ms": 90000,
+        "dim_dist_mode": "log_normal",
+    },
+    "32k": {
+        "max_elem_per_tensor": 32768 * 4,
+        "concr_ph_dim_rng": (8, 32768),
+        "timeout_ms": 120000,
+        "dim_dist_mode": "log_normal",
+    },
+    "64k": {
+        "max_elem_per_tensor": 65536 * 4,
+        "concr_ph_dim_rng": (8, 65536),
+        "timeout_ms": 180000,
+        "dim_dist_mode": "log_normal",
+    },
+    "128k": {
+        "max_elem_per_tensor": 131072 * 4,
+        "concr_ph_dim_rng": (8, 131072),
+        "timeout_ms": 300000,
+        "dim_dist_mode": "log_normal",
     },
 }
 
@@ -281,6 +338,7 @@ def run_single_case(
         max_elem_per_tensor = profile["max_elem_per_tensor"]
     if concr_ph_dim_rng is None:
         concr_ph_dim_rng = profile["concr_ph_dim_rng"]
+    dim_dist_mode = profile["dim_dist_mode"]
 
     t0 = time.time()
     case_id = f"{index:05d}-{case_seed}"
@@ -318,6 +376,7 @@ def run_single_case(
             seed=case_seed,
             max_elem_per_tensor=max_elem_per_tensor,
             concr_ph_dim_rng=concr_ph_dim_rng,
+            dim_dist_mode=dim_dist_mode,
             max_nodes=actual_max_nodes,
             timeout_ms=timeout_ms,
             # dtype_choices intentionally omitted: passing dtype_choices=None
@@ -396,6 +455,8 @@ def run_single_case(
             bug_dir=str(case_dir) if (debug and case_dir is not None) else None,
             input_shapes={name: list(t.shape) for name, t in model.input_like.items()},
             output_shapes={name: list(t.shape) for name, t in model.output_like.items()},
+            input_dtypes={name: t.dtype.short() for name, t in model.input_like.items()},
+            output_dtypes={name: t.dtype.short() for name, t in model.output_like.items()},
             n_kernels=n_kernels,
         )
 
@@ -418,6 +479,8 @@ def run_single_case(
         error_summary=_truncate(bug.log or ""),
         input_shapes={name: list(t.shape) for name, t in model.input_like.items()},
         output_shapes={name: list(t.shape) for name, t in model.output_like.items()},
+        input_dtypes={name: t.dtype.short() for name, t in model.input_like.items()},
+        output_dtypes={name: t.dtype.short() for name, t in model.output_like.items()},
         n_kernels=n_kernels,
     )
 

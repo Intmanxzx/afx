@@ -616,12 +616,14 @@ def build_parser() -> argparse.ArgumentParser:
         # fuzz_loop's heavy nnsmith/torch imports (and autofusedebugger's
         # nnsmith patch side effect) on every invocation, not just af-fuzz.
         # Keep in sync with the keys of TENSOR_SCALE_PROFILES in fuzz_loop.py.
-        choices=["large", "medium", "small"],
+        choices=["large", "medium", "small", "16k", "32k", "64k", "128k"],
         default="small",
         help="Controls max_elem_per_tensor + concr_ph_dim_rng + timeout_ms "
         "together (see TENSOR_SCALE_PROFILES in fuzz_loop.py). 'small' "
         "matches the original hardcoded defaults for regression "
-        "compatibility.",
+        "compatibility. '16k'/'32k'/'64k'/'128k' push concr_ph_dim_rng's "
+        "per-dim upper bound to that many elements (long-context seq_len "
+        "style scenarios), well beyond 'large''s 8192.",
     )
     fuzz.add_argument(
         "--value-dist-mode",

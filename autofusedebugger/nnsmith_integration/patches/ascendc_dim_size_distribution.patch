@@ -1,0 +1,88 @@
+diff --git a/nnsmith/graph_gen.py b/nnsmith/graph_gen.py
+index b3aa0ba..4043df6 100644
+--- a/nnsmith/graph_gen.py
++++ b/nnsmith/graph_gen.py
+@@ -1,4 +1,5 @@
+ import logging
++import math
+ import random
+ import time
+ import traceback
+@@ -28,6 +29,52 @@ def concretize_graph(ir: GraphIR, model: z3.ModelRef) -> GraphIR:
+     return ir.concretize(model)
+ 
+ 
++def _sample_dim_size(l: int, r: int, dist_mode: str) -> int:
++    """Sample one dimension's size from `[l, r]` (inclusive) under `dist_mode`.
++
++    "uniform" (default, unchanged behavior): `random.randint(l, r)`, every
++    value in range equally likely.
++
++    "log_normal": skews toward small values while still occasionally
++    reaching the upper bound, instead of every size in `[l, r]` being
++    equally likely -- useful for large ranges (e.g. r=131072) where most
++    generated cases should stay small/medium and only a few should probe
++    the extreme end. Implemented as a normal distribution in log-space,
++    re-exponentiated and clamped back into `[l, r]`:
++      mu = log(l) + 0.3 * (log(r) - log(l))   # mean sits 30% of the way
++                                               # from log(l) to log(r), not
++                                               # at log(l) itself -- anchoring
++                                               # the mean exactly at log(l)
++                                               # makes the median collapse to
++                                               # l after clamping, since half
++                                               # the unclamped mass already
++                                               # falls below the mean
++      sigma = (log(r) - log(l)) / 3.5         # wide enough that the tail
++                                               # reaches r with non-negligible
++                                               # (but still a few-percent)
++                                               # probability, not so wide that
++                                               # values pile up at the r clamp
++    These two constants were picked by simulating the resulting distribution
++    across this project's actual (l, r) ranges (8..16384 up to 8..131072) and
++    checking the resulting percentiles/clamp rate were reasonable -- not
++    derived from a formula, so if the (l, r) ranges this is used with change
++    drastically, re-simulate rather than assuming these still hold.
++    """
++    if dist_mode == "uniform":
++        return random.randint(l, r)
++    if dist_mode != "log_normal":
++        raise ValueError(f"Unknown dist_mode {dist_mode!r}; expected 'uniform' or 'log_normal'")
++    if l <= 0:
++        # log(0) is undefined; only reachable if some future caller passes
++        # l=0, which this project's (l, r) ranges never do (smallest is 8).
++        return random.randint(l, r)
++    log_l, log_r = math.log(l), math.log(r)
++    mu = log_l + 0.3 * (log_r - log_l)
++    sigma = (log_r - log_l) / 3.5
++    v = int(round(math.exp(random.gauss(mu, sigma))))
++    return max(l, min(r, v))
++
++
+ class BaseGen:
+     def __init__(
+         self,
+@@ -38,6 +85,7 @@ class BaseGen:
+         max_elem_per_tensor: int = 2**16,
+         rank_choices=None,
+         dtype_choices=None,
++        dim_dist_mode: str = "uniform",
+     ):
+         assert len(opset) > 0, "opset must not be empty"
+         if seed is not None:
+@@ -54,6 +102,7 @@ class BaseGen:
+         self.forward_prob = 0.5 if forward_prob is None else forward_prob
+         self.concr_ph_dim_rng = concr_ph_dim_rng
+         self.max_elem_per_tensor = max_elem_per_tensor
++        self.dim_dist_mode = dim_dist_mode
+         self.rank_choices = rank_choices if rank_choices else rank_all()
+         # analyze the dtypes used by the opset
+         dtype_top = set()
+@@ -103,7 +152,7 @@ class BaseGen:
+         shape = []
+         product = 1
+         for _ in range(rank):
+-            v = random.randint(l, r)
++            v = _sample_dim_size(l, r, self.dim_dist_mode)
+             if product * v > self.max_elem_per_tensor:
+                 v = 1
+             shape.append(v)

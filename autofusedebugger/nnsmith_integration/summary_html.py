@@ -108,10 +108,14 @@ const CASES = {payload};
 const tbody = document.querySelector('#caseTable tbody');
 let sortKey = 'index', sortAsc = true;
 
-function formatShapes(shapes) {{
+function formatShapes(shapes, dtypes) {{
   const entries = Object.entries(shapes || {{}});
   if (entries.length === 0) return '-';
-  return entries.map(([name, dims]) => `${{name}}: [${{dims.join(', ')}}]`).join('\\n');
+  return entries.map(([name, dims]) => {{
+    const dtype = (dtypes || {{}})[name];
+    const dtypePrefix = dtype ? `${{dtype}}` : '';
+    return `${{name}}: ${{dtypePrefix}}[${{dims.join(', ')}}]`;
+  }}).join('\\n');
 }}
 
 function render() {{
@@ -138,8 +142,8 @@ function render() {{
       <td>${{c.symptom || '-'}}</td>
       <td>${{c.stage || '-'}}</td>
       <td class="ops" title="${{(c.op_types || []).join(', ')}}">${{(c.op_types || []).join(', ') || '-'}}</td>
-      <td class="shapes" title="${{formatShapes(c.input_shapes)}}">${{formatShapes(c.input_shapes)}}</td>
-      <td class="shapes" title="${{formatShapes(c.output_shapes)}}">${{formatShapes(c.output_shapes)}}</td>
+      <td class="shapes" title="${{formatShapes(c.input_shapes, c.input_dtypes)}}">${{formatShapes(c.input_shapes, c.input_dtypes)}}</td>
+      <td class="shapes" title="${{formatShapes(c.output_shapes, c.output_dtypes)}}">${{formatShapes(c.output_shapes, c.output_dtypes)}}</td>
       <td>${{c.bug_dir ? `<a href="${{c.bug_dir}}/repro.py">repro.py</a>` : '-'}}</td>
     </tr>
   `).join('');

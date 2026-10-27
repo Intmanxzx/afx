@@ -30,7 +30,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--n-cases` | `100` | 本批次生成并验证的用例总数 |
 | `--max-nodes` | `5` | 单个用例计算图节点数的**上限**；每个 case 的真实节点数会在 `[2, max-nodes]` 区间内随机抽取，不是固定等于这个值（至少 2 个节点才有融合的意义） |
 | `--method` | `"symbolic-cinit"` | nnsmith 图生成算法，一般不需要改 |
-| `--tensor-scale` | `"small"` | `small`/`medium`/`large` 三档，每档同时固定 `--timeout-ms`/`--max-elem-per-tensor`/维度取值区间 3 个值，具体数值见本表后面的"`--tensor-scale` 三档具体数值"表；`small` 等价于改动前的硬编码默认行为 |
+| `--tensor-scale` | `"small"` | `small`/`medium`/`large`/`16k`/`32k`/`64k`/`128k` 七档，每档同时固定 `--timeout-ms`/`--max-elem-per-tensor`/维度取值区间 3 个值，具体数值见本表后面的"`--tensor-scale` 各档具体数值"表；`small` 等价于改动前的硬编码默认行为；`16k`/`32k`/`64k`/`128k` 专门用来压测单维度大小本身（长上下文 `seq_len` 场景），上界直接对应档位名的数值 |
 | `--timeout-ms` | `None`（跟随 `--tensor-scale` 档位） | 单 case 生成超时（毫秒）。不传时使用 `--tensor-scale` 档位自带的值（见后面的档位数值表），显式传值会覆盖档位值 |
 | `--max-elem-per-tensor` | `None`（跟随 `--tensor-scale` 档位） | 单张量最大元素数上限。不传时使用 `--tensor-scale` 档位自带的值（见后面的档位数值表），显式传值会覆盖档位值 |
 | `--value-dist-mode` | `"uniform"` | 权重/输入的数值分布档位，四选一：`uniform`（原始 `[3,7)` 均匀分布，默认兼容旧行为）/ `log_scale`（跨 `1e-4~1e4` 量级）/ `llm`（模拟 LLM 激活值分布：主体 `N(0, 0.2²)`，5% 元素随机放大 100~10000 倍，模拟"massive activations"现象）/ `recommendation`（模拟推荐系统归一化特征，`uniform[0,1)`）。具体分布公式见 `docs/af_fuzz_randomization.md` |
@@ -43,15 +43,21 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--repro-seed` | `None` | 只跑这一个 `case_seed`，不跑整批（见第 3 节） |
 | `--debug` / `--no-debug` | 不传（`None`） | 是否开启调试落盘。只在配合 `--repro-seed` 时生效：不传时 `--repro-seed` 自动当作开了 `--debug`；显式 `--no-debug` 可以在单 case 复现时关掉落盘，只看 pass/fail（见第 3 节） |
 
-`--tensor-scale` 三档具体数值：
+`--tensor-scale` 各档具体数值：
 
 | 档位 | `max_elem_per_tensor`（单张量最大元素数） | `concr_ph_dim_rng`（每个维度大小的随机取值区间） | `timeout_ms`（单 case 生成超时） |
 |---|---|---|---|
 | `small`（默认） | `2^16` = 65536 | `(1, 64)` | `10000`（10s） |
 | `medium` | `2^20` ≈ 1,048,576 | `(8, 4096)` | `30000`（30s） |
 | `large` | `2^24` ≈ 16,777,216 | `(8, 8192)` | `60000`（60s） |
+| `16k` | `65536` | `(8, 16384)` | `90000`（90s） |
+| `32k` | `131072` | `(8, 32768)` | `120000`（120s） |
+| `64k` | `262144` | `(8, 65536)` | `180000`（180s） |
+| `128k` | `524288` | `(8, 131072)` | `300000`（300s） |
 
-`concr_ph_dim_rng=(l, r)` 是输入占位符**每一维**大小的随机区间（`random.randint(l, r)`），各维连乘得到总元素数；一旦某一维累乘会超过 `max_elem_per_tensor`，那一维会退化成 `1` 而不是真的生成超大张量。档位越大，单 case 生成的张量可能越大、形状越多样，但耗时和显存/内存占用也越高——批量跑时优先用 `small`，确认要测大 shape 场景时再切 `medium`/`large`。
+`concr_ph_dim_rng=(l, r)` 是输入占位符**每一维**大小的随机取值区间，各维连乘得到总元素数；一旦某一维累乘会超过 `max_elem_per_tensor`，那一维会退化成 `1` 而不是真的生成超大张量。档位越大，单 case 生成的张量可能越大、形状越多样，但耗时和显存/内存占用也越高——批量跑时优先用 `small`，确认要测大 shape 场景时再切 `medium`/`large`。
+
+`small`/`medium`/`large` 三档在 `[l, r]` 区间内走**均匀分布**采样（`random.randint(l, r)`，区间内每个值概率相等，和改动前的行为一致）。`16k`/`32k`/`64k`/`128k` 四档改成**对数正态分布**：小尺寸的概率明显更高，大尺寸（接近上界）概率很低但仍有机会出现，不是均匀铺开——设计意图是"这四档本来就是为了偶尔探一下大 shape 边界，不应该让一半以上的 case 都扎堆在大值附近，拖慢整批生成/编译速度"。具体效果（A5 实测，`32k` 档 `(8, 32768)` 区间）：中位数在个位数~百位数量级，p90 在千级，极少数会摸到上万甚至接近 `32768` 上界。`16k`/`32k`/`64k`/`128k` 是专门为长上下文（`seq_len` 4K~128K）场景设计的，目标是偏重压测**单维度**能不能长到这么大，不是让"整张张量的总元素数"同步变大：`max_elem_per_tensor` 固定取"维度上界 × 4"（不是上界的平方），意思是允许大概 2 个维度同时取到接近上界的大值，其余维度仍会被 `max_elem_per_tensor` 的总量约束压缩成 `1`——如果把 `max_elem_per_tensor` 设成上界的平方，单 case 会瞬间 OOM/超时。
 
 `--op-categories` 分类明细（具体算子列表以 `autofusedebugger/nnsmith_integration/ascendc_opset.py` 的 `OP_CATEGORIES` 为准，这里列的是分类含义和代表性算子；每个分类都已限定在 `--soc-tier` 对应的融合算子白名单内，不含白名单之外的算子）：
 
@@ -69,6 +75,12 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 ```bash
 autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 ```
+
+### 1.3 dtype 是怎么生成的
+
+每个 case 用什么 dtype 不是"固定 fp32"也不是完全均匀随机，是加权随机：候选集是 `--soc-tier`/`--op-categories` 对应的算子实际支持的 dtype 并集（见 `ascendc_opset.py` 的探测缓存），float 类（f16/f32/f64/bf16）权重是 int/uint/bool 类的 4 倍，但两边都有机会被抽到——一个 case 内所有张量的 dtype 由图的第一个节点决定后沿图继承（大多数算子是"输入 dtype = 输出 dtype"），只有遇到 `Cast` 这类显式允许转换 dtype 的算子，或者图里出现独立的新分支，才会重新随机换一次。
+
+实测：同样的 `--op-categories elewise,reduce`，40 个 case 的 dtype 分布是 `{f32: 30, f64: 27, f16: 17, i8: 12, i16: 8, i32: 7, i64: 6, bool: 5, u8: 2, c128: 2}`，覆盖了 float16/32/64、int8/16/32/64、uint8、bool、complex128 共 10 种——`bf16` 目前暂未出现，是因为这批算子在当前 A5 环境的探测结果里本身就没有 bf16 组合（不是生成逻辑的问题，是 opset 探测阶段的已知限制）。
 
 ## 2. 输出结果
 
@@ -106,8 +118,8 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 | Symptom | `symptom` | 只有 `fail` 才有值：`exception`（执行时抛异常）/ `segfault`（进程崩溃）/ `inconsistency`（NPU 和 CPU eager 输出数值不一致）/ `timeout`（执行超时）/ `worse_perf`（性能回退，当前流程不触发） |
 | Stage | `stage` | 只有 `fail` 才有值：`compilation`（编译阶段）/ `execution`（执行阶段）/ `verification`（数值校验阶段） |
 | 算子集合 | `op_types` | 这个 case 用到的算子类名去重列表（同一种算子出现多次只算一条） |
-| Input Shape | `input_shapes` | `{输入张量名: shape}`，`gen_error` case 为空 |
-| Output Shape | `output_shapes` | 同上，针对输出张量 |
+| Input Shape | `input_shapes` + `input_dtypes` | 显示成 `张量名: dtype[shape]`（例如 `v2_0: f32[4, 8]`），dtype 是 `DType.short()` 缩写（`f32`/`f16`/`bf16`/`i8`/`i32`/`u8`/`b`=bool/`c128`=complex128 等）；`gen_error` case 为空 |
+| Output Shape | `output_shapes` + `output_dtypes` | 同上，针对输出张量 |
 | 复现路径 | `bug_dir` | 失败用例的 `repro.py` 链接；`pass`/`gen_error` 没有 |
 
 点击表头可排序，顶部可按算子名子串 / 状态筛选。

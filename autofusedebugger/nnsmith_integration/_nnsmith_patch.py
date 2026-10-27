@@ -148,6 +148,29 @@ def _attribute_exists_probe(module_path: str, qualname: str, attr_name: str) -> 
     return probe
 
 
+def _function_source_contains_probe(
+    module_path: str, qualname: str, needle: str
+) -> _Probe:
+    """Probe factory: "does `<module_path>.<qualname>`'s source text contain
+    `needle`?"
+
+    Used for patches that only rewrite an expression *inside* an existing
+    function body -- no new symbol, no signature change (same parameter
+    names/count as before), no new class/enum member -- so none of the
+    other probe factories above have anything to key off of. `qualname` may
+    be dotted to reach a method on a class, same convention as
+    `_function_has_param_probe`. `needle` should be a short, distinctive
+    substring unique to the patched line (e.g. a call the unpatched source
+    never makes) -- not matched against the literal unpatched text, or this
+    would report "already applied" on a pristine checkout.
+    """
+
+    def probe() -> bool:
+        return _probe_function_source_contains(module_path, qualname, needle)
+
+    return probe
+
+
 @dataclass(frozen=True)
 class _AscendcPatch:
     """One independently-applied ascendc NNSmith patch.
@@ -223,6 +246,31 @@ _ASCENDC_PATCHES: tuple[_AscendcPatch, ...] = (
         # parameter here, not a **kwargs catch-all.
         probe=_function_has_param_probe(
             "nnsmith.materialize.torch", "TorchModel.refine_weights", "value_dist_mode"
+        ),
+    ),
+    _AscendcPatch(
+        filename="ascendc_init_fp_dtype_diversity.patch",
+        # No new symbol/parameter/attribute to key off of -- this patch only
+        # rewrites an expression inside three existing __init__ bodies
+        # (SymbolicGen x2, ConcolicGen x1), replacing the unpatched
+        # `dtype=DType.float32 if init_fp else None` with
+        # `dtype=self.random_dtype_gen() if init_fp else None`. Probing
+        # SymbolicGen.__init__'s source for the literal call the unpatched
+        # version never makes is the only way to tell the two apart.
+        probe=_function_source_contains_probe(
+            "nnsmith.graph_gen", "SymbolicGen.__init__", "self.random_dtype_gen()"
+        ),
+    ),
+    _AscendcPatch(
+        filename="ascendc_dim_size_distribution.patch",
+        # Adds a new `dim_dist_mode` parameter to BaseGen.__init__ (default
+        # "uniform", unchanged behavior) plus a new module-level helper
+        # `_sample_dim_size()` that make_random_concrete_placeholder calls
+        # instead of a bare `random.randint(l, r)` -- the new parameter is
+        # the simplest thing to key off of (same convention as
+        # ascendc_refine_weights_value_dist.patch's `value_dist_mode` probe).
+        probe=_function_has_param_probe(
+            "nnsmith.graph_gen", "BaseGen.__init__", "dim_dist_mode"
         ),
     ),
 )
@@ -357,6 +405,33 @@ def _probe_attribute_exists(module_path: str, qualname: str, attr_name: str) -> 
     for part in qualname.split("."):
         obj = getattr(obj, part)
     return hasattr(obj, attr_name)
+
+
+def _probe_function_source_contains(
+    module_path: str, qualname: str, needle: str
+) -> bool:
+    """True iff `needle` appears in the source text of the function/method
+    reached by walking `qualname`'s dot-separated parts off of `module_path`.
+
+    Same import-failure handling as `_probe_function_has_param` above: an
+    `ImportError` means "we cannot currently tell" and is treated as
+    "not yet applied" rather than propagated. `inspect.getsource()` itself
+    can also raise `OSError` (e.g. the source file is missing, or the
+    object is a builtin with no retrievable source) -- that case gets the
+    same "cannot currently tell" treatment, for the same reason: it isn't
+    evidence the patch is pending, it's evidence this probe strategy cannot
+    currently answer the question, which `ensure_ascendc_patch_applied()`'s
+    caller handles by attempting to (re)apply the patch rather than by
+    crashing.
+    """
+    try:
+        obj = importlib.import_module(module_path)
+        for part in qualname.split("."):
+            obj = getattr(obj, part)
+        source = inspect.getsource(obj)
+    except (ImportError, OSError):
+        return False
+    return needle in source
 
 
 def _find_nnsmith_package_parent() -> Path:
