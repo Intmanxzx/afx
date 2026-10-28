@@ -636,6 +636,18 @@ def run_fuzz_session(
     return summary
 
 
+def _shard_target(target: str, devices: Optional[Sequence[int]], shard_idx: int) -> str:
+    """Resolve the `target` a given shard index should use: plain `target`
+    if `devices` is unset or `target` isn't `"npu"`, else `"npu:<index>"`
+    with `devices[shard_idx % len(devices)]` round-robin so `--jobs` can
+    exceed the card count (e.g. `--jobs 4 --devices 0,1` puts shards 0/2 on
+    npu:0 and shards 1/3 on npu:1).
+    """
+    if not devices or target != "npu":
+        return target
+    return f"npu:{devices[shard_idx % len(devices)]}"
+
+
 def _run_shard(args: tuple) -> FuzzSummary:
     (
         shard_out_dir,
@@ -685,6 +697,7 @@ def run_fuzz_session_parallel(
     seed: Optional[int] = None,
     target: str = "npu",
     jobs: int = 1,
+    devices: Optional[Sequence[int]] = None,
     soc_tier: str = "A3",
     value_dist_mode: str = "uniform",
     op_categories: Optional[Sequence[str]] = None,
@@ -695,6 +708,15 @@ def run_fuzz_session_parallel(
     directories never collide. Results are merged into one summary written to
     `<out_dir>/summary.json` / `summary.html`, matching the single-process
     path's output shape exactly.
+
+    `devices`, if given, is a list of NPU device indices (e.g. `[0, 1]` on a
+    2-card box); shard `i` runs on `devices[i % len(devices)]` (`target`
+    becomes `"npu:<index>"` for that shard), round-robin so `--jobs` can
+    exceed the card count. Only meaningful when `target == "npu"` -- ignored
+    for `cuda`/`cpu` targets, where there's no analogous NNSmith/AscendC
+    indexed-device convention to plug into. `None` (the default) keeps every
+    shard on plain `target` ("npu", no index), identical to the pre-existing
+    single-device behavior.
     """
     if jobs <= 1:
         return run_fuzz_session(
@@ -707,7 +729,7 @@ def run_fuzz_session_parallel(
             concr_ph_dim_rng=concr_ph_dim_rng,
             tensor_scale=tensor_scale,
             seed=seed,
-            target=target,
+            target=_shard_target(target, devices, 0),
             soc_tier=soc_tier,
             value_dist_mode=value_dist_mode,
             op_categories=op_categories,
@@ -739,7 +761,7 @@ def run_fuzz_session_parallel(
                 method,
                 max_elem_per_tensor,
                 shard_seeds[shard_idx],
-                target,
+                _shard_target(target, devices, shard_idx),
                 index_offset,
                 soc_tier,
                 concr_ph_dim_rng,

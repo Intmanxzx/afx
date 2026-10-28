@@ -37,6 +37,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--seed` | `None`（随机） | 整批的顶层随机种子，固定后同一批次的全部 case 可复现（按进程分片时各分片派生独立子种子，但总体仍确定性） |
 | `--target` | `"npu"` | 执行目标后端 |
 | `--jobs` | `2` | 按进程切分 `--n-cases`，并行跑 N 个进程。每个 worker 真实占用 NPU 编译/执行资源，偏重 CPU+内存，建议先用低值观察负载再往上调；并发调优细节和实测数据见 `docs/af_fuzz_npu_env.md` 第 5 节 |
+| `--devices` | `None`（不指定，所有 `--jobs` worker 都跑在 `npu:0` 上） | 逗号分隔的 NPU 卡号列表，比如 `0,1`；把 `--jobs` 分出的每个 worker 按 `shard_idx % len(devices)` 轮询分配到对应的卡上（`--jobs 4 --devices 0,1` 时 shard 0/2 → `npu:0`，shard 1/3 → `npu:1`），让多卡机器真正并发利用所有卡，而不是全部挤在一张卡上排队。只在 `--target npu`（默认）下生效，`cuda`/`cpu` 忽略此参数。多卡用法和实测见 `docs/af_fuzz_npu_env.md` 第 5.3 节 |
 | `--compile-threads` | `None`（跟随环境变量 `TORCHINDUCTOR_COMPILE_THREADS`，否则 `4`） | **每个** `--jobs` 进程内部 inductor 并行编译 worker 池大小。inductor 自身默认值是 `min(32, 宿主机 CPU 核数)`，在容器里容易把内存撑爆，所以这里改成了偏保守的默认 `4` |
 | `--soc-tier` | `"A3"` | `A3` / `A5` 二选一，决定用哪一代 NPU 的融合算子白名单来约束图生成（见 `ascendc_opset.py`）；在 A5 硬件上验证时要显式传 `A5` |
 | `--op-categories` | `None`（不限制，用 `--soc-tier` 对应的全量算子集合） | 逗号分隔的算子分类子集，比如 `elewise,reduce`；传了之后**完全替换**默认的全量算子集合（不是在默认集合基础上再收窄），只会从这些分类里的算子生成用例。可选分类及具体数值见本表后面的"`--op-categories` 分类明细"表。会在 `--soc-tier` 过滤之后再应用，所以只能让生成范围变得更窄，不会出现某个分类在当前 soc-tier 上本来不支持却被生成出来的情况；如果选的分类在当前 soc-tier 上一个算子都没有（比如 A3 下选 `matmul`），会直接报错 |

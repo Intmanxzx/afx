@@ -211,6 +211,11 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         if args.op_categories
         else None
     )
+    devices = (
+        [int(d.strip()) for d in args.devices.split(",") if d.strip()]
+        if args.devices
+        else None
+    )
 
     if args.repro_seed is not None:
         from autofusedebugger.nnsmith_integration.fuzz_loop import run_repro_case
@@ -257,6 +262,7 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         seed=args.seed,
         target=args.target,
         jobs=args.jobs,
+        devices=devices,
         soc_tier=args.soc_tier,
         value_dist_mode=args.value_dist_mode,
         op_categories=op_categories,
@@ -658,6 +664,15 @@ def build_parser() -> argparse.ArgumentParser:
         "11GB at jobs=1, while jobs=4 only reached 74s at 28GB peak. Raise "
         "it on machines with more memory; peak memory is roughly "
         "jobs * (~2GB + compile-threads * ~1.5GB)",
+    )
+    fuzz.add_argument(
+        "--devices",
+        default=None,
+        help="comma-separated NPU device indices to spread --jobs workers across "
+        "(e.g. '0,1' on a 2-card box): shard i runs on devices[i %% len(devices)], "
+        "round-robin, so --jobs can exceed the card count. Only affects --target "
+        "npu (the default); ignored for cuda/cpu. Default: unset, meaning every "
+        "worker runs on plain npu (device 0), identical to single-device behavior.",
     )
     fuzz.add_argument(
         "--compile-threads",

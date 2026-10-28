@@ -87,6 +87,23 @@ A5 实测（32GB cgroup、1 块 NPU、**冷编译缓存**、20 个 case；热缓
 
 换到内存更大的机器时可以按上面公式提高两个值；`jobs` 从 2 提到 4 在只有 1 块 NPU 的机器上收益很小（81s → 74s），换成多卡或更大内存机器后需要重新实测。
 
+### 5.3 多卡：`--devices`
+
+`--jobs` 本身只决定分几个进程，不管这些进程具体跑在哪张卡上——不传 `--devices` 时，所有 worker 都会跑在 `npu:0` 上，机器上的其他卡完全闲置。`--devices` 用来把这些 worker 分散到多张卡：
+
+```bash
+# 2 张卡各跑一个 worker
+autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --jobs 2 --devices 0,1
+
+# worker 数超过卡数，轮询分配：shard 0/2 -> npu:0，shard 1/3 -> npu:1
+autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --jobs 4 --devices 0,1
+```
+
+- 只在 `--target npu`（默认值，af-fuzz 目前唯一真正支持的 target）下生效；传了 `--devices` 但 `--target` 不是 `npu` 时直接忽略，不报错。
+- 不传 `--devices` 时行为和之前完全一致（所有 worker 跑 `npu:0`），这是一个纯增量的能力，不影响任何已有用法。
+- 卡号就是 `npu-smi info` 里 `Chip` 那一列的编号（不是 `Phy-ID`），`torch.device(f"npu:{i}")` 直接按这个编号寻址，不需要额外设置 `ASCEND_RT_VISIBLE_DEVICES` 或 `torch.npu.set_device()`。
+- A3 双卡实测（`--jobs 2 --devices 0,1`，20 case，`--op-categories reduce,elewise`）：`19 pass / 1 fail`（失败案例是 `Pow`+`Sigmoid`+`Sqrt` 组合的精度误差，跟多卡无关，是 af-fuzz 本该发现的真实数值差异）；跑批期间用 `npu-smi info` 轮询采样，两张卡（`Chip 0`/`0000:0A:00.0`、`Chip 1`/`0000:0B:00.0`）的 HBM 占用都在持续增长，确认两个 worker 进程真的各自独立编译/执行在对应的卡上，不是都挤在一张卡上排队。
+
 ## 附录：已知 flaky 现象（未定位根因）
 
 第一次在某个 pod 上用 `--seed 1 --n-cases 2` 跑出过 2/2 失败（ascendc 输出几乎全零，CPU eager 输出正常非零值），但换一个 pod 用同样的 `--seed 1 --n-cases 2` 重新跑，2/2 全部通过；随后 `--seed 42 --n-cases 20` 也全部通过。目前判断更像是 NPU 运行时首次初始化/编译缓存相关的偶发问题，不是某个 op/dtype 组合的固定数值 bug，但还没有定位到具体机制。如果后续批量跑出现类似"同一 case 复现不稳定"的情况，优先怀疑这个方向，而不是直接当成 ascendc 的真实 bug 去提单。

@@ -30,7 +30,12 @@ class AscendC(BackendFactory):
 
     def __init__(self, target: str = "npu", optmax: bool = True, **kwargs):
         super().__init__(target, optmax)
-        if self.target not in ("npu", "cuda", "cpu"):
+        # Accept an optional device index suffix ("npu:1") for multi-card
+        # --devices sharding (see fuzz_loop.py's run_fuzz_session_parallel) --
+        # torch.device() below is what actually binds the index; this check
+        # only needs to validate the device *type*.
+        device_type = self.target.split(":", 1)[0]
+        if device_type not in ("npu", "cuda", "cpu"):
             raise ValueError(f"Unknown target: {self.target}. Expected 'npu'.")
         self.device = torch.device(self.target)
         self.mode = kwargs.get("mode")
