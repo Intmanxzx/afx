@@ -99,6 +99,19 @@ ASCENDC_OPSET_A3: List[str] = [
     # see the "excluded from both tiers" note below.
     "torch.TorchReduceSum",  # aten.sum / aten.sum.dim_IntList, float_dtypes()
     "core.ReduceMean",  # x.mean(dim) -> aten.mean, float_dtypes()
+    # core.ReduceMin/core.ReduceMax -- see
+    # patches/ascendc_reduce_min_max_amin_amax.patch (auto-applied, see
+    # _nnsmith_patch.py): forward_fn rewritten from `x.min(dim).values` /
+    # `x.max(dim).values` (traces to the tuple-returning aten.min.dim /
+    # aten.max.dim, whose int64 `indices` half never matches the registered
+    # float/int output dtype set -- see the "excluded from both tiers" note
+    # below for the full explanation, kept there since it also still
+    # describes *why* the un-rewritten ops would fail) to `x.amin(dim)` /
+    # `x.amax(dim)` (aten.amin/aten.amax, single-Tensor output, registered
+    # separately in aten_lowering.py with no since= gate -- fusable on A3
+    # already, A5 only widens the dtype set).
+    "core.ReduceMin",
+    "core.ReduceMax",
     # view / layout ops (needed as connective tissue between compute ops;
     # NNSmith generates these constantly to reconcile shapes)
     "core.Reshape",  # aten.reshape, float_dtypes() (no since= gate; A5 widens to +int32/int64)
@@ -252,6 +265,7 @@ OP_CATEGORIES: Dict[str, Set[str]] = {
     # outputs (sum/mean over a dim).
     "reduce": {
         "torch.TorchReduceSum", "core.ReduceMean",
+        "core.ReduceMin", "core.ReduceMax",
     },
     # Shape/layout-only ops: no arithmetic, just which position holds which
     # value (or how many positions exist).
@@ -319,22 +333,25 @@ def filter_opset_by_categories(
 # Ops NNSmith's default catalog contains that are intentionally excluded from
 # *both* tiers above:
 #
-# - core.ReduceMin / core.ReduceMax: NNSmith's forward_fn calls `x.min(dim)` /
-#   `x.max(dim)`, which traces to `aten.min.dim` / `aten.max.dim` -- the
-#   2-tuple-returning overload (values, indices), not the reduce-to-scalar
-#   `aten.min`/`aten.max` overload. `_LoweringGuard.has()` returns True for
-#   `.dim` too (registered via the whole `OpOverloadPacket`, which covers
-#   every overload with the same dtype tuple), but the dtype check runs
-#   against the *node's full output type* before the `.values`/`.indices`
-#   split: the indices half is always int64, which is never in the
-#   registered (fp16, fp32, bf16) output set, so the `.dim` node always
-#   fails the check and falls back -- confirmed via the live
+# - core.ArgMin / core.ArgMax: unlike core.ReduceMin/core.ReduceMax (now
+#   fusable -- see patches/ascendc_reduce_min_max_amin_amax.patch above),
+#   these ops' *output* is specifically the indices, not the values --
+#   NNSmith's forward_fn traces to `aten.min.dim`/`aten.max.dim` followed by
+#   a `.indices` getitem (not `.values`), and there is no amin/amax-style
+#   alternate overload that returns indices alone -- `aten.argmin`/
+#   `aten.argmax` exist as separate ops but NNSmith's ArgMin/ArgMax classes
+#   don't trace to them (confirmed by reading forward.py: both still use the
+#   `.dim`+getitem construction, same root cause as the original
+#   ReduceMin/ReduceMax problem, but with no amin/amax-equivalent escape
+#   hatch since indices output is the whole point here). The underlying
+#   `.dim` node itself still always fails ascendc's output-dtype check for
+#   the same reason explained in the patch's comment above (int64 `indices`
+#   never in the registered float/int output set) -- confirmed via the live
 #   fusion-diagnostics fallback log (`'target': 'aten.max.dim', 'reason':
-#   'output dtype torch.int64 not in (...)'`), not just static reading of
-#   aten_lowering.py. This is a structural limitation, not a dtype-tier gap,
-#   so it applies identically on A5 and isn't added as an A5-only addition.
+#   'output dtype torch.int64 not in (...)'`). Structural limitation, applies
+#   identically on A5.
 #
-# - core.Log2, core.Xor, core.ArgMin, core.ArgMax, core.PReLU, core.Softmax
+# - core.Log2, core.Xor, core.PReLU, core.Softmax
 #   (not registered directly; only a `_softmax` decomposition exists, gated
 #   dynamic-shape-only -- doesn't widen the registered-primitive set),
 #   pooling (MaxPool2d/AvgPool2d), conv (Conv1d/NCHWConv2d), BatchNorm2d,

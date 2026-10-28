@@ -163,10 +163,36 @@ def _function_source_contains_probe(
     substring unique to the patched line (e.g. a call the unpatched source
     never makes) -- not matched against the literal unpatched text, or this
     would report "already applied" on a pristine checkout.
+
+    Not usable for `nnsmith.materialize.torch.forward`: that module defines
+    dozens of distinct functions all literally named `forward_fn` (one per
+    `@operator_impl(...)`-decorated definition), so `getattr(module,
+    "forward_fn")` resolves to whichever one happens to be bound *last* at
+    module scope, not the one named by `qualname`. Use
+    `_module_source_contains_probe` for patches that touch that file.
     """
 
     def probe() -> bool:
         return _probe_function_source_contains(module_path, qualname, needle)
+
+    return probe
+
+
+def _module_source_contains_probe(module_path: str, needle: str) -> _Probe:
+    """Probe factory: "does `<module_path>`'s source file, as a whole,
+    contain `needle`?"
+
+    Coarser than `_function_source_contains_probe`: it checks the entire
+    module's source text rather than one function's, so it works even when
+    the patched function can't be looked up by name (e.g.
+    `nnsmith.materialize.torch.forward`, which redefines `forward_fn` at
+    module scope once per `@operator_impl(...)` registration -- `getattr`
+    only ever reaches the last one). `needle` should be unique enough
+    within the whole file that it can't appear anywhere by coincidence.
+    """
+
+    def probe() -> bool:
+        return _probe_module_source_contains(module_path, needle)
 
     return probe
 
@@ -271,6 +297,26 @@ _ASCENDC_PATCHES: tuple[_AscendcPatch, ...] = (
         # ascendc_refine_weights_value_dist.patch's `value_dist_mode` probe).
         probe=_function_has_param_probe(
             "nnsmith.graph_gen", "BaseGen.__init__", "dim_dist_mode"
+        ),
+    ),
+    _AscendcPatch(
+        filename="ascendc_reduce_min_max_amin_amax.patch",
+        # No new symbol/parameter/attribute either -- this patch only
+        # rewrites ReduceMin/ReduceMax's forward_fn bodies in
+        # nnsmith/materialize/torch/forward.py, replacing
+        # `x.min(dim).values`/`x.max(dim).values` (traces to the
+        # tuple-returning aten.min.dim/aten.max.dim, which ascendc's
+        # _LoweringGuard always falls back on -- the int64 `indices` half of
+        # that tuple never matches the registered float/int output dtype
+        # set) with `x.amin(dim)`/`x.amax(dim)` (traces to aten.amin/
+        # aten.amax, single-Tensor output, registered separately and
+        # actually fusable). `forward.py` redefines `forward_fn` at module
+        # scope once per `@operator_impl(...)` registration, so it can't be
+        # probed by qualname (see _function_source_contains_probe's
+        # docstring) -- use the whole-module probe instead, keyed on a
+        # substring the unpatched file never contains.
+        probe=_module_source_contains_probe(
+            "nnsmith.materialize.torch.forward", "x.amin(op.extra_attrs"
         ),
     ),
 )
@@ -429,6 +475,22 @@ def _probe_function_source_contains(
         for part in qualname.split("."):
             obj = getattr(obj, part)
         source = inspect.getsource(obj)
+    except (ImportError, OSError):
+        return False
+    return needle in source
+
+
+def _probe_module_source_contains(module_path: str, needle: str) -> bool:
+    """True iff `needle` appears anywhere in `module_path`'s source file.
+
+    Same import-failure handling as `_probe_function_has_param` above: an
+    `ImportError` or `OSError` (source file missing/unreadable) means "we
+    cannot currently tell" and is treated as "not yet applied" rather than
+    propagated.
+    """
+    try:
+        module = importlib.import_module(module_path)
+        source = inspect.getsource(module)
     except (ImportError, OSError):
         return False
     return needle in source

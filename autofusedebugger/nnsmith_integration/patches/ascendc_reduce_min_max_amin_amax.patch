@@ -1,0 +1,25 @@
+diff --git a/nnsmith/materialize/torch/forward.py b/nnsmith/materialize/torch/forward.py
+index 02615f0..7cb1517 100644
+--- a/nnsmith/materialize/torch/forward.py
++++ b/nnsmith/materialize/torch/forward.py
+@@ -384,16 +384,16 @@ def forward_fn(op: TorchReduceSum):
+ @operator_impl(ReduceMin)
+ def forward_fn(op: ReduceMin):
+     if op.extra_attrs["reduce_dim"] is not None:
+-        return lambda x: x.min(op.extra_attrs["reduce_dim"]).values
+-    return lambda x: x.min()
++        return lambda x: x.amin(op.extra_attrs["reduce_dim"])
++    return lambda x: x.amin()
+ 
+ 
+ # ReduceMax
+ @operator_impl(ReduceMax)
+ def forward_fn(op: ReduceMax):
+     if op.extra_attrs["reduce_dim"] is not None:
+-        return lambda x: x.max(op.extra_attrs["reduce_dim"]).values
+-    return lambda x: x.max()
++        return lambda x: x.amax(op.extra_attrs["reduce_dim"])
++    return lambda x: x.amax()
+ 
+ 
+ # ReduceMean
