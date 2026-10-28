@@ -64,7 +64,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | 分类 | 含义 | 代表算子（不含 `Input`/`Constant` 这类图生成器自带的叶子节点，它们不受 `--op-categories` 限制） |
 |---|---|---|
 | `elewise` | 逐元素算子：输出每个位置只依赖输入同位置的值，二元广播算子（Add/Sub/...）也算在内 | `Add`/`Sub`/`Mul`/`Div`/`Pow`/`Abs`/`Neg`/`Sigmoid`/`Clip`/`Sqrt`/`Equal`/`And`/`Or`/`Where`/`Sin`/`Cos`/`Tan`/`GELU` 等 |
-| `reduce` | 归约算子：按某个轴把多个位置合并成更少的输出 | `TorchReduceSum`/`ReduceMean`/`ReduceMin`/`ReduceMax` |
+| `reduce` | 归约算子：按某个轴把多个位置合并成更少的输出。`TorchReduceSum`/`ReduceMin`/`ReduceMax`/`ReduceMean` 支持单轴或多轴归约（`dim` 是单个 int 或 int 列表，轴数随机，详见 `ascendc_multi_axis_reduce.patch`）；`ArgMin`/`ArgMax`/`Squeeze` 语义上只支持单轴，不受影响 | `TorchReduceSum`/`ReduceMean`/`ReduceMin`/`ReduceMax` |
 | `view` | 纯形状/布局变换，不做算术运算 | `Reshape`/`Transpose`/`Squeeze`/`Concat`/`Cast`/`Slice`/`ExpandLast1~4`/`Tril`/`Triu` |
 | `gather` | 索引/查表类算子，输出位置由单独的 index 张量决定 | `IndexSelect`/`Gather` |
 | `norm` | 归一化复合算子，内部是 reduce+elewise 的组合，单独归一类 | `LayerNorm` |

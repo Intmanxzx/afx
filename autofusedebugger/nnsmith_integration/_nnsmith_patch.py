@@ -319,6 +319,27 @@ _ASCENDC_PATCHES: tuple[_AscendcPatch, ...] = (
             "nnsmith.materialize.torch.forward", "x.amin(op.extra_attrs"
         ),
     ),
+    _AscendcPatch(
+        filename="ascendc_multi_axis_reduce.patch",
+        # Lets ReduceSum/ReduceMin/ReduceMax/ReduceMean pick *multiple*
+        # axes (reduce_dim becomes a list) instead of exactly one, via a
+        # new MultiAxisReduceBase(ReduceBase) that only those four
+        # subclass -- Squeeze/ArgMin/ArgMax keep the single-axis base
+        # unchanged (ArgMin/ArgMax's PyTorch semantics are single-axis
+        # only; Squeeze's single-axis default is still correct). The
+        # axis *count* is chosen in deduct_inp_ranks_and_dtype (before
+        # any input tensor exists, output rank only) and cached in
+        # extra_attrs["reduce_dim_count"]; the axis *positions* are
+        # chosen later via the new weighted_axis_sample() (a
+        # without-replacement counterpart to ascendc_rank_and_axis_
+        # weighting.patch's weighted_axis_choice(), applied earlier in
+        # this tuple) once the real input rank is known. forward.py needs
+        # no change: TorchReduceSum/ReduceMin/ReduceMax/ReduceMean's
+        # forward_fns already pass reduce_dim straight through to
+        # x.sum/x.amin/x.amax/x.mean, and those all accept a list dim
+        # exactly like an int one.
+        probe=_import_symbol_probe("MultiAxisReduceBase"),
+    ),
 )
 
 
