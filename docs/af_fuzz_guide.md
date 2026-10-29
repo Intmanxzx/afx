@@ -92,7 +92,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 | 文件/目录 | 内容 |
 |---|---|
 | `summary.json` | 本批次全部 case 的结构化结果（`total`/`passed`/`failed`/`gen_errors` 汇总 + 每条 `CaseResult`） |
-| `summary.html` | 可视化报告，字段见下面 2.2 |
+| `summary.html` | 可视化报告，两个页签：「汇总统计」（默认打开，图表总览）和「用例列表」（逐 case 表格），字段见下面 2.2/2.3 |
 | `bug-<index>-<case_seed>/` | 每个 **失败**（`status == "fail"`）用例单独落盘的目录，内容见下表；`pass`/`gen_error` 的 case 默认不落盘 |
 
 `bug-<index>-<case_seed>/` 目录内容：
@@ -106,7 +106,23 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 | `meta.json` | `system`/`symptom`/`stage`/`version` 等元信息 |
 | `repro.py` | 可直接运行的单 case 复现脚本 |
 
-### 2.2 `summary.html` 字段说明
+### 2.2 「汇总统计」页签
+
+打开 `summary.html` 默认看到的页签，五张图，都是基于当前批次全部 case 的 `op_types`/`input_shapes`/`output_shapes`/`input_dtypes`/`output_dtypes`/`status` 在浏览器端实时聚合出来的（不需要额外的命令行参数，每次生成报告都自动带上）：
+
+| 图 | 统计口径 |
+|---|---|
+| 总体 pass/fail/gen_error | 环形图，中心是 pass rate 大数字；三态计数 + 占比在图例 |
+| 按算子分类 | 竖直堆叠柱状图，按 `ascendc_opset.py` 的 `OP_CATEGORIES`（`elewise`/`reduce`/`view`/`gather`/`norm`/`matmul`）分组统计每类的 pass/fail/gen_error 数。**一个 case 可能同时落入多个分类**（比如一张图里同时有 `Add` 和 `ReduceMin`，会同时计入 `elewise` 和 `reduce`），所以各分类计数之和可能大于 `total`；算子不属于任何已知分类时归到「(未分类)」 |
+| 按 shape 档位（最大单维度值） | 把 case 所有 input/output 张量形状里最大的单个维度值分到 `≤8`/`≤64`/`≤512`/`≤4096`/`>4096` 五档统计 |
+| 按 shape 档位（最大元素数） | 同上，但用张量形状各维度的乘积（元素总数）分档：`≤1K`/`≤64K`/`≤1M`/`≤64M`/`>64M` |
+| 按 dtype | 汇总 case 所有 input/output 张量出现过的 dtype（去重），一个 case 可能同时出现多种 dtype（比如混合精度图），同样会被重复计入多个 dtype 桶 |
+
+这五张图都是纯前端 JS 计算（`summary_html.py` 里的 `renderStats()`），刷新页面/切换页签不需要重新生成报告。
+
+图表配色用的是经过色觉障碍（CVD）安全验证的三色（pass `#12805e` / fail `#d03b3b` / gen_error `#6250d6`，与「用例列表」表格里状态徽章的颜色是两套独立配色）；柱状图为细柱 + 段间留白 + 整洁刻度 y 轴，悬停/Tab 键聚焦任一柱段会弹出该分类的 pass/fail/gen_error 细分浮层。
+
+### 2.3 「用例列表」页签：字段说明
 
 | 列名 | 对应字段 | 含义 |
 |---|---|---|

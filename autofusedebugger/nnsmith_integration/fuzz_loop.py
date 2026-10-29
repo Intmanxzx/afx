@@ -85,7 +85,10 @@ from autofusedebugger.inductor_autofuse import (
     reset_autofuse_diagnostics,
 )
 from autofusedebugger.nnsmith_integration.ascendc_backend import AscendC
-from autofusedebugger.nnsmith_integration.ascendc_opset import probe_ascendc_opset
+from autofusedebugger.nnsmith_integration.ascendc_opset import (
+    OP_CATEGORIES,
+    probe_ascendc_opset,
+)
 from autofusedebugger.nnsmith_integration.repro import write_repro_script
 from autofusedebugger.nnsmith_integration.summary_html import write_summary_html
 
@@ -631,7 +634,7 @@ def run_fuzz_session(
         summary_dict = summary.to_dict()
         with open(out_dir / "summary.json", "w") as f:
             json.dump(summary_dict, f, indent=2, ensure_ascii=False)
-        write_summary_html(summary_dict, out_dir / "summary.html")
+        write_summary_html(summary_dict, out_dir / "summary.html", op_categories=OP_CATEGORIES)
 
     return summary
 
@@ -783,6 +786,6 @@ def run_fuzz_session_parallel(
     summary_dict = merged.to_dict()
     with open(out_dir / "summary.json", "w") as f:
         json.dump(summary_dict, f, indent=2, ensure_ascii=False)
-    write_summary_html(summary_dict, out_dir / "summary.html")
+    write_summary_html(summary_dict, out_dir / "summary.html", op_categories=OP_CATEGORIES)
 
     return merged
