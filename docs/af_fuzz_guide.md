@@ -81,7 +81,9 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 
 每个 case 用什么 dtype 不是"固定 fp32"也不是完全均匀随机，是加权随机：候选集是 `--soc-tier`/`--op-categories` 对应的算子实际支持的 dtype 并集（见 `ascendc_opset.py` 的探测缓存），float 类（f16/f32/f64/bf16）权重是 int/uint/bool 类的 4 倍，但两边都有机会被抽到——一个 case 内所有张量的 dtype 由图的第一个节点决定后沿图继承（大多数算子是"输入 dtype = 输出 dtype"），只有遇到 `Cast` 这类显式允许转换 dtype 的算子，或者图里出现独立的新分支，才会重新随机换一次。
 
-实测：同样的 `--op-categories elewise,reduce`，40 个 case 的 dtype 分布是 `{f32: 30, f64: 27, f16: 17, i8: 12, i16: 8, i32: 7, i64: 6, bool: 5, u8: 2, c128: 2}`，覆盖了 float16/32/64、int8/16/32/64、uint8、bool、complex128 共 10 种——`bf16` 目前暂未出现，是因为这批算子在当前 A5 环境的探测结果里本身就没有 bf16 组合（不是生成逻辑的问题，是 opset 探测阶段的已知限制）。
+**这里的候选集口径 2026-10-29 起变了一次**：之前"候选集"只看探测缓存——某个 dtype 组合只要编译+执行不报错（哪怕是走 eager fallback，根本没碰到 ascendc 的融合 lowering）就会被当成合法候选，典型例子是 `torch.TorchReduceSum`：`aten.sum.dim_IntList` 真实只注册了 `float16`/`float32`/`bfloat16`/`int32` 四种，但探测缓存里曾经出现过 `complex64`/`complex128`/`uint8`/`int8`/`int16`/`int64`/`float64` 一共 10 种组合——后面这 7 种全是沿 eager fallback 跑通的，从来没有走过融合，被抽到也只是在拖低"真实验证了融合能力"的 case 占比。现在 `probe_ascendc_opset()` 会把探测结果再跟 `inductor_npu_ext` 真实的 `_LoweringGuard` 注册表交叉核对一遍（见 `lowering_dtype_filter.py`），只保留真的在融合白名单里的组合；`matmul`/`Linear` 额外处理了 `_LoweringGuard` 查不出来的 A3 SoC 门槛。只覆盖有直接 `_LoweringGuard` 注册的算子——`core.LayerNorm`/`core.GELU`/`core.LeakyReLU` 这类只能靠 decomposition 达成融合、自己没注册记录的算子不受影响，继续信任探测结果。
+
+实测（此修复前）：同样的 `--op-categories elewise,reduce`，40 个 case 的 dtype 分布是 `{f32: 30, f64: 27, f16: 17, i8: 12, i16: 8, i32: 7, i64: 6, bool: 5, u8: 2, c128: 2}`——这份分布里的 `f64`/`c128` 占比明显偏高，现在已知主要是上面说的"探测缓存混入了纯 fallback 组合"造成的，不代表这些算子真的有这么高比例的 case 在融合路径上用到这些 dtype；`bf16` 目前暂未出现，是因为这批算子在当前 A5 环境的探测结果里本身就没有 bf16 组合（不是生成逻辑的问题，是 opset 探测阶段的已知限制）。
 
 ## 2. 输出结果
 

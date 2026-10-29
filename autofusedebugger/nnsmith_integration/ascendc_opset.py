@@ -36,6 +36,7 @@ live `torch_npu` installation when available.
 
 from __future__ import annotations
 
+import importlib
 import os
 from typing import Dict, List, Optional, Sequence, Set, Type
 
@@ -392,6 +393,58 @@ def filter_ascendc_opset(
     return filtered
 
 
+# dtype pre-filtering against `_LoweringGuard`'s *real* registered dtype
+# sets -- see `lowering_dtype_filter.py`'s module docstring for why this
+# exists. Only the thin wiring (NNSmith `DType` -> `torch.dtype` via its own
+# `.torch()` method, and the live `_LoweringGuard` lookup) lives here; the
+# actual filtering logic is plain functions in that module with no
+# nnsmith/torch_npu import of their own, so it's unit-testable without this
+# project's heavy import chain.
+from .lowering_dtype_filter import filter_probed_dtypes  # noqa: E402
+
+
+def _torch_dtype_support(op_overload, soc_tier: str):
+    """`_LoweringGuard.dtypes_support(op_overload)` as `(in_dtypes, out_dtypes)`
+    of real `torch.dtype`.
+
+    Deliberately does NOT `import inductor_npu_ext.lowering.common` by that
+    bare name: on a machine where the real ascendc backend is the one
+    *bundled inside* `torch_npu` (`torch_npu._inductor.ascendc`, the
+    common case -- see `activate_autofuse_backend()`'s two candidate roots),
+    a same-named but unrelated standalone `inductor_npu_ext` can still be
+    importable from some other path on `sys.path` (confirmed to happen on
+    real A5 hardware: a stray checkout at a completely different location
+    was first on `sys.path`). Importing *that* one re-runs its own
+    module-level custom-op registrations, which collide with the ones the
+    real, already-active backend already registered and crashes with
+    `RuntimeError: Tried to register an operator ... multiple times`.
+    `activate_autofuse_backend()` is the one place that already knows which
+    root is actually live (idempotent to call again here -- the module is
+    already imported by the time any op probing runs, so this is just a
+    cheap `sys.modules` lookup, not a fresh import); building this lookup's
+    import path from its answer guarantees hitting the same package the
+    rest of this process is already using, not a same-named impostor.
+    """
+    from autofusedebugger.inductor_autofuse import activate_autofuse_backend  # pylint: disable=import-outside-toplevel
+
+    package_root = activate_autofuse_backend()
+    common = importlib.import_module(f"{package_root}.lowering.common")
+    return common._LoweringGuard.dtypes_support(op_overload)  # pylint: disable=protected-access
+
+
+def _filter_probed_dtypes_by_lowering_guard(
+    op_name: str, in_dtypes: list, out_dtypes: list, soc_tier: str
+) -> tuple:
+    return filter_probed_dtypes(
+        op_name,
+        in_dtypes,
+        out_dtypes,
+        soc_tier,
+        to_torch_dtypes=lambda combo: tuple(dt.torch() for dt in combo),
+        dtype_support=_torch_dtype_support,
+    )
+
+
 def probe_ascendc_opset(
     model_cls,
     factory,
@@ -599,16 +652,30 @@ def probe_ascendc_opset(
     for op in candidate_ops:
         if op.name() not in topset_config:
             continue
-        op.in_dtypes = topset_config[op.name()].in_dtypes
-        op.out_dtypes = topset_config[op.name()].out_dtypes
+        # The on-disk cache stores the raw "compiles and runs at all" probe
+        # result, unfiltered -- `_filter_probed_dtypes_by_lowering_guard()`
+        # is applied fresh on every call instead of baked into the cache, so
+        # updating the dtype-support mapping below never requires deleting
+        # or invalidating anyone's cache file.
+        in_dtypes, out_dtypes = _filter_probed_dtypes_by_lowering_guard(
+            op.name(),
+            topset_config[op.name()].in_dtypes,
+            topset_config[op.name()].out_dtypes,
+            soc_tier,
+        )
+        if not in_dtypes:
+            continue
+        op.in_dtypes = in_dtypes
+        op.out_dtypes = out_dtypes
         opset.append(op)
 
     if not opset:
         raise RuntimeError(
             f"probe_ascendc_opset(soc_tier={soc_tier!r}) probed "
             f"{len(candidate_ops)} candidate ops but none survived "
-            f"(compiled+ran successfully against {factory}) -- check "
-            f"{cache_path} for per-op failure details, or delete it to "
-            "force a fresh probe."
+            f"(compiled+ran successfully against {factory}, AND confirmed "
+            "actually registered in ascendc's _LoweringGuard rather than a "
+            f"pure fallback) -- check {cache_path} for per-op probe failure "
+            "details, or delete it to force a fresh probe."
         )
     return filter_opset_by_categories(opset, op_categories)
