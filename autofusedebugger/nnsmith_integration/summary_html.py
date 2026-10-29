@@ -368,12 +368,18 @@ const DIM_BUCKETS = [
   {{ label: '\\u226464', test: v => v <= 64 }},
   {{ label: '\\u2264512', test: v => v <= 512 }},
   {{ label: '\\u22644096', test: v => v <= 4096 }},
-  {{ label: '>4096', test: () => true }},
+  {{ label: '\\u226416384', test: v => v <= 16384 }},
+  {{ label: '\\u226465536', test: v => v <= 65536 }},
+  {{ label: '\\u2264131072', test: v => v <= 131072 }},
+  {{ label: '>131072', test: () => true }},
 ];
 const ELEM_BUCKETS = [
   {{ label: '\\u22641K', test: v => v <= 1e3 }},
+  {{ label: '\\u226416K', test: v => v <= 16e3 }},
   {{ label: '\\u226464K', test: v => v <= 64e3 }},
+  {{ label: '\\u2264256K', test: v => v <= 256e3 }},
   {{ label: '\\u22641M', test: v => v <= 1e6 }},
+  {{ label: '\\u226416M', test: v => v <= 16e6 }},
   {{ label: '\\u226464M', test: v => v <= 64e6 }},
   {{ label: '>64M', test: () => true }},
 ];
