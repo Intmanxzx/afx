@@ -304,6 +304,24 @@ TENSOR_SCALE_PROFILES: dict[str, dict[str, object]] = {
         "timeout_ms": 300000,
         "dim_dist_mode": "log_normal",
     },
+    # default: the new out-of-the-box tier (--tensor-scale's default, see
+    # cli.py) -- range is [1, 128k] rather than 16k/32k/64k/128k's [8, ...]
+    # since this tier isn't targeting a specific seq_len-style scenario, just
+    # giving every batch broad shape coverage by default. max_elem_per_tensor
+    # and timeout_ms are reused from "128k" as-is (same upper bound, so its
+    # already-vetted safety margins apply unchanged) rather than re-derived.
+    # dim_dist_mode="half_normal" (unlike 16k/32k/64k/128k's "log_normal",
+    # which peaks at an interior value): density is highest at the range's
+    # minimum and strictly decreases toward the maximum, so small shapes are
+    # the most common outcome and large shapes get rarer the larger they
+    # get, with no interior mode. See _sample_dim_size()'s docstring in
+    # ascendc_dim_size_distribution.patch for the exact sigma and why.
+    "default": {
+        "max_elem_per_tensor": 131072 * 4,
+        "concr_ph_dim_rng": (1, 131072),
+        "timeout_ms": 300000,
+        "dim_dist_mode": "half_normal",
+    },
 }
 
 
@@ -319,7 +337,7 @@ def run_single_case(
     method: str = "symbolic-cinit",
     max_elem_per_tensor: Optional[int] = None,
     concr_ph_dim_rng: Optional[tuple[int, int]] = None,
-    tensor_scale: str = "small",
+    tensor_scale: str = "default",
     out_dir: Optional[str | Path] = None,
     debug: bool = False,
     value_dist_mode: str = "uniform",
@@ -497,7 +515,7 @@ def run_repro_case(
     method: str = "symbolic-cinit",
     max_elem_per_tensor: Optional[int] = None,
     concr_ph_dim_rng: Optional[tuple[int, int]] = None,
-    tensor_scale: str = "small",
+    tensor_scale: str = "default",
     target: str = "npu",
     debug: bool = True,
     soc_tier: str = "A3",
@@ -545,7 +563,7 @@ def run_fuzz_session(
     method: str = "symbolic-cinit",
     max_elem_per_tensor: Optional[int] = None,
     concr_ph_dim_rng: Optional[tuple[int, int]] = None,
-    tensor_scale: str = "small",
+    tensor_scale: str = "default",
     seed: Optional[int] = None,
     target: str = "npu",
     index_offset: int = 0,
@@ -696,7 +714,7 @@ def run_fuzz_session_parallel(
     method: str = "symbolic-cinit",
     max_elem_per_tensor: Optional[int] = None,
     concr_ph_dim_rng: Optional[tuple[int, int]] = None,
-    tensor_scale: str = "small",
+    tensor_scale: str = "default",
     seed: Optional[int] = None,
     target: str = "npu",
     jobs: int = 1,
