@@ -1,0 +1,96 @@
+# AscendC / Triton-Ascend 性能对比
+
+在 `af-fuzz` 上启用独立的性能模式：
+
+```bash
+autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf \
+  --n-cases 10 --seed 42 --soc-tier A3 --op-categories elewise,reduce \
+  --warmup-steps 3 --profile-steps 10
+```
+
+单 case 重跑：保持原生成参数，使用 `--repro-seed <case_seed>`，同时保留 `--compare-performance`。无需模型、图、权重或输入文件。性能模式会导出 profiling、CSV、请求配置和 JSON/HTML 汇总。
+
+## 测量口径
+
+每种后端先完成编译、一次正确性校验和配置数量的预热，然后同步 NPU。正式 profiling 只执行相同模型和已在设备上的输入，采集 `--profile-steps` 次；输入/权重拷贝、编译、预热和 CPU 校验均在采集区间外。
+
+**每步 kernel 总耗时（μs）= `op_statistic.csv` 中所有算子类型的 `Total Time` 求和 / 实际采集步数。** `Total Time` 已包含该算子的所有出现次数，不再乘 Occurrences，也不累加 Average Time。该指标是 kernel 耗时之和，不是 Python 端到端延迟。默认 Level2 / Text 配置参考 `af_add_ge.py`。
+
+AscendC 加速比 = Triton-Ascend 每步耗时 / AscendC 每步耗时，大于 1 表示 AscendC 更快。worker 超时、profile 缺失、耗时为零或重建出的 case 不同都会标为不可比，不生成有效加速比。精度结果独立展示，不参与性能 pass/fail 判定。数值不一致但仍能执行的后端保留实测耗时及正确性状态，供检查。
+
+## 隔离与可比性
+
+- 两个后端分别启动新的 Python 进程。AscendC 在启动前设置环境变量并传入 `torch.compile` 的 AscendC 选项；Triton-Ascend 在启动前删除继承的 `TORCHINDUCTOR_NPU_BACKEND`，且不传 `npu_backend` 选项，使用 NPU 默认后端。
+- 父进程探测 AscendC 候选集合，只传 seed、生成配置和算子/dtype 候选快照。子进程使用共享生成模块重新构造 case，并核对图、完整权重、输入和 CPU oracle 的内容指纹。
+- case 和后端串行测量，`--jobs` 在性能模式中不参与调度。`--devices` 可轮询分配 case，两种后端始终使用该 case 的同一张卡；每个 case 交替后端先后顺序。请在设备无其他负载时解读性能数据。
+- 两个后端使用各自的编译缓存，每次采集使用新的 profiling 目录，避免导出文件或缓存混用。编译及预热不计入性能数值。
+
+## 参数与输出
+
+| 参数 | 默认值 | 含义 |
+|---|---|---|
+| `--compare-performance` | 关闭 | 开启后端性能对比 |
+| `--warmup-steps` | 3 | 编译完成后的预热步数 |
+| `--profile-steps` | 10 | 实际 profiling 的迭代次数 |
+| `--perf-timeout-s` | 600 | 每个后端子进程总超时，包括编译、预热和导出 |
+
+原有生成参数 `--method`、`--max-nodes`、`--tensor-scale`、`--max-elem-per-tensor`、`--timeout-ms`、`--value-dist-mode`、`--soc-tier`、`--op-categories`、`--seed` / `--repro-seed` 继续生效。`--timeout-ms` 只约束构图，`--perf-timeout-s` 约束整个后端 worker。性能模式始终导出 profiling，`--debug` / `--no-debug` 不控制这些性能数据，也不导出模型文件。
+
+- `summary.json` / `summary.html`：沿用原汇总报告并添加性能对比和性能对比汇总页签；浏览器表头可排序。
+- `cases/<case_id>/<backend>/run-*/`：本轮配置、worker 结果和日志，以及 profiling 的原始导出目录。
+- `compile_cache/<backend>/`：互相隔离的编译缓存。
+
+返回码：全部 case 有有效对比时为 0；生成失败、后端失败、数值不一致或不可比时为 1；配置错误为 2。
+
+## 模块边界
+
+`nnsmith_integration/generation.py` 为正确性模式和性能模式共用的确定性生成实现。性能代码位于 `nnsmith_integration/performance/`：
+
+| 模块 | 职责 |
+|---|---|
+| `backends.py` | 后端定义、启动环境和编译选项；新增后端的扩展入口 |
+| `cases.py` | 候选快照及完整 case 身份校验 |
+| `profiling.py` | Torch-NPU profiling 采集适配器 |
+| `statistics.py` | CSV 定位、单位换算及计时聚合 |
+| `worker.py` | 一个后端的重建、编译、校验、预热及采集 |
+| `runner.py` | 进程启动、超时及子进程组清理 |
+| `session.py` | 串行配对调度与结果汇总 |
+| `schema.py` / `report.py` / `cli.py` | 数据契约、报告与命令行接入 |
+
+## 旧 Python 3.12 环境的编译器兼容性
+
+此前 Python 3.12 环境中 PyTorch 2.14 的 ATen 头文件要求 C++20，而已安装的 Triton-Ascend launcher 仍使用 `-std=c++17`，会在 `precompiled.h.gch` 阶段编译失败。应优先安装与 torch / torch_npu / CANN 匹配的 Triton-Ascend 版本。工具将此情况报告为后端错误、耗时缺失及不可比，不会生成虚假的加速比。
+
+为验证采集与对比链路，本次只在 `/tmp` 创建了编译器包装器，通过当前 Triton 支持的 `CC` 环境变量选择它，将 C++17 参数改为 C++20；没有修改虚拟环境的安装文件，也没有修改后端选择或 kernel 计时口径。该设置不是工具默认行为。需要在相同旧环境临时验证时，可使用：
+
+```bash
+cat > /tmp/af-perf-cxx20 <<'SH'
+#!/bin/bash
+args=()
+for arg in "$@"; do
+  if [ "$arg" = "-std=c++17" ]; then
+    args+=("-std=c++20")
+  else
+    args+=("$arg")
+  fi
+done
+exec /usr/bin/g++ "${args[@]}"
+SH
+chmod +x /tmp/af-perf-cxx20
+CC=/tmp/af-perf-cxx20 autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf --n-cases 1 --seed 42
+```
+
+JSON 的每个后端结果包含运行时版本、设备、实际传入的编译选项及相关环境变量，便于核对后端隔离和测试条件。
+
+## summary.html 性能页签
+
+性能模式沿用原 `summary.html` 的“汇总统计”和“用例列表”（功能/精度结果），并增加：
+
+- **性能对比**：逐例展示序号、性能状态、seed、计算节点数、两种后端每步 kernel 数、执行耗时（秒）、每步 kernel 总耗时（μs）、加速比、算子集合、输入/输出 shape 与 dtype、独立精度状态、异常详情。支持按性能状态、算子/seed 筛选以及点击表头排序。
+- **性能对比汇总**：总体占比，以及算子分类、dtype、最大维度值、最大元素数、节点数、AscendC 每步 kernel 数等维度的 pass/fail/error 分布。总体 pass rate 的分母为全部用例；多算子类别、多 dtype 可重复计入对应分组。
+
+性能 **pass** 表示 AscendC kernel 时间小于或等于 Triton-Ascend；**fail** 表示 AscendC 更慢；**error** 表示没有有效配对计时（后端失败、耗时无效或指纹不匹配）。性能状态只按有效计时判断，精度结果独立展示。CSV 没有 Count 列时 kernel 数显示“—”；有 Count 列时为所有行计数求和再除以采集步数。
+
+执行耗时是后端 worker 的墙钟时间，包含进程启动、构图、编译、精度校验、预热、采集和导出，**不参与性能判定**。每步 kernel 耗时始终使用 profiling CSV 的 Total Time 口径。JSON 增加 `performance_status`、`performance_passed`、`performance_failed`，保留既有 `status`/`comparable` 调度与采集状态；性能 fail 本身不改变退出码，采集或精度异常仍返回 1。
+
+报告渲染拆分为共享 `summary_html.py`、性能适配器 `performance/report.py`、页签组件 `performance/tabs.py`、判定逻辑 `performance/metrics.py`，便于后续扩展指标和分组。

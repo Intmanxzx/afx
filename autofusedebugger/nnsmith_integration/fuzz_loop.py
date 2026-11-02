@@ -60,16 +60,12 @@ import os
 import random
 import time
 import traceback
-from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from nnsmith.abstract.dtype import DType
 from nnsmith.error import InternalError
-from nnsmith.graph_gen import model_gen, set_z3_state
-from nnsmith.materialize import Model, TestCase
-from nnsmith.util import set_seed
+from nnsmith.materialize import Model
 
 # Phase 2: dtype is no longer locked to fp32. BaseGen.__init__ (graph_gen.py)
 # already intersects whatever dtype_choices we pass with the opset's own
@@ -89,6 +85,10 @@ from autofusedebugger.nnsmith_integration.ascendc_backend import AscendC
 from autofusedebugger.nnsmith_integration.ascendc_opset import (
     OP_CATEGORIES,
     probe_ascendc_opset,
+)
+from autofusedebugger.nnsmith_integration.generation import (
+    GenerationConfig, generate_case, TENSOR_SCALE_PROFILES,
+    _seeded_solver_context, _seeded_materialization, _tolerance_for_ir,
 )
 from autofusedebugger.nnsmith_integration.repro import write_repro_script
 from autofusedebugger.nnsmith_integration.summary_html import write_summary_html
@@ -155,7 +155,11 @@ class FuzzSummary:
 
 def _truncate(text: str, limit: int = 500) -> str:
     text = text.strip()
-    return text if len(text) <= limit else text[:limit] + " ...[truncated]"
+    if len(text) <= limit:
+        return text
+    # Keep the exception type/message at the end even when call paths grow.
+    head = limit // 3
+    return text[:head] + " ...[truncated]... " + text[-(limit - head):]
 
 
 class _DebugDumpEnv:
@@ -208,171 +212,6 @@ class _DebugDumpEnv:
                 os.environ[key] = value
 
 
-def _tolerance_for_ir(ir) -> tuple[float, float]:
-    """Loosen rtol/atol when any variable in this graph is a low-precision
-    float dtype. PyTorch's own torch.testing.assert_close defaults widen by
-    roughly 10x per halving of mantissa bits going fp32 -> fp16/bf16 (both
-    have a 7-8 bit mantissa vs fp32's 23), so rtol=1e-1/atol=1e-2 (10x
-    nnsmith's fp32 defaults) is the right order of magnitude, not a number
-    pulled from nowhere. Pure-fp32/fp64/int graphs are unaffected (same
-    constants nnsmith always used), so this is a no-op for the regression
-    batches already validated under the old fp32-only lock.
-    """
-    # TODO(bf16 task): this nnsmith snapshot's DType enum has no `bfloat16`
-    # member yet (verified: hasattr(DType, "bfloat16") is False here) -- bf16
-    # support is a separate follow-up task that patches nnsmith's DType enum
-    # to add it. Once that patch lands, add DType.bfloat16 to this set too.
-    low_precision = {DType.float16}
-    dtypes_used = {var.dtype for var in ir.vars.values()}
-    if dtypes_used & low_precision:
-        return 1e-1, 1e-2
-    return 1e-2, 1e-3
-
-
-# "scale" controls max_elem_per_tensor (total tensor size), concr_ph_dim_rng
-# (per-dim range), timeout_ms, and dim_dist_mode together: these all answer
-# the same underlying question ("how big/slow/how-distributed are generated
-# cases allowed to be"), so one --tensor-scale flag drives all four rather
-# than independently-settable, easily-inconsistent flags (e.g. a large
-# max_elem_per_tensor paired with a tiny concr_ph_dim_rng just gets spent on
-# more dims of size 1, not genuinely larger tensors).
-TENSOR_SCALE_PROFILES: dict[str, dict[str, object]] = {
-    # small/medium/large: unchanged from the original hardcoded defaults
-    # (including dim_dist_mode="uniform", nnsmith's own pre-existing
-    # behavior) -- kept as the regression baseline so existing --repro-seed
-    # batches stay reproducible unless --tensor-scale is explicitly set to
-    # something else.
-    "small": {
-        "max_elem_per_tensor": 2**16,
-        "concr_ph_dim_rng": (1, 64),
-        "timeout_ms": 10000,
-        "dim_dist_mode": "uniform",
-    },
-    "medium": {
-        "max_elem_per_tensor": 2**20,
-        "concr_ph_dim_rng": (8, 4096),
-        "timeout_ms": 30000,
-        "dim_dist_mode": "uniform",
-    },
-    "large": {
-        "max_elem_per_tensor": 2**24,
-        "concr_ph_dim_rng": (8, 8192),
-        "timeout_ms": 60000,
-        "dim_dist_mode": "uniform",
-    },
-    # 16k/32k/64k/128k: concr_ph_dim_rng's upper bound is the actual target
-    # (seq_len-style long-context scenarios, see docs/af_fuzz_randomization.md's
-    # "业界典型数值参考" -- large-model seq_len commonly reaches 4K~128K).
-    # max_elem_per_tensor is set to 4x that upper bound: enough for ~2 dims to
-    # both land near the upper bound at once (their product ~= upper_bound^2
-    # would blow the budget immediately, so this is deliberately NOT upper_bound
-    # squared) while every other dim in the same tensor gets squeezed down to 1
-    # by graph_gen.py's existing total-nelement clamp -- not a guess at "how
-    # large a tensor should be allowed to get" from scratch, since the dim
-    # upper bound is the thing actually being stress-tested here, not the
-    # overall tensor size.
-    #
-    # dim_dist_mode="log_normal" (unlike the three profiles above, which keep
-    # nnsmith's original uniform sampling): at these upper bounds, sampling
-    # every size in [8, upper_bound] with equal probability means most
-    # generated dims land nowhere near the business-relevant small/medium
-    # range -- log_normal instead skews each dim toward smaller values while
-    # still letting a (deliberately small) fraction of draws reach the full
-    # upper bound, matching the request that "large shapes should be rarer,
-    # not equally likely". See _sample_dim_size()'s docstring in the
-    # ascendc_dim_size_distribution.patch for the exact mu/sigma and why.
-    "16k": {
-        "max_elem_per_tensor": 16384 * 4,
-        "concr_ph_dim_rng": (8, 16384),
-        "timeout_ms": 90000,
-        "dim_dist_mode": "log_normal",
-    },
-    "32k": {
-        "max_elem_per_tensor": 32768 * 4,
-        "concr_ph_dim_rng": (8, 32768),
-        "timeout_ms": 120000,
-        "dim_dist_mode": "log_normal",
-    },
-    "64k": {
-        "max_elem_per_tensor": 65536 * 4,
-        "concr_ph_dim_rng": (8, 65536),
-        "timeout_ms": 180000,
-        "dim_dist_mode": "log_normal",
-    },
-    "128k": {
-        "max_elem_per_tensor": 131072 * 4,
-        "concr_ph_dim_rng": (8, 131072),
-        "timeout_ms": 300000,
-        "dim_dist_mode": "log_normal",
-    },
-    # default: the new out-of-the-box tier (--tensor-scale's default, see
-    # cli.py) -- range is [1, 128k] rather than 16k/32k/64k/128k's [8, ...]
-    # since this tier isn't targeting a specific seq_len-style scenario, just
-    # giving every batch broad shape coverage by default. max_elem_per_tensor
-    # and timeout_ms are reused from "128k" as-is (same upper bound, so its
-    # already-vetted safety margins apply unchanged) rather than re-derived.
-    # dim_dist_mode="half_normal" (unlike 16k/32k/64k/128k's "log_normal",
-    # which peaks at an interior value): density is highest at the range's
-    # minimum and strictly decreases toward the maximum, so small shapes are
-    # the most common outcome and large shapes get rarer the larger they
-    # get, with no interior mode. See _sample_dim_size()'s docstring in
-    # ascendc_dim_size_distribution.patch for the exact sigma and why.
-    "default": {
-        "max_elem_per_tensor": 131072 * 4,
-        "concr_ph_dim_rng": (1, 131072),
-        "timeout_ms": 300000,
-        "dim_dist_mode": "half_normal",
-    },
-}
-
-
-# Numeric refinement is bounded by work, never by elapsed time. Keep this
-# fixed across a batch and its --repro-seed runs (changing it changes cases).
-_NUMERIC_SEARCH_STEPS = 16
-
-
-@contextmanager
-def _seeded_solver_context(case_seed: int):
-    """Give each graph a fresh Z3 context, independent of earlier searches.
-
-    NNSmith constructs expressions using Z3's implicit default context. Z3
-    has no public setter for that context; scope the swap to generation in
-    this worker (cases run sequentially per process), and always restore it.
-    Resetting solver seeds alone does not reset context-internal AST history.
-    """
-    import z3
-    from z3 import z3 as z3_impl
-
-    previous = z3.main_ctx()
-    set_z3_state(case_seed)
-    try:
-        z3_impl._main_ctx = z3.Context()
-        yield
-    finally:
-        z3_impl._main_ctx = previous
-
-
-@contextmanager
-def _seeded_materialization(case_seed: int):
-    """Pin arithmetic as well as RNG state, then restore caller settings."""
-    import torch
-
-    threads = torch.get_num_threads()
-    deterministic = torch.are_deterministic_algorithms_enabled()
-    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
-    try:
-        torch.set_num_threads(1)
-        torch.use_deterministic_algorithms(True)
-        set_seed(case_seed)
-        # run_single_case is also a public entrypoint; do not rely on a batch
-        # caller having registered TorchModel.add_seed_setter() beforehand.
-        torch.manual_seed(case_seed)
-        yield
-    finally:
-        torch.use_deterministic_algorithms(deterministic, warn_only=warn_only)
-        torch.set_num_threads(threads)
-
-
 def run_single_case(
     *,
     factory: AscendC,
@@ -394,70 +233,18 @@ def run_single_case(
     configuration, op/dtype pool and software environment. Used both by
     `run_fuzz_session`'s loop body and by the `--repro-seed` CLI path.
     """
-    if tensor_scale not in TENSOR_SCALE_PROFILES:
-        raise ValueError(
-            f"Unknown tensor_scale {tensor_scale!r}; expected one of "
-            f"{sorted(TENSOR_SCALE_PROFILES.keys())}"
-        )
-    profile = TENSOR_SCALE_PROFILES[tensor_scale]
-    if timeout_ms is None:
-        timeout_ms = profile["timeout_ms"]
-    if max_elem_per_tensor is None:
-        max_elem_per_tensor = profile["max_elem_per_tensor"]
-    if concr_ph_dim_rng is None:
-        concr_ph_dim_rng = profile["concr_ph_dim_rng"]
-    dim_dist_mode = profile["dim_dist_mode"]
-
+    config = GenerationConfig(
+        max_nodes=max_nodes, timeout_ms=timeout_ms, method=method,
+        max_elem_per_tensor=max_elem_per_tensor, concr_ph_dim_rng=concr_ph_dim_rng,
+        tensor_scale=tensor_scale, value_dist_mode=value_dist_mode,
+    )
     t0 = time.time()
     case_id = f"{index:05d}-{case_seed}"
     out_dir = Path(out_dir) if out_dir is not None else None
-
-    # Randomize the actual node-count ceiling within [2, max_nodes] so
-    # generated graphs vary in size instead of every case landing on
-    # exactly max_nodes nodes (abstract_gen's loop condition is
-    # `num_op() < max_node_size`, so it always inserts up to the ceiling
-    # it's given -- the ceiling itself needs to vary, not the loop).
-    # set_seed(case_seed) here, before consuming this random draw, keeps
-    # it reproducible under --repro-seed: model_gen(seed=case_seed, ...)
-    # below does its own set_seed(case_seed) again (a full, idempotent
-    # reset, not an incremental draw), so this draw doesn't perturb the
-    # RNG state the graph-structure search consumes afterwards.
-    set_seed(case_seed)
-    actual_max_nodes = random.randint(2, max_nodes) if max_nodes >= 2 else max_nodes
-
     try:
-        # Graph search has its own seeded RNG reset. Materialization resets
-        # it again so graph-search draws cannot shift weights or inputs.
-        with _seeded_solver_context(case_seed):
-            gen = model_gen(
-                opset=opset,
-                method=method,
-                seed=case_seed,
-                max_elem_per_tensor=max_elem_per_tensor,
-                concr_ph_dim_rng=concr_ph_dim_rng,
-                dim_dist_mode=dim_dist_mode,
-                max_nodes=actual_max_nodes,
-                timeout_ms=timeout_ms,
-                # dtype_choices intentionally omitted: passing dtype_choices=None
-                # lets BaseGen intersect nnsmith's full dtype set (DTYPE_GEN_ALL)
-                # with the opset's own supported dtypes, so every dtype this
-                # ascendc opset snapshot actually supports can appear, instead of
-                # locking generation to fp32 only.
-                init_fp=True,
-                # dtype_choices alone only constrains *later* nodes' dtype pool --
-                # SymbolicGen's very first placeholder ignores it and is fp32 only
-                # when init_fp=True is passed explicitly (default False lets the
-                # entry node roll any dtype, which then propagates downstream).
-            )
-            ir = gen.make_concrete()
-            del gen
-        with _seeded_materialization(case_seed):
-            model = model_cls.from_gir(ir)
-            model.refine_weights(
-                value_dist_mode=value_dist_mode, max_search_steps=_NUMERIC_SEARCH_STEPS
-            )
-            oracle = model.make_oracle(mode=value_dist_mode)
-        testcase = TestCase(model, oracle)
+        testcase = generate_case(opset=opset, model_cls=model_cls, case_seed=case_seed, config=config)
+        model = testcase.model
+        ir = model.native_model.ir
     except InternalError:
         raise
     except Exception:

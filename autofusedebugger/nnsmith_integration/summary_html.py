@@ -41,6 +41,10 @@ def render_summary_html(
     passed = summary.get("passed", 0)
     failed = summary.get("failed", 0)
     gen_errors = summary.get("gen_errors", 0)
+    perf_buttons = perf_pages = perf_script = ""
+    if "performance_cases" in summary:
+        from .performance.tabs import render_performance_tabs
+        perf_buttons, perf_pages, perf_script = render_performance_tabs(summary)
     pass_rate = f"{(passed / total * 100):.1f}" if total else "0.0"
 
     return f"""<!doctype html>
@@ -85,7 +89,7 @@ def render_summary_html(
   .badge {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }}
   .badge.pass {{ color: var(--pass); background: var(--pass-bg); }}
   .badge.fail {{ color: var(--fail); background: var(--fail-bg); }}
-  .badge.gen_error {{ color: var(--gen-error); background: var(--gen-error-bg); }}
+  .badge.error, .badge.gen_error {{ color: var(--gen-error); background: var(--gen-error-bg); }}
   .ops {{ color: #617083; font-size: 12px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .shapes {{ color: #617083; font-size: 12px; max-width: 220px; white-space: pre-line; overflow-y: auto; max-height: 72px; }}
   a {{ color: var(--accent); text-decoration: none; }}
@@ -134,6 +138,7 @@ def render_summary_html(
   <div class="tabs">
     <button id="tabBtnStats" class="active">汇总统计</button>
     <button id="tabBtnTable">用例列表</button>
+    {perf_buttons}
   </div>
 </header>
 <main>
@@ -203,6 +208,7 @@ def render_summary_html(
       <tbody></tbody>
     </table>
   </div>
+  {perf_pages}
 </main>
 <div class="viz-tooltip" id="vizTooltip"></div>
 <script>
@@ -279,6 +285,7 @@ const _rootStyle = getComputedStyle(document.documentElement);
 const STATUS_COLORS = {{
   pass: _rootStyle.getPropertyValue('--viz-pass').trim(),
   fail: _rootStyle.getPropertyValue('--viz-fail').trim(),
+  error: _rootStyle.getPropertyValue('--viz-gen-error').trim(),
   gen_error: _rootStyle.getPropertyValue('--viz-gen-error').trim(),
 }};
 const VIZ = {{
@@ -393,13 +400,13 @@ function bucketOf(buckets, value) {{
 
 // 按 key 分组统计 pass/fail/gen_error 计数，group(c) 可以返回单个字符串或字符串数组
 // （比如一个 case 同时含 reduce+elewise 两类 op，会同时计入两个分类桶）。
-function groupCounts(cases, groupFn, order) {{
+function groupCounts(cases, groupFn, order, statusKeys = STATUS_KEYS) {{
   const counts = new Map();
   for (const c of cases) {{
     let keys = groupFn(c);
     if (!Array.isArray(keys)) keys = [keys];
     for (const k of new Set(keys)) {{
-      if (!counts.has(k)) counts.set(k, {{ pass: 0, fail: 0, gen_error: 0 }});
+      if (!counts.has(k)) counts.set(k, Object.fromEntries(statusKeys.map(s => [s, 0])));
       counts.get(k)[c.status] = (counts.get(k)[c.status] || 0) + 1;
     }}
   }}
@@ -455,21 +462,21 @@ function drawDonut(svgId, legendId, segments) {{
 
 // ---- 竖直堆叠柱状图：细柱（≤24px）、顶端 4px 圆角、段间 2px 白缝、
 // 极淡实线网格 + 基线；柱顶标总数，段内数值仅在放得下时显示。 ----
-function drawStackedBars(svgId, legendId, rows) {{
+function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {{
   const svg = document.querySelector('#' + svgId);
   const W = 380, H = 260;
   const leftPad = 34, rightPad = 10, topPad = 18, bottomPad = 42;
   const chartH = H - topPad - bottomPad;
   const plotW = W - leftPad - rightPad;
   const legend = document.querySelector('#' + legendId);
-  legend.innerHTML = STATUS_KEYS.map(s =>
+  legend.innerHTML = statusKeys.map(s =>
     `<span><i style="background:${{STATUS_COLORS[s]}}"></i>${{s}}</span>`
   ).join('');
   if (rows.length === 0) {{
     svg.innerHTML = `<text x="${{W / 2}}" y="${{H / 2}}" text-anchor="middle" fill="${{VIZ.textMuted}}" font-family="${{FONT}}" font-size="13">无数据</text>`;
     return;
   }}
-  const maxTotal = Math.max(...rows.map(r => r.pass + r.fail + r.gen_error), 1);
+  const maxTotal = Math.max(...rows.map(r => statusKeys.reduce((n, s) => n + (r[s] || 0), 0)), 1);
   const slot = plotW / rows.length;
   const barW = Math.min(slot * 0.52, 24);
   const gap = slot - barW;
@@ -498,9 +505,9 @@ function drawStackedBars(svgId, legendId, rows) {{
   const parts = [];
   rows.forEach((r, i) => {{
     const x = leftPad + i * (barW + gap) + (slot - barW) / 2;
-    const total = r.pass + r.fail + r.gen_error;
+    const total = statusKeys.reduce((n, s) => n + (r[s] || 0), 0);
     const topY = topPad + chartH - (total / yMax) * chartH;
-    const segs = STATUS_KEYS
+    const segs = statusKeys
       .map(s => ({{ v: r[s], color: STATUS_COLORS[s], label: s }}))
       .filter(s => s.v > 0);
     let yBottom = topPad + chartH;
@@ -538,8 +545,8 @@ function drawStackedBars(svgId, legendId, rows) {{
     const [catKey, statusKey] = el.dataset.key.split('|');
     attachTooltip(el, () => {{
       const row = rows.find(r => r.key === catKey);
-      const entries = STATUS_KEYS.filter(s => row[s] > 0).map(s => [s, row[s]]);
-      entries.push(['total', row.pass + row.fail + row.gen_error]);
+      const entries = statusKeys.filter(s => row[s] > 0).map(s => [s, row[s]]);
+      entries.push(['total', statusKeys.reduce((n, s) => n + (row[s] || 0), 0)]);
       return [catKey, entries];
     }});
   }});
@@ -578,6 +585,7 @@ function renderStats() {{
 }}
 
 renderStats();
+{perf_script}
 </script>
 </body>
 </html>

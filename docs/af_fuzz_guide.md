@@ -41,6 +41,10 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--compile-threads` | `None`（跟随环境变量 `TORCHINDUCTOR_COMPILE_THREADS`，否则 `4`） | **每个** `--jobs` 进程内部 inductor 并行编译 worker 池大小。inductor 自身默认值是 `min(32, 宿主机 CPU 核数)`，在容器里容易把内存撑爆，所以这里改成了偏保守的默认 `4` |
 | `--soc-tier` | `"A3"` | `A3` / `A5` 二选一，决定用哪一代 NPU 的融合算子白名单来约束图生成（见 `ascendc_opset.py`）；在 A5 硬件上验证时要显式传 `A5` |
 | `--op-categories` | `None`（不限制，用 `--soc-tier` 对应的全量算子集合） | 逗号分隔的算子分类子集，比如 `elewise,reduce`；传了之后**完全替换**默认的全量算子集合（不是在默认集合基础上再收窄），只会从这些分类里的算子生成用例。可选分类及具体数值见本表后面的"`--op-categories` 分类明细"表。会在 `--soc-tier` 过滤之后再应用，所以只能让生成范围变得更窄，不会出现某个分类在当前 soc-tier 上本来不支持却被生成出来的情况；如果选的分类在当前 soc-tier 上一个算子都没有（比如 A3 下选 `matmul`），会直接报错 |
+| `--compare-performance` | 关闭（`False`） | 开启 AscendC 与默认 Triton-Ascend 的性能对比；同一 case 在同一张 NPU 上分别运行两个独立后端进程，比较 profiling 得到的每步 kernel 总耗时。仅支持 NPU，按 case 和后端串行执行（忽略 `--jobs`）；`--devices` 按 case 轮询分配卡号。报告增加“性能对比”和“性能对比汇总”页签，详见第 4 节 |
+| `--warmup-steps` | `3` | 性能模式专用，正整数；每种后端完成编译和首次精度校验后的预热步数，不计入 kernel 耗时 |
+| `--profile-steps` | `10` | 性能模式专用，正整数；正式 profiling 的采集步数。每步 kernel 总耗时 = `op_statistic.csv` 中所有算子 `Total Time` 求和 ÷ 实际采集步数 |
+| `--perf-timeout-s` | `600` | 性能模式专用，正数，单位秒；每个后端 worker 的总超时，包含进程启动、构图、编译、校验、预热、采集和导出，与 `--timeout-ms` 的构图超时分别控制 |
 | `--repro-seed` | `None` | 只跑这一个 `case_seed`，不跑整批（见第 3 节） |
 | `--debug` / `--no-debug` | 不传（`None`） | 是否开启调试落盘。只在配合 `--repro-seed` 时生效：不传时 `--repro-seed` 自动当作开了 `--debug`；显式 `--no-debug` 可以在单 case 复现时关掉落盘，只看 pass/fail（见第 3 节） |
 
@@ -97,7 +101,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 | 文件/目录 | 内容 |
 |---|---|
 | `summary.json` | 本批次全部 case 的结构化结果（`total`/`passed`/`failed`/`gen_errors` 汇总 + 每条 `CaseResult`） |
-| `summary.html` | 可视化报告，两个页签：「汇总统计」（默认打开，图表总览）和「用例列表」（逐 case 表格），字段见下面 2.2/2.3 |
+| `summary.html` | 可视化报告，默认包含「汇总统计」（默认打开，图表总览）和「用例列表」（逐 case 表格），字段见下面 2.2/2.3；开启 `--compare-performance` 后增加「性能对比」和「性能对比汇总」两个页签 |
 | `bug-<index>-<case_seed>/` | 每个 **失败**（`status == "fail"`）用例单独落盘的目录，内容见下表；`pass`/`gen_error` 的 case 默认不落盘 |
 
 `bug-<index>-<case_seed>/` 目录内容：
@@ -191,3 +195,16 @@ autofusedbg af-fuzz --out-dir /tmp/repro --target npu \
 ```
 
 批量跑（不带 `--repro-seed`）时不受这个开关影响：只有失败用例才落盘 `bug-<index>-<case_seed>/`，不会打开上面这些 debug 环境变量——避免整批几十上百个 case 都落一份 inductor debug 目录把磁盘撑爆。
+
+## 4. 后端性能对比
+
+使用 `af-fuzz --compare-performance` 对比同一 seed 下 AscendC 和默认 Triton-Ascend 的每步 kernel 总耗时，默认预热 3 步、采集 10 步。例如：
+
+```bash
+autofusedbg af-fuzz --compare-performance \
+  --out-dir /tmp/af_perf_run --n-cases 10 --seed 42 \
+  --target npu:0 --soc-tier A3 \
+  --warmup-steps 3 --profile-steps 10 --perf-timeout-s 600
+```
+
+性能模式始终采集并导出 profiling，`--debug` / `--no-debug` 不控制这些性能产物。具体口径、参数和模块结构见 [性能对比指南](af_fuzz_performance.md)。

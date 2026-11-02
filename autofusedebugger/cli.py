@@ -217,6 +217,10 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         else None
     )
 
+    if getattr(args, "compare_performance", False):
+        from autofusedebugger.nnsmith_integration.performance.cli import run
+        return run(args, op_categories=op_categories, devices=devices)
+
     if args.repro_seed is not None:
         from autofusedebugger.nnsmith_integration.fuzz_loop import run_repro_case
 
@@ -721,6 +725,8 @@ def build_parser() -> argparse.ArgumentParser:
         "case, pass or fail (only applies with --repro-seed)",
     )
     fuzz.add_argument("--no-debug", dest="debug", action="store_false")
+    from autofusedebugger.nnsmith_integration.performance.cli import add_arguments
+    add_arguments(fuzz)
     fuzz.set_defaults(func=cmd_af_fuzz, debug=None)
     return parser
 
