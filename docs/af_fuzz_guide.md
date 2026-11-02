@@ -34,7 +34,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--timeout-ms` | `None`（跟随 `--tensor-scale` 档位） | 单 case 生成超时（毫秒）。不传时使用 `--tensor-scale` 档位自带的值（见后面的档位数值表），显式传值会覆盖档位值 |
 | `--max-elem-per-tensor` | `None`（跟随 `--tensor-scale` 档位） | 单张量最大元素数上限。不传时使用 `--tensor-scale` 档位自带的值（见后面的档位数值表），显式传值会覆盖档位值 |
 | `--value-dist-mode` | `"uniform"` | 权重/输入的数值分布档位，四选一：`uniform`（原始 `[3,7)` 均匀分布，默认兼容旧行为）/ `log_scale`（跨 `1e-4~1e4` 量级）/ `llm`（模拟 LLM 激活值分布：主体 `N(0, 0.2²)`，5% 元素随机放大 100~10000 倍，模拟"massive activations"现象）/ `recommendation`（模拟推荐系统归一化特征，`uniform[0,1)`）。具体分布公式见 `docs/af_fuzz_randomization.md` |
-| `--seed` | `None`（随机） | 整批的顶层随机种子，固定后同一批次的全部 case 可复现（按进程分片时各分片派生独立子种子，但总体仍确定性） |
+| `--seed` | `None`（随机） | 整批的顶层随机种子，决定派生的 `case_seed` 序列；批量复跑须保持 `--jobs` 等分片参数一致。单 case 用 `--repro-seed`，复现条件见第 3 节 |
 | `--target` | `"npu"` | 执行目标后端 |
 | `--jobs` | `2` | 按进程切分 `--n-cases`，并行跑 N 个进程。每个 worker 真实占用 NPU 编译/执行资源，偏重 CPU+内存，建议先用低值观察负载再往上调；并发调优细节和实测数据见 `docs/af_fuzz_npu_env.md` 第 5 节 |
 | `--devices` | `None`（不指定，所有 `--jobs` worker 都跑在 `npu:0` 上） | 逗号分隔的 NPU 卡号列表，比如 `0,1`；把 `--jobs` 分出的每个 worker 按 `shard_idx % len(devices)` 轮询分配到对应的卡上（`--jobs 4 --devices 0,1` 时 shard 0/2 → `npu:0`，shard 1/3 → `npu:1`），让多卡机器真正并发利用所有卡，而不是全部挤在一张卡上排队。只在 `--target npu`（默认）下生效，`cuda`/`cpu` 忽略此参数。多卡用法和实测见 `docs/af_fuzz_npu_env.md` 第 5.3 节 |
@@ -133,7 +133,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 |---|---|---|
 | `#` | `index` | case 在本批次里的序号（从 0 开始） |
 | 状态 | `status` | `pass`（通过验证）/ `fail`（生成成功但验证不一致或执行异常）/ `gen_error`（图生成阶段本身失败，没走到验证） |
-| Seed | `seed` | 这个 case 的 `case_seed`，决定它的全部随机内容；用 `--repro-seed <这个值>` 单独复现 |
+| Seed | `seed` | 这个 case 的 `case_seed`，控制图结构、权重和输入的生成；用 `--repro-seed <这个值>` 单独复现，条件见第 3 节 |
 | 节点数 | `n_nodes` | 生成模型中的计算节点数（不含 `Input` 占位符，`gen_error` case 为 `0`） |
 | Kernel数 | `n_kernels` | 这个 case 最终真正生成并在 NPU 上执行的 kernel 总数。**这个数字本身不能单独说明"有没有发生融合"**：`n_nodes` 比 `n_kernels` 大，说明至少有节点被融合进了同一个 kernel；`n_nodes == n_kernels` 通常意味着没有发生融合，但也可能是节点之间本身就没有可融合的依赖关系（比如两条独立并行的分支），不能只凭这一个数字下结论。`gen_error` case 为 `0` |
 | 耗时(s) | `duration_s` | 这个 case 从开始生成到验证完成（或失败）的总耗时 |
@@ -154,16 +154,21 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run --op-categories elewise,reduce
 
 ```bash
 autofusedbg af-fuzz --out-dir /tmp/repro --target npu \
-  --repro-seed 389609433 --max-nodes 4
+  --repro-seed 389609433 --max-nodes 4 --no-debug
 ```
 
-- 只要生成参数（`--method`/`--max-nodes`/`--timeout-ms`/`--max-elem-per-tensor`/`--target`/`--tensor-scale`/`--value-dist-mode`/`--soc-tier`）和原批次保持一致，`--repro-seed` 就能确定性地重新生成同一张图，不依赖原批次的任何落盘文件。
+- OP 使用 `random.choice` 均匀采样，**均匀分布也受 seed 控制**。构图开始时会用 `case_seed` 重置随机数状态；OP 候选按名称排序，探测缓存中的输入/输出 dtype 组合按稳定顺序成对排序，rank 候选也固定顺序，因此同一个随机下标不会因为进程或集合遍历顺序变化而指向另一个候选。不需要额外设置 `PYTHONHASHSEED`。
+- 用 `--repro-seed` 重新生成完整 case（图结构、权重、输入及 CPU oracle）时，生成参数（`--method`/`--max-nodes`/`--timeout-ms`/`--max-elem-per-tensor`/`--target`/`--tensor-scale`/`--value-dist-mode`/`--soc-tier`/**`--op-categories`**）须和原批次一致，`NNSMITH_MAX_RANK` 等生成环境、软件版本及探测得到的 OP/dtype 候选集合也须一致。seed 不能替代这些配置；跨版本或候选集合改变时不保证生成相同的图。
+- 构图达到时间上限时直接记录 `gen_error`，不再把截止时的部分图当作成功用例；Z3 返回 `unknown`（例如求解超时）也记为 `gen_error`，避免受负载影响而跳过当前 OP 后生成另一张图。繁忙环境可能出现生成失败，但不应把它解释为 seed 对应另一张有效图。
+- **新生成的 case 只需保存 `case_seed`，不依赖 `repro.py`、模型结构、权重或输入文件。** 每次构图使用独立的 Z3 上下文，避免前序 case 的求解历史改变 reshape 等算子的解。数值生成前重新设置 Python/NumPy/Torch seed，在 CPU 单线程、Torch 确定性算法模式下创建模型、权重、输入和 CPU oracle；完成后恢复调用方的线程及确定性算法设置。
+- 数值稳定性搜索改为最多 **2 组采样，每组最多 16 步梯度修正**。提前结束由数值结果决定，不再使用原来的 20 ms / `NNSMITH_GRAD_TIME` 时间预算，因此日志、机器负载或先前运行过哪些 case 不会改变最终权重和输入。没有确定性实现的操作直接记为 `gen_error`，不降级到非确定性生成。
+- `--no-debug` 下 pass/fail 均不落盘模型、权重、输入、图结构或 `repro.py`。`--debug` 仍可用于主动导出诊断文件；这些文件不是 seed 复现的依赖。
+- 此保证针对当前确定性生成版本。旧版本的候选顺序、求解器上下文或搜索耗时已经影响过的 case，不能由新版根据同一个 seed 反推出旧产物；升级生成算法也可能改变 seed 的映射。
 - 复跑只跑这一个 case，终端会打印：
   ```
   case_id=00000-389609433 status=fail symptom=inconsistency stage=verification
-  artifacts: /tmp/repro/case-00000-389609433
   ```
-- 也可以直接运行失败目录里现成的 `repro.py`（`bug-<index>-<case_seed>/repro.py`），不需要重新走 `--repro-seed`。
+- 若主动保留了导出文件，也可以直接运行失败目录里的 `repro.py`（`bug-<index>-<case_seed>/repro.py`），不需要重新走 `--repro-seed`。
 
 ### 3.2 如何开启 debug 日志、落盘 dump 图
 

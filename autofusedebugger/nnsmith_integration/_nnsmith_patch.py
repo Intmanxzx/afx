@@ -340,6 +340,20 @@ _ASCENDC_PATCHES: tuple[_AscendcPatch, ...] = (
         # exactly like an int one.
         probe=_import_symbol_probe("MultiAxisReduceBase"),
     ),
+    _AscendcPatch(
+        filename="ascendc_seed_reproducibility.patch",
+        probe=_function_source_contains_probe(
+            "nnsmith.graph_gen",
+            "BaseGen.__init__",
+            "self.op_candidates = sorted(opset",
+        ),
+    ),
+    _AscendcPatch(
+        filename="ascendc_seeded_numeric_search.patch",
+        probe=_function_has_param_probe(
+            "nnsmith.materialize.torch", "TorchModel.refine_weights", "max_search_steps"
+        ),
+    ),
 )
 
 

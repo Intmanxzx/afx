@@ -1,0 +1,63 @@
+diff --git a/nnsmith/graph_gen.py b/nnsmith/graph_gen.py
+--- a/nnsmith/graph_gen.py
++++ b/nnsmith/graph_gen.py
+@@ -111,7 +111,8 @@
+             set_seed(seed)
+
+         self.seed = seed
+-        self.op_candidates = opset
++        # A seeded index only identifies an op if the candidate order is stable.
++        self.op_candidates = sorted(opset, key=lambda op: op.name())
+         self.ir = GraphIR()
+         self.monotonic_placeholder_id = 0
+
+@@ -137,7 +138,9 @@
+             else DTYPE_GEN_ALL
+         )
+
+-        self.dtype_choices = list(dtype_top.intersection(self.dtype_choices))
++        self.dtype_choices = sorted(
++            dtype_top.intersection(self.dtype_choices), key=str
++        )
+         assert len(self.dtype_choices) > 0, "dtype_choices must not be empty"
+         assert len(self.rank_choices) > 0, "rank_choices must not be empty"
+
+@@ -250,10 +253,14 @@
+         init_time = time.time()
+
+         # starts generation.
+-        while (
+-            time.time() - init_time < max_gen_millisec / 1000
+-            and self.num_op() < max_node_size
+-        ):
++        while self.num_op() < max_node_size:
++            # A wall-clock cutoff must not silently produce a different partial
++            # graph for the same seed on a slower/busier machine.
++            if time.time() - init_time >= max_gen_millisec / 1000:
++                raise TimeoutError(
++                    f"Graph generation timed out after {max_gen_millisec} ms "
++                    f"(seed={self.seed}, nodes={self.num_op()}/{max_node_size})"
++                )
+             if self.extra_exit_check(max_node_size):
+                 break
+             self.try_insert()
+@@ -314,7 +321,7 @@
+
+             SanityCheck.ge(len(rank_set), 1)
+
+-            final_dim = random.choice(list(rank_set))
++            final_dim = random.choice(sorted(rank_set))
+             dim_spec_list = [(final_dim,)] * n_inp
+         else:  # inputs have different dimension sizes.
+             dim_spec_list = op.inp_ranks
+@@ -494,6 +501,10 @@
+             SMT_LOG.debug(f"new constraints: {', '.join(map(str, assumptions))}")
+
+     cres = solver.check(*assumptions)
++    if cres == z3.unknown:
++        # Treat a solver timeout as generation failure, not as an unsatisfiable
++        # op that can be skipped depending on the current machine load.
++        raise RuntimeError(f"SMT solver returned unknown: {solver.reason_unknown()}")
+
+     if SMT_LOG.getEffectiveLevel() <= logging.DEBUG:
+         SMT_LOG.debug(

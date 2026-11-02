@@ -545,7 +545,9 @@ def probe_ascendc_opset(
         raise ValueError(f"Unknown soc_tier: {soc_tier!r}; expected 'A3' or 'A5'")
 
     all_ops = model_cls.operators()
-    candidate_ops = [op for op in all_ops if op.name() in allow]
+    candidate_ops = sorted(
+        (op for op in all_ops if op.name() in allow), key=lambda op: op.name()
+    )
     if not candidate_ops:
         raise RuntimeError(
             f"probe_ascendc_opset(soc_tier={soc_tier!r}) found zero ops in "
@@ -665,8 +667,14 @@ def probe_ascendc_opset(
         )
         if not in_dtypes:
             continue
-        op.in_dtypes = in_dtypes
-        op.out_dtypes = out_dtypes
+        # Probe caches originate from sets. Canonicalize paired signatures so
+        # a seeded random draw has the same meaning across cache/worker order.
+        dtype_pairs = sorted(
+            zip(in_dtypes, out_dtypes),
+            key=lambda pair: tuple(tuple(str(dt) for dt in combo) for combo in pair),
+        )
+        op.in_dtypes = [tuple(pair[0]) for pair in dtype_pairs]
+        op.out_dtypes = [tuple(pair[1]) for pair in dtype_pairs]
         opset.append(op)
 
     if not opset:

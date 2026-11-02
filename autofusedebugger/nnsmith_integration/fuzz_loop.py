@@ -32,13 +32,13 @@ Phase 2 scope (see conversation history for the full rationale):
   meta.json). Exception: `--debug` mode (single-case repro) always dumps,
   pass or fail, since the point there is inspecting one targeted case.
 
-Case identity: every case is fully determined by `case_seed` (an NNSmith
-`model_gen` seed) plus the generation knobs (`method`, `max_nodes`,
-`timeout_ms`, `max_elem_per_tensor`, `target`) -- `case_id` below is just
-`f"{index:05d}-{case_seed}"`, matching the `bug-<index>-<case_seed>` dump
-folder naming. Passing `--repro-seed <case_seed>` (with the same generation
-knobs used originally) regenerates the exact same graph deterministically,
-without needing any dumped artifacts -- see `run_single_case`.
+Case identity: `case_id` is `f"{index:05d}-{case_seed}"`. Under fixed
+software, generation configuration and op/dtype candidates, `case_seed`
+regenerates the graph, weights, inputs and CPU oracle without saved artifacts.
+Candidate ordering is canonical, numeric search uses fixed sample/gradient
+step counts, and CPU materialization uses one thread and deterministic Torch
+algorithms. Graph/SMT timeouts fail generation instead of returning a different
+case. See docs/af_fuzz_guide.md for the replay command and version boundary.
 
 Concurrency: generation and verification run one case at a time within a
 single process/device context (see `run_fuzz_session`). Parallelism across
@@ -60,13 +60,14 @@ import os
 import random
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from nnsmith.abstract.dtype import DType
 from nnsmith.error import InternalError
-from nnsmith.graph_gen import model_gen
+from nnsmith.graph_gen import model_gen, set_z3_state
 from nnsmith.materialize import Model, TestCase
 from nnsmith.util import set_seed
 
@@ -325,6 +326,53 @@ TENSOR_SCALE_PROFILES: dict[str, dict[str, object]] = {
 }
 
 
+# Numeric refinement is bounded by work, never by elapsed time. Keep this
+# fixed across a batch and its --repro-seed runs (changing it changes cases).
+_NUMERIC_SEARCH_STEPS = 16
+
+
+@contextmanager
+def _seeded_solver_context(case_seed: int):
+    """Give each graph a fresh Z3 context, independent of earlier searches.
+
+    NNSmith constructs expressions using Z3's implicit default context. Z3
+    has no public setter for that context; scope the swap to generation in
+    this worker (cases run sequentially per process), and always restore it.
+    Resetting solver seeds alone does not reset context-internal AST history.
+    """
+    import z3
+    from z3 import z3 as z3_impl
+
+    previous = z3.main_ctx()
+    set_z3_state(case_seed)
+    try:
+        z3_impl._main_ctx = z3.Context()
+        yield
+    finally:
+        z3_impl._main_ctx = previous
+
+
+@contextmanager
+def _seeded_materialization(case_seed: int):
+    """Pin arithmetic as well as RNG state, then restore caller settings."""
+    import torch
+
+    threads = torch.get_num_threads()
+    deterministic = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    try:
+        torch.set_num_threads(1)
+        torch.use_deterministic_algorithms(True)
+        set_seed(case_seed)
+        # run_single_case is also a public entrypoint; do not rely on a batch
+        # caller having registered TorchModel.add_seed_setter() beforehand.
+        torch.manual_seed(case_seed)
+        yield
+    finally:
+        torch.use_deterministic_algorithms(deterministic, warn_only=warn_only)
+        torch.set_num_threads(threads)
+
+
 def run_single_case(
     *,
     factory: AscendC,
@@ -342,10 +390,9 @@ def run_single_case(
     debug: bool = False,
     value_dist_mode: str = "uniform",
 ) -> CaseResult:
-    """Generate and verify exactly one case, identified solely by `case_seed`
-    (plus the generation knobs) -- deterministic and independent of any prior
-    batch run or dumped file. Used both by `run_fuzz_session`'s loop body and
-    by the `--repro-seed` CLI path.
+    """Generate and verify one case using `case_seed` under a fixed generation
+    configuration, op/dtype pool and software environment. Used both by
+    `run_fuzz_session`'s loop body and by the `--repro-seed` CLI path.
     """
     if tensor_scale not in TENSOR_SCALE_PROFILES:
         raise ValueError(
@@ -379,43 +426,37 @@ def run_single_case(
     actual_max_nodes = random.randint(2, max_nodes) if max_nodes >= 2 else max_nodes
 
     try:
-        # model_gen -> BaseGen.__init__ already calls nnsmith.util.set_seed(seed)
-        # itself, so graph structure (op/shape/dtype) is already fully
-        # determined by case_seed. But graph *search* then consumes further
-        # steps from the same random/numpy/torch global RNGs it just reset,
-        # leaving them at a state that depends on how long the search ran --
-        # not purely on case_seed. SymbolNet's default weight init,
-        # refine_weights's PracticalHybridSearch, and make_oracle's
-        # get_random_inps all read from those same global RNGs with no seed
-        # argument of their own. Re-pinning them here, right before weight
-        # init, decouples weight/input generation from the graph search's
-        # random-draw count, so the same case_seed reproduces the same
-        # weights and inputs too -- not just the same graph.
-        gen = model_gen(
-            opset=opset,
-            method=method,
-            seed=case_seed,
-            max_elem_per_tensor=max_elem_per_tensor,
-            concr_ph_dim_rng=concr_ph_dim_rng,
-            dim_dist_mode=dim_dist_mode,
-            max_nodes=actual_max_nodes,
-            timeout_ms=timeout_ms,
-            # dtype_choices intentionally omitted: passing dtype_choices=None
-            # lets BaseGen intersect nnsmith's full dtype set (DTYPE_GEN_ALL)
-            # with the opset's own supported dtypes, so every dtype this
-            # ascendc opset snapshot actually supports can appear, instead of
-            # locking generation to fp32 only.
-            init_fp=True,
-            # dtype_choices alone only constrains *later* nodes' dtype pool --
-            # SymbolicGen's very first placeholder ignores it and is fp32 only
-            # when init_fp=True is passed explicitly (default False lets the
-            # entry node roll any dtype, which then propagates downstream).
-        )
-        ir = gen.make_concrete()
-        set_seed(case_seed)
-        model = model_cls.from_gir(ir)
-        model.refine_weights(value_dist_mode=value_dist_mode)
-        oracle = model.make_oracle(mode=value_dist_mode)
+        # Graph search has its own seeded RNG reset. Materialization resets
+        # it again so graph-search draws cannot shift weights or inputs.
+        with _seeded_solver_context(case_seed):
+            gen = model_gen(
+                opset=opset,
+                method=method,
+                seed=case_seed,
+                max_elem_per_tensor=max_elem_per_tensor,
+                concr_ph_dim_rng=concr_ph_dim_rng,
+                dim_dist_mode=dim_dist_mode,
+                max_nodes=actual_max_nodes,
+                timeout_ms=timeout_ms,
+                # dtype_choices intentionally omitted: passing dtype_choices=None
+                # lets BaseGen intersect nnsmith's full dtype set (DTYPE_GEN_ALL)
+                # with the opset's own supported dtypes, so every dtype this
+                # ascendc opset snapshot actually supports can appear, instead of
+                # locking generation to fp32 only.
+                init_fp=True,
+                # dtype_choices alone only constrains *later* nodes' dtype pool --
+                # SymbolicGen's very first placeholder ignores it and is fp32 only
+                # when init_fp=True is passed explicitly (default False lets the
+                # entry node roll any dtype, which then propagates downstream).
+            )
+            ir = gen.make_concrete()
+            del gen
+        with _seeded_materialization(case_seed):
+            model = model_cls.from_gir(ir)
+            model.refine_weights(
+                value_dist_mode=value_dist_mode, max_search_steps=_NUMERIC_SEARCH_STEPS
+            )
+            oracle = model.make_oracle(mode=value_dist_mode)
         testcase = TestCase(model, oracle)
     except InternalError:
         raise
@@ -530,7 +571,9 @@ def run_repro_case(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     factory = AscendC(target=target)
-    model_cls = Model.init("torch", backend_target=target)
+    # Generate numeric data and the reference oracle on CPU for every target.
+    # The backend moves the resulting model/inputs to its execution device.
+    model_cls = Model.init("torch", backend_target="cpu")
     model_cls.add_seed_setter()
     opset = probe_ascendc_opset(
         model_cls, factory, soc_tier=soc_tier, grad=False, op_categories=op_categories
@@ -548,7 +591,8 @@ def run_repro_case(
         max_elem_per_tensor=max_elem_per_tensor,
         concr_ph_dim_rng=concr_ph_dim_rng,
         tensor_scale=tensor_scale,
-        out_dir=out_dir,
+        # --no-debug is a seed-only replay, including when it fails.
+        out_dir=out_dir if debug else None,
         debug=debug,
         value_dist_mode=value_dist_mode,
     )
@@ -584,7 +628,9 @@ def run_fuzz_session(
     rng = random.Random(seed)
 
     factory = AscendC(target=target)
-    model_cls = Model.init("torch", backend_target=target)
+    # Generate numeric data and the reference oracle on CPU for every target.
+    # The backend moves the resulting model/inputs to its execution device.
+    model_cls = Model.init("torch", backend_target="cpu")
     model_cls.add_seed_setter()
 
     # Narrow NNSmith's op catalog to the ones ascendc's `_LoweringGuard`
