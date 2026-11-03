@@ -9,6 +9,7 @@ class ProfileConfig:
     warmup_steps: int = 3
     steps: int = 10
     timeout_s: float = 600
+    keep_artifacts: bool = False
 
     def __post_init__(self):
         if self.warmup_steps < 1 or self.steps < 1 or not math.isfinite(self.timeout_s) or self.timeout_s <= 0:
@@ -32,6 +33,7 @@ class BackendResult:
     error_stage: Optional[str] = None
     error: Optional[str] = None
     correctness_error: Optional[str] = None
+    cleanup_error: Optional[str] = None
     op_statistics: list[dict] = field(default_factory=list)
     resolved_backend: Optional[str] = None
     runtime: dict = field(default_factory=dict)

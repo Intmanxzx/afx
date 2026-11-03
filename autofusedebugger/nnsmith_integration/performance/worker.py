@@ -93,6 +93,8 @@ def main():
     parser.add_argument("--request", required=True)
     parser.add_argument("--result", required=True)
     args = parser.parse_args()
+    from .lifecycle import guard_worker_parent
+    guard_worker_parent(os.environ.get("AF_PERF_PARENT_PID"))
     request = json.loads(Path(args.request).read_text())
     result = execute(request)
     path = Path(args.result)

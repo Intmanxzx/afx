@@ -221,6 +221,9 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         from autofusedebugger.nnsmith_integration.performance.cli import run
         return run(args, op_categories=op_categories, devices=devices)
 
+    if getattr(args, "resume", False) or getattr(args, "keep_perf_artifacts", False):
+        raise ValueError("--resume and --keep-perf-artifacts require --compare-performance")
+
     if args.repro_seed is not None:
         from autofusedebugger.nnsmith_integration.fuzz_loop import run_repro_case
 
@@ -257,7 +260,7 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
 
     summary = run_fuzz_session_parallel(
         out_dir=args.out_dir,
-        n_cases=args.n_cases,
+        n_cases=100 if args.n_cases is None else args.n_cases,
         max_nodes=args.max_nodes,
         timeout_ms=args.timeout_ms,
         method=args.method,
@@ -598,7 +601,8 @@ def build_parser() -> argparse.ArgumentParser:
         "af-fuzz", help="generate NNSmith cases and verify them end-to-end against the autofuse backend"
     )
     fuzz.add_argument("--out-dir", required=True)
-    fuzz.add_argument("--n-cases", type=int, default=100)
+    fuzz.add_argument("--n-cases", type=int, default=None,
+                      help="case limit; omitted: continuous in performance mode, 100 in correctness mode; resume uses the saved limit")
     fuzz.add_argument("--max-nodes", type=int, default=5)
     fuzz.add_argument(
         "--timeout-ms",

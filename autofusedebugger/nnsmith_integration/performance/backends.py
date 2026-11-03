@@ -15,6 +15,7 @@ class BackendSpec:
         if self.npu_backend is not None:
             env["TORCHINDUCTOR_NPU_BACKEND"] = self.npu_backend
         env["TORCHINDUCTOR_CACHE_DIR"] = str(cache_dir)
+        env["TRITON_CACHE_DIR"] = str(cache_dir / "triton")
         # Debug hooks/dumps are excluded from measured execution.
         for key in ("TORCH_COMPILE_DEBUG", "AUTOFUSE_DFX_FLAGS"):
             env.pop(key, None)

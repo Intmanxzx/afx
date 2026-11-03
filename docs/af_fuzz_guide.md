@@ -27,7 +27,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | 参数 | 默认值 | 可配置范围 / 含义 |
 |---|---|---|
 | `--out-dir` | **必填** | 结果输出目录（`summary.json`/`summary.html`/失败用例目录都落在这里） |
-| `--n-cases` | `100` | 本批次生成并验证的用例总数 |
+| `--n-cases` | 功能/精度模式 `100`；性能模式不限制 | 本次会话的用例总数上限，显式指定时为正整数。性能模式不传时持续运行，直到 Ctrl+C、SIGTERM 或会话异常退出；配合 `--resume` 时是不包含重复执行已完成用例的累计总上限，不传则沿用检查点的上限 |
 | `--max-nodes` | `5` | 单个用例计算图节点数的**上限**；每个 case 的真实节点数会在 `[2, max-nodes]` 区间内随机抽取，不是固定等于这个值（至少 2 个节点才有融合的意义） |
 | `--method` | `"symbolic-cinit"` | nnsmith 图生成算法，一般不需要改 |
 | `--tensor-scale` | `"default"` | `default`/`small`/`medium`/`large`/`16k`/`32k`/`64k`/`128k` 八档，每档同时固定 `--timeout-ms`/`--max-elem-per-tensor`/维度取值区间/分布形态，具体数值见本表后面的"`--tensor-scale` 各档具体数值"表；`default` 是 2026-10-29 新增的开箱即用档位，区间 `[1, 131072]` 配合 half-normal 分布（小 shape 常见、大 shape 罕见但可达）；`small` 等价于改动前的硬编码默认行为，保留作回归基线；`16k`/`32k`/`64k`/`128k` 专门用来压测单维度大小本身（长上下文 `seq_len` 场景），上界直接对应档位名的数值 |
@@ -42,6 +42,8 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--soc-tier` | `"A3"` | `A3` / `A5` 二选一，决定用哪一代 NPU 的融合算子白名单来约束图生成（见 `ascendc_opset.py`）；在 A5 硬件上验证时要显式传 `A5` |
 | `--op-categories` | `None`（不限制，用 `--soc-tier` 对应的全量算子集合） | 逗号分隔的算子分类子集，比如 `elewise,reduce`；传了之后**完全替换**默认的全量算子集合（不是在默认集合基础上再收窄），只会从这些分类里的算子生成用例。可选分类及具体数值见本表后面的"`--op-categories` 分类明细"表。会在 `--soc-tier` 过滤之后再应用，所以只能让生成范围变得更窄，不会出现某个分类在当前 soc-tier 上本来不支持却被生成出来的情况；如果选的分类在当前 soc-tier 上一个算子都没有（比如 A3 下选 `matmul`），会直接报错 |
 | `--compare-performance` | 关闭（`False`） | 开启 AscendC 与默认 Triton-Ascend 的性能对比；同一 case 在同一张 NPU 上分别运行两个独立后端进程，比较 profiling 得到的每步 kernel 总耗时。仅支持 NPU，按 case 和后端串行执行（忽略 `--jobs`）；`--devices` 按 case 轮询分配卡号。报告增加“性能对比”和“性能对比汇总”页签，详见第 4 节 |
+| `--keep-perf-artifacts` | 关闭（`False`） | 性能模式专用；显式保留原始 profiling 和每次测量的编译缓存。默认在结果持久化后删除这些大体积产物，保留统计 CSV、JSON、日志和 HTML；异常与超时用例同样清理 |
+| `--resume` | 关闭（`False`） | 性能模式专用；从 `--out-dir` 的检查点继续运行，跳过已完成用例并重跑被中断的 case。须保持生成参数、预热/采集步数、目标设备与软件版本一致；只支持新版创建的会话 |
 | `--warmup-steps` | `3` | 性能模式专用，正整数；每种后端完成编译和首次精度校验后的预热步数，不计入 kernel 耗时 |
 | `--profile-steps` | `10` | 性能模式专用，正整数；正式 profiling 的采集步数。每步 kernel 总耗时 = `op_statistic.csv` 中所有算子 `Total Time` 求和 ÷ 实际采集步数 |
 | `--perf-timeout-s` | `600` | 性能模式专用，正数，单位秒；每个后端 worker 的总超时，包含进程启动、构图、编译、校验、预热、采集和导出，与 `--timeout-ms` 的构图超时分别控制 |
@@ -207,4 +209,18 @@ autofusedbg af-fuzz --compare-performance \
   --warmup-steps 3 --profile-steps 10 --perf-timeout-s 600
 ```
 
-性能模式始终采集并导出 profiling，`--debug` / `--no-debug` 不控制这些性能产物。具体口径、参数和模块结构见 [性能对比指南](af_fuzz_performance.md)。
+性能模式在运行期间采集并导出 profiling，默认在保存统计结果后清理原始 profiling 和每次测量的编译缓存；`--keep-perf-artifacts` 可保留完整产物，`--debug` / `--no-debug` 不控制这项策略。
+
+持续运行时省略 `--n-cases`：
+
+```bash
+autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf_continuous --seed 42
+```
+
+Ctrl+C 或 `kill -TERM <主进程PID>` 会停止当前测量及其子进程，并保留已完成用例的 `summary.json` / `summary.html`。未完成的 case 不计入完成数。使用相同配置加 `--resume` 可继续：
+
+```bash
+autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf_continuous --seed 42 --resume
+```
+
+报告和检查点逐例原子保存；SIGKILL（`kill -9`）或断电无法执行退出回调，可读取最后一次保存的报告，并在下次 `--resume` 时恢复。具体口径、参数和模块结构见 [性能对比指南](af_fuzz_performance.md)。

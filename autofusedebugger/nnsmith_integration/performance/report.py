@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from .storage import atomic_write_text
 from .metrics import comparable_speedup, correctness_status, performance_status
 
 
@@ -27,9 +28,10 @@ def summary_for_html(summary: dict) -> dict:
 
 
 def write_reports(summary: dict, out_dir: Path):
-    from ..summary_html import write_summary_html
+    from ..summary_html import render_summary_html
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-    write_summary_html(summary_for_html(summary), out_dir / "summary.html",
-                       title="AF Fuzz Summary · AscendC / Triton-Ascend", op_categories=summary.get("category_ops", {}))
+    atomic_write_text(out_dir / "summary.json", json.dumps(summary, indent=2, ensure_ascii=False))
+    page = render_summary_html(summary_for_html(summary),
+        title="AF Fuzz Summary · AscendC / Triton-Ascend", op_categories=summary.get("category_ops", {}))
+    atomic_write_text(out_dir / "summary.html", page)

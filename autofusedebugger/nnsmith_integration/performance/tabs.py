@@ -1,5 +1,6 @@
 """Optional performance views for the shared summary renderer (no NPU imports)."""
 import json
+import html
 
 
 CHARTS = [
@@ -35,6 +36,11 @@ def render_performance_tabs(summary):
 每步 kernel 耗时 = 所有算子 Total Time 求和 ÷ 采集步数；加速比 = Triton-Ascend / AscendC（≥1 为 pass）。精度状态独立展示。<br>
 执行耗时为后端 worker 总墙钟时间，包含启动、构图、编译、校验、预热、采集和导出，不参与性能判定；“—”表示无数据。</p>'''
     stats = f'<div class="stats"><span>Total <strong>{len(cases)}</strong></span><span class="pass">性能 pass <strong>{counts["pass"]}</strong></span><span class="fail">性能 fail <strong>{counts["fail"]}</strong></span><span>error <strong>{counts["error"]}</strong></span></div>'
+    state = html.escape(str(summary.get("session_status", "")))
+    if state:
+        limit = summary.get("requested_cases")
+        limit_text = "持续运行" if limit is None else f"目标 {limit} 例"
+        stats += f'<span>运行状态 <strong>{state}</strong> · {limit_text}</span>'
     pages = f'''<div id="tabPerf" class="tabpage">{stats}{note}
 <div class="toolbar"><input id="perfFilterOps" placeholder="按 op 或 seed 筛选"><select id="perfFilterStatus">
 <option value="">全部性能状态</option><option>pass</option><option>fail</option><option>error</option></select><span id="perfRowCount"></span></div>
