@@ -22,7 +22,7 @@ AscendC 加速比 = Triton-Ascend 每步耗时 / AscendC 每步耗时，大于 1
 
 - 两个后端分别启动新的 Python 进程。AscendC 在启动前设置环境变量并传入 `torch.compile` 的 AscendC 选项；Triton-Ascend 在启动前删除继承的 `TORCHINDUCTOR_NPU_BACKEND`，且不传 `npu_backend` 选项，使用 NPU 默认后端。
 - 父进程探测 AscendC 候选集合，只传 seed、生成配置和算子/dtype 候选快照。子进程使用共享生成模块重新构造 case，并核对图、完整权重、输入和 CPU oracle 的内容指纹。
-- case 和后端串行测量，`--jobs` 在性能模式中不参与调度。`--devices` 可轮询分配 case，两种后端始终使用该 case 的同一张卡；每个 case 交替后端先后顺序。请在设备无其他负载时解读性能数据。
+- 使用 --jobs 2 --devices 0,1 时，不同 NPU 的常驻 worker 从公共任务池动态领取 case；每张卡最多一个性能 worker。两个后端始终在该 case 的同一卡上串行测量，逐例交替后端顺序。未指定 --devices 时只使用 --target 对应的一张卡；jobs 超过独立卡数时自动限制 worker 数。请在设备无其他负载时解读性能数据。
 - 两个后端的每次测量使用独享的编译缓存（包括 Triton 缓存）和新的 profiling 目录，避免导出文件或缓存混用；默认在 worker 退出且结果保存后清理。编译及预热不计入性能数值。
 
 ## 参数与输出
@@ -57,7 +57,7 @@ AscendC 加速比 = Triton-Ascend 每步耗时 / AscendC 每步耗时，大于 1
 | `statistics.py` | CSV 定位、单位换算及计时聚合 |
 | `worker.py` | 一个后端的重建、编译、校验、预热及采集 |
 | `runner.py` | 进程启动、超时及子进程组清理 |
-| `session.py` | 串行配对调度、连续运行与结果汇总 |
+| `session.py` / `parallel.py` | 同卡串行配对、跨卡公共任务池、连续运行及乱序完成检查点 |
 | `artifacts.py` | 结果落盘、CSV 精简保留及原始 profiling/独享缓存清理 |
 | `lifecycle.py` | SIGINT/SIGTERM 停止、子进程父进程死亡保护 |
 | `storage.py` / `checkpoint.py` | 原子写入、输出目录互斥锁、随机数状态与续跑配置校验 |
@@ -121,3 +121,14 @@ SIGKILL（`kill -9`）或断电不能触发退出回调，已原子保存的报�
 默认清理同样覆盖超时和异常场景，错误信息保留在 worker 日志和 JSON；CSV 若已生成则精简保留。清理前先持久化结果，清理失败记录 `cleanup_error` 并停止会话。需要完整现场时，在启动时加 `--keep-perf-artifacts`，或用相同生成配置加 `--repro-seed <case_seed> --keep-perf-artifacts` 重跑。
 
 原始 profiling 与编译缓存默认只占当前测量所需空间；CSV、日志和汇总结果仍随用例数增长，持续运行时也需为这些轻量结果预留空间。
+
+
+## 多卡动态性能调度
+
+~~~bash
+autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf_multi --jobs 2 --devices 0,1 --seed 42
+~~~
+
+每个常驻 worker 固定绑定一张 NPU，完成当前 case 的两个后端测量后领取下一例。主进程统一生成 index/seed，记录所有已分配未完成任务，并独占汇总报告写入；完成顺序可以不同，报告按 index 排序。省略 --n-cases 继续表示持续运行。
+
+停止时终止所有性能 worker 及其测量子进程，报告只计已收到的完整结果。--resume 会优先重跑全部未完成 case，保留已完成的高 index 结果，然后继续生成新 seed。--jobs 可以调整，--devices 和测量/生成参数仍需与原会话一致。不同卡的硬件状态和共享主机资源可能影响实测耗时，应在报告比较中保持设备条件一致。

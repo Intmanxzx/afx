@@ -63,9 +63,24 @@ def _measure_case(*, index, case_seed, out, generation, profile, opset, model_cl
     return case
 
 
+def _commit_case(summary, case, out):
+    summary["cases"].append(case)
+    summary["cases"].sort(key=lambda c: c["index"])
+    summary["total"] += 1
+    summary["comparable"] += int(case["status"] == "compared")
+    summary["errors"] += int(case["status"] != "compared" or case["correctness_status"] != "pass")
+    summary["performance_passed"] += int(case["performance_status"] == "pass")
+    summary["performance_failed"] += int(case["performance_status"] == "fail")
+    write_reports(summary, out)
+    print(f"performance case={case['case_id']} status={case['status']} "
+          f"speedup={case.get('ascendc_speedup')} completed={summary['total']}", flush=True)
+
+
 def run_performance_session(*, out_dir, generation, profile: ProfileConfig, n_cases=None,
                             seed=None, repro_seed=None, target="npu", soc_tier="A3",
-                            op_categories=None, devices=None, opset=None, resume=False):
+                            op_categories=None, devices=None, opset=None, resume=False, jobs=1):
+    from .parallel import worker_targets
+    targets = worker_targets(jobs, devices, target)
     if target.split(":", 1)[0] != "npu":
         raise ValueError("Performance comparison requires --target npu")
     if n_cases is not None and n_cases < 1:
@@ -75,11 +90,11 @@ def run_performance_session(*, out_dir, generation, profile: ProfileConfig, n_ca
     with session_lock(out), stop_signals():
         return _run_locked(out=out, generation=generation, profile=profile, n_cases=n_cases,
             seed=seed, repro_seed=repro_seed, target=target, soc_tier=soc_tier,
-            op_categories=op_categories, devices=devices, opset=opset, resume=resume)
+            op_categories=op_categories, devices=devices, opset=opset, resume=resume, targets=targets)
 
 
 def _run_locked(*, out, generation, profile, n_cases, seed, repro_seed, target, soc_tier,
-                op_categories, devices, opset, resume):
+                op_categories, devices, opset, resume, targets):
     if resume:
         summary = load_checkpoint(out, generation=generation, profile=profile, seed=seed,
             repro_seed=repro_seed, target=target, soc_tier=soc_tier,
@@ -100,6 +115,7 @@ def _run_locked(*, out, generation, profile, n_cases, seed, repro_seed, target, 
     limit = 1 if repro_seed is not None else n_cases
     if limit is not None and limit < summary["total"]:
         raise ValueError("--n-cases is the total session limit and cannot be below completed cases")
+    summary["worker_targets"] = targets
     summary["requested_cases"] = limit
     summary["session_status"] = "running"
     summary.pop("stop_signal", None)
@@ -128,31 +144,28 @@ def _run_locked(*, out, generation, profile, n_cases, seed, repro_seed, target, 
                                        op_categories=op_categories, grad=False)
         summary["category_ops"] = {k: sorted(v) for k, v in OP_CATEGORIES.items()}
         summary["checkpoint"]["opset"] = snapshot_opset(opset)
-        pending = summary["checkpoint"]["pending_seed"]
-        if resume and pending is not None and not profile.keep_artifacts:
-            compact_pending_case(out, f"{summary['total']:05d}-{pending}")
-        while limit is None or summary["total"] < limit:
-            checkpoint = summary["checkpoint"]
-            case_seed = checkpoint["pending_seed"]
-            if case_seed is None:
-                case_seed = repro_seed if repro_seed is not None else rng.getrandbits(32)
-                checkpoint.update(pending_seed=case_seed, rng_state=rng.getstate())
-            # Persist the active seed before starting any potentially interrupted work.
-            _save_checkpoint(summary, out)
-            case = _measure_case(index=summary["total"], case_seed=case_seed, out=out,
-                generation=generation, profile=profile, opset=opset, model_cls=model_cls,
-                target=target, devices=devices)
-            with defer_stop_signals():
-                summary["cases"].append(case)
-                summary["total"] += 1
-                summary["comparable"] += int(case["status"] == "compared")
-                summary["errors"] += int(case["status"] != "compared" or case["correctness_status"] != "pass")
-                summary["performance_passed"] += int(case["performance_status"] == "pass")
-                summary["performance_failed"] += int(case["performance_status"] == "fail")
-                checkpoint["pending_seed"] = None
-                write_reports(summary, out)
-            print(f"performance case={case['case_id']} status={case['status']} "
-                  f"speedup={case.get('ascendc_speedup')} completed={summary['total']}", flush=True)
+        if len(targets) > 1 or 'pending_tasks' in summary['checkpoint']:
+            from .parallel import run_parallel
+            run_parallel(summary=summary, out=out, generation=generation, profile=profile,
+                rng=rng, limit=limit, targets=targets, resume=resume)
+        else:
+            pending = summary["checkpoint"]["pending_seed"]
+            if resume and pending is not None and not profile.keep_artifacts:
+                compact_pending_case(out, f"{summary['total']:05d}-{pending}")
+            while limit is None or summary["total"] < limit:
+                checkpoint = summary["checkpoint"]
+                case_seed = checkpoint["pending_seed"]
+                if case_seed is None:
+                    case_seed = repro_seed if repro_seed is not None else rng.getrandbits(32)
+                    checkpoint.update(pending_seed=case_seed, rng_state=rng.getstate())
+                # Persist the active seed before starting any potentially interrupted work.
+                _save_checkpoint(summary, out)
+                case = _measure_case(index=summary["total"], case_seed=case_seed, out=out,
+                    generation=generation, profile=profile, opset=opset, model_cls=model_cls,
+                    target=targets[0], devices=None)
+                with defer_stop_signals():
+                    checkpoint["pending_seed"] = None
+                    _commit_case(summary, case, out)
         summary["session_status"] = "completed"
     except SessionStopped as exc:
         summary["session_status"] = "stopped"

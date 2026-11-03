@@ -48,8 +48,17 @@ def load_checkpoint(out, *, generation, profile, seed, repro_seed, target, soc_t
             raise ValueError(f"Cannot resume with different profile.{key}")
     if seed is not None and seed != summary["batch_seed"]:
         raise ValueError("Cannot resume with a different batch seed")
-    if summary["total"] != len(summary["cases"]) or any(c["index"] != i for i,c in enumerate(summary["cases"])):
-        raise ValueError("Inconsistent performance checkpoint case indices")
+    cases = summary['cases']
+    indices = [c['index'] for c in cases]
+    cp = summary['checkpoint']
+    if summary['total'] != len(cases) or indices != sorted(set(indices)):
+        raise ValueError('Inconsistent performance checkpoint case indices')
+    if 'pending_tasks' in cp:
+        assigned = indices + [t['index'] for t in cp['pending_tasks']]
+        if sorted(assigned) != list(range(cp['next_index'])):
+            raise ValueError('Inconsistent pending case indices in performance checkpoint')
+    elif indices != list(range(summary['total'])):
+        raise ValueError('Inconsistent serial performance checkpoint indices')
     # Timeout and artifact retention may change; measured workload must match.
     summary["profile"] = asdict(profile)
     return summary

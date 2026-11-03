@@ -42,7 +42,7 @@ case. See docs/af_fuzz_guide.md for the replay command and version boundary.
 
 Concurrency: generation and verification run one case at a time within a
 single process/device context (see `run_fuzz_session`). Parallelism across
-cases is done by sharding into multiple OS *processes*
+cases uses a shared task pool with multiple OS *processes*
 (`run_fuzz_session_parallel`, `--jobs`), not threads: `activate_autofuse_backend`
 and the autofuse Inductor hooks mutate process-global state (env vars, a
 monkeypatched class attribute, module-level diagnostic lists guarded only by a
@@ -497,45 +497,41 @@ def _shard_target(target: str, devices: Optional[Sequence[int]], shard_idx: int)
     exceed the card count (e.g. `--jobs 4 --devices 0,1` puts shards 0/2 on
     npu:0 and shards 1/3 on npu:1).
     """
-    if not devices or target != "npu":
+    if not devices or target.split(":", 1)[0] != "npu":
         return target
     return f"npu:{devices[shard_idx % len(devices)]}"
 
 
-def _run_shard(args: tuple) -> FuzzSummary:
-    (
-        shard_out_dir,
-        shard_n_cases,
-        max_nodes,
-        timeout_ms,
-        method,
-        max_elem_per_tensor,
-        shard_seed,
-        target,
-        index_offset,
-        soc_tier,
-        concr_ph_dim_rng,
-        tensor_scale,
-        value_dist_mode,
-        op_categories,
-    ) = args
-    return run_fuzz_session(
-        out_dir=shard_out_dir,
-        n_cases=shard_n_cases,
-        max_nodes=max_nodes,
-        timeout_ms=timeout_ms,
-        method=method,
-        max_elem_per_tensor=max_elem_per_tensor,
-        concr_ph_dim_rng=concr_ph_dim_rng,
-        tensor_scale=tensor_scale,
-        seed=shard_seed,
-        target=target,
-        index_offset=index_offset,
-        write_outputs=False,
-        soc_tier=soc_tier,
-        value_dist_mode=value_dist_mode,
-        op_categories=op_categories,
-    )
+def _initialize_pool_worker(worker_index, config):
+    import os
+    worker_target = _shard_target(config['target'], config['devices'], worker_index)
+    if worker_target.split(':', 1)[0] == 'npu':
+        import torch
+        torch.npu.set_device(worker_target)
+    cache = Path(config['out_dir']).resolve() / 'worker_cache' / str(worker_index)
+    cache.mkdir(parents=True, exist_ok=True)
+    os.environ['TORCHINDUCTOR_CACHE_DIR'] = str(cache)
+    os.environ['TRITON_CACHE_DIR'] = str(cache / 'triton')
+    factory = AscendC(target=worker_target)
+    model_cls = Model.init('torch', backend_target='cpu')
+    model_cls.add_seed_setter()
+    opset = probe_ascendc_opset(model_cls, factory, soc_tier=config['soc_tier'],
+        grad=False, op_categories=config['op_categories'])
+    return factory, model_cls, opset
+
+
+def _execute_pool_case(runtime, task, config):
+    factory, model_cls, opset = runtime
+    index, case_seed = task
+    result = run_single_case(factory=factory, model_cls=model_cls, opset=opset,
+        index=index, case_seed=case_seed, out_dir=Path(config['out_dir']), debug=False,
+        **config['generation'])
+    try:
+        import torch
+        torch.npu.empty_cache()
+    except Exception:
+        pass
+    return result
 
 
 def run_fuzz_session_parallel(
@@ -556,21 +552,10 @@ def run_fuzz_session_parallel(
     value_dist_mode: str = "uniform",
     op_categories: Optional[Sequence[str]] = None,
 ) -> FuzzSummary:
-    """Shard `n_cases` across `jobs` worker processes, each with its own
-    disjoint seed sub-stream (derived from the top-level `seed` so the whole
-    run stays reproducible) and own case-index range, so dumped `bug-<index>-*`
-    directories never collide. Results are merged into one summary written to
-    `<out_dir>/summary.json` / `summary.html`, matching the single-process
-    path's output shape exactly.
+    """Workers bound to devices dynamically claim individual cases from one pool.
 
-    `devices`, if given, is a list of NPU device indices (e.g. `[0, 1]` on a
-    2-card box); shard `i` runs on `devices[i % len(devices)]` (`target`
-    becomes `"npu:<index>"` for that shard), round-robin so `--jobs` can
-    exceed the card count. Only meaningful when `target == "npu"` -- ignored
-    for `cuda`/`cpu` targets, where there's no analogous NNSmith/AscendC
-    indexed-device convention to plug into. `None` (the default) keeps every
-    shard on plain `target` ("npu", no index), identical to the pre-existing
-    single-device behavior.
+    All workers consume one global index/seed sequence. No worker owns a fixed
+    fraction of the batch. Only the parent writes the merged session reports.
     """
     if jobs <= 1:
         return run_fuzz_session(
@@ -592,51 +577,43 @@ def run_fuzz_session_parallel(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Derive one independent seed per shard from the top-level seed so the
-    # overall run is still reproducible as a whole, without every shard
-    # replaying the same case_seed sequence.
-    master_rng = random.Random(seed)
-    shard_seeds = [master_rng.getrandbits(32) for _ in range(jobs)]
+    if n_cases < 1:
+        raise ValueError('n_cases must be positive')
+    from .task_pool import dynamic_results
+    from .performance.storage import atomic_write_text
 
-    base = n_cases // jobs
-    remainder = n_cases % jobs
-    shard_args = []
-    index_offset = 0
-    for shard_idx in range(jobs):
-        shard_n_cases = base + (1 if shard_idx < remainder else 0)
-        if shard_n_cases == 0:
-            continue
-        shard_args.append(
-            (
-                out_dir,
-                shard_n_cases,
-                max_nodes,
-                timeout_ms,
-                method,
-                max_elem_per_tensor,
-                shard_seeds[shard_idx],
-                _shard_target(target, devices, shard_idx),
-                index_offset,
-                soc_tier,
-                concr_ph_dim_rng,
-                tensor_scale,
-                value_dist_mode,
-                op_categories,
-            )
-        )
-        index_offset += shard_n_cases
-
-    ctx = multiprocessing.get_context("spawn")
+    # One global seed sequence, independent of worker count and completion order.
+    rng = random.Random(seed)
+    tasks = ((index, rng.getrandbits(32)) for index in range(n_cases))
+    config = dict(out_dir=str(out_dir), target=target, devices=devices,
+        soc_tier=soc_tier, op_categories=op_categories, generation=dict(
+            max_nodes=max_nodes, timeout_ms=timeout_ms, method=method,
+            max_elem_per_tensor=max_elem_per_tensor, concr_ph_dim_rng=concr_ph_dim_rng,
+            tensor_scale=tensor_scale, value_dist_mode=value_dist_mode))
     merged = FuzzSummary()
-    with ctx.Pool(processes=len(shard_args)) as pool:
-        for shard_summary in pool.map(_run_shard, shard_args):
-            merged.merge(shard_summary)
 
-    merged.cases.sort(key=lambda c: c.index)
+    def save():
+        merged.cases.sort(key=lambda c: c.index)
+        data = merged.to_dict()
+        atomic_write_text(out_dir / 'summary.json', json.dumps(data, indent=2, ensure_ascii=False))
+        from .summary_html import render_summary_html
+        atomic_write_text(out_dir / 'summary.html', render_summary_html(data, op_categories=OP_CATEGORIES))
 
-    summary_dict = merged.to_dict()
-    with open(out_dir / "summary.json", "w") as f:
-        json.dump(summary_dict, f, indent=2, ensure_ascii=False)
-    write_summary_html(summary_dict, out_dir / "summary.html", op_categories=OP_CATEGORIES)
-
+    stream = dynamic_results(tasks, workers=min(jobs, n_cases), config=config,
+        initialize=_initialize_pool_worker, execute=_execute_pool_case)
+    try:
+        save()
+        for result in stream:
+            merged.cases.append(result)
+            merged.total += 1
+            if result.status == 'pass':
+                merged.passed += 1
+            elif result.status == 'fail':
+                merged.failed += 1
+            else:
+                merged.gen_errors += 1
+            save()
+    finally:
+        stream.close()
+        save()
     return merged

@@ -665,7 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--jobs",
         type=int,
         default=2,
-        help="shard case generation/verification across N processes "
+        help="run N persistent case workers consuming a shared task pool "
         "(each worker compiles on real NPU hardware, which is memory/CPU "
         "heavy -- start low and watch system load before raising this; "
         "jobs=8 has been observed to crash a 40-core/229GB instance). "
@@ -679,7 +679,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--devices",
         default=None,
         help="comma-separated NPU device indices to spread --jobs workers across "
-        "(e.g. '0,1' on a 2-card box): shard i runs on devices[i %% len(devices)], "
+        "(e.g. '0,1' on a 2-card box): worker i stays on devices[i %% len(devices)]; idle workers claim the next case, "
         "round-robin, so --jobs can exceed the card count. Only affects --target "
         "npu (the default); ignored for cuda/cpu. Default: unset, meaning every "
         "worker runs on plain npu (device 0), identical to single-device behavior.",

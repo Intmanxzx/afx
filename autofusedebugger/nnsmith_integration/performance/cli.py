@@ -3,7 +3,7 @@
 def add_arguments(parser):
     group = parser.add_argument_group("backend performance comparison")
     group.add_argument("--compare-performance", action="store_true",
-                       help="compare AscendC and default Triton-Ascend kernel time using isolated NPU profiler workers; serial execution (ignores --jobs)")
+                       help="compare AscendC and default Triton-Ascend kernel time using isolated NPU profiler workers; dynamic workers across distinct --devices; each case benchmarks backends serially")
     group.add_argument("--keep-perf-artifacts", action="store_true",
                        help="retain raw profiling and per-run compile caches; default keeps only CSV/results/logs/reports")
     group.add_argument("--resume", action="store_true",
@@ -35,7 +35,7 @@ def run(args, *, op_categories, devices):
         out_dir=args.out_dir, generation=generation, profile=profile,
         n_cases=args.n_cases, seed=args.seed, repro_seed=args.repro_seed,
         target=args.target, soc_tier=args.soc_tier, op_categories=op_categories,
-        devices=devices, resume=args.resume,
+        devices=devices, resume=args.resume, jobs=args.jobs,
     )
     print(f"total={summary['total']} comparable={summary['comparable']} perf_pass={summary['performance_passed']} perf_fail={summary['performance_failed']} errors={summary['errors']}; summary: {args.out_dir}/summary.html")
     if summary.get("stop_signal"):

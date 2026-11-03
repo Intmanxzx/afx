@@ -34,14 +34,14 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--timeout-ms` | `None`（跟随 `--tensor-scale` 档位） | 单 case 生成超时（毫秒）。不传时使用 `--tensor-scale` 档位自带的值（见后面的档位数值表），显式传值会覆盖档位值 |
 | `--max-elem-per-tensor` | `None`（跟随 `--tensor-scale` 档位） | 单张量最大元素数上限。不传时使用 `--tensor-scale` 档位自带的值（见后面的档位数值表），显式传值会覆盖档位值 |
 | `--value-dist-mode` | `"uniform"` | 权重/输入的数值分布档位，四选一：`uniform`（原始 `[3,7)` 均匀分布，默认兼容旧行为）/ `log_scale`（跨 `1e-4~1e4` 量级）/ `llm`（模拟 LLM 激活值分布：主体 `N(0, 0.2²)`，5% 元素随机放大 100~10000 倍，模拟"massive activations"现象）/ `recommendation`（模拟推荐系统归一化特征，`uniform[0,1)`）。具体分布公式见 `docs/af_fuzz_randomization.md` |
-| `--seed` | `None`（随机） | 整批的顶层随机种子，决定派生的 `case_seed` 序列；批量复跑须保持 `--jobs` 等分片参数一致。单 case 用 `--repro-seed`，复现条件见第 3 节 |
+| `--seed` | `None`（随机） | 整批的顶层随机种子，决定派生的 `case_seed` 序列；功能/精度模式改变 `--jobs` 不改变全局 case seed 序列；软件、生成参数和算子候选仍须一致。单 case 用 `--repro-seed`，复现条件见第 3 节 |
 | `--target` | `"npu"` | 执行目标后端 |
-| `--jobs` | `2` | 按进程切分 `--n-cases`，并行跑 N 个进程。每个 worker 真实占用 NPU 编译/执行资源，偏重 CPU+内存，建议先用低值观察负载再往上调；并发调优细节和实测数据见 `docs/af_fuzz_npu_env.md` 第 5 节 |
+| `--jobs` | `2` | 并行运行 N 个常驻 worker，从公共任务池逐例领取任务；先完成的 worker 继续领取下一例，不再固定均分用例。每个 worker 真实占用 NPU 编译/执行资源，偏重 CPU+内存，建议先用低值观察负载再往上调；并发调优细节和实测数据见 `docs/af_fuzz_npu_env.md` 第 5 节 |
 | `--devices` | `None`（不指定，所有 `--jobs` worker 都跑在 `npu:0` 上） | 逗号分隔的 NPU 卡号列表，比如 `0,1`；把 `--jobs` 分出的每个 worker 按 `shard_idx % len(devices)` 轮询分配到对应的卡上（`--jobs 4 --devices 0,1` 时 shard 0/2 → `npu:0`，shard 1/3 → `npu:1`），让多卡机器真正并发利用所有卡，而不是全部挤在一张卡上排队。只在 `--target npu`（默认）下生效，`cuda`/`cpu` 忽略此参数。多卡用法和实测见 `docs/af_fuzz_npu_env.md` 第 5.3 节 |
 | `--compile-threads` | `None`（跟随环境变量 `TORCHINDUCTOR_COMPILE_THREADS`，否则 `4`） | **每个** `--jobs` 进程内部 inductor 并行编译 worker 池大小。inductor 自身默认值是 `min(32, 宿主机 CPU 核数)`，在容器里容易把内存撑爆，所以这里改成了偏保守的默认 `4` |
 | `--soc-tier` | `"A3"` | `A3` / `A5` 二选一，决定用哪一代 NPU 的融合算子白名单来约束图生成（见 `ascendc_opset.py`）；在 A5 硬件上验证时要显式传 `A5` |
 | `--op-categories` | `None`（不限制，用 `--soc-tier` 对应的全量算子集合） | 逗号分隔的算子分类子集，比如 `elewise,reduce`；传了之后**完全替换**默认的全量算子集合（不是在默认集合基础上再收窄），只会从这些分类里的算子生成用例。可选分类及具体数值见本表后面的"`--op-categories` 分类明细"表。会在 `--soc-tier` 过滤之后再应用，所以只能让生成范围变得更窄，不会出现某个分类在当前 soc-tier 上本来不支持却被生成出来的情况；如果选的分类在当前 soc-tier 上一个算子都没有（比如 A3 下选 `matmul`），会直接报错 |
-| `--compare-performance` | 关闭（`False`） | 开启 AscendC 与默认 Triton-Ascend 的性能对比；同一 case 在同一张 NPU 上分别运行两个独立后端进程，比较 profiling 得到的每步 kernel 总耗时。仅支持 NPU，按 case 和后端串行执行（忽略 `--jobs`）；`--devices` 按 case 轮询分配卡号。报告增加“性能对比”和“性能对比汇总”页签，详见第 4 节 |
+| `--compare-performance` | 关闭（`False`） | 开启 AscendC 与默认 Triton-Ascend 的性能对比；同一 case 在同一张 NPU 上分别运行两个独立后端进程，比较 profiling 得到的每步 kernel 总耗时。仅支持 NPU；使用 `--jobs 2 --devices 0,1` 启用不同卡之间的公共任务池调度，同一 case 的两种后端仍在同卡串行测量。每张卡最多一个性能 worker；未指定卡列表时只使用目标卡。报告增加“性能对比”和“性能对比汇总”页签，详见第 4 节 |
 | `--keep-perf-artifacts` | 关闭（`False`） | 性能模式专用；显式保留原始 profiling 和每次测量的编译缓存。默认在结果持久化后删除这些大体积产物，保留统计 CSV、JSON、日志和 HTML；异常与超时用例同样清理 |
 | `--resume` | 关闭（`False`） | 性能模式专用；从 `--out-dir` 的检查点继续运行，跳过已完成用例并重跑被中断的 case。须保持生成参数、预热/采集步数、目标设备与软件版本一致；只支持新版创建的会话 |
 | `--warmup-steps` | `3` | 性能模式专用，正整数；每种后端完成编译和首次精度校验后的预热步数，不计入 kernel 耗时 |
@@ -224,3 +224,19 @@ autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf_continuous --se
 ```
 
 报告和检查点逐例原子保存；SIGKILL（`kill -9`）或断电无法执行退出回调，可读取最后一次保存的报告，并在下次 `--resume` 时恢复。具体口径、参数和模块结构见 [性能对比指南](af_fuzz_performance.md)。
+
+
+### 多卡动态任务池
+
+功能/精度模式下，两个进程分别绑定两张卡，从公共任务池领取用例：
+
+~~~bash
+autofusedbg af-fuzz --out-dir /tmp/af_fuzz_dynamic --n-cases 500 --jobs 2 --devices 0,1 --seed 42
+~~~
+
+每个 worker 初始化一次后端和算子集合，完成当前 case 后领取下一例。父进程统一分配全局 index/seed，并逐例更新报告；完成顺序不影响最终报告的 index 排序。worker 崩溃或初始化异常会停止调度并保留已收到结果的报告，不会静默遗漏领取中的用例。
+
+性能模式同样支持公共任务池：加 --compare-performance --jobs 2 --devices 0,1，不同卡并行领取 case，同一个 case 内两种后端串行执行。性能 worker 数不超过指定的独立卡数，未指定 --devices 时只使用 --target 对应的一张卡。新调度下，同一 batch seed 的 case seed 序列与单进程一致；旧版多进程按 shard 派生的序列会改变，旧报告中的单例仍可通过 --repro-seed 复现。
+
+
+性能模式支持乱序完成后的断点续跑：检查点保留多个未完成 case 的 index/seed，已经完成的高 index 用例不会丢失；续跑优先补测未完成项，再从全局 seed 序列继续。报告记录每个并行 case 实际使用的 target。改变 --jobs 不改变 case seed 序列，但可能改变 case 对应的设备和实测耗时。
