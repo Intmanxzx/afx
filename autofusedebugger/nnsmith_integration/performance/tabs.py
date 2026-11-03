@@ -26,7 +26,7 @@ def render_performance_tabs(summary):
         ("asc_time", "AscendC Kernel耗时(μs/步)"), ("tri_time", "Triton Kernel耗时(μs/步)"),
         ("ascendc_speedup", "性能加速比"), ("op_types", "算子集合"),
         ("input_shapes", "Input Shape / dtype"), ("output_shapes", "Output Shape / dtype"),
-        ("accuracy", "精度 AscendC / Triton"), ("error", "异常详情"),
+        ("shape_details", "Shape模式 / 各尺寸耗时"), ("accuracy", "精度 AscendC / Triton"), ("error", "异常详情"),
     ]
     heads = ''.join(f'<th data-perf-key="{key}">{label}</th>' for key, label in columns)
     cards = ''.join(f'''<div class="chart-card"><h3>{title}</h3><p class="chart-sub">{sub}</p>
@@ -34,6 +34,7 @@ def render_performance_tabs(summary):
 <div class="legend" id="perfLegend{key}"></div></div>''' for key, title, sub in CHARTS)
     note = '''<p style="color:#617083">性能 pass：AscendC kernel 耗时 ≤ Triton-Ascend；fail：AscendC 更慢；error：采集失败、耗时缺失或内容指纹不匹配。<br>
 每步 kernel 耗时 = 所有算子 Total Time 求和 ÷ 采集步数；加速比 = Triton-Ascend / AscendC（≥1 为 pass）。精度状态独立展示。<br>
+动态模式逐尺寸采集，汇总耗时为所有尺寸 Total Time 求和 ÷ 所有采集步数；各尺寸结果见表格。<br>
 执行耗时为后端 worker 总墙钟时间，包含启动、构图、编译、校验、预热、采集和导出，不参与性能判定；“—”表示无数据。</p>'''
     stats = f'<div class="stats"><span>Total <strong>{len(cases)}</strong></span><span class="pass">性能 pass <strong>{counts["pass"]}</strong></span><span class="fail">性能 fail <strong>{counts["fail"]}</strong></span><span>error <strong>{counts["error"]}</strong></span></div>'
     state = html.escape(str(summary.get("session_status", "")))
@@ -61,6 +62,10 @@ const perfRows = PERF_CASES.map(c => {
   const a = c.backends?.ascendc || {}, t = c.backends?.['triton-ascend'] || {};
   return {...c, asc_kernels:a.mean_kernel_count, tri_kernels:t.mean_kernel_count,
     asc_duration:a.duration_s, tri_duration:t.duration_s, asc_time:a.mean_kernel_us, tri_time:t.mean_kernel_us,
+    shape_details:(c.shape_mode || 'static') + (c.shape_variants || []).map((v,i) =>
+      '\n#' + i + ' ' + formatShapes(v.input_shapes,c.input_dtypes) + '\nAscendC / Triton μs: ' +
+      perfNumber(a.shape_results?.[i]?.mean_kernel_us) + ' / ' + perfNumber(t.shape_results?.[i]?.mean_kernel_us) +
+      ' · ' + (a.shape_results?.[i]?.correctness || '—') + ' / ' + (t.shape_results?.[i]?.correctness || '—')).join(''),
     accuracy:`${a.correctness || 'not_checked'} / ${t.correctness || 'not_checked'}`,
     error:c.error || Object.entries(c.backends || {}).filter(([name,b]) => b.status !== 'ok' || b.error || b.correctness_error)
       .map(([name,b]) => `${name} [${b.error_stage || b.status}]: ${b.error || b.correctness_error || b.status}`).join('\n') ||
@@ -87,7 +92,7 @@ function renderPerfTable() {
     td(perfNumber(c.asc_duration,2)) + td(perfNumber(c.tri_duration,2)) +
     td(perfNumber(c.asc_time)) + td(perfNumber(c.tri_time)) + td(c.ascendc_speedup == null ? '—' : perfNumber(c.ascendc_speedup) + '×') +
     td((c.op_types || []).join(', '),'ops') + td(formatShapes(c.input_shapes,c.input_dtypes),'shapes') +
-    td(formatShapes(c.output_shapes,c.output_dtypes),'shapes') + td(c.accuracy) + td(c.error,'shapes') + '</tr>').join('');
+    td(formatShapes(c.output_shapes,c.output_dtypes),'shapes') + td(c.shape_details,'shapes') + td(c.accuracy) + td(c.error,'shapes') + '</tr>').join('');
 }
 document.querySelectorAll('#perfTable th[data-perf-key]').forEach(th => th.onclick = () => {
   const key = th.dataset.perfKey;

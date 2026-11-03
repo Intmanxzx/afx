@@ -29,6 +29,8 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--out-dir` | **必填** | 结果输出目录（`summary.json`/`summary.html`/失败用例目录都落在这里） |
 | `--n-cases` | 功能/精度模式 `100`；性能模式不限制 | 本次会话的用例总数上限，显式指定时为正整数。性能模式不传时持续运行，直到 Ctrl+C、SIGTERM 或会话异常退出；配合 `--resume` 时是不包含重复执行已完成用例的累计总上限，不传则沿用检查点的上限 |
 | `--max-nodes` | `5` | 单个用例计算图节点数的**上限**；每个 case 的真实节点数会在 `[2, max-nodes]` 区间内随机抽取，不是固定等于这个值（至少 2 个节点才有融合的意义） |
+| --dynamic-shapes | 关闭 | 启用同图多尺寸动态输入验证：保持图结构、常量和权重固定，生成多组合法 shape，并用同一个 torch.compile(dynamic=True) 实例执行；维度严格标记为动态。功能/精度、单例复现和性能对比均可使用，详见第 5 节 |
+| --dynamic-variants | 3 | 每个动态 case 的尺寸组数，整数 2～8，包含原始 shape；每组均执行精度校验，性能模式还逐组预热及采集 |
 | `--method` | `"symbolic-cinit"` | nnsmith 图生成算法，一般不需要改 |
 | `--tensor-scale` | `"default"` | `default`/`small`/`medium`/`large`/`16k`/`32k`/`64k`/`128k` 八档，每档同时固定 `--timeout-ms`/`--max-elem-per-tensor`/维度取值区间/分布形态，具体数值见本表后面的"`--tensor-scale` 各档具体数值"表；`default` 是 2026-10-29 新增的开箱即用档位，区间 `[1, 131072]` 配合 half-normal 分布（小 shape 常见、大 shape 罕见但可达）；`small` 等价于改动前的硬编码默认行为，保留作回归基线；`16k`/`32k`/`64k`/`128k` 专门用来压测单维度大小本身（长上下文 `seq_len` 场景），上界直接对应档位名的数值 |
 | `--timeout-ms` | `None`（跟随 `--tensor-scale` 档位） | 单 case 生成超时（毫秒）。不传时使用 `--tensor-scale` 档位自带的值（见后面的档位数值表），显式传值会覆盖档位值 |
@@ -240,3 +242,60 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_dynamic --n-cases 500 --jobs 2 --devi
 
 
 性能模式支持乱序完成后的断点续跑：检查点保留多个未完成 case 的 index/seed，已经完成的高 index 用例不会丢失；续跑优先补测未完成项，再从全局 seed 序列继续。报告记录每个并行 case 实际使用的 target。改变 --jobs 不改变 case seed 序列，但可能改变 case 对应的设备和实测耗时。
+
+
+## 5. 动态 shape 测试
+
+默认仍生成固定输入 shape。开启 --dynamic-shapes 后，一个 case 表示“同一图、同一份权重、多组输入尺寸”，而不是为每个尺寸重新生成一个模型。--dynamic-variants 默认 3（包含原始尺寸），范围 2～8。
+
+### 5.1 生成与校验方式
+
+先按原流程生成具体图和参考输入，再从输入中选择一个大于 1 的尺寸值，将具有相同尺寸值的输入轴联动变化；其他输入维度、图属性、常量和权重保持固定。候选尺寸按 case seed 确定，变化后的每张输入仍受 --max-elem-per-tensor / --tensor-scale 的元素数上限约束。新尺寸的数据通过原输入确定性缩放填充，保留原 dtype 和数值来源；它不是为新 shape 重新独立采样一份随机分布。
+
+每组候选先运行 CPU eager，生成参考输出；必须可执行且输出有限，才能纳入动态 workload。固定 reshape、常量广播、切片等约束可能让图无法生成指定数量的不同尺寸，这时记录 gen_error，不会退回静态验证后宣称动态通过。当前不改变 rank，不支持数据依赖输出长度，也不对图的任意维度组合做符号求解；标量输入、全 1 输入和无输入图可能无法形成动态 workload。
+
+后端通过 torch.compile(dynamic=True, fullgraph=True) 编译同一张 FX 图，所有尺寸复用同一个编译 callable。变化轴使用 torch._dynamo.mark_dynamic 严格标记；若后端必须把该轴特化为常量，编译/执行会失败并反映在结果中。后端仍可能因 guard、分支等原因重编译，工具当前不提供“所有 shape 只编译一次”的保证或编译次数统计。
+
+### 5.2 命令示例
+
+~~~bash
+# 功能/精度：每例校验 3 组 shape
+autofusedbg af-fuzz --out-dir /tmp/af_dynamic_accuracy --n-cases 20 \
+  --seed 42 --tensor-scale small --dynamic-shapes --dynamic-variants 3
+
+# 动态性能：两卡动态领取，每种 shape 分别预热3步、采集10步
+autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_dynamic_perf \
+  --jobs 2 --devices 0,1 --seed 42 --dynamic-shapes --dynamic-variants 3
+
+# 单个 case 复现：保留原批次生成参数及动态参数
+autofusedbg af-fuzz --out-dir /tmp/af_dynamic_repro --repro-seed 2746317213 \
+  --tensor-scale small --dynamic-shapes --dynamic-variants 3 --no-debug
+~~~
+
+动态功能模式通过 seed 复现，当前不导出传统的 model.pth/gir.pkl/repro.py 调试包；--debug 不会启用动态路径的传统调试包。需要定位时保留报告里的 seed、动态轴和尺寸列表；性能模式可加 --keep-perf-artifacts 保留逐 shape 的 profiling 与日志。
+
+### 5.3 报告与性能口径
+
+用例列表新增 Shape 模式/尺寸组，JSON 包含 shape_mode、dynamic_axes、shape_variants。动态功能用例只有全部尺寸的精度检查通过才为 pass；非法 workload 为 gen_error；动态编译、执行或精度问题为 fail。性能结果的 shape_results 记录每组的输入/输出 shape、精度、kernel 数、kernel 耗时及 CSV 路径；HTML 性能表展示各尺寸的双后端耗时和精度。
+
+--profile-steps 是每组尺寸的采集步数。3 组 shape、每组 10 步时，每个后端共采集 30 步；每组编译触发、精度校验和预热都在该组采集区间外。case 汇总耗时为各尺寸 Total Time 求和 ÷ 各尺寸采集步数总和，相当于对等步数的尺寸组取等权平均。性能 pass/fail 按该汇总时间比较，同时查看逐尺寸数据可发现某组较慢而被平均值掩盖的情况。
+
+图、权重、原输入、所有动态输入和参考输出参与跨后端内容指纹校验。--repro-seed 在软件、候选算子、生成参数和动态参数一致时重建相同 workload；--resume 同样校验动态配置，不能把静态会话当作动态会话继续，也不能更改动态组数后混入原会话。
+
+## 6. af-fuzz 能力速查
+
+| 能力 | 开启方式 | 说明 |
+|---|---|---|
+| 静态功能/精度 | 默认 | CPU oracle 对比 AscendC，默认100例 |
+| 动态多 shape | --dynamic-shapes | 同图同权重，多组尺寸逐组校验 |
+| 单例 seed 复现 | --repro-seed | 保持原生成配置及动态参数 |
+| 双后端性能 | --compare-performance | AscendC 与默认 Triton-Ascend profiling 对比 |
+| 多卡公共任务池 | --jobs 2 --devices 0,1 | 空闲 worker 逐例领任务；性能模式每卡最多一个 worker |
+| 持续运行 | 性能模式不传 --n-cases | SIGINT/SIGTERM 停止，逐例保存报告 |
+| 断点续跑 | 性能模式 --resume | 补跑未完成项，保留已完成项，要求配置和软件一致 |
+| 自动清理 | 性能模式默认 | 保留 CSV/JSON/日志/报告，清理原始 profiling 与独享缓存 |
+| 完整性能产物 | --keep-perf-artifacts | 保留 profiling 与缓存，磁盘占用随用例数增长 |
+
+动态 shape 已通过 CPU 符号编译、多尺寸精度和 seed 重建测试，并在 A3 上完成小规模工具级验证：Python 3.11、Torch 2.10.0+cpu、torch_npu 2.10.0.post7.dev20261011、CANN 9.3.0；FP32 Neg 算子池，seed 42，同图三组 shape 为 [5,5,5,6,4]、[3,3,3,6,4]、[4,4,4,6,4]，动态轴为 0/1/2。动态功能精度通过；AscendC 和 Triton-Ascend 均以 dynamic=True 执行，逐 shape 预热3步、采集10步，六组精度全部通过且均有 kernel 统计 CSV。CSV 中分别出现 autofused_neg_… 和 triton_poi_fused_neg_0；原始 profiling 自动清理、逐 shape CSV 保留均通过检查。此结论只覆盖上述小规模链路，不代表任意算子组合和形状约束都能动态编译；动态多卡大批量稳定性尚未验证。
+
+该 A3 新实例缺少 setuptools 及 NNSmith 运行依赖，验证使用 /tmp 隔离依赖目录补齐，未改动虚拟环境安装文件；隔离 NumPy 固定为 Triton 要求的 1.26.4，ml_dtypes 使用 0.5.1。

@@ -56,13 +56,15 @@ def case_fingerprint(case) -> str:
             if isinstance(value, torch.Tensor):
                 value = value.detach().cpu().contiguous().reshape(-1).view(torch.uint8).numpy()
             h.update(hashlib.sha256(value.tobytes()).digest())
+    if hasattr(case, "dynamic_fingerprint"):
+        h.update(case.dynamic_fingerprint.encode())
     return h.hexdigest()
 
 
 def describe_case(case) -> dict:
     model = case.model
     ir = model.native_model.ir
-    return {"n_nodes": ir.n_compute_inst(),
+    return {**getattr(case, "dynamic_metadata", {}), "n_nodes": ir.n_compute_inst(),
             "op_types": sorted({i.iexpr.op.name() for i in ir.insts}),
             "input_shapes": {n: list(t.shape) for n, t in model.input_like.items()},
             "input_dtypes": {n: t.dtype.short() for n, t in model.input_like.items()},

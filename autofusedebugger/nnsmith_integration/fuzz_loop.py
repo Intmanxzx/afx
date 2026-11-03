@@ -122,6 +122,10 @@ class CaseResult:
     # Left at the default 0 for "gen_error" cases, which never reach
     # compilation.
     n_kernels: int = 0
+    shape_mode: str = "static"
+    dynamic_axes: dict = field(default_factory=dict)
+    shape_variants: list = field(default_factory=list)
+    dynamic_fingerprint: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.case_id:
@@ -228,6 +232,8 @@ def run_single_case(
     out_dir: Optional[str | Path] = None,
     debug: bool = False,
     value_dist_mode: str = "uniform",
+    dynamic_shapes: bool = False,
+    dynamic_variants: int = 3,
 ) -> CaseResult:
     """Generate and verify one case using `case_seed` under a fixed generation
     configuration, op/dtype pool and software environment. Used both by
@@ -237,6 +243,7 @@ def run_single_case(
         max_nodes=max_nodes, timeout_ms=timeout_ms, method=method,
         max_elem_per_tensor=max_elem_per_tensor, concr_ph_dim_rng=concr_ph_dim_rng,
         tensor_scale=tensor_scale, value_dist_mode=value_dist_mode,
+        dynamic_shapes=dynamic_shapes, dynamic_variants=dynamic_variants,
     )
     t0 = time.time()
     case_id = f"{index:05d}-{case_seed}"
@@ -253,9 +260,30 @@ def run_single_case(
             index=index,
             case_id=case_id,
             status="gen_error",
+            shape_mode="dynamic" if dynamic_shapes else "static",
             duration_s=time.time() - t0,
             error_summary=_truncate(traceback.format_exc()),
         )
+
+    if dynamic_shapes:
+        from .dynamic_shapes import verify_workload
+        metadata = dict(testcase.dynamic_metadata)
+        try:
+            rtol,atol = _tolerance_for_ir(ir)
+            verify_workload(testcase,target=factory.target,seed=case_seed,variants=dynamic_variants,
+                max_elements=max_elem_per_tensor or TENSOR_SCALE_PROFILES[tensor_scale]['max_elem_per_tensor'],
+                rtol=rtol,atol=atol)
+            status, error = "pass", None
+        except Exception:
+            status,error = "fail",_truncate(traceback.format_exc())
+        return CaseResult(seed=case_seed,index=index,status=status,duration_s=time.time()-t0,
+            n_nodes=ir.n_compute_inst(),op_types=sorted({i.iexpr.op.name() for i in ir.insts}),
+            input_shapes={n:list(v.shape) for n,v in testcase.oracle.input.items()},
+            output_shapes={n:list(v.shape) for n,v in testcase.oracle.output.items()},
+            input_dtypes={n:t.dtype.short() for n,t in model.input_like.items()},
+            output_dtypes={n:t.dtype.short() for n,t in model.output_like.items()},
+            dynamic_fingerprint=testcase.dynamic_fingerprint,
+            error_summary=error,stage="dynamic_compile_execute" if error else None,**metadata)
 
     op_types = sorted({inst.iexpr.op.name() for inst in ir.insts})
 
@@ -348,6 +376,8 @@ def run_repro_case(
     debug: bool = True,
     soc_tier: str = "A3",
     value_dist_mode: str = "uniform",
+    dynamic_shapes: bool = False,
+    dynamic_variants: int = 3,
     op_categories: Optional[Sequence[str]] = None,
 ) -> CaseResult:
     """Re-run exactly one case identified by its original `case_seed`
@@ -382,6 +412,7 @@ def run_repro_case(
         out_dir=out_dir if debug else None,
         debug=debug,
         value_dist_mode=value_dist_mode,
+        dynamic_shapes=dynamic_shapes, dynamic_variants=dynamic_variants,
     )
 
 
@@ -401,6 +432,8 @@ def run_fuzz_session(
     write_outputs: bool = True,
     soc_tier: str = "A3",
     value_dist_mode: str = "uniform",
+    dynamic_shapes: bool = False,
+    dynamic_variants: int = 3,
     op_categories: Optional[Sequence[str]] = None,
 ) -> FuzzSummary:
     """Generate `n_cases` NNSmith torch models, run each end-to-end against the
@@ -452,6 +485,7 @@ def run_fuzz_session(
             out_dir=out_dir,
             debug=False,
             value_dist_mode=value_dist_mode,
+            dynamic_shapes=dynamic_shapes, dynamic_variants=dynamic_variants,
         )
         # Cheap per-case safety net; it is NOT what bounds memory in a batch.
         # Measured on A5 across 20 real cases (run_single_case in a loop):
@@ -550,6 +584,8 @@ def run_fuzz_session_parallel(
     devices: Optional[Sequence[int]] = None,
     soc_tier: str = "A3",
     value_dist_mode: str = "uniform",
+    dynamic_shapes: bool = False,
+    dynamic_variants: int = 3,
     op_categories: Optional[Sequence[str]] = None,
 ) -> FuzzSummary:
     """Workers bound to devices dynamically claim individual cases from one pool.
@@ -571,6 +607,7 @@ def run_fuzz_session_parallel(
             target=_shard_target(target, devices, 0),
             soc_tier=soc_tier,
             value_dist_mode=value_dist_mode,
+            dynamic_shapes=dynamic_shapes, dynamic_variants=dynamic_variants,
             op_categories=op_categories,
         )
 
@@ -589,7 +626,8 @@ def run_fuzz_session_parallel(
         soc_tier=soc_tier, op_categories=op_categories, generation=dict(
             max_nodes=max_nodes, timeout_ms=timeout_ms, method=method,
             max_elem_per_tensor=max_elem_per_tensor, concr_ph_dim_rng=concr_ph_dim_rng,
-            tensor_scale=tensor_scale, value_dist_mode=value_dist_mode))
+            tensor_scale=tensor_scale, value_dist_mode=value_dist_mode,
+            dynamic_shapes=dynamic_shapes, dynamic_variants=dynamic_variants))
     merged = FuzzSummary()
 
     def save():

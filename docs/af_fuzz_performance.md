@@ -132,3 +132,10 @@ autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf_multi --jobs 2 
 每个常驻 worker 固定绑定一张 NPU，完成当前 case 的两个后端测量后领取下一例。主进程统一生成 index/seed，记录所有已分配未完成任务，并独占汇总报告写入；完成顺序可以不同，报告按 index 排序。省略 --n-cases 继续表示持续运行。
 
 停止时终止所有性能 worker 及其测量子进程，报告只计已收到的完整结果。--resume 会优先重跑全部未完成 case，保留已完成的高 index 结果，然后继续生成新 seed。--jobs 可以调整，--devices 和测量/生成参数仍需与原会话一致。不同卡的硬件状态和共享主机资源可能影响实测耗时，应在报告比较中保持设备条件一致。
+
+
+## 动态 shape 性能
+
+增加 --dynamic-shapes --dynamic-variants 3，可对同图同权重的三组合法输入尺寸分别采集。每组执行精度校验、预热和 --profile-steps 次采集，后端共享一个 torch.compile(dynamic=True) callable；严格标记变化输入轴，无法符号化时显式失败。case 总耗时为所有尺寸 Total Time 之和除以采集步数总和。逐尺寸结果在 shape_results 和 HTML 的“Shape模式 / 各尺寸耗时”列展示，默认清理后保留 op_statistic_shape_0.csv 等逐尺寸 CSV。
+
+动态候选约束、生成失败含义、seed 复现及续跑条件见 [使用指南第5节](af_fuzz_guide.md#5-动态-shape-测试)。--dynamic-shapes 默认关闭；新参数也已加入使用指南参数表。

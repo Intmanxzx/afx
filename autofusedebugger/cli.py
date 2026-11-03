@@ -239,6 +239,7 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
             debug=True if args.debug is None else args.debug,
             soc_tier=args.soc_tier,
             value_dist_mode=args.value_dist_mode,
+            dynamic_shapes=args.dynamic_shapes, dynamic_variants=args.dynamic_variants,
             op_categories=op_categories,
         )
         print(
@@ -272,6 +273,7 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         devices=devices,
         soc_tier=args.soc_tier,
         value_dist_mode=args.value_dist_mode,
+        dynamic_shapes=args.dynamic_shapes, dynamic_variants=args.dynamic_variants,
         op_categories=op_categories,
     )
     print(
@@ -612,6 +614,8 @@ def build_parser() -> argparse.ArgumentParser:
         "profile value takes effect; passing this explicitly overrides the "
         "profile's timeout_ms (see TENSOR_SCALE_PROFILES in fuzz_loop.py).",
     )
+    fuzz.add_argument("--dynamic-shapes", action="store_true", help="validate multiple input shapes using strict symbolic dimensions and torch.compile(dynamic=True)")
+    fuzz.add_argument("--dynamic-variants", type=int, default=3, help="number of distinct shapes per dynamic case, 2..8 (default 3)")
     fuzz.add_argument("--method", default="symbolic-cinit")
     fuzz.add_argument(
         "--max-elem-per-tensor",

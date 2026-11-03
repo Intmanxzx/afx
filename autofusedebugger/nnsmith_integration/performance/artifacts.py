@@ -34,6 +34,15 @@ def finalize_artifacts(result, run_dir: Path, cache_dir: Path, *, keep=False):
                 shutil.copy2(source, destination.with_suffix(".csv.tmp"))
                 destination.with_suffix(".csv.tmp").replace(destination)
             result.csv_path = str(destination)
+        for index, shape in enumerate(result.shape_results):
+            if not shape.get("csv_path"):
+                continue
+            source = Path(shape["csv_path"])
+            destination = run_dir / f"op_statistic_shape_{index}.csv"
+            if source.resolve() != destination.resolve():
+                source.resolve().relative_to((run_dir / "profiling").resolve())
+                shutil.copy2(source, destination)
+            shape["csv_path"] = str(destination)
         # Save the new CSV location before removing the capture tree.
         atomic_write_text(result_path, json.dumps(asdict(result), indent=2, ensure_ascii=False))
         for directory in (run_dir / "profiling", cache_dir):

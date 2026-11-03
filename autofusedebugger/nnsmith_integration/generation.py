@@ -175,10 +175,14 @@ class GenerationConfig:
     concr_ph_dim_rng: Optional[tuple[int, int]] = None
     tensor_scale: str = "default"
     value_dist_mode: str = "uniform"
+    dynamic_shapes: bool = False
+    dynamic_variants: int = 3
 
     def __post_init__(self):
         if self.tensor_scale not in TENSOR_SCALE_PROFILES:
             raise ValueError(f"Unknown tensor_scale {self.tensor_scale!r}")
+        if not 2 <= self.dynamic_variants <= 8:
+            raise ValueError("dynamic_variants must be between 2 and 8")
         if self.max_nodes < 1:
             raise ValueError("max_nodes must be positive")
 
@@ -202,4 +206,14 @@ def generate_case(*, opset, model_cls, case_seed: int, config: GenerationConfig)
         model = model_cls.from_gir(ir)
         model.refine_weights(value_dist_mode=config.value_dist_mode, max_search_steps=_NUMERIC_SEARCH_STEPS)
         oracle = model.make_oracle(mode=config.value_dist_mode)
-    return TestCase(model, oracle)
+    case = TestCase(model, oracle)
+    if config.dynamic_shapes:
+        from .dynamic_shapes import build_workload, workload_metadata, workload_fingerprint
+        with _seeded_materialization(case_seed):
+            samples, axes = build_workload(case, seed=case_seed, variants=config.dynamic_variants,
+                max_elements=config.max_elem_per_tensor or profile["max_elem_per_tensor"])
+        case.dynamic_samples = samples
+        case.dynamic_axes = axes
+        case.dynamic_metadata = workload_metadata(samples, axes)
+        case.dynamic_fingerprint = workload_fingerprint(samples, axes)
+    return case

@@ -44,12 +44,19 @@ def execute(request: dict) -> BackendResult:
         if spec.npu_backend is None and configured == "ascendc":
             raise RuntimeError("NPU default resolved to AscendC; refusing to label it Triton-Ascend")
         result.resolved_backend = str(configured or "NPU default (no override)") if spec.npu_backend is None else spec.npu_backend
+        compile_kwargs = spec.compile_kwargs()
+        if config.dynamic_shapes:
+            compile_kwargs["dynamic"] = True
         result.runtime = {
             "torch": torch.__version__, "torch_npu": torch_npu.__version__,
             "device": str(device), "device_name": torch.npu.get_device_name(device),
             "npu_backend_env": os.environ.get("TORCHINDUCTOR_NPU_BACKEND"),
-            "compile_kwargs": spec.compile_kwargs(), "cc": os.environ.get("CC"),
+            "compile_kwargs": compile_kwargs, "cc": os.environ.get("CC"),
         }
+        if config.dynamic_shapes:
+            stage = "dynamic_compile_execute_profile"
+            from .dynamic_worker import measure_dynamic
+            return measure_dynamic(case, result, request, spec, device, config, compile_kwargs)
         model = case.model.native_model.eval().to(device)
         inputs = [torch.from_numpy(case.oracle.input[n]).to(device) for n in model.input_like]
         stage = "compile_or_warmup"

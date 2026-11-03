@@ -195,6 +195,7 @@ def render_summary_html(
           <th data-key="status">状态</th>
           <th data-key="seed">Seed</th>
           <th data-key="n_nodes">节点数</th>
+          <th data-key="shape_mode">Shape模式 / 尺寸组</th>
           <th data-key="n_kernels">Kernel数</th>
           <th data-key="duration_s">耗时(s)</th>
           <th data-key="symptom">Symptom</th>
@@ -253,6 +254,7 @@ function render() {{
       <td><span class="badge ${{c.status}}">${{c.status}}</span></td>
       <td>${{c.seed}}</td>
       <td>${{c.n_nodes || '-'}}</td>
+      <td class="shapes">${{c.shape_mode || 'static'}}${{(c.shape_variants || []).map((v,i) => '<br>#' + i + ' ' + formatShapes(v.input_shapes,c.input_dtypes)).join('')}}</td>
       <td>${{c.n_kernels || '-'}}</td>
       <td>${{c.duration_s.toFixed(2)}}</td>
       <td>${{c.symptom || '-'}}</td>

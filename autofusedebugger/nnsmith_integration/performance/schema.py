@@ -37,3 +37,4 @@ class BackendResult:
     op_statistics: list[dict] = field(default_factory=list)
     resolved_backend: Optional[str] = None
     runtime: dict = field(default_factory=dict)
+    shape_results: list[dict] = field(default_factory=list)

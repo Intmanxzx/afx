@@ -23,7 +23,7 @@ def software_signature():
             digest.update(path.read_bytes())
     generator = Path(__file__).parent.parent / "generation.py"
     return {"python": list(sys.version_info[:3]), "packages": versions,
-            "generator_sha256": hashlib.sha256(generator.read_bytes()).hexdigest(),
+            "generator_sha256": hashlib.sha256(generator.read_bytes() + (generator.parent / "dynamic_shapes.py").read_bytes()).hexdigest(),
             "nnsmith_sha256": digest.hexdigest()}
 
 
