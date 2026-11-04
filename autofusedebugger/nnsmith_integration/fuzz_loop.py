@@ -252,9 +252,11 @@ def run_single_case(
         testcase = generate_case(opset=opset, model_cls=model_cls, case_seed=case_seed, config=config)
         model = testcase.model
         ir = model.native_model.ir
-    except InternalError:
-        raise
-    except Exception:
+    except Exception as exc:
+        # A graph search can exhaust its budget without finding a model.
+        # Record that case and continue, but preserve other internal failures.
+        if isinstance(exc, InternalError) and "Run check_sat first! | expr is None" not in str(exc):
+            raise
         return CaseResult(
             seed=case_seed,
             index=index,
@@ -262,7 +264,7 @@ def run_single_case(
             status="gen_error",
             shape_mode="dynamic" if dynamic_shapes else "static",
             duration_s=time.time() - t0,
-            error_summary=_truncate(traceback.format_exc()),
+            error_summary=_truncate(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"),
         )
 
     if dynamic_shapes:
