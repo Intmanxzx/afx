@@ -83,7 +83,7 @@ def test_report_integrates_performance_tabs_and_accuracy(tmp_path):
     assert '性能对比汇总' in page and 'tabBtnStats' in page and 'tabBtnTable' in page
     assert 'Kernel耗时(μs/步)' in page and 'worker 总墙钟时间' in page
     assert '"performance_status": "pass"' in page
-    assert page.count('class="chart-card"') == 12
+    assert page.count('class="chart-card"') == 13
 
 
 @pytest.mark.parametrize('a,t,expected', [(10,10,'pass'),(10,20,'pass'),(20,10,'fail'),(0,10,'error'),(float('nan'),10,'error'),(10,None,'error')])

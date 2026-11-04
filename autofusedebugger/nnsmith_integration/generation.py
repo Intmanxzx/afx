@@ -175,10 +175,13 @@ class GenerationConfig:
     concr_ph_dim_rng: Optional[tuple[int, int]] = None
     tensor_scale: str = "default"
     value_dist_mode: str = "uniform"
+    mixed_shapes: bool = False
     dynamic_shapes: bool = False
     dynamic_variants: int = 3
 
     def __post_init__(self):
+        if self.mixed_shapes and self.dynamic_shapes:
+            raise ValueError("mixed_shapes and dynamic_shapes are mutually exclusive")
         if self.tensor_scale not in TENSOR_SCALE_PROFILES:
             raise ValueError(f"Unknown tensor_scale {self.tensor_scale!r}")
         if not 2 <= self.dynamic_variants <= 8:

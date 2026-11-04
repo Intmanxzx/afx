@@ -4,6 +4,7 @@ def add_arguments(parser):
     group = parser.add_argument_group("backend performance comparison")
     group.add_argument("--compare-performance", action="store_true",
                        help="compare AscendC and default Triton-Ascend kernel time using isolated NPU profiler workers; dynamic workers across distinct --devices; each case benchmarks backends serially")
+    group.add_argument("--mixed-shapes", action="store_true", help="mix static/dynamic cases in one seed-stable task pool (approximately 1:1)")
     group.add_argument("--keep-perf-artifacts", action="store_true",
                        help="retain raw profiling and per-run compile caches; default keeps only CSV/results/logs/reports")
     group.add_argument("--resume", action="store_true",
@@ -28,7 +29,7 @@ def run(args, *, op_categories, devices):
         max_nodes=args.max_nodes, timeout_ms=args.timeout_ms, method=args.method,
         max_elem_per_tensor=args.max_elem_per_tensor, tensor_scale=args.tensor_scale,
         value_dist_mode=args.value_dist_mode,
-        dynamic_shapes=args.dynamic_shapes, dynamic_variants=args.dynamic_variants,
+        mixed_shapes=args.mixed_shapes, dynamic_shapes=args.dynamic_shapes, dynamic_variants=args.dynamic_variants,
     )
     profile = ProfileConfig(warmup_steps=args.warmup_steps, steps=args.profile_steps,
                             timeout_s=args.perf_timeout_s, keep_artifacts=args.keep_perf_artifacts)

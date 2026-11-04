@@ -10,6 +10,7 @@ CHARTS = [
     ("ShapeDim", "按 shape：最大维度值", "与功能/精度汇总使用相同档位"),
     ("ShapeElem", "按 shape：最大元素数", "与功能/精度汇总使用相同档位"),
     ("Nodes", "按图节点数", "计算节点数 · 不含输入和常量节点"),
+    ("ShapeMode", "静态 / 动态 shape 对比", "按 case 统计性能 pass / fail / error；不是同图静态与动态的配对加速比"),
     ("Kernels", "按 AscendC 每步 kernel 数", "CSV Count 求和 ÷ 实际采集步数"),
 ]
 
@@ -42,11 +43,13 @@ def render_performance_tabs(summary):
         limit = summary.get("requested_cases")
         limit_text = "持续运行" if limit is None else f"目标 {limit} 例"
         stats += f'<span>运行状态 <strong>{state}</strong> · {limit_text}</span>'
+    from .shape_summary import render_shape_summary
+    mode_summary = render_shape_summary(cases)
     pages = f'''<div id="tabPerf" class="tabpage">{stats}{note}
-<div class="toolbar"><input id="perfFilterOps" placeholder="按 op 或 seed 筛选"><select id="perfFilterStatus">
+<div class="toolbar"><input id="perfFilterOps" placeholder="按 op 或 seed 筛选"><select id="perfFilterMode"><option value="">全部 Shape 模式</option><option value="static">static</option><option value="dynamic">dynamic</option></select><select id="perfFilterStatus">
 <option value="">全部性能状态</option><option>pass</option><option>fail</option><option>error</option></select><span id="perfRowCount"></span></div>
 <div style="overflow-x:auto"><table id="perfTable"><thead><tr>{heads}</tr></thead><tbody></tbody></table></div></div>
-<div id="tabPerfStats" class="tabpage">{stats}{note}<div class="chart-grid">{cards}</div></div>'''
+<div id="tabPerfStats" class="tabpage">{stats}{note}{mode_summary}<div class="chart-grid">{cards}</div></div>'''
     script = SCRIPT.replace('__PAYLOAD__', payload)
     return buttons, pages, script
 
@@ -75,7 +78,8 @@ let perfSortKey = 'index', perfSortAsc = true;
 function renderPerfTable() {
   const query = document.querySelector('#perfFilterOps').value.trim().toLowerCase();
   const status = document.querySelector('#perfFilterStatus').value;
-  const rows = perfRows.filter(c => (!status || c.performance_status === status) &&
+  const mode = document.querySelector('#perfFilterMode').value;
+  const rows = perfRows.filter(c => (!mode || (c.shape_mode || 'static') === mode) && (!status || c.performance_status === status) &&
     (!query || String(c.seed).includes(query) || (c.op_types || []).some(op => op.toLowerCase().includes(query))));
   rows.sort((a,b) => {
     const x = a[perfSortKey], y = b[perfSortKey];
@@ -102,6 +106,7 @@ document.querySelectorAll('#perfTable th[data-perf-key]').forEach(th => th.oncli
 });
 document.querySelector('#perfFilterOps').oninput = renderPerfTable;
 document.querySelector('#perfFilterStatus').onchange = renderPerfTable;
+document.querySelector('#perfFilterMode').onchange = renderPerfTable;
 renderPerfTable();
 function renderPerfStats() {
   const cases = PERF_CASES.map(c => ({...c,status:c.performance_status}));
@@ -120,6 +125,7 @@ function renderPerfStats() {
   draw('ShapeElem',c => Object.keys(c.input_shapes || {}).length || Object.keys(c.output_shapes || {}).length ? bucketOf(ELEM_BUCKETS,caseMaxDim(c).maxElem) : '(无数据)', [...ELEM_BUCKETS.map(b => b.label),'(无数据)']);
   const buckets = ['≤1','≤4','≤8','≤16','≤32','>32','(无数据)'];
   const bucket = v => v == null ? '(无数据)' : v <= 1 ? '≤1' : v <= 4 ? '≤4' : v <= 8 ? '≤8' : v <= 16 ? '≤16' : v <= 32 ? '≤32' : '>32';
+  draw('ShapeMode',c => c.shape_mode || 'static',['static','dynamic']);
   draw('Nodes',c => bucket(c.n_nodes),buckets);
   draw('Kernels',c => bucket(c.backends?.ascendc?.mean_kernel_count),buckets);
 }

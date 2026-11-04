@@ -29,6 +29,7 @@ autofusedbg af-fuzz --out-dir /tmp/af_fuzz_run
 | `--out-dir` | **必填** | 结果输出目录（`summary.json`/`summary.html`/失败用例目录都落在这里） |
 | `--n-cases` | 功能/精度模式 `100`；性能模式不限制 | 本次会话的用例总数上限，显式指定时为正整数。性能模式不传时持续运行，直到 Ctrl+C、SIGTERM 或会话异常退出；配合 `--resume` 时是不包含重复执行已完成用例的累计总上限，不传则沿用检查点的上限 |
 | `--max-nodes` | `5` | 单个用例计算图节点数的**上限**；每个 case 的真实节点数会在 `[2, max-nodes]` 区间内随机抽取，不是固定等于这个值（至少 2 个节点才有融合的意义） |
+| --mixed-shapes | 关闭 | 性能模式专用；按 case seed 奇偶确定动态/静态（奇数 dynamic，偶数 static），预期约1:1；同一个公共任务池跨卡调度，支持按 shape 模式统计和筛选。与 --dynamic-shapes 互斥 |
 | --dynamic-shapes | 关闭 | 启用同图多尺寸动态输入验证：保持图结构、常量和权重固定，生成多组合法 shape，并用同一个 torch.compile(dynamic=True) 实例执行；维度严格标记为动态。功能/精度、单例复现和性能对比均可使用，详见第 5 节 |
 | --dynamic-variants | 3 | 每个动态 case 的尺寸组数，整数 2～8，包含原始 shape；每组均执行精度校验，性能模式还逐组预热及采集 |
 | `--method` | `"symbolic-cinit"` | nnsmith 图生成算法，一般不需要改 |
@@ -299,3 +300,18 @@ autofusedbg af-fuzz --out-dir /tmp/af_dynamic_repro --repro-seed 2746317213 \
 动态 shape 已通过 CPU 符号编译、多尺寸精度和 seed 重建测试，并在 A3 上完成小规模工具级验证：Python 3.11、Torch 2.10.0+cpu、torch_npu 2.10.0.post7.dev20261011、CANN 9.3.0；FP32 Neg 算子池，seed 42，同图三组 shape 为 [5,5,5,6,4]、[3,3,3,6,4]、[4,4,4,6,4]，动态轴为 0/1/2。动态功能精度通过；AscendC 和 Triton-Ascend 均以 dynamic=True 执行，逐 shape 预热3步、采集10步，六组精度全部通过且均有 kernel 统计 CSV。CSV 中分别出现 autofused_neg_… 和 triton_poi_fused_neg_0；原始 profiling 自动清理、逐 shape CSV 保留均通过检查。此结论只覆盖上述小规模链路，不代表任意算子组合和形状约束都能动态编译；动态多卡大批量稳定性尚未验证。
 
 该 A3 新实例缺少 setuptools 及 NNSmith 运行依赖，验证使用 /tmp 隔离依赖目录补齐，未改动虚拟环境安装文件；隔离 NumPy 固定为 Triton 要求的 1.26.4，ml_dtypes 使用 0.5.1。
+
+
+## 7. 静态 / 动态混合性能批跑
+
+~~~bash
+autofusedbg af-fuzz --compare-performance --mixed-shapes \
+  --out-dir /mnt/workspace/xingzhixiong/af_perf_mixed/run \
+  --jobs 2 --devices 0,1 --seed 42 --warmup-steps 3 --profile-steps 10
+~~~
+
+省略 --n-cases 表示持续运行。两张卡的 worker 从同一任务池逐例领取任务，任何一张卡都可能执行静态或动态用例，同一 case 的双后端仍在同卡串行测量。模式由 case seed 奇偶决定，因此改变并发度或续跑不会改变模式，单例复现时保留 --mixed-shapes 即可。有限批次的实际比例可能偏离1:1。
+
+性能汇总增加静态/动态 shape 的 pass/fail/error 分布及统计表；表中通过率分母为有效对比数，后端耗时为有效用例中位数，后端加速比为各用例 Triton/AscendC 比值的几何平均。列表增加模式筛选。两组来自不同随机图，并非同图配对实验，不能从两组耗时差直接判断动态编译比静态编译慢多少。动态 workload 生成失败仍计入 dynamic 组，不会静默改为 static。
+
+混合配置参与 --resume 校验；恢复时保持 --mixed-shapes 及其余生成、测量、设备参数一致。报告和日志建议写到 /mnt/workspace 的持久目录，原始 profiling 和独享编译缓存仍按默认策略自动清理。

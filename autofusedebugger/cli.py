@@ -221,6 +221,9 @@ def cmd_af_fuzz(args: argparse.Namespace) -> int:
         from autofusedebugger.nnsmith_integration.performance.cli import run
         return run(args, op_categories=op_categories, devices=devices)
 
+    if getattr(args, "mixed_shapes", False):
+        raise ValueError("--mixed-shapes requires --compare-performance")
+
     if getattr(args, "resume", False) or getattr(args, "keep_perf_artifacts", False):
         raise ValueError("--resume and --keep-perf-artifacts require --compare-performance")
 

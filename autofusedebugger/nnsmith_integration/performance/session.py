@@ -27,7 +27,10 @@ def _save_checkpoint(summary, out):
 
 def _measure_case(*, index, case_seed, out, generation, profile, opset, model_cls, target, devices):
     from ..generation import generate_case
-    case = {"seed": case_seed, "index": index, "case_id": f"{index:05d}-{case_seed}", "backends": {}}
+    from .shape_modes import resolve_generation
+    generation = resolve_generation(generation, case_seed)
+    case = {"seed": case_seed, "index": index, "case_id": f"{index:05d}-{case_seed}", "backends": {},
+            "shape_mode": "dynamic" if generation.dynamic_shapes else "static", "target": target}
     started, stage = time.monotonic(), "generation"
     try:
         generated = generate_case(opset=opset, model_cls=model_cls, case_seed=case_seed, config=generation)

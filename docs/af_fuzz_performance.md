@@ -139,3 +139,8 @@ autofusedbg af-fuzz --compare-performance --out-dir /tmp/af_perf_multi --jobs 2 
 增加 --dynamic-shapes --dynamic-variants 3，可对同图同权重的三组合法输入尺寸分别采集。每组执行精度校验、预热和 --profile-steps 次采集，后端共享一个 torch.compile(dynamic=True) callable；严格标记变化输入轴，无法符号化时显式失败。case 总耗时为所有尺寸 Total Time 之和除以采集步数总和。逐尺寸结果在 shape_results 和 HTML 的“Shape模式 / 各尺寸耗时”列展示，默认清理后保留 op_statistic_shape_0.csv 等逐尺寸 CSV。
 
 动态候选约束、生成失败含义、seed 复现及续跑条件见 [使用指南第5节](af_fuzz_guide.md#5-动态-shape-测试)。--dynamic-shapes 默认关闭；新参数也已加入使用指南参数表。
+
+
+## 静态 / 动态混合模式
+
+使用 --mixed-shapes（与 --dynamic-shapes 互斥）在同一性能会话中按 seed 确定约1:1的静态/动态用例；--jobs 2 --devices 0,1 可让两张卡动态领取这两类任务。--dynamic-variants 控制其中动态用例的尺寸组数，--resume 会校验混合配置。HTML 支持模式筛选、按模式性能分布和汇总表。统计口径及完整命令见 [指南第7节](af_fuzz_guide.md#7-静态--动态混合性能批跑)。
