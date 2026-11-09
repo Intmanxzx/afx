@@ -256,3 +256,18 @@ CPU Inductor `replay 42 --performance` 三个 shape 通过；AscendC 同 seed �
 模块化：generation/v1 + registry、backends/base + lazy factory + Torch adapter、通用 tensors、独立 execution loop 和 `python -m autofusedebugger.fuzz`。协议字节不改变，numeric golden 不更新。架构边界与扩展规则见 `af_fuzz_module_architecture.md`。测试完成提交后进入 D3 SQLite 轻量结果/快照，不等待跨架构资源才开始独立的数据层工作。
 
 模块化远端全量：**322 passed / 原 5 failed / 32.56s**，`round5-modules.log`；新增 3 个架构边界测试通过，五个数字 golden 不变。阶段完成后提交，再推进 D3。
+
+## 11. 已进入 D3：轻量 SQLite 与一致性快照
+
+模块化阶段已提交 `e20e44d` 后继续实现，而非停在计划。
+
+- 独立 storage/schema、records、repository；无 Torch/NNSmith/生成器依赖。
+- 默认 replay 保存轻量 attempt 与逐 shape 指标，支持 --database/--no-save；配置与环境白名单去重，不存图/tensor/raw profiler/长日志/环境全集。
+- 事务写入、相同 attempt ID 幂等、冲突拒绝、新 replay 新 attempt；并发首次初始化原子发布完整 schema。
+- results 分页/seed 过滤/详情，限制 1..200；snapshot read transaction 一致性导出白名单表，包含 WAL 已提交数据，排除未提交变化及额外 secrets 表，拒绝覆盖目标文件。
+- 非本工具/损坏/未知 schema 数据库拒绝操作；schema1 尚无升级迁移，不宣称完成 D3 全验收。
+- 新增存储测试：白名单、短错误、回滚、幂等、分页、WAL 快照、非覆盖、损坏拒绝、无重依赖查询和并发首次初始化。
+
+远端独立 CLI 已实际完成 replay 42 -> results.sqlite -> snapshot -> 只读 results 查询。后续继续预构建静态 view 与共享查询界面，再做规模/bytes-case 验证；本轮不部署网站、不实现 SSH 查看助手。
+
+D3 首批最终远端全量：**332 passed / 原 5 failed / 42.15s**（`round5-final.log`）；storage 专项 10 passed。wheel 在无 Torch/NNSmith/numpy 的 light-venv 中独立运行 results，读取 snapshot 成功（`round5-wheel.log` / `round5-light-query.json`）。本阶段测试通过后提交；下一阶段为离线 view 与分页/规模验收。原 5 项历史基线失败继续列示，不等于全库全绿。

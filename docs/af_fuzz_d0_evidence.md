@@ -188,3 +188,15 @@ autofusedbg fuzz seed v1:preview-dynamic-v1:42
 - 隔离 `round4-npu-cache`、`round4-cpu-cache`、`round4-triton-cache`、`round4-tmp` 存放运行产物；本地只保留需交付的源码、文档、golden JSON。
 
 未知数字版本不回退；旧长 token 不兼容；`--dynamic/--max-nodes/--dtype/--seed-token` 不接受作为 replay 生成覆盖参数。静态选择和性能开关不改变 bundle 指纹。尚无跨架构实测，不以这次单 NPU 环境结果替代跨设备验收。
+
+## 10. 阶段 commit、模块边界与 D3 存储
+
+用户已授权阶段性 commit，仍不推送。checkpoint `c9039fa` 保存前轮成果；`e20e44d` 保存独立 fuzz 模块化。模块化远端 `round5-modules.log`：322 passed / 原 5 failed / 32.56s。
+
+模块新增 generation registry/version、backend interface/factory/Torch adapter、tensors、独立 __main__；所有数字黄金向量保持原值。3 个架构测试覆盖依赖方向与不依赖旧 debugger 的模块入口。
+
+D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 个存储专项测试全部通过，包含多 writer 首次创建。`round5-saved-replay.json` 保存实际 CPU replay42，生成 `round5-results.sqlite`；`round5-snapshot.sqlite` 与 results 命令读到同 workload ID。DB 仅 contexts/attempts/shapes，白名单记录，不含 tensor/原始日志/密钥配置。
+
+快照测试保留一个 WAL writer 的未提交修改，另一个连接一致性导出已提交状态；额外 secrets 表不出现在导出 DB。故障注入 trigger 验证 shapes 失败时 attempts 和新增 context 一起回滚。未知 schema、损坏文件及其它 SQLite 均拒绝，不覆盖用户文件。
+
+最终 `round5-final.log`：332 passed / 原 5 failed / 42.15s。`round5-wheel.log` 构建安装同包 wheel 到无重依赖 light-venv；`round5-light-query.json` 验证独立模块查询快照成功。本轮所有测试/构建在 npussh mlir；本地只编辑、Git 检查和 commit，没有安装/运行测试或创建临时测试产物。

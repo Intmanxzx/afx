@@ -54,7 +54,16 @@ def main(argv=None):
     compare = sub.add_parser("diagnose", help="compare two opt-in generation traces")
     compare.add_argument("expected")
     compare.add_argument("actual")
-    for command in ("view", "snapshot", "status", "stop", "resume"):
+    snapshot = sub.add_parser("snapshot", help="export a consistent lightweight SQLite snapshot")
+    snapshot.add_argument("source")
+    snapshot.add_argument("destination")
+    results = sub.add_parser("results", help="read lightweight results without model dependencies")
+    results.add_argument("database")
+    results.add_argument("--limit", type=int, default=50)
+    results.add_argument("--after", type=int)
+    results.add_argument("--seed")
+    results.add_argument("--attempt")
+    for command in ("view", "status", "stop", "resume"):
         p = sub.add_parser(command, help="reserved; not implemented in D1")
         p.add_argument("target", nargs="?")
     args = parser.parse_args(argv)
@@ -71,6 +80,13 @@ def main(argv=None):
                       "preview": True, "shape_count": len(bundle.spec.shape_samples)}
             if args.show_spec:
                 result["manifest"] = content_manifest(bundle)
+        elif args.command == "snapshot":
+            from .storage import ResultRepository
+            result = {"snapshot": ResultRepository(args.source).snapshot(args.destination)}
+        elif args.command == "results":
+            from .storage import ResultRepository
+            repo = ResultRepository(args.database)
+            result = repo.detail(args.attempt) if args.attempt else repo.list(limit=args.limit, after=args.after, seed=args.seed)
         elif args.command == "doctor":
             result = doctor(args.data_dir)
         elif args.command == "diagnose":
@@ -84,7 +100,7 @@ def main(argv=None):
             parser.error(f"{args.command} is not implemented yet; no service was started")
         print(json.dumps(result, indent=2))
         return 0
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, sqlite3.Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
@@ -101,6 +117,8 @@ def replay_parser():
     parser.add_argument("--static-only", action="store_true", help="execute base sample only; does not change case or workload ID")
     parser.add_argument("--backend", choices=BACKEND_NAMES, default="cpu-eager")
     parser.add_argument("--device")
+    parser.add_argument("--database", help="result SQLite path; defaults to data home/results/results.sqlite")
+    parser.add_argument("--no-save", action="store_true", help="explicit ephemeral execution")
     parser.add_argument("--compile-threads", type=int, default=1)
     parser.add_argument("--performance", action="store_true", help="optional CPU wall-time measurement; NPU measurement needs D4 leases")
     parser.add_argument("--warmup-steps", type=int, default=3)
@@ -118,8 +136,20 @@ def execute_args(args):
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         bundle = materialize(args.seed)
         result = execute(bundle, create_backend(config), evaluation)
+        if not args.no_save:
+            from .storage import ResultRepository
+            database = args.database or data_home() / "results/results.sqlite"
+            environment = {"python": platform.python_version(), "platform": sys.platform, "machine": platform.machine()}
+            for name, field in (("torch", "torch"), ("torch-npu", "torch_npu"), ("triton-ascend", "triton"), ("autofusedebugger", "package_version")):
+                try:
+                    environment[field] = importlib.metadata.version(name)
+                except importlib.metadata.PackageNotFoundError:
+                    pass
+            repo = ResultRepository(database)
+            result["attempt_id"] = repo.save(result, environment=environment)
+            result["database"] = str(repo.path)
         print(json.dumps(result, indent=2))
         return 0 if result["status"] == "ok" else 1
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

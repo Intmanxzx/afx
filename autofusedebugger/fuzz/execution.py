@@ -70,5 +70,3 @@ def execute(bundle, adapter, evaluation):
     result["status"] = "error" if any("error_stage" in r for r in result["shape_results"]) else (
         "fail" if any(r["correctness"] == "fail" for r in result["shape_results"]) else "ok")
     return result
-
-
