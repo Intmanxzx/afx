@@ -93,3 +93,17 @@ autofusedbg fuzz run --foreground --data-dir ./fuzz-data
 ```
 
 目前仅 POSIX、串行 CPU worker；`--timeout` 每 task 默认120秒。后台托管和 NPU 全局设备租约未完成，所以 `--foreground` 必填且此入口不接受 NPU backend。停止/中断不会自动重跑；结果已保存而未确认的 attempt 在恢复检查后直接完成，不重复实验。run 的 completed 指已落库，不等于正确性通过；用 results/view 看逐后端结果。多 seed/backend 分别入队，容量或后续出错时已接受的任务保留，用 status 检查，不要盲目重交整批。
+
+
+## 后台 CPU 批测（最新）
+
+```sh
+autofusedbg fuzz run 42 43 --backend cpu-eager --data-dir ./fuzz-data
+autofusedbg fuzz status --data-dir ./fuzz-data
+# 仍可选择终端内等待：
+autofusedbg fuzz run --foreground --data-dir ./fuzz-data
+# 已有上一阶段schema1操作库时，先停止所有相关supervisor/worker：
+autofusedbg fuzz upgrade-queue ./fuzz-data/tasks/tasks.sqlite ./tasks-v1.backup.sqlite
+```
+
+本节取代上文“--foreground必填”和部分入队说明：默认后台有限批次，所有新任务原子入队；超容量/非法规格不会半批提交。启动失败后已接受的批次可保持pending，用status确认，再不带seed的run，不要盲目重交。启动ACK不是正确性成功。后台任务完成后进程退出，不是常驻个人NPU查看API。仍仅POSIX/串行CPU；NPU托管不接受，查看模式跨平台设计不受影响。schema2操作库保存短reason，结果库仍schema1。升级必须显式新备份，不覆盖；回退前终止相关进程并使用匹配旧版本及备份，不混用活跃数据库和WAL文件。

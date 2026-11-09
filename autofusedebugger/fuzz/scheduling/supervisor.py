@@ -115,19 +115,23 @@ def _worker_command(ledger, database, task):
             str(ledger.path), str(database), task['id'], task['claim']]
 
 
-def drain(ledger, database, *, timeout=120):
+def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
     """Drain pending CPU tasks; stale claims are recovered, never auto-retried."""
     if not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('timeout must be finite and positive')
     database = Path(database).expanduser().resolve()
     if database == ledger.path:
         raise ValueError('task and result databases must differ')
-    with own_queue(ledger) as fd:
+    from contextlib import nullcontext
+    ownership = own_queue(ledger) if _owned_fd is None else nullcontext(_owned_fd)
+    with ownership as fd:
         _bind_results(ledger, database)
         for task in _tasks(ledger):
             if task['state'] in {'pending', 'running', 'stop_requested'}:
                 _validate_task(task)
         summary = dict(_reconcile(ledger, database), completed=0)
+        if _ready is not None:
+            _ready()
         while True:
             task = ledger.claim()
             if task is None:

@@ -1,4 +1,4 @@
-"""Explicit foreground CPU command surface; no silent background/NPU fallback."""
+"""Managed CPU command surface; detached by default, explicit foreground option."""
 from ..config import data_home
 from ..contracts import Seed, ExecutionConfig, EvaluationConfig
 from .ledger import TaskLedger
@@ -9,13 +9,13 @@ def register(sub):
     upgrade.add_argument('queue')
     upgrade.add_argument('backup')
     for name in ('run', 'status', 'stop', 'resume'):
-        parser = sub.add_parser(name, help='managed CPU tasks (foreground preview)')
+        parser = sub.add_parser(name, help='managed CPU tasks (serial preview)')
         parser.add_argument('--data-dir')
         parser.add_argument('--queue', help='operational task database')
         if name == 'run':
             parser.add_argument('seeds', nargs='*', help='numeric seeds; omit to drain existing pending tasks')
-            parser.add_argument('--foreground', action='store_true', required=True,
-                                help='required until detached hosting is implemented')
+            parser.add_argument('--foreground', action='store_true',
+                                help='wait and supervise in this terminal instead of detaching')
             parser.add_argument('--backend', action='append', choices=('cpu-eager', 'cpu-compile'))
             parser.add_argument('--compile-threads', type=int, default=1)
             parser.add_argument('--static-only', action='store_true')
@@ -38,12 +38,15 @@ def dispatch(args):
     home = data_home(args.data_dir)
     ledger = TaskLedger(args.queue or home/'tasks/tasks.sqlite')
     if args.command == 'status':
-        return ledger.get(args.task) if args.task else ledger.page(limit=args.limit, after=args.after)
+        if args.task:
+            return ledger.get(args.task)
+        from .hosting import status
+        return dict(ledger.page(limit=args.limit, after=args.after), supervisor=status(ledger))
     if args.command == 'stop':
         ledger.stop(args.task)
         return ledger.get(args.task)
     database = args.database or home/'results/results.sqlite'
-    from .supervisor import drain, resume, _validate_task
+    from .supervisor import resume, _validate_task
     if args.command == 'resume':
         return resume(ledger, database, args.task)
     from dataclasses import asdict
@@ -57,6 +60,6 @@ def dispatch(args):
                for backend in dict.fromkeys(args.backend or ['cpu-eager'])]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
-    ids = ledger.enqueue_many((seed, config, evaluation, None) for seed in seeds for config in configs)
-    return dict(drain(ledger, database, timeout=args.timeout), enqueued=ids,
-                queue=str(ledger.path), mode='serial_foreground_cpu')
+    from .hosting import launch
+    return launch(ledger, database, ((seed, config, evaluation, None) for seed in seeds for config in configs),
+                  timeout=args.timeout, foreground=args.foreground)

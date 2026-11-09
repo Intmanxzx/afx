@@ -179,10 +179,10 @@ with own_queue(TaskLedger(sys.argv[1])) as fd:
             time.sleep(.05)
 
 
-def test_cli_requires_foreground_and_exposes_lightweight_status(tmp_path, capsys):
+def test_cli_rejects_npu_and_exposes_lightweight_status(tmp_path, capsys):
     from autofusedebugger.fuzz.cli import main
     with pytest.raises(SystemExit):
-        main(['run', '42'])
+        main(['run', '42', '--backend', 'ascendc'])
     ledger, identity, _ = setup(tmp_path)
     assert main(['status', identity, '--queue', str(ledger.path)]) == 0
     assert main(['stop', identity, '--queue', str(ledger.path)]) == 0

@@ -99,3 +99,27 @@ def test_reason_is_bounded_and_survives_reopen(tmp_path):
     assert TaskLedger(path).get(identity)['reason'] == 'timeout'
     queue.resume(identity)
     assert queue.get(identity)['reason'] == ''
+
+
+def test_upgrade_failure_after_alter_rolls_back_and_keeps_backup(tmp_path, monkeypatch):
+    from autofusedebugger.fuzz.scheduling import migrations
+    path, backup = tmp_path/'queue', tmp_path/'backup'
+    old_queue(path)
+    original = sqlite3.connect
+    class FailVersion(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql == 'PRAGMA user_version=2':
+                raise sqlite3.OperationalError('injected failure after ALTER')
+            return super().execute(sql, *args, **kwargs)
+    def connect(*args, **kwargs):
+        if 'mode=rw' in str(args[0]):
+            kwargs['factory'] = FailVersion
+        return original(*args, **kwargs)
+    monkeypatch.setattr(migrations.sqlite3, 'connect', connect)
+    with pytest.raises(sqlite3.OperationalError, match='after ALTER'):
+        upgrade_queue(path, backup)
+    for database in (path, backup):
+        with original(database) as conn:
+            assert conn.execute('PRAGMA user_version').fetchone()[0] == 1
+            assert len(conn.execute('PRAGMA table_info(tasks)').fetchall()) == 8
+    assert not list(tmp_path.glob('.fuzz-queue-backup-*'))

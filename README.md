@@ -211,3 +211,19 @@ autofusedbg fuzz view ./snapshot.sqlite
 ```
 
 查看模式仅使用 Python 标准库和 wheel 内置前端，不需要 Torch、NNSmith、CANN、NPU 或 Node。页面支持 seed/状态筛选、分页、逐 shape 详情和复制 `autofusedbg fuzz replay <seed>`。它是仅本机可访问的只读临时服务，Ctrl+C 退出；不是公网结果入口的替代品。请只打开可信快照。可选 `--no-browser`、`--port`；无需 SSH 查看助手。
+
+### Fuzz 后台 CPU 批测（D4 预览）
+
+```sh
+autofusedbg fuzz run 42 43 --backend cpu-eager --data-dir ./fuzz-data
+autofusedbg fuzz status --data-dir ./fuzz-data
+# 需要在当前终端等待时：
+autofusedbg fuzz run --foreground --data-dir ./fuzz-data
+```
+
+目前仅 POSIX、串行 CPU worker。默认后台处理队列至空后退出；`--foreground` 复用同一执行流程。启动确认不代表正确性通过，用 results/view 看结果。容量或规格错误不会半批入队；已接受但启动失败的任务保留为 pending，用不带 seed 的 run 继续，不要重复提交整批。中断任务先显式 resume。NPU 托管、设备租约及机器重启后服务恢复尚未实现。
+
+前阶段 task schema1 操作库需停用后显式升级（结果库仍schema1）：
+```sh
+autofusedbg fuzz upgrade-queue ./fuzz-data/tasks/tasks.sqlite ./tasks-v1.backup.sqlite
+```

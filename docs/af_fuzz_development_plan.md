@@ -333,3 +333,17 @@ D4 首批最终验证：任务账本专项 **10 passed / 0.97s**；远端全量 
 - 任务操作库备份是管理文件，可能包含运行状态，不能直接当结果快照公开分享。无新格式兼容别名；此迁移只为本次已提交的重构操作库升级。
 
 第三批最终远端全量 **414 passed / 原5 failed / 52.19s**；阶段测试后提交，再进入后台CPU启动握手。
+
+## 17. D4 第四批：有限后台 CPU 批测与启动握手
+
+- run 默认 detached CPU supervisor，保留 --foreground。后台只处理当前队列直到无pending后退出，不安装常驻查看API/服务，不引入任务调度基础设施。
+- `scheduling/hosting` 独立负责POSIX启动、所有权传递、有限socket握手及短状态文件；worker仍走原execution。父进程先持锁、验证结果路径绑定与现有任务，再原子入队；child准备好后需父进程start授权，drain校验/恢复完成再ACK running，父进程才返回。
+- 启动失败/超时清理子supervisor，批次保留pending供显式处理，不虚构running；提交方在start授权前断开不会领取任务。ACK后的启动状态不是任务成功承诺；仍以task/result为准。
+- 子supervisor start_new_session、stdin/out/err不关联终端、忽略SIGHUP；SIGTERM转入正常worker进程组清理路径。启动器退出不等于终止worker。有限状态文件包含run_id/state/pid/时间/短错误和结束摘要，不保存原始日志。
+- status同时展示任务页及supervisor元数据/真实队列锁占用，PID仅展示不用来授权kill或判断存活。旧running元数据但锁已释放时显示exited_without_final_status，不误报后台存活。
+
+限制：尚无机器重启后的自动服务恢复、系统级cgroup、NPU设备租约/跨用户协调或并行worker。操作库坏盘、ACK丢失后的不确定执行窗口、父/worker同时被杀后的脱离helper仍需人工核对；保留锁栅栏而非强抢。新run在队列忙时拒绝，不把已存在后台supervisor当成可永久追加任务的daemon。stop仍按task操作，不是整个队列shutdown；中断任务默认显式resume再run。
+
+第四批验收：后台CPU Inductor seed42在提交SSH连接结束后由新连接确认completed/result ok且supervisor finished/unowned；安装wheel无模型依赖环境后台空队列成功启动并结束。`round11-full.log` **422 passed / 原5 failed / 112.09s**；升级事务回滚新增项独立通过，最终包含该项的全量见证据第16节。没有宣称机器重启自动恢复或NPU托管已完成。
+
+第四批最终全量 **423 passed / 原5 failed / 46.68s**；阶段测试后提交。下一阶段仍是资源配置强制执行、同机NPU设备身份/独占租约与worker清理能力验证；自动服务重启/outbox同步未实现，不以后台CPU批次代替这些验收。

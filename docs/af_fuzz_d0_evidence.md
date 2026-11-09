@@ -258,3 +258,17 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 `round10-focused.log` **33 passed / 13.76s**，包含7项新增批次/升级测试：容量及晚到冲突全回滚、非法规格不入队、并发批次预算、schema1一致性备份→schema2保留task身份、备份发布失败不升级、活跃锁拒绝、reason限长与重新打开持久化。最终全量见下方。未知版本不猜测迁移；不将此任务库升级等同结果库未来升级或断电验收。
 
 `round10-full.log` 最终 **414 passed / 原5 failed / 52.19s**，新增7项全部通过，未出现上一轮额外时序失败。
+
+## 16. D4 后台 CPU 启动握手
+
+隔离源码 `refactor-d0-Nh5vfp/round11-hosting`。
+
+- `round11-focused.log` 首轮 **30 passed / 60.65s**，覆盖后台launcher退出后真实seed42完成、启动失败/超时保持pending、错误结果库绑定/活跃锁不入队、旧状态文件不冒充存活、未授权断开不领取、SIGTERM清理worker。后续增加后台API拒绝NPU和升级ALTER后失败回滚测试。
+- `round11-migration-rollback.log` **1 passed / 0.10s**：注入ALTER后、版本提交前失败，原库和独立备份仍为schema1八列，无残留临时备份。
+- `round11-ssh-start.json`：独立npussh连接提交CPU Inductor seed42，收到running ACK后该连接退出。
+- 随后新npussh连接读取 `round11-ssh-status.json` / `round11-ssh-results.json`：task completed、supervisor finished/unowned、result ok，workload ID `610516f468114ce745c01ab2d1cb78129c87e4395d60e19e034aee9a714e9daa`。验证正常SSH命令结束后的有限后台任务，不冒充网络强断/重启自动恢复或systemd/cgroup验收。
+- `round11-wheel.log` / `round11-light-start.json`：同包wheel安装与轻量环境后台空队列启动，最终状态另见light-status。
+
+后台进程只有本地socketpair握手，不监听网络，不安装NPU查看API，也未修改共享Torch/CANN/NNSmith。子supervisor不自动重跑interrupted任务，有限队列耗尽即退出；后台执行不是自动上传，也不是机器重启托管。
+
+`round11-final.log` 最终 **423 passed / 原5 failed / 46.68s**，包含后台8项新增测试和额外升级回滚1项，无新增失败。`round11-light-status.json` 安装wheel后台空队列最终finished/unowned；不是仅检查启动ACK。无本地测试/安装/临时产物，远端共享仓库状态保持不变。
