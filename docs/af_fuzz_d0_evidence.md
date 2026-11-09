@@ -311,3 +311,19 @@ round16-outage.log：before(total,ACK)=(157,157)，offline=(173,157)且URLError�
 - round21-sync-latency.log：30秒上传、8条抽样记录创建至公网API观测可见10.24–20.61秒；是观测样本，不是SLA，页面每30秒刷新有额外等待。
 - oracle1 systemd daily backup timer已启用，首次手动触发Result=success，备份0600；源码模板deploy/fuzz。NPU容器无systemd，之前无效的本次创建上传unit已删除，实际daemon继续运行。
 - 1000验收当前捕获2条AscendC错误（entropy135、217），first_call_combined阶段因本次隔离缓存kernel.so权限775被拒。仅对隔离目录*.so移除group/other写权限，保留失败记录，待最终重放。不能计为精度通过。
+
+- round21-scale.log：100000 attempts/300000 shapes，74,817,536 bytes（748.18 bytes/attempt，合成空context场景）；分页约0.6ms，summary35.6ms；不等同真实NPU记录平均大小。
+- 最新round21 wheel Docker重建并恢复原37条私有库通过，镜像sha256:b45d3a79572b0952ed39b459dfc36945876bf9300e76c3cf01a373ec164e7190，验证容器已down。线上仍pip+systemd。
+- setup在acceptance-home实测身份校验显示MLIR NPU，daemon already_running，未启动重复上传进程。
+
+- 私有灾备跨架构迁移实测：oracle1 x86_64/Python3.12备份复制至mlir aarch64/Python3.11，同wheel启动1277条attempt、1user、1source、1277receipt/owner，summary一致；round21-migration.log。
+- 已安装wheel静态AscendC npu:1与CPU性能同seed v2+42：workload均为5a075539...，前者base shape通过、后者3shape测量通过，metric明确为同步wall-time非kernel profiler；round21-static.log、round21-performance.log。
+- 正式用户流程补验：setup自动sync → run后台入队CPU+AscendC(npu:1) → SSH命令返回后worker继续 → 两task完成 → 30秒daemon自动上传 → 公网Chromium按seed查询两条、详情/比较/移动布局通过。seed=v2+1234，日志round21-e2e-*.json及round21-managed-public-browser.log，独立于1000验收计数。
+
+## 21. 最终1000例和公网汇总
+
+`acceptance-final.log`：completed_seeds=1000、interrupted=false；最后阶段跳过1124个已成功backend记录、新执行876个backend，非重新生成计数。`tools/fuzz_acceptance_audit.py`重新物化所有seed并逐后端检查workload/shape索引/正确性：2000 verified_backend_cases、6000 verified_shape_checks、missing_passed_pairs=[]。历史2条error均保留，成功重放对应entropy135、217；数据库共2002 attempt。
+
+中心最终SQL核对：2004 attempts（CPU ok1001、AscendC ok1001、AscendC error2）、6012 shape rows。验收source ACK=2002，另正式托管E2E source ACK=2，无需手动once。网站summary与库一致；另运行每日backup服务生成完成后的私有备份。
+
+隔离安装实际replay：round21-installed-replay.log npu:1 v2+42 status=ok/3shape；runtime-venv安装wheel且只读引用既有Torch，light-venv上传器无Torch/NNSmith/NumPy。验收结束后设备工作负载释放，后台只保留轻量同步服务。

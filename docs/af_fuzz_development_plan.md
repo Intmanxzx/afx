@@ -419,3 +419,22 @@ setup新增--sync-endpoint/--sync-interval，使用管理员key-file完成同步
 - 当前v2只覆盖Add、ReLU/Neg/Mul、Transpose、可选Sum的小型图协议，不覆盖类别内所有算子。旧NNSmith原始广播故障未因此宣称修复。
 - Linux aarch64/x86_64有实际wheel/黄金样本证据；Windows/macOS本机验收未进行。当前版本package依赖仍有numpy，但view本身不导入，--no-deps干净venv可用。
 - cgroup硬内存限制、全站跨用户预算、容器重启托管，以及未可工作的Triton后端仍是后续能力，不以“网站可用”替代验收。
+
+### round21追加验收
+
+- 480 passed/5原有失败；WAL并发初始化压力测试连续10轮通过。
+- 两平台完整1000 seed生成fingerprint序列SHA256一致：`9147ea351acff3264469d3b2e5d65ae0cb9f8a6bc3e7bc8f6eac3dcb2e8cdb07`（aarch64 Python3.11.4、x86_64 Python3.12.3）。这是生成确定性证据，不能代替NPU执行计数。
+- 固定1000种子的op分布：Add1000、Transpose1000、Neg369、Mul325、ReLU306；Sum656（axis0=312、axis1=344）；float32=509、float16=491，广播axis0=499、axis1=501。
+- NPU0完成前500后，NPU1的独立冷缓存编译仍慢；在当前backend完成后SIGTERM优雅停NPU1（完成563个seed总范围），剩余通过resume迁回NPU0已热隔离缓存。缓存只用于执行加速，不参与case物化；最终审计重新逐seed物化检查指纹。
+- Triton隔离overlay重新验证仍失败：CANN头文件缺`RT_LIMIT_TYPE_SIMT_WARP_STACK_SIZE`导致npu_utils.cpp编译错误。未改共享CANN/Torch，不把import triton成功视为后端可用。日志round21-triton.log。
+
+## 22. 本轮可用交付验收完成（2026-11-09）
+
+**完成的是本轮可用交付，不是D0–D6所有长期架构能力。** 未决边界见第21节，尤其真实编译拆分、NPU性能、Triton与原生三系统测试，不打勾冒充完成。
+
+- 1000唯一seed（v2 entropy0..999），CPU-eager与AscendC各1000个成功case/backend，6000个成功shape校验；跨平台重新物化的1000指纹序列一致。
+- 失败历史保留：2条AscendC首次调用的隔离cache权限错误，修正权限后同seed重放通过；验收数据库2002条attempt，不删除或覆盖失败。最终审计`acceptance-final-audit.json`：missing_passed_pairs=[]、passed=true。
+- 公网汇总2004条attempt（2002条验收+正式托管流程的2条），6012 shape行；2002条ok、2条error。两来源ACK分别2002、2，自动同步追平。
+- 正式端到端：一次setup+管理员身份校验→后台run→CPU/NPU独立任务→SQLite→30秒outbox→HTTPS中心→浏览器筛选/重放/对比，均实测。普通运行和验收都复用统一execute，无第二套执行引擎。
+- 安装版runtime-venv在源码目录外npu:1 replay通过；初始system-site-packages未继承嵌套venv中的Torch，改仅在隔离venv添加只读shared-torch.pth后通过，无共享依赖修改。
+- 当前交付说明：docs/af_fuzz_quickstart.md。公网https://esay.app；本地无安装/测试产物，阶段commit已创建、未push。

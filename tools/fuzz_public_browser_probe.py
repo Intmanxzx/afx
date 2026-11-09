@@ -12,7 +12,7 @@ with sync_playwright() as p:
     page.goto('https://esay.app',wait_until='networkidle')
     expect(page.locator('h1')).to_have_text('团队结果')
     expect(page.locator('#rows tr').first).to_be_visible()
-    seed=str(2**128)  # completed acceptance seed, not a still-uploading newest pair
+    seed=sys.argv[2] if len(sys.argv)>2 else str(2**128)  # use a completed pair
     page.locator('[name=seed]').fill(seed)
     page.locator('button[type=submit]').click()
     expect(page.locator('#rows tr')).to_have_count(2)
