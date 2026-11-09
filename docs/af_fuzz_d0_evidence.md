@@ -225,3 +225,11 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 `round7-focused.log` 初始 transfer+storage 31 passed；新增子进程崩溃回滚/WAL 未提交数据隔离后以 `round7-transfer.log`、`round7-final.log` 为最终记录。`round7-light.log` 保存 installed-wheel restore/import/check-db 实际命令输出。异常注入并非真实填满磁盘；崩溃回滚以子进程 os._exit(77) 在事务写入后、提交前终止验证。未测断电和目录 fsync 持久化保证。
 
 最终：`round7-transfer.log` **23 passed / 40.50s**；`round7-final.log` **381 passed / 原 5 failed / 74.14s**。`round7-light.log` restore added=1、再次 import skipped=1、check-db schema1/integrity=ok。新增测试全部通过；全量耗时不是性能基准。
+
+## 13. D4 操作任务账本首批
+
+隔离源码 `refactor-d0-Nh5vfp/round8-ledger`。测试日志 `round8-focused.log`、`round8-final.log`；构建及无执行依赖安装验证为 `round8-wheel.log` / `round8-light.log`。
+
+覆盖 case/backend 分开入队、任务幂等、容量背压、并发首次建库/领取、停止/显式恢复、过期 claim 拒绝、六个子进程只允许一个领取、子进程退出后禁止隐式重领、恢复时容量检查及跨客户端持久化容量。没有 NPU 执行或假冒后端 split；任务账本完成不代表调度系统完成。测试子进程退出后由父进程 communicate/wait 确认退出，才 interrupt/resume。
+
+最终 `round8-focused.log` **10 passed / 0.97s**；`round8-final.log` **391 passed / 原 5 failed / 35.75s**。`round8-light.log` 安装 wheel 内部生命周期测试成功，无 Torch/NNSmith/numpy 导入。所有构建/测试在远端隔离目录；本地没有新增临时产物，不修改共享依赖，不推送。

@@ -43,3 +43,7 @@ cli -> generation registry -> versioned generation/v1 -> contracts + tensors
 `view <database>` 是用户主动启动、Ctrl+C 退出的临时 PC 服务；只绑定 127.0.0.1，随机 capability 路径、Host/Origin 限制、CSP、只读连接、参数/分页/查询耗时限制。不是公网服务，也不是 NPU 常驻 API。该边界不是任意恶意 SQLite 文件的安全沙箱；仅打开可信来源的本工具结果/快照。中心服务的认证、授权、上传协议、线程/连接资源隔离将独立实现。
 
 `storage/transfer.py` 单独负责可信恢复、合并和完整性审核，复用 records 的规范化和 schema 白名单。restore 新文件原子发布；merge 保持源 read transaction + 目标 IMMEDIATE write transaction。现有 results schema 不放任务状态，后续调度操作数据与长期结果分离，snapshot 不携带运行租约。
+
+## 调度操作层
+
+`scheduling/ledger.py` 仅依赖 contracts/标准库，提供有界持久化队列、事务领取、停止/中断/显式恢复、旧 claim 栅栏。任务操作库使用独立 application ID；不是长期结果归档或 seed 重放前提。运行时 supervisor/worker 将依赖 ledger + 统一 execution，不再复制一套执行引擎。当前尚未接执行器、设备锁或 CLI，不自动重领失联任务，必须先确认旧 worker 已终止。

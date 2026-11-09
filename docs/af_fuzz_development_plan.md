@@ -296,3 +296,17 @@ D3 仍待：Windows/macOS 实测、可信快照导入/恢复与 schema 升级迁
 - 故障注入涵盖写入后异常、发布竞争、子进程强制退出，验证现有库回滚/新目标不发布；突然断电/硬件故障不在这些测试覆盖内。SIGKILL 恢复临时文件可能残留，不会发布为最终目标；自动清理他人临时文件暂不实现。
 
 第三批验收：远端 transfer 专项 **23 passed**；全量 **381 passed / 原 5 failed / 74.14s**，无新增失败；安装 wheel 后无模型依赖 restore 1 条、重复 import skipped=1、check-db integrity=ok 均通过。完成阶段提交后进入 D4 的操作状态账本；尚不开放未接执行/设备租约的 run 命令。
+
+## 14. D4 第一批：持久化任务状态机（内部基础 API）
+
+D3 恢复/导入阶段提交 `c69cd85` 后继续开发，而非只列下一阶段计划。
+
+- 新增独立 `scheduling/ledger.py`：单 case/backend 的规范 seed + execution/evaluation 配置持久化，不保存 tensor、不执行 backend。
+- 操作库有独立 application ID/schema，与长期结果库隔离；任务库不能误作结果库导出/查看。持久化全队列 active 上限，多个客户端不能通过新建对象改变容量；超额明确背压。
+- enqueue 有 task ID 幂等/冲突检测，IMMEDIATE 事务单任务领取；claim token 与 attempt UUID 每次重新领取更新。
+- pending 可取消；running 停止变为 stop_requested，不能直接 resume；worker 已确认终止/reap 后才可 interrupt，再由用户显式 resume；不按超时自动抢占、不因服务重启自动重跑。
+- 旧 claim 无法完成新领取的任务，seed/执行配置不变。跨线程/多进程领取与子进程死亡恢复已纳入测试。
+
+边界：内部 API 尚未接 supervisor/run/status/stop/resume CLI；不声称后台测试已可用。claim 是结果状态栅栏，不是 NPU 设备锁，也无法杀掉仍在运行的旧进程。complete 要求调用者先保存对应 attempt 结果，但本批不实现两库提交间的恢复协调。设备全局租约、进程组/超时清理、CPU/NPU 流水、资源完整预算、worker 心跳/恢复及后台进程托管是下一批，未通过之前不开放性能独占承诺。
+
+D4 首批最终验证：任务账本专项 **10 passed / 0.97s**；远端全量 **391 passed / 原 5 failed / 35.75s**，无新增失败。安装 wheel 后在轻量 venv 走 enqueue/claim/interrupt/resume/complete 全流程，未加载 Torch/NNSmith/numpy。阶段测试完成提交，下一批是 supervisor 与统一执行器衔接、结果提交中断协调及设备全局租约，不能提前启用 NPU 性能模式。
