@@ -162,3 +162,11 @@ class TaskLedger:
                                    "WHERE id=? AND state IN ('interrupted','cancelled')", (identity,)).rowcount
             if changed != 1:
                 raise ValueError('only interrupted or cancelled tasks can resume')
+
+    def page(self, *, limit=100, after=0):
+        if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
+            raise ValueError('invalid task pagination')
+        with self._connection() as conn:
+            rows = [dict(row) for row in conn.execute(
+                'SELECT rowid,* FROM tasks WHERE rowid>? ORDER BY rowid LIMIT ?', (after, limit+1))]
+        return {'items': rows[:limit], 'next_cursor': rows[limit-1]['rowid'] if len(rows)>limit else None}

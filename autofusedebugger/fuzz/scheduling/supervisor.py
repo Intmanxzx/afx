@@ -1,0 +1,167 @@
+"""Serial foreground CPU supervisor with process-group cleanup/reconciliation.
+
+No NPU, daemon hosting, throughput claims, or CPU/compile-stage splitting yet.
+"""
+from contextlib import closing
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+from .ownership import own_queue
+from ..contracts import ExecutionConfig, EvaluationConfig
+
+
+def _bind_results(ledger, database):
+    """Keep recovery pointed at the original result archive, including on restart."""
+    path = ledger.path.with_name(ledger.path.name + '.results.json')
+    value = {'version': 1, 'database': str(database)}
+    if path.exists():
+        if json.loads(path.read_text()) != value:
+            raise ValueError('queue is bound to a different result database')
+        return
+    # Called only while holding queue ownership; atomic metadata publication.
+    fd, name = tempfile.mkstemp(prefix='.fuzz-binding-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as out:
+            json.dump(value, out)
+            out.flush(); os.fsync(out.fileno())
+        os.link(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def _tasks(ledger):
+    after = 0
+    while True:
+        page = ledger.page(after=after)
+        yield from page['items']
+        if page['next_cursor'] is None:
+            return
+        after = page['next_cursor']
+
+
+def _validate_task(task):
+    config = ExecutionConfig(**json.loads(task['execution']))
+    EvaluationConfig(**json.loads(task['evaluation']))
+    if config.backend not in {'cpu-eager', 'cpu-compile'} or config.device != 'cpu':
+        raise ValueError('managed execution currently supports CPU only; device lease pending')
+    if type(config.compile_threads) is not int or not 1 <= config.compile_threads <= (os.cpu_count() or 1):
+        raise ValueError('compile thread budget exceeds available CPU count')
+
+
+def _has_result(database, task):
+    from ..storage.repository import _connect
+    from ..storage.transfer import _record
+    from ..generation import materialize, workload_id, oracle_id
+    import sqlite3
+    if not database.exists():
+        return False
+    with closing(_connect(database)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute('BEGIN')
+        row = conn.execute('SELECT * FROM attempts WHERE id=?', (task['attempt_id'],)).fetchone()
+        if row is None:
+            return False
+        contexts, _ = _record(conn, row)
+        bundle = materialize(task['seed'])
+        if (row['seed'] != task['seed'] or row['workload_id'] != workload_id(bundle) or
+                row['oracle_id'] != oracle_id(bundle) or
+                row['backend'] != json.loads(task['execution'])['backend'] or
+                contexts['execution'] != json.loads(task['execution']) or
+                contexts['evaluation'] != json.loads(task['evaluation'])):
+            raise ValueError('saved attempt conflicts with task; refusing acknowledgement')
+        return True
+
+
+def _reconcile(ledger, database):
+    recovered = interrupted = 0
+    for task in _tasks(ledger):
+        if task['state'] not in {'running', 'stop_requested'}:
+            continue
+        # Caller owns queue; inherited worker lock prevents recovery while alive.
+        if _has_result(database, task):
+            ledger.complete(task['id'], task['claim']); recovered += 1
+        else:
+            ledger.interrupt(task['id'], task['claim']); interrupted += 1
+    return {'recovered': recovered, 'interrupted': interrupted}
+
+
+def _terminate_group(child):
+    # Even a reaped group leader can have descendants; kill the entire new session
+    # group before acknowledging/releasing ownership. Worker helpers must not detach.
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        child.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait(timeout=5)
+
+
+def _worker_command(ledger, database, task):
+    return [sys.executable, '-m', 'autofusedebugger.fuzz.scheduling.worker',
+            str(ledger.path), str(database), task['id'], task['claim']]
+
+
+def drain(ledger, database, *, timeout=120):
+    """Drain pending CPU tasks; stale claims are recovered, never auto-retried."""
+    if not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError('timeout must be finite and positive')
+    database = Path(database).expanduser().resolve()
+    if database == ledger.path:
+        raise ValueError('task and result databases must differ')
+    with own_queue(ledger) as fd:
+        _bind_results(ledger, database)
+        for task in _tasks(ledger):
+            if task['state'] in {'pending', 'running', 'stop_requested'}:
+                _validate_task(task)
+        summary = dict(_reconcile(ledger, database), completed=0)
+        while True:
+            task = ledger.claim()
+            if task is None:
+                return summary
+            child = None
+            try:
+                _validate_task(task)
+                env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
+                child = subprocess.Popen(_worker_command(ledger, database, task),
+                    start_new_session=True, pass_fds=(fd,), env=env,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                deadline = time.monotonic() + timeout
+                while child.poll() is None:
+                    if time.monotonic() >= deadline or ledger.get(task['id'])['state'] == 'stop_requested':
+                        break
+                    time.sleep(.05)
+            finally:
+                if child is not None:
+                    _terminate_group(child)
+                if _has_result(database, task):
+                    ledger.complete(task['id'], task['claim'])
+                    summary['completed'] += 1
+                else:
+                    ledger.interrupt(task['id'], task['claim'])
+                    summary['interrupted'] += 1
+
+
+def resume(ledger, database, identity):
+    """Reconcile a saved result before allowing an interrupted task to retry."""
+    database = Path(database).expanduser().resolve()
+    with own_queue(ledger):
+        _bind_results(ledger, database)
+        _reconcile(ledger, database)
+        if ledger.get(identity)['state'] == 'completed':
+            return {'task_id': identity, 'state': 'completed', 'already_saved': True}
+        ledger.resume(identity)
+        return {'task_id': identity, 'state': 'pending', 'execution': 'not_started'}

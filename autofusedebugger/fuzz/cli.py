@@ -73,12 +73,14 @@ def main(argv=None):
     view.add_argument("database")
     view.add_argument("--port", type=int, default=0, help="loopback port; default chooses a free port")
     view.add_argument("--no-browser", action="store_true")
-    for command in ("status", "stop", "resume"):
-        p = sub.add_parser(command, help="reserved; not implemented in D1")
-        p.add_argument("target", nargs="?")
+    from .scheduling.cli import register
+    register(sub)
     args = parser.parse_args(argv)
     try:
-        if args.command == "setup":
+        if args.command in {"run", "status", "stop", "resume"}:
+            from .scheduling.cli import dispatch
+            result = dispatch(args)
+        elif args.command == "setup":
             result = setup(args.data_dir, display_name=args.display_name, user_id=args.user_id,
                            key_file=args.key_file, cpu_workers=args.cpu_workers,
                            compile_threads=args.compile_threads, memory_budget_bytes=args.memory_budget_bytes,
@@ -119,6 +121,9 @@ def main(argv=None):
             parser.error(f"{args.command} is not implemented yet; no service was started")
         print(json.dumps(result, indent=2))
         return 0
+    except KeyboardInterrupt:
+        print("Interrupted; active managed worker cleanup attempted. Resume interrupted tasks explicitly.", file=sys.stderr)
+        return 130
     except (ValueError, OSError, sqlite3.Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

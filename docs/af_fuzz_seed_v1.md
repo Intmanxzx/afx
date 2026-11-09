@@ -80,3 +80,16 @@ autofusedbg fuzz import ./snapshot.sqlite ./existing-results.sqlite
 ```
 
 restore 仅创建新文件，不覆盖；import 要求目标已存在，整批事务，重复 attempt 幂等、冲突拒绝。不是恢复/运行 fuzz 任务，不上传，不导入旧 summary。check-db 校验完整性及轻量记录 hash；它不验证发送者身份，只打开可信来源文件。当前 schema1，未知 schema 明确拒绝，升级不自动重写源文件。
+
+## 前台 CPU 批测（D4 预览）
+
+```sh
+autofusedbg fuzz run 42 43 --foreground --backend cpu-eager --backend cpu-compile --data-dir ./fuzz-data
+autofusedbg fuzz status --data-dir ./fuzz-data
+autofusedbg fuzz stop <task-id> --data-dir ./fuzz-data
+autofusedbg fuzz resume <task-id> --data-dir ./fuzz-data
+# resume 只重新排队，再显式执行：
+autofusedbg fuzz run --foreground --data-dir ./fuzz-data
+```
+
+目前仅 POSIX、串行 CPU worker；`--timeout` 每 task 默认120秒。后台托管和 NPU 全局设备租约未完成，所以 `--foreground` 必填且此入口不接受 NPU backend。停止/中断不会自动重跑；结果已保存而未确认的 attempt 在恢复检查后直接完成，不重复实验。run 的 completed 指已落库，不等于正确性通过；用 results/view 看逐后端结果。多 seed/backend 分别入队，容量或后续出错时已接受的任务保留，用 status 检查，不要盲目重交整批。

@@ -233,3 +233,20 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 覆盖 case/backend 分开入队、任务幂等、容量背压、并发首次建库/领取、停止/显式恢复、过期 claim 拒绝、六个子进程只允许一个领取、子进程退出后禁止隐式重领、恢复时容量检查及跨客户端持久化容量。没有 NPU 执行或假冒后端 split；任务账本完成不代表调度系统完成。测试子进程退出后由父进程 communicate/wait 确认退出，才 interrupt/resume。
 
 最终 `round8-focused.log` **10 passed / 0.97s**；`round8-final.log` **391 passed / 原 5 failed / 35.75s**。`round8-light.log` 安装 wheel 内部生命周期测试成功，无 Torch/NNSmith/numpy 导入。所有构建/测试在远端隔离目录；本地没有新增临时产物，不修改共享依赖，不推送。
+
+## 14. D4 前台 CPU supervisor 验收
+
+远端隔离根 `refactor-d0-Nh5vfp`，源码 `round9-supervisor`。实施前复查 Python3.11.4、Autofuse c1b46272 clean、NNSmith bc0af42 原9项修改；NPU无列示运行进程但有HBM占用，本批不运行NPU。
+
+- `round9-final.log`：**407 passed / 原5 failed / 50.31s**。新增16项 supervisor/CLI 测试通过。
+- `round9-focused-final.log`：最终 supervisor + ledger 专项（含真实 worker、进程组超时、SIGINT、父死后worker锁、保存后崩溃确认、轻量CLI）。
+- `round9-cli-run.json` / `round9-cli-status.json` / `round9-cli-results.json`：`run 42 --foreground --backend cpu-eager --backend cpu-compile` completed=2，两个后端结果均ok，workload ID均为 `610516f468114ce745c01ab2d1cb78129c87e4395d60e19e034aee9a714e9daa`。
+- `round9-cli-check.json`：结果库2条完整性与契约检查通过。
+- `round9-static-run.json` / `round9-static-check.json`：单独静态样本+CPU可选性能路径验证。
+- `round9-wheel.log` / `round9-light.log`：重建安装wheel，源码目录外无模型依赖环境 status 成功。
+
+中间失败：`round9-full.log` 首次全量 **404 passed / 6 failed / 94.96s**，除了原5项，旧 `test_real_spawn_pool_rebalances_complete_performance_cases` 的任务分配时序断言期望1:9、实际3:7。任务本身10条完成。最终全量同项通过；没有修改或删除该测试，也不能据一次复验保证其不再波动。独立重跑见 `round9-legacy-timing-rerun.log`。
+
+本轮验证的是POSIX CPU进程树，不是设备租约。子进程清理使用独立进程组TERM/KILL+wait；测试允许被init尚未回收的僵尸，但不允许继续执行。自行脱离进程组的helper、孤儿设备进程以及SSH断连后的自动托管未验收。父进程SIGKILL时worker可继续完成，但继承锁阻止另一supervisor并发接管；不得删除/替换活跃队列或自行强制解锁。
+
+最终专项 `round9-focused-final.log` **26 passed / 35.14s**；旧时序测试独立复验 `round9-legacy-timing-rerun.log` **1 passed / 4.18s**。静态CPU性能用例断言 status=ok、1个shape、performance=measured；不与NPU kernel profiler比较。

@@ -1,0 +1,58 @@
+"""Explicit foreground CPU command surface; no silent background/NPU fallback."""
+from ..config import data_home
+from ..contracts import Seed, ExecutionConfig, EvaluationConfig
+from .ledger import TaskLedger
+
+
+def register(sub):
+    for name in ('run', 'status', 'stop', 'resume'):
+        parser = sub.add_parser(name, help='managed CPU tasks (foreground preview)')
+        parser.add_argument('--data-dir')
+        parser.add_argument('--queue', help='operational task database')
+        if name == 'run':
+            parser.add_argument('seeds', nargs='*', help='numeric seeds; omit to drain existing pending tasks')
+            parser.add_argument('--foreground', action='store_true', required=True,
+                                help='required until detached hosting is implemented')
+            parser.add_argument('--backend', action='append', choices=('cpu-eager', 'cpu-compile'))
+            parser.add_argument('--compile-threads', type=int, default=1)
+            parser.add_argument('--static-only', action='store_true')
+            parser.add_argument('--performance', action='store_true')
+            parser.add_argument('--timeout', type=float, default=120)
+        elif name == 'status':
+            parser.add_argument('task', nargs='?')
+            parser.add_argument('--limit', type=int, default=50)
+            parser.add_argument('--after', type=int, default=0)
+        else:
+            parser.add_argument('task')
+        if name in {'run', 'resume'}:
+            parser.add_argument('--database', help='result archive; bound on first run')
+
+
+def dispatch(args):
+    home = data_home(args.data_dir)
+    ledger = TaskLedger(args.queue or home/'tasks/tasks.sqlite')
+    if args.command == 'status':
+        return ledger.get(args.task) if args.task else ledger.page(limit=args.limit, after=args.after)
+    if args.command == 'stop':
+        ledger.stop(args.task)
+        return ledger.get(args.task)
+    database = args.database or home/'results/results.sqlite'
+    from .supervisor import drain, resume, _validate_task
+    if args.command == 'resume':
+        return resume(ledger, database, args.task)
+    from dataclasses import asdict
+    from ..contracts import canonical_json
+    import math
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        raise ValueError('timeout must be finite and positive')
+    seeds = [str(Seed.parse(s)) for s in args.seeds]
+    evaluation = EvaluationConfig(performance=args.performance)
+    configs = [ExecutionConfig(backend, 'cpu', args.compile_threads, static_only=args.static_only)
+               for backend in dict.fromkeys(args.backend or ['cpu-eager'])]
+    for config in configs:
+        _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
+    # Enqueue is individually durable. Backpressure may leave a partial batch pending;
+    # never silently delete accepted tasks if capacity or execution later fails.
+    ids = [ledger.enqueue(seed, config, evaluation) for seed in seeds for config in configs]
+    return dict(drain(ledger, database, timeout=args.timeout), enqueued=ids,
+                queue=str(ledger.path), mode='serial_foreground_cpu')

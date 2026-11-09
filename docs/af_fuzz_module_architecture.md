@@ -47,3 +47,12 @@ cli -> generation registry -> versioned generation/v1 -> contracts + tensors
 ## 调度操作层
 
 `scheduling/ledger.py` 仅依赖 contracts/标准库，提供有界持久化队列、事务领取、停止/中断/显式恢复、旧 claim 栅栏。任务操作库使用独立 application ID；不是长期结果归档或 seed 重放前提。运行时 supervisor/worker 将依赖 ledger + 统一 execution，不再复制一套执行引擎。当前尚未接执行器、设备锁或 CLI，不自动重领失联任务，必须先确认旧 worker 已终止。
+
+### 前台管理层
+
+- `scheduling/ownership.py`：POSIX 队列 flock，父进程关闭 FD 不显式解锁，继承的 worker FD 继续持有所有权；不是 NPU lease。
+- `scheduling/supervisor.py`：进程生命周期、期限/停止、claim/result 恢复协调、队列→结果路径绑定；不重复执行逻辑。
+- `scheduling/worker.py`：一个 task 的标准生成/后端/执行/持久化；只写结果，parent 确认任务。
+- `scheduling/cli.py`：前台 CPU 命令编排；后台托管、NPU 设备映射/租约与 setup 完整资源预算仍待接入。
+
+操作库及 `.results.json` 绑定文件应放在稳定本机路径，不可在运行中替换数据库 inode。备份结果使用 snapshot；不能用结果恢复命令恢复正在运行的队列。管理命令可运行而不导入 Torch，只有 worker 加载后端依赖。

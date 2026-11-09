@@ -310,3 +310,16 @@ D3 恢复/导入阶段提交 `c69cd85` 后继续开发，而非只列下一阶�
 边界：内部 API 尚未接 supervisor/run/status/stop/resume CLI；不声称后台测试已可用。claim 是结果状态栅栏，不是 NPU 设备锁，也无法杀掉仍在运行的旧进程。complete 要求调用者先保存对应 attempt 结果，但本批不实现两库提交间的恢复协调。设备全局租约、进程组/超时清理、CPU/NPU 流水、资源完整预算、worker 心跳/恢复及后台进程托管是下一批，未通过之前不开放性能独占承诺。
 
 D4 首批最终验证：任务账本专项 **10 passed / 0.97s**；远端全量 **391 passed / 原 5 failed / 35.75s**，无新增失败。安装 wheel 后在轻量 venv 走 enqueue/claim/interrupt/resume/complete 全流程，未加载 Torch/NNSmith/numpy。阶段测试完成提交，下一批是 supervisor 与统一执行器衔接、结果提交中断协调及设备全局租约，不能提前启用 NPU 性能模式。
+
+## 15. D4 第二批：前台 CPU supervisor 与结果确认恢复
+
+- `scheduling/worker` 仅调用既有 materialize → create_backend → execute → ResultRepository.save；没有第二套执行引擎。每个 worker 一个 case/backend，按 claim 的 attempt UUID 写入。
+- `scheduling/supervisor` 前台串行启动独立进程/进程组，设有限 timeout，轮询 stop_requested；停止/超时/KeyboardInterrupt/启动失败执行清理。结果确实已持久化才确认 completed；失败的正确性结果同样是已完成 attempt，不误当需要重跑。
+- 结果保存与任务确认的崩溃窗口：重启持有队列锁后按 attempt ID 检查规范记录 hash、seed/workload/oracle、执行/评估配置，匹配则确认而不重跑；无结果则 interrupted，必须显式 resume，resume 后新 attempt，不改变用例。
+- 独立 POSIX flock 队列所有权，worker 继承锁 FD；父 supervisor 非正常退出但 worker 尚活着时，新 supervisor 拒绝接管。不能基于 PID/过期时间抢占。队列固定绑定结果库路径，避免错误目标库造成误判。
+- 新 CLI：`run <seeds...> --foreground`（可重复 --backend cpu-eager/cpu-compile）、`status [task]`、`stop <task>`、`resume <task>`；支持 --data-dir/--queue，run/resume 可指定 --database。run 不带 seeds 时仅处理已排队 pending；resume 只改状态，不悄悄启动执行。run 必须明确 --foreground，尚未实现默认后台托管，不能静默降级。
+- 任务状态分页最多200，CLI默认50；串行 worker，compile_threads <= CPU count，worker OMP/MKL/OpenBLAS threads 设为1。尚未接 setup 完整内存/磁盘预算；这不是已验证的最大吞吐并发方案。
+
+边界：目前仅 POSIX CPU 托管执行，NPU 管理入口拒绝（直接 replay 既有功能不变，NPU performance 仍 unsupported）。进程组清理验证普通同组子进程，不保证清理自行 setsid/double-fork 的 helper；父进程与 worker 同时死亡而仍有不继承 FD 的 helper、断电、SSH 自动重启/托管尚未验收。不会把队列锁称为设备锁，不会承诺严格性能同卡独占。当前 run 为部分入队语义，达到容量/后续失败时保留已接受任务；通过 status 查看，取消或不带 seed 继续排队任务，不自动重交整批。
+
+第二批全量最终 **407 passed / 原5 failed / 50.31s**，新增16项通过；真实 CLI 的 CPU eager/Inductor 两个 seed42 任务均ok且完整workload ID一致。安装wheel的无模型依赖 status 成功。首次全量旧并行分配测试另有时序断言失败，最终全量复验通过，过程保留在证据第14节，不隐去。下一批先完善失败原因/批次事务与后台监督，再实现同机设备身份/租约及NPU进程清理；这些未完成前保持NPU托管禁用和显式前台要求。
