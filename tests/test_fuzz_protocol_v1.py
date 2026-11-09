@@ -9,8 +9,10 @@ import sys
 import pytest
 
 from autofusedebugger.fuzz.contracts import CaseBundle, EvaluationConfig, ExecutionConfig
-from autofusedebugger.fuzz.protocol_v1 import materialize, plan, reference, workload_id
-from autofusedebugger.fuzz.execution import execute, TorchAdapter, UnsupportedBackend
+from autofusedebugger.fuzz.generation import materialize, plan, reference, workload_id
+from autofusedebugger.fuzz.execution import execute
+from autofusedebugger.fuzz.backends.torch import TorchAdapter
+from autofusedebugger.fuzz.backends.base import UnsupportedBackend
 
 
 @pytest.mark.parametrize("entropy", [0, 1, 42, 389609433, 2**128-1])
@@ -51,7 +53,7 @@ class Block(importlib.abc.MetaPathFinder):
  def find_spec(self,name,*args):
   if name.split('.')[0] in {'torch','numpy','nnsmith','torch_npu'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-from autofusedebugger.fuzz.protocol_v1 import materialize,workload_id
+from autofusedebugger.fuzz.generation import materialize,workload_id
 random.seed(int(os.environ['PYTHONHASHSEED']))
 print(workload_id(materialize('42')))
 '''

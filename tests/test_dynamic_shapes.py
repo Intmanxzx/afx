@@ -59,7 +59,7 @@ def test_fixed_reshape_constraint_is_not_silently_accepted():
 
 def test_cli_dynamic_flags_and_config_validation():
     from autofusedebugger.fuzz.cli import replay_parser
-    from autofusedebugger.fuzz.protocol_v1 import materialize
+    from autofusedebugger.fuzz.generation import materialize
     args = replay_parser().parse_args(['42', '--static-only'])
     assert args.static_only
     assert len(materialize(args.seed).spec.shape_samples) == 3

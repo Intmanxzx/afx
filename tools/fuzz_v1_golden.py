@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from autofusedebugger.fuzz.protocol_v1 import materialize, workload_id, reference
+from autofusedebugger.fuzz.generation import materialize, workload_id, reference
 
 records = []
 for entropy in (0, 1, 42, 389609433, 2**128 - 1):

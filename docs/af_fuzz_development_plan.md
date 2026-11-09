@@ -246,3 +246,13 @@ D3的schema/导入/展示可在D2验证期间推进；D5协议建立在D3的版�
 CPU Inductor `replay 42 --performance` 三个 shape 通过；AscendC 同 seed 全三 shape 与 static-only 均通过，并拥有同一个完整 workload ID。轻量 wheel 在无执行依赖环境通过数字 seed 生成和五个 golden；旧 console alias 不再分发。详见证据第 9 节。
 
 仍未完成跨架构验收、NPU 性能独占租约、Triton 可用环境、后台批测/数据库/view，以及历史 NNSmith 目录清理；本批没有发布/提交或修改共享依赖。
+
+## 10. 阶段提交与模块化（本轮）
+
+用户要求每阶段测试后 commit 并继续下一阶段；本地仍只编辑/提交，执行测试仍在 npussh mlir。前述“不自行提交”由本次明确授权更新为阶段性提交、不推送。
+
+首个 checkpoint：`c9039fa`，记录已验证数字 seed/replay、D0/D1/D2 预览及文档。
+
+模块化：generation/v1 + registry、backends/base + lazy factory + Torch adapter、通用 tensors、独立 execution loop 和 `python -m autofusedebugger.fuzz`。协议字节不改变，numeric golden 不更新。架构边界与扩展规则见 `af_fuzz_module_architecture.md`。测试完成提交后进入 D3 SQLite 轻量结果/快照，不等待跨架构资源才开始独立的数据层工作。
+
+模块化远端全量：**322 passed / 原 5 failed / 32.56s**，`round5-modules.log`；新增 3 个架构边界测试通过，五个数字 golden 不变。阶段完成后提交，再推进 D3。

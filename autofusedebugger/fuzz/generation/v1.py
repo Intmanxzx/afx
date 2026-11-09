@@ -8,9 +8,9 @@ import hashlib
 import math
 import struct
 
-from .contracts import CaseBundle, CaseSpec, Seed, TensorSpec, canonical_json, fingerprint
+from ..contracts import CaseBundle, CaseSpec, Seed, TensorSpec, canonical_json, fingerprint
 
-DTYPES = {"float16": ("e", 2), "float32": ("f", 4)}
+from ..tensors import DTYPES, storage_values
 ORACLE_ID = "af-mini-reference-v1-exact-dyadic"
 
 
@@ -92,12 +92,6 @@ def content_manifest(bundle):
 
 def workload_id(bundle):
     return fingerprint(content_manifest(bundle))
-
-
-def storage_values(bundle, tensor):
-    fmt, width = DTYPES[tensor.dtype]
-    raw = bundle.storages[tensor.alias_group]
-    return struct.unpack("<" + fmt * (len(raw) // width), raw)
 
 
 def reference(bundle, sample_index):

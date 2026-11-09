@@ -1,4 +1,4 @@
-"""Stdlib-only front door. Legacy execution is forwarded, not duplicated."""
+"""Independent stdlib-only front door for fuzz use cases."""
 import argparse
 import importlib.metadata
 import json
@@ -8,6 +8,7 @@ import sys
 
 from .config import data_home, setup, load_config, identity_status
 from .resources import resource_inventory, budget_warnings
+from .backends import BACKEND_NAMES
 
 
 def doctor(home):
@@ -64,7 +65,7 @@ def main(argv=None):
                            compile_threads=args.compile_threads, memory_budget_bytes=args.memory_budget_bytes,
                            cache_budget_bytes=args.cache_budget_bytes)
         elif args.command == "seed":
-            from .protocol_v1 import materialize, content_manifest, workload_id
+            from .generation import materialize, content_manifest, workload_id
             bundle = materialize(args.token)
             result = {"seed": str(bundle.spec.seed), "workload_id": workload_id(bundle),
                       "preview": True, "shape_count": len(bundle.spec.shape_samples)}
@@ -98,7 +99,7 @@ def replay_parser():
     parser = argparse.ArgumentParser(prog="autofusedbg fuzz replay")
     parser.add_argument("seed", help="self-contained nonnegative decimal seed")
     parser.add_argument("--static-only", action="store_true", help="execute base sample only; does not change case or workload ID")
-    parser.add_argument("--backend", choices=("cpu-eager", "cpu-compile", "ascendc", "triton"), default="cpu-eager")
+    parser.add_argument("--backend", choices=BACKEND_NAMES, default="cpu-eager")
     parser.add_argument("--device")
     parser.add_argument("--compile-threads", type=int, default=1)
     parser.add_argument("--performance", action="store_true", help="optional CPU wall-time measurement; NPU measurement needs D4 leases")
@@ -110,12 +111,13 @@ def replay_parser():
 def execute_args(args):
     try:
         from .contracts import ExecutionConfig, EvaluationConfig
-        from .protocol_v1 import materialize
-        from .execution import TorchAdapter, execute
+        from .generation import materialize
+        from .execution import execute
+        from .backends import create_backend
         config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton"} else "cpu"), args.compile_threads, static_only=args.static_only)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         bundle = materialize(args.seed)
-        result = execute(bundle, TorchAdapter(config), evaluation)
+        result = execute(bundle, create_backend(config), evaluation)
         print(json.dumps(result, indent=2))
         return 0 if result["status"] == "ok" else 1
     except (ValueError, TypeError) as exc:
