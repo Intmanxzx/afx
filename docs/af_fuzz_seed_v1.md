@@ -117,3 +117,7 @@ autofusedbg fuzz run 42 --data-dir ./fuzz-data
 ```
 
 数值仅为示例，请按机器调整。配置过大超出探测容量时拒绝执行；CLI --compile-threads 可下调不可突破已配置上限。cpu_workers目前是上限，实际仍串行1个。Linux可按进程组RSS采样，超过memory预算中断；cache预算针对每attempt私有临时目录，结束清理，不影响用户既有缓存。采样有间隔和遍历开销，可能短暂越限，不是硬配额。直接replay不使用此托管策略。NPU托管/严格性能租约仍待实现。
+
+## v2 Elementwise + Reduce + Transpose
+
+v2数字范围为2^128..2^129-1。数字本身仍自包含，无额外profile/生成参数；v1 seed含义不变。v2在Elementwise后执行显式transpose(0,1)，再按seed决定是否/在哪个轴Reduce。独立分类Transpose，不属于View。输入/权重字节沿v1 entropy映射，输出spec/oracle随新版本冻结。网站复制重放命令无需人工填写版本参数。

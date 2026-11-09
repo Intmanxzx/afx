@@ -48,7 +48,7 @@ async function load() {
     $('errors').textContent = ((summary.by_status.error || 0)+(summary.by_status.unsupported || 0)).toLocaleString();
     $('rows').replaceChildren();
     for(const item of result.items) {
-      const tr = document.createElement('tr'); cell(tr,item.seed); cell(tr,item.backend);
+      const tr = document.createElement('tr'); cell(tr,item.seed); cell(tr,item.backend + (item.display_name ? " · " + item.display_name : ""));
       const state = document.createElement('span'); state.className = 'state ' + (Object.hasOwn(labels,item.status)?item.status:'');
       state.textContent = labels[item.status] || item.status; cell(tr,'').append(state);
       cell(tr,item.created_at); const button = document.createElement('button'); button.textContent = '查看';
@@ -68,3 +68,5 @@ $('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;loa
 $('previous').addEventListener('click',()=>{if(page>0){page--;load();}});
 $('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('command').value);$('detail-message').textContent='已复制';}catch{ $('command').select();$('detail-message').textContent='请复制已选中的命令';}});
 load();
+
+if (location.pathname === '/') setInterval(() => { if (!document.hidden) load(); }, 30000);

@@ -1,0 +1,10 @@
+esay.app {
+    encode gzip
+    request_body {
+        max_size 2MB
+    }
+    reverse_proxy 127.0.0.1:8090
+}
+www.esay.app {
+    redir https://esay.app{uri} permanent
+}

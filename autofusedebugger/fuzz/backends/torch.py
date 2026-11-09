@@ -54,6 +54,8 @@ class TorchAdapter:
         def forward(x):
             value = x + weight
             value = torch.relu(value) if op == "relu" else -value if op == "neg" else value * weight
+            if graph.get('transpose'):
+                value = value.transpose(0, 1)
             if axis is not None:
                 value = value.sum(dim=axis)
             return (value,)

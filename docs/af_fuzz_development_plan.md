@@ -373,3 +373,14 @@ D4 首批最终验证：任务账本专项 **10 passed / 0.97s**；远端全量 
 这是第1工作包的可用保护层，不把它标记为硬隔离/全局多队列总预算已完成；直接replay仍不走托管预算。NPU托管仍关闭。
 
 资源首批验收：远端17项新增预算测试通过，全量440 passed/原5 failed；真实seed42 eager与Inductor在预算内执行均ok且无scratch残留。后续goal已获公网部署授权，保留这些约束，不把采样保护当硬隔离完成。
+
+## 19. 公网可用性 goal（用户明确授权）
+
+用户授权ssh oracle1、停止babynews并复用esay.app/80/443，要求默认30秒可配置自动同步、至少1000组真实Elementwise+Reduce+Transpose测试，Transpose单独类别。已创建active goal；不再受“不部署公网”旧限制，但仍不本地测试/安装，不修改共享依赖。
+
+- babynews源码/服务/Caddy配置已备份于oracle1私有/var/backups/af-fuzz-cutover；新服务健康后停止disable旧service，保留数据。esay.app由原Caddy TLS转发127.0.0.1:8090的新服务。
+- sync outbox与result save同事务写入，attempt不可变，revision递增，ACK和中心receipt持久化；HTTPS拒绝redirect转发凭据。默认30秒，每周期有界批次，失败不阻塞执行。admin-user离线生成唯一展示名和密钥，中心仅存hash，密钥私有文件传递不输出。
+- v1冻结含义不变；新增数字区间v2明确Transpose图节点、独立scalar oracle及Elementwise/Reduce/Transpose分类，旧view类别移除Transpose。不是把转置输入layout冒充显式Transpose节点。
+- oracle1(x86_64/Python3.12)与mlir(aarch64/Python3.11)已比对seed42/v2首例workload指纹一致；更大golden待验收。
+- 初次NPU试跑因覆盖PYTHONPATH漏掉CANN Autofuse而error，恢复原PYTHONPATH后3个v2 seed×CPU/AscendC×3shape全部ok。错误probe不计入1000正式验收。
+- NPU容器存在systemctl二进制但PID1不是systemd，因此不宣称systemd同步托管成功，改用独立带flock的POSIX daemon；自动机器重启恢复仍需容器启动器接入。

@@ -7,6 +7,9 @@ def _protocol(seed):
     if seed.version == 1:
         from . import v1
         return v1
+    if seed.version == 2:
+        from . import v2
+        return v2
     raise ValueError(f"unsupported generation version {seed.version}")
 
 

@@ -276,3 +276,15 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 ## 17. 托管资源预算首批
 
 远端round12-budgets：新增预算专项 **17 passed / 3.41s**，全量 **440 passed / 原5 failed / 54.44s**。`round12-run.json` 真实seed42 eager/Inductor均completed，`round12-results.json`两后端ok且workload指纹不变；4GiB RSS/1GiB scratch预算生效，结束无.fuzz-worker临时目录。采样超额终止不是硬隔离；没有声称峰值绝不越限。
+
+## 18. 公网与同步首批（goal进行中，非最终验收）
+
+oracle1 x86_64/Python3.12，babynews源码180KiB及systemd/Caddy配置备份到/var/backups/af-fuzz-cutover后，停用babynews，Caddy 80/443转新af-fuzz.service(127.0.0.1:8090)。公网healthz和只读摘要已通过；管理员密钥只落远端0600文件，未入库明文/日志/Git。
+
+mlir round13/14：初始同步/存储/架构专项17 passed；v2+sync专项15 passed。round14-focused 39 passed/3.79s，全量 **458 passed / 原5 failed / 80.42s**。首轮额外1项是旧测试仍把v2边界当未知版本，更新为v3后通过，v1 golden不变。
+
+公网同步首次HTTP403 Cloudflare1010，明确产品User-Agent后HTTPS上传15条成功；未关闭TLS验证、未转发凭据到其他站点。系统有systemctl但容器PID1非systemd，因此systemd试启动失败，已改独立POSIX同步daemon。
+
+NPU首轮3例失败原因是覆盖PYTHONPATH漏掉CANN Autofuse；保留原环境路径后3例×CPU/AscendC×3shape均ok。正式1000组诊断runner已启动，使用v2 seed区间0..999，逐seed两个后端三个shape，轻量结果实时同步；未完成前不能报1000通过。日志acceptance-1000.log，数据库acceptance-home/results/results.sqlite。该长验收不是托管NPU租约已完成证明。
+
+round14-final-focused **48 passed / 59.68s**（v1/v2黄金、同步幂等/ACK丢失/断网、备份及view）。公网首次Cloudflare UA限制已使用产品UA修复，自动daemon状态ok/ACK递增，公网摘要已出现真实验收结果。1000组执行仍进行中，不能提前完成goal。

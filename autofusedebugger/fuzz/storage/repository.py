@@ -101,6 +101,8 @@ class ResultRepository:
             for shape in record['shapes']:
                 row = dict(shape, attempt_id=attempt_id)
                 conn.execute(f"INSERT INTO shapes VALUES ({','.join('?' for _ in columns)})", tuple(row[c] for c in columns))
+            from ..sync.outbox import enqueue
+            enqueue(conn, attempt_id)
         return attempt_id
 
     def list(self, *, limit=50, after=None, seed=None):

@@ -73,11 +73,49 @@ def main(argv=None):
     view.add_argument("database")
     view.add_argument("--port", type=int, default=0, help="loopback port; default chooses a free port")
     view.add_argument("--no-browser", action="store_true")
+    central = sub.add_parser("serve", help="central service behind a TLS proxy")
+    central.add_argument("database")
+    central.add_argument("--port", type=int, default=8090)
+    backup = sub.add_parser("server-backup", help="private complete central backup including identities and ACKs")
+    backup.add_argument("database")
+    backup.add_argument("destination")
+    admin = sub.add_parser("admin-user", help="offline administrator creates an upload identity")
+    admin.add_argument("database")
+    admin.add_argument("display_name")
+    admin.add_argument("key_file")
+    sync = sub.add_parser("sync", help="configure/run independent automatic upload")
+    sync.add_argument("action", choices=("configure", "once", "run", "start", "status"))
+    sync.add_argument("--data-dir", required=True)
+    sync.add_argument("--database")
+    sync.add_argument("--endpoint")
+    sync.add_argument("--key-file")
+    sync.add_argument("--interval", type=float, default=30)
     from .scheduling.cli import register
     register(sub)
     args = parser.parse_args(argv)
     try:
-        if args.command in {"run", "status", "stop", "resume", "upgrade-queue"}:
+        if args.command == "serve":
+            from .central.server import serve
+            return serve(args.database, args.port)
+        elif args.command == "server-backup":
+            from .central.backup import backup
+            result = backup(args.database, args.destination)
+        elif args.command == "admin-user":
+            from .central.repository import create_user
+            result = create_user(args.database, args.display_name, args.key_file)
+        elif args.command == "sync":
+            from .sync.client import configure, once, run, start
+            home = data_home(args.data_dir)
+            if args.action == "configure":
+                if not args.endpoint or not args.key_file:
+                    raise ValueError("configure requires endpoint and administrator key file")
+                result = configure(home, args.endpoint, args.key_file, args.interval)
+            elif args.action == "status":
+                result = json.loads((home / "sync-status.json").read_text()) if (home / "sync-status.json").exists() else {"state":"not_started"}
+            else:
+                database = args.database or home / "results/results.sqlite"
+                result = {"once": once, "run": run, "start": start}[args.action](home, database)
+        elif args.command in {"run", "status", "stop", "resume", "upgrade-queue"}:
             from .scheduling.cli import dispatch
             result = dispatch(args)
         elif args.command == "setup":

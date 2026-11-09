@@ -29,7 +29,7 @@ class Seed:
     def __post_init__(self):
         if type(self.value) is not int or self.value < 0:
             raise ValueError("seed must be a nonnegative integer")
-        if self.version != 1:
+        if self.version not in {1, 2}:
             raise ValueError(f"unsupported generation version {self.version}; no fallback")
 
     @property

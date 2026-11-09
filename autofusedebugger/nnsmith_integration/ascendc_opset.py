@@ -253,8 +253,9 @@ OP_CATEGORIES: Dict[str, Set[str]] = {
     },
     # Shape/layout-only ops: no arithmetic, just which position holds which
     # value (or how many positions exist).
+    "transpose": {"core.Transpose"},
     "view": {
-        "core.Reshape", "core.Transpose", "core.Squeeze", "core.Concat",
+        "core.Reshape", "core.Squeeze", "core.Concat",
         "core.Cast", "core.Slice", "core.ExpandLast1", "core.ExpandLast2",
         "core.ExpandLast3", "core.ExpandLast4", "core.Tril", "core.Triu",
     },
