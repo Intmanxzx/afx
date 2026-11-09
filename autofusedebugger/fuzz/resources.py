@@ -1,7 +1,7 @@
 """Read-only, stdlib resource inventory. Budgets never change case generation.
 
 Unknown limits stay unknown. These are advisory limits, not reservations or a
-scheduler; legacy run does not yet enforce persisted budgets (D4).
+scheduler; managed run consumes the inventory through scheduling.budgets.
 """
 import math
 import os
@@ -121,7 +121,7 @@ def resource_inventory(home):
             "effective_cpu_cores": cores, "cpu_worker_ceiling": max(1, math.floor(cores)) if cores else None,
             "physical_memory_bytes": physical, "effective_memory_bytes": min(memories) if memories else None,
             "disk_free_bytes": disk, "disk_probe_path": str(path),
-            "enforcement": "advisory_only; legacy run does not enforce setup budgets"}
+            "enforcement": "inventory_only; managed CPU run enforces admission and sampled budgets"}
 
 
 def budget_warnings(config, inventory):

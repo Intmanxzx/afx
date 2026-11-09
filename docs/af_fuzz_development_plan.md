@@ -347,3 +347,29 @@ D4 首批最终验证：任务账本专项 **10 passed / 0.97s**；远端全量 
 第四批验收：后台CPU Inductor seed42在提交SSH连接结束后由新连接确认completed/result ok且supervisor finished/unowned；安装wheel无模型依赖环境后台空队列成功启动并结束。`round11-full.log` **422 passed / 原5 failed / 112.09s**；升级事务回滚新增项独立通过，最终包含该项的全量见证据第16节。没有宣称机器重启自动恢复或NPU托管已完成。
 
 第四批最终全量 **423 passed / 原5 failed / 46.68s**；阶段测试后提交。下一阶段仍是资源配置强制执行、同机NPU设备身份/独占租约与worker清理能力验证；自动服务重启/outbox同步未实现，不以后台CPU批次代替这些验收。
+
+## 18. 剩余范围盘点与资源预算首批
+
+按可独立验收的大工作包归组，开始本轮时还剩8包（不是8轮工期或完成率）：
+1. 执行资源预算：CPU/编译线程、内存、临时磁盘/缓存。
+2. NPU托管、设备身份/同卡租约、严格性能独占及异常清理。
+3. 经能力验证的流水并行、完整后台恢复/故障隔离。
+4. 跨架构确定性、Triton、原seed/input问题证据及因素验收。
+5. 三OS安装查看、结果分析/配对比较与迁移边界收口。
+6. 自动同步outbox/revision/ACK、断网续传及托管。
+7. 中心网站、管理员离线身份接入/认证上传/团队查询。
+8. 部署运维及全链路验收：Compose/同pip、备份恢复升级和跨环境迁移演练。
+
+### 本轮：第1包首批（非硬隔离完成）
+
+- `scheduling/budgets` 只依赖标准库和资源盘点；run读取setup，compile_threads默认配置值，CLI仅可在已配上限内下调，旧pending任务超出当前预算则拒绝，不改其规格。
+- 按affinity/cgroup/host最小CPU容量准入，而不是仅os.cpu_count。当前仅1个worker，cpu_workers作为上限，不伪装并发已实现；OMP/MKL/OpenBLAS仍1线程。
+- 内存配置启用Linux /proc进程组RSS采样，超额终止worker组并标记memory_budget_exceeded；非Linux显式拒绝该采样能力。RSS共享页可能重复计数，采样不是cgroup硬限制，不保证峰值不越界。
+- 每attempt创建私有临时目录，TMPDIR/Inductor/Triton缓存均重定向其中；cache_budget_bytes用于此目录总用量采样（含元数据/块占用），超额终止并清理。不会删除用户共享缓存，代价是跨attempt不复用编译缓存。
+- 开始前检查scratch与结果路径所在盘的空间，默认保留64MiB；运行中采样磁盘余量，低于reserve则终止。未控制任意后端私自写出目录的路径；真实磁盘填满、硬配额、cgroup管理不在本轮完成范围。
+- 前后台相同策略，短白名单resources.json在父进程持锁时落盘，child启动后重读再检查；不把身份密钥/环境全集传入策略，不修改seed或CaseBundle。
+- worker结束/超时/资源超限/采样异常后先进程组清理，再清理仅本任务的临时目录；parent SIGKILL仍可能留下临时目录，不能未经ownership核对自动删他人目录。
+
+这是第1工作包的可用保护层，不把它标记为硬隔离/全局多队列总预算已完成；直接replay仍不走托管预算。NPU托管仍关闭。
+
+资源首批验收：远端17项新增预算测试通过，全量440 passed/原5 failed；真实seed42 eager与Inductor在预算内执行均ok且无scratch残留。后续goal已获公网部署授权，保留这些约束，不把采样保护当硬隔离完成。

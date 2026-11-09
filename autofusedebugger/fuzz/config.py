@@ -132,7 +132,7 @@ def setup(home, *, display_name=None, user_id=None, key_file=None, cpu_workers=N
                 "identity_configured": identity_status(config)["configured"],
                 "identity": identity_status(config), "sync": "not_implemented",
                 "cpu_workers": config["cpu_workers"], "compile_threads": config.get("compile_threads", 4),
-                "budget_enforcement": "not_implemented; legacy run uses CLI options"}
+                "budget_enforcement": "managed CPU run: admission + sampled memory/scratch guards; serial worker; replay not governed"}
     finally:
         if temporary is not None and temporary.exists():
             temporary.unlink()

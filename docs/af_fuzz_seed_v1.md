@@ -107,3 +107,13 @@ autofusedbg fuzz upgrade-queue ./fuzz-data/tasks/tasks.sqlite ./tasks-v1.backup.
 ```
 
 本节取代上文“--foreground必填”和部分入队说明：默认后台有限批次，所有新任务原子入队；超容量/非法规格不会半批提交。启动失败后已接受的批次可保持pending，用status确认，再不带seed的run，不要盲目重交。启动ACK不是正确性成功。后台任务完成后进程退出，不是常驻个人NPU查看API。仍仅POSIX/串行CPU；NPU托管不接受，查看模式跨平台设计不受影响。schema2操作库保存短reason，结果库仍schema1。升级必须显式新备份，不覆盖；回退前终止相关进程并使用匹配旧版本及备份，不混用活跃数据库和WAL文件。
+
+## 托管资源保护（采样，不是硬隔离）
+
+```sh
+autofusedbg fuzz setup --data-dir ./fuzz-data --cpu-workers 1 --compile-threads 2 \
+  --memory-budget-bytes 4294967296 --cache-budget-bytes 1073741824
+autofusedbg fuzz run 42 --data-dir ./fuzz-data
+```
+
+数值仅为示例，请按机器调整。配置过大超出探测容量时拒绝执行；CLI --compile-threads 可下调不可突破已配置上限。cpu_workers目前是上限，实际仍串行1个。Linux可按进程组RSS采样，超过memory预算中断；cache预算针对每attempt私有临时目录，结束清理，不影响用户既有缓存。采样有间隔和遍历开销，可能短暂越限，不是硬配额。直接replay不使用此托管策略。NPU托管/严格性能租约仍待实现。

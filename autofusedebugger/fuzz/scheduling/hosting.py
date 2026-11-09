@@ -77,7 +77,7 @@ def _command(ledger, database, timeout, fd, connection, run_id):
             str(ledger.path), str(database), str(timeout), str(fd), str(connection), run_id]
 
 
-def launch(ledger, database, specifications, *, timeout=120, foreground=False, startup_timeout=15):
+def launch(ledger, database, specifications, *, timeout=120, foreground=False, startup_timeout=15, budget=None):
     """Bind and enqueue under ownership before handing lock to a child supervisor."""
     if not math.isfinite(timeout) or timeout <= 0 or not math.isfinite(startup_timeout) or startup_timeout <= 0:
         raise ValueError('timeouts must be finite and positive')
@@ -94,16 +94,25 @@ def launch(ledger, database, specifications, *, timeout=120, foreground=False, s
         _validate_task({'execution': canonical_json(asdict(execution)),
                         'evaluation': canonical_json(asdict(evaluation))})
         prepared.append(specification)
+    from .budgets import Budget, read_policy, write_policy
     with own_queue(ledger) as fd:
+        effective_budget = budget or read_policy(ledger) or Budget()
+        effective_budget.admit(ledger.path.parent)
+        effective_budget.admit(database.parent)
+        for seed, execution, evaluation, identity in prepared:
+            effective_budget.admit(ledger.path.parent, {'execution': canonical_json(asdict(execution))})
         _bind_results(ledger, database)
         # Validate existing queued work before accepting any additional tasks.
         for task in _tasks(ledger):
             if task['state'] in {'pending', 'running', 'stop_requested'}:
                 _validate_task(task)
+                effective_budget.admit(ledger.path.parent, task)
+        write_policy(ledger, effective_budget)
         ids = ledger.enqueue_many(prepared)
         if foreground:
             return dict(drain(ledger, database, timeout=timeout, _owned_fd=fd),
-                        enqueued=ids, queue=str(ledger.path), mode='serial_foreground_cpu')
+                        enqueued=ids, queue=str(ledger.path), mode='serial_foreground_cpu',
+                        budget=asdict(effective_budget), active_workers=1, enforcement='sampled_not_hard_isolation')
         run_id = str(uuid.uuid4())
         _write_status(ledger, {'run_id': run_id, 'state': 'starting'})
         parent, child_socket = socket.socketpair()
@@ -126,7 +135,8 @@ def launch(ledger, database, specifications, *, timeout=120, foreground=False, s
             # Reap in long-lived embedding callers; ordinary CLI exits immediately.
             threading.Thread(target=child.wait, daemon=True).start()
             return {'run_id': run_id, 'state': 'running', 'supervisor_pid': child.pid,
-                    'enqueued': ids, 'queue': str(ledger.path), 'mode': 'serial_background_cpu'}
+                    'enqueued': ids, 'queue': str(ledger.path), 'mode': 'serial_background_cpu',
+                    'budget': asdict(effective_budget), 'active_workers': 1, 'enforcement': 'sampled_not_hard_isolation'}
         finally:
             parent.close(); child_socket.close()
             if not accepted:

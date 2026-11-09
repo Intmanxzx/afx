@@ -1,5 +1,5 @@
 """Managed CPU command surface; detached by default, explicit foreground option."""
-from ..config import data_home
+from ..config import data_home, load_config
 from ..contracts import Seed, ExecutionConfig, EvaluationConfig
 from .ledger import TaskLedger
 
@@ -17,7 +17,7 @@ def register(sub):
             parser.add_argument('--foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
             parser.add_argument('--backend', action='append', choices=('cpu-eager', 'cpu-compile'))
-            parser.add_argument('--compile-threads', type=int, default=1)
+            parser.add_argument('--compile-threads', type=int)
             parser.add_argument('--static-only', action='store_true')
             parser.add_argument('--performance', action='store_true')
             parser.add_argument('--timeout', type=float, default=120)
@@ -56,10 +56,12 @@ def dispatch(args):
         raise ValueError('timeout must be finite and positive')
     seeds = [str(Seed.parse(s)) for s in args.seeds]
     evaluation = EvaluationConfig(performance=args.performance)
-    configs = [ExecutionConfig(backend, 'cpu', args.compile_threads, static_only=args.static_only)
+    from .budgets import Budget
+    budget = Budget.configured(load_config(home), args.compile_threads)
+    configs = [ExecutionConfig(backend, 'cpu', budget.compile_threads, static_only=args.static_only)
                for backend in dict.fromkeys(args.backend or ['cpu-eager'])]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
     from .hosting import launch
     return launch(ledger, database, ((seed, config, evaluation, None) for seed in seeds for config in configs),
-                  timeout=args.timeout, foreground=args.foreground)
+                  timeout=args.timeout, foreground=args.foreground, budget=budget)

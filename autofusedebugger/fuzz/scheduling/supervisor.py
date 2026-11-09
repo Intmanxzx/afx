@@ -129,6 +129,15 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
         for task in _tasks(ledger):
             if task['state'] in {'pending', 'running', 'stop_requested'}:
                 _validate_task(task)
+        from .budgets import Budget, read_policy, violation
+        budget = read_policy(ledger) or Budget(compile_threads=max(
+            [json.loads(t['execution'])['compile_threads'] for t in _tasks(ledger)
+             if t['state'] == 'pending'] or [1]))
+        budget.admit(ledger.path.parent)
+        budget.admit(database.parent)
+        for candidate in _tasks(ledger):
+            if candidate['state'] == 'pending':
+                budget.admit(ledger.path.parent, candidate)
         summary = dict(_reconcile(ledger, database), completed=0)
         if _ready is not None:
             _ready()
@@ -137,15 +146,27 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             if task is None:
                 return summary
             child = None
+            scratch = None
             reason = 'worker_exited_without_result'
             try:
                 _validate_task(task)
+                budget.admit(ledger.path.parent, task)
+                budget.admit(database.parent)
+                database.parent.mkdir(parents=True, exist_ok=True)
+                scratch = tempfile.TemporaryDirectory(prefix='.fuzz-worker-', dir=ledger.path.parent)
                 env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
+                env.update(TMPDIR=scratch.name, TORCHINDUCTOR_CACHE_DIR=str(Path(scratch.name)/'inductor'),
+                           TRITON_CACHE_DIR=str(Path(scratch.name)/'triton'),
+                           TORCHINDUCTOR_COMPILE_THREADS=str(json.loads(task['execution'])['compile_threads']))
                 child = subprocess.Popen(_worker_command(ledger, database, task),
                     start_new_session=True, pass_fds=(fd,), env=env,
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 deadline = time.monotonic() + timeout
                 while child.poll() is None:
+                    exceeded = violation(budget, child.pid, scratch.name, database.parent)
+                    if exceeded:
+                        reason = exceeded
+                        break
                     if ledger.get(task['id'])['state'] == 'stop_requested':
                         reason = 'user_stop'
                         break
@@ -164,6 +185,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             finally:
                 if child is not None:
                     _terminate_group(child)
+                if scratch is not None:
+                    scratch.cleanup()
                 if _has_result(database, task):
                     ledger.complete(task['id'], task['claim'])
                     summary['completed'] += 1

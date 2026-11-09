@@ -60,3 +60,5 @@ cli -> generation registry -> versioned generation/v1 -> contracts + tensors
 `scheduling/migrations.py` 只处理操作库显式schema1→2，要求独立新备份及非活跃队列；普通连接拒绝旧/未知版本。schema2 的reason是短生命周期摘要，不是模型结果。enqueue_many拥有原子批次边界，CLI不再逐个提交可能失败的半批。
 
 `scheduling/hosting.py` 为有限后台drain的进程托管适配，持有并传递ownership，socket握手不接公网；短supervisor状态侧文件是可丢失诊断信息，任务/结果库才是持久化事实。status对比真实锁，不基于PID复用推断所有权。后台与前台都进入相同supervisor.drain；无第二套执行器。
+
+`scheduling/budgets.py` 拥有Budget、setup→运行策略解析、准入和Linux进程组RSS/私有scratch采样。CLI/hosting解析并持久化白名单策略，supervisor在worker启动和运行阶段消费；generation不依赖策略。策略仅管当前串行队列，不是系统级多队列/跨用户资源调度。采样监控与cgroup硬隔离明确分开。

@@ -272,3 +272,7 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 后台进程只有本地socketpair握手，不监听网络，不安装NPU查看API，也未修改共享Torch/CANN/NNSmith。子supervisor不自动重跑interrupted任务，有限队列耗尽即退出；后台执行不是自动上传，也不是机器重启托管。
 
 `round11-final.log` 最终 **423 passed / 原5 failed / 46.68s**，包含后台8项新增测试和额外升级回滚1项，无新增失败。`round11-light-status.json` 安装wheel后台空队列最终finished/unowned；不是仅检查启动ACK。无本地测试/安装/临时产物，远端共享仓库状态保持不变。
+
+## 17. 托管资源预算首批
+
+远端round12-budgets：新增预算专项 **17 passed / 3.41s**，全量 **440 passed / 原5 failed / 54.44s**。`round12-run.json` 真实seed42 eager/Inductor均completed，`round12-results.json`两后端ok且workload指纹不变；4GiB RSS/1GiB scratch预算生效，结束无.fuzz-worker临时目录。采样超额终止不是硬隔离；没有声称峰值绝不越限。
