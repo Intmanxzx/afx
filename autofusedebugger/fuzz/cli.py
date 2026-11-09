@@ -57,6 +57,12 @@ def main(argv=None):
     snapshot = sub.add_parser("snapshot", help="export a consistent lightweight SQLite snapshot")
     snapshot.add_argument("source")
     snapshot.add_argument("destination")
+    for command in ("restore", "import"):
+        transfer = sub.add_parser(command, help="restore to a new database" if command == "restore" else "merge into an existing database atomically")
+        transfer.add_argument("source")
+        transfer.add_argument("destination")
+    check = sub.add_parser("check-db", help="audit a trusted result database without modification")
+    check.add_argument("database")
     results = sub.add_parser("results", help="read lightweight results without model dependencies")
     results.add_argument("database")
     results.add_argument("--limit", type=int, default=50)
@@ -87,6 +93,12 @@ def main(argv=None):
         elif args.command == "snapshot":
             from .storage import ResultRepository
             result = {"snapshot": ResultRepository(args.source).snapshot(args.destination)}
+        elif args.command in {"restore", "import", "check-db"}:
+            from .storage.transfer import restore, merge, check_database
+            if args.command == "check-db":
+                result = check_database(args.database)
+            else:
+                result = (restore if args.command == "restore" else merge)(args.source, args.destination)
         elif args.command == "view":
             from .view.server import serve
             return serve(args.database, port=args.port, open_browser=not args.no_browser)

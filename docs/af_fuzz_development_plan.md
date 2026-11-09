@@ -285,3 +285,14 @@ D3 首批最终远端全量：**332 passed / 原 5 failed / 42.15s**（`round5-f
 本阶段新增 25 项 view 测试 + 1 项架构边界测试；最终全量 **358 passed / 原 5 failed / 33.85s**，日志见证据第 11 节。历史 5 项失败继续保留，不以新增模块通过冒充整个仓库全绿。所有执行位于 npussh mlir；本地仅编辑/Git，临时检查截图已删除。
 
 D3 仍待：Windows/macOS 实测、可信快照导入/恢复与 schema 升级迁移、异常聚类/指标配对比较。D4 任务持久化/恢复与设备独占 lease，D5 自动 outbox/revision/ACK + 网站，D6 部署迁移/备份演练均未完成。接下来先补 D3 恢复/升级边界与故障注入，再推进 D4；不可将本机 viewer 变成 NPU 常驻查看 API，也不把现有后端 prepare 当纯 CPU 编译完成。
+
+## 13. D3 第三批：可信快照恢复/合并和升级边界
+
+- 新增 `restore <snapshot> <new-db>`、`import <snapshot> <existing-db>`、`check-db <db>`。全程只依赖标准库，不导入执行层；不恢复 tensor/秘密/任务/同步状态。
+- restore 流式写临时新库，检查完成后原子无覆盖发布；import 在一个事务内合并，原 attempt ID/时间/指纹不变，重复完全一致才跳过，同 ID 内容冲突整批回滚，不按 seed 去重。
+- 逐记录重做 whitelist/指标/seed/UUID/时间/上下文及结果 hash 验证，不能只信任 result_hash；源完整性/引用检查、目标触发器拒绝。仅支持可信来源，不把自带 hash 当签名。
+- schema1 目前没有更早的已发布 fuzz schema，也没有必需的 schema2 变更，因此不造空迁移、不把 user_version 改号当升级。check-db 显式报告当前 schema/无需升级，未知/旧号拒绝且不改文件。未来真实升级需逐版本转换与备份/恢复测试；尚不能宣称 schema 迁移已完成。
+- 旧 summary 导入按用户最新“不兼容旧设计/功能”要求取消，不虚构其数字 seed/workload 身份。
+- 故障注入涵盖写入后异常、发布竞争、子进程强制退出，验证现有库回滚/新目标不发布；突然断电/硬件故障不在这些测试覆盖内。SIGKILL 恢复临时文件可能残留，不会发布为最终目标；自动清理他人临时文件暂不实现。
+
+第三批验收：远端 transfer 专项 **23 passed**；全量 **381 passed / 原 5 failed / 74.14s**，无新增失败；安装 wheel 后无模型依赖 restore 1 条、重复 import skipped=1、check-db integrity=ok 均通过。完成阶段提交后进入 D4 的操作状态账本；尚不开放未接执行/设备租约的 run 命令。

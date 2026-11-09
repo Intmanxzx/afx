@@ -217,3 +217,11 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 中间失败均保留原因：首次 wheel 使用 --no-build-isolation 时 light-venv 缺 bdist_wheel，改回 pip 隔离构建成功；首次轻量检查在含 nnsmith 源码目录的父目录运行，发现 namespace spec，移至空 cwd 后无该依赖；首次浏览器测试发现 reset DOM 命名冲突，修复后重新验证。没有通过忽略断言/静默跳过来宣称通过。
 
 未验证：跨 CPU 架构/跨 OS 重放、Windows/macOS 浏览器与 wheel 运行、任意恶意数据库沙箱隔离、schema 升级/恢复导入、中心服务及自动上传。性能数据是合成查询单次测量；不代表 NPU 测试性能或真实生产库上界。
+
+## 12. D3 可信恢复/导入验证
+
+隔离源码 `refactor-d0-Nh5vfp/round7-recovery`。实施前复查 Autofuse HEAD c1b46272 且干净、NNSmith 原有 9 项修改；NPU 无列示运行进程（仍有 HBM 占用），本阶段不运行 NPU。
+
+`round7-focused.log` 初始 transfer+storage 31 passed；新增子进程崩溃回滚/WAL 未提交数据隔离后以 `round7-transfer.log`、`round7-final.log` 为最终记录。`round7-light.log` 保存 installed-wheel restore/import/check-db 实际命令输出。异常注入并非真实填满磁盘；崩溃回滚以子进程 os._exit(77) 在事务写入后、提交前终止验证。未测断电和目录 fsync 持久化保证。
+
+最终：`round7-transfer.log` **23 passed / 40.50s**；`round7-final.log` **381 passed / 原 5 failed / 74.14s**。`round7-light.log` restore added=1、再次 import skipped=1、check-db schema1/integrity=ok。新增测试全部通过；全量耗时不是性能基准。

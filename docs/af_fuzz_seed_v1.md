@@ -70,3 +70,13 @@ autofusedbg fuzz view ./snapshot.sqlite
 ```
 
 查询、快照与 view 不需要 Torch/NNSmith/CANN/NPU/Node。view 默认在当前电脑打开浏览器，只监听本机随机端口；可用 --no-browser 禁止自动打开、--port 指定端口，Ctrl+C 退出。前端随同一 wheel 分发，不需另装前端。请先将一致性快照复制到个人电脑，再运行 view；这不是个人 NPU 常驻查看服务。只打开可信来源的结果文件；Windows/macOS 的实际运行验收仍待 CI。
+
+## 恢复与合并可信结果
+
+```sh
+autofusedbg fuzz check-db ./snapshot.sqlite
+autofusedbg fuzz restore ./snapshot.sqlite ./restored.sqlite
+autofusedbg fuzz import ./snapshot.sqlite ./existing-results.sqlite
+```
+
+restore 仅创建新文件，不覆盖；import 要求目标已存在，整批事务，重复 attempt 幂等、冲突拒绝。不是恢复/运行 fuzz 任务，不上传，不导入旧 summary。check-db 校验完整性及轻量记录 hash；它不验证发送者身份，只打开可信来源文件。当前 schema1，未知 schema 明确拒绝，升级不自动重写源文件。
