@@ -3,6 +3,18 @@
 `autofusedebugger` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具。
 当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
 
+## 新版 fuzz（开发中）
+
+完整重放只需要一个数字 seed：
+
+```sh
+autofusedbg fuzz replay 42
+```
+
+可选执行参数：`--backend ascendc`、`--static-only`、`--performance`；它们不改变 seed 对应的图、权重、输入与完整用例指纹。`autofusedbg fuzz seed 42 --show-spec` 可在无 Torch/NNSmith 环境查看规格。
+
+新版不支持旧 af-fuzz、长 token、profile 或 --seed-token。旧版发行包不包含此新入口。协议与当前限制见 [数字 seed 说明](docs/af_fuzz_seed_v1.md)。
+
 ## 安装
 
 请先准备好 PyTorch、torch_npu 和 CANN 环境，再选择以下一种方式安装。

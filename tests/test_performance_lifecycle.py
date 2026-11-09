@@ -197,25 +197,18 @@ def test_output_lock_prevents_two_writers(tmp_path):
             with session_lock(tmp_path):pass
 
 
-def test_cli_continuous_and_retention_flags():
-    from autofusedebugger.cli import build_parser
-    parser=build_parser()
-    args=parser.parse_args(['af-fuzz','--compare-performance','--out-dir','/tmp/example'])
-    assert args.n_cases is None and not args.keep_perf_artifacts and not args.resume
-    args=parser.parse_args(['af-fuzz','--compare-performance','--out-dir','/tmp/example','--resume','--keep-perf-artifacts'])
-    assert args.resume and args.keep_perf_artifacts
+def test_replay_does_not_accept_legacy_retention_flags():
+    from autofusedebugger.fuzz.cli import replay_parser
+    for flag in ('--resume', '--keep-perf-artifacts'):
+        with pytest.raises(SystemExit):
+            replay_parser().parse_args(['42', flag])
 
 
-def test_correctness_mode_still_defaults_to_100(monkeypatch):
-    from autofusedebugger.cli import build_parser,cmd_af_fuzz
-    from autofusedebugger.nnsmith_integration import fuzz_loop
-    calls={}
-    def run(**kwargs):
-        calls.update(kwargs)
-        return SimpleNamespace(total=100,passed=100,failed=0,gen_errors=0)
-    monkeypatch.setattr(fuzz_loop,'run_fuzz_session_parallel',run)
-    args=build_parser().parse_args(['af-fuzz','--out-dir','/tmp/example'])
-    assert cmd_af_fuzz(args)==0 and calls['n_cases']==100
+def test_replay_default_is_one_complete_case_not_legacy_batch():
+    from autofusedebugger.fuzz.cli import replay_parser
+    args = replay_parser().parse_args(['42'])
+    assert args.seed == '42' and not args.static_only
+    assert not hasattr(args, 'n_cases')
 
 
 def test_runner_interrupt_cleans_worker_capture_and_cache(tmp_path,monkeypatch):

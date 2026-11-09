@@ -58,11 +58,11 @@ def test_fixed_reshape_constraint_is_not_silently_accepted():
 
 
 def test_cli_dynamic_flags_and_config_validation():
-    from autofusedebugger.cli import build_parser
-    from autofusedebugger.nnsmith_integration.generation import GenerationConfig
-    args=build_parser().parse_args(['af-fuzz','--out-dir','/tmp/dyn','--dynamic-shapes','--dynamic-variants','4'])
-    assert args.dynamic_shapes and args.dynamic_variants==4
-    with pytest.raises(ValueError):GenerationConfig(dynamic_variants=1)
+    from autofusedebugger.fuzz.cli import replay_parser
+    from autofusedebugger.fuzz.protocol_v1 import materialize
+    args = replay_parser().parse_args(['42', '--static-only'])
+    assert args.static_only
+    assert len(materialize(args.seed).spec.shape_samples) == 3
 
 
 def test_generated_nnsmith_case_dynamic_fingerprint_replays():

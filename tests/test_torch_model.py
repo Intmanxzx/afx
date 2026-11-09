@@ -302,8 +302,9 @@ def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
         return {"passed": True, "summary": {"status": "PASS", "passed": 0, "total": 0}}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "run_framework_script", fake_run_framework_script)
-    monkeypatch.setattr(cli, "format_torch_run_summary", lambda summary: "summary")
+    from autofusedebugger import script_runner, torch_model
+    monkeypatch.setattr(script_runner, "run_framework_script", fake_run_framework_script)
+    monkeypatch.setattr(torch_model, "format_run_summary", lambda summary: "summary")
 
     assert cli.main(["python3", str(script), "--device", "npu", "--custom-flag"]) == 0
     assert received["script"] == script.resolve()

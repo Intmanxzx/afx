@@ -1,0 +1,190 @@
+# D0/D1 实施证据（2026-11-09）
+
+本次执行位置：`npussh mlir`。隔离根目录：
+`/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp`（下文日志路径相对此目录）。
+本地只保留源码/测试/文档，不安装或运行后续测试。最初误建的本地临时 venv、日志、传输包已清理。
+
+## 1. 基线与消费者
+
+- 本地起点 `6d6190c`；两份评审文档原为未跟踪文件，保留，未提交/推送。
+- 无适用 AGENTS.md。旧入口 `autofusedbg af-fuzz`，正确性和性能仍是不同会话实现；本次只做转发，不增加第三套执行器。
+- `generation.py` 为已有共用生成入口；`performance/{session,parallel,worker,dynamic_worker}.py` 为性能消费者，`fuzz_loop.py` 为正确性消费者。
+- 旧数据消费者包括 summary JSON/HTML、性能 CSV、checkpoint/resume、重放 dump。D1 不更换其格式，不伪装为新协议数据。
+- 项目元数据 Python >=3.9、numpy 必需，NNSmith 另装。本次实际执行：Linux aarch64、Python 3.11.4、SQLite 3.31.1、Torch 2.10.0+cpu、torch_npu 2.10.0.post7.dev20261015、NNSmith 0.2.0.dev25。
+- `~/autofuse` HEAD `c1b46272`，初检无修改。`~/niu/nnsmith` HEAD `bc0af42`，已有 9 个修改文件；复制到隔离目录后测试，不改原件。旧 baseline import 可能补齐**隔离副本**的补丁。
+- 初检 NPU 6 / 两个 chip、健康 OK、AICore 0%，无运行进程；约 3GB/chip 已占用内存。并非严格性能独占测量；不使用此探针声称吞吐提升。
+- 最初本地缺 NNSmith 导致普通 import 触发补丁错误、测试收集失败；后续按用户要求所有执行转远端。新的 import 无该副作用。
+
+基线命令（在隔离 `repo` 下，使用 `PYTHONPATH=$PWD:../nnsmith`）：
+
+```sh
+source ~/env.sh
+python -m pytest -q
+```
+
+`baseline.log`：**256 passed, 5 failed / 48.30s**。五项失败原样保留，不通过跳过/xfail 隐藏：
+
+1. `test_pytorch_adapter_captures_model_from_cann_ge_fork_worker`：未捕获 fork 子进程 module call。
+2. `test_run_script_keeps_script_directory_importable_during_backend_execution`：前序测试的 `libs` 模块污染，`add_one` import 失败。
+3. `test_seed_survives_candidate_order_and_previous_cases[42]`：具体 shape 漂移。
+4. `test_capture_prefusion_graphs_skips_cpu_replay_by_default`：`Linear` 无 `.graph`。
+5. `test_capture_prefusion_graphs_with_cpu_captures_both_sides`：同上。
+
+## 2. Seed / input size 诊断
+
+新增 `tools/fuzz_solver_probe.py` 和 `tools/fuzz_seed_probe.py`，仅显式诊断时写 JSON，不用这些文件保证重放。
+
+```sh
+export PYTHONPATH=$PWD:../nnsmith
+python tools/fuzz_solver_probe.py --output-dir ../solver
+PYTHONHASHSEED=0 python tools/fuzz_seed_probe.py --seed 42 --output ../traces/a.json
+PYTHONHASHSEED=123 python tools/fuzz_seed_probe.py --seed 42 --output ../traces/b.json
+python -m autofusedebugger fuzz diagnose ../traces/a.json ../traces/b.json
+```
+
+诊断顺序：配置/候选池 -> 具体图/有序变量 -> 初始权重 -> refine 权重 -> 输入字节/签名 -> 动态轴/逐 shape 输入。记录 dtype、shape、stride、storage offset、alias group 和字节 SHA256；首个差异返回 stage、JSON path、预期/实际。诊断物化时对比模型声明输入和实际输入的名称、顺序、dtype、shape；绝不 reshape/pad 掩盖错误。当前未接入所有编译加载/后端边界，此项留 D2。
+
+已捕获的事实（`solver/comparison.json`）：
+
+- 裸 `model_gen` 按 0/42/389609433 顺序运行，并在重试前生成 seed+1、反转候选池时，seed=42 首个差异在 **graph / `$.payload.variables[1].shape[4]`：2 -> 1**。
+- 图指令文本相同不意味着广播形状相同；不同变量也有 [1]/[2] 变化。
+- 同一实验使用已有 `_seeded_solver_context` 后，三个 seed 均无差异。说明该捕获现象与求解器上下文/调用历史有关；不声称已查明 Z3 内部全部原因。
+- **生产 `generate_case` 已有 context 隔离**。本次补充其回归，不将裸 API 的故障冒充生产修复，也不更改共享 NNSmith。
+- seed=42、受限 Add/Mul/Neg/ReLU、小规模静态：hash seed 0/1/123 和前序 seed=43 后，完整 trace digest 都为 `4259ae2b2184a5f14ef415f4bcc6319b5ed2d7d8a58bf67569e71e0948595398`。fixture 明确标为环境受限的 legacy diagnostic golden，而非 v1 承诺。
+- 静态 fresh process 生成约 0.399–0.402s，调用历史热身后约 0.024s；RSS 约 1.09–1.11 GiB（Linux ru_maxrss KiB，包含 Torch 进程），trace 3529 bytes。不是全流水线性能基线。
+- 动态 seed=42 生成 5867-byte trace，约 0.415s；完整 digest `b3e04667a7da3baf511d85b7543d79d60ec3977f0d208c61b36c749d941a81cd`。
+- 手工固定诊断样本覆盖广播、规约、两个 shape、float32/float16/int32、转置/alias 与字节哈希；它们是诊断工具测试，**不是新生成器覆盖率或跨架构黄金测试**。
+
+仍未定位用户原始广播轴/input size 故障。动态候选合法性拒绝单独报告，不归为同一故障。完整图属性的结构化表示、参考输出/可变 buffer、真实设备布局和所有输入绑定检查点仍需 D2 完成。
+
+## 3. 后端能力矩阵
+
+`tools/fuzz_backend_probe.py` 使用广播 Add+ReLU；调用后同步并检查输出。每后端独立进程/缓存、串行执行。
+
+| 能力 | AscendC | Triton-Ascend |
+|---|---|---|
+| 当前环境 eager 输入准备 | 通过 | 通过 |
+| callable 创建 | 约 0.688s；不是编译结束 | 已进入编译流程 |
+| 首次 combined compile+execute | 约 15.958s，通过 | 失败，见下 |
+| 再次执行（非正式性能） | 约 0.000634s，通过 | 未测 |
+| 纯 CPU 完整图编译 | 未验证 | 未验证 |
+| 跨进程可移交执行包 | 未验证 | 未验证 |
+| 调度契约 | 只允许 combined | 不声明可用/split |
+
+日志：`backend-ascendc.log`、`backend-triton.log` 记录初次环境失败；`overlay-ascendc.log`、`overlay-triton.log` 记录补齐隔离依赖后的验证。
+
+AscendC 首次失败为未加载 autofuse Python 包；重试只读使用已有预构建 overlay 的 paths.json，设置独立缓存及禁止 pyc 写入，不改共享源码，也未重新编译 Autofuse。
+
+Triton 预检不存在。使用 `pip --target <隔离根>/triton-deps --no-deps` 安装 `triton-ascend==3.2.0` 及缺失的 pybind11，不升级 Torch/CANN。最终运行失败：当前 CANN 9.3.0 头文件没有 `rtLimitType_t::RT_LIMIT_TYPE_SIMT_WARP_STACK_SIZE`，Triton 的 npu_utils.cpp 无法编译。不能声称双后端环境已补齐；需寻找与该 Torch/CANN 组合匹配的 Triton 构建，禁止通过修改共享 SDK 枚举强行绕过。
+
+已复查当前 torch_npu 源码 `ascendc/compiler/_autotune.py:102–143`：使用 NPU current_stream、NPU profiler 和 stream synchronize，因此此 autotune 路径必须占用设备，不能归类为纯 CPU 工作。本探针未覆盖触发该路径的完整调优用例。
+
+## 4. D1 交付范围与边界
+
+- 普通包/CLI 导入不再初始化 NPU 环境、不再改 NNSmith。兼容检查默认只读，缺补丁显式失败；显式 `isolated_copy=` 才允许旧工具给用户自建副本打补丁。
+- `autofusedbg fuzz setup|doctor|run|diagnose`；旧 `autofusedbg af-fuzz` 和 `af-fuzz` console script 都转发同一旧执行处理器。不是新统一执行引擎。
+- `setup` 原子写配置、持久 source_id、独占 setup lock、保留未知字段、路径规范化、CPU worker 预算、管理员预发 user_id/display_name/key_file 引用。密钥内容不打印、不复制。没有在线注册、密钥申请或伪造在线校验。
+- `doctor` 仅读取包元数据与 Python/SQLite/OS，不 import 执行依赖、不探测设备、不安装软件；明确报告未实现/未验证能力。
+- seed token 编解码及不可变 CaseSpec/CaseBundle/配置/短结果为**预览契约**。未注册任何 v1 generator，调用显式失败，不用当前设备能力或旧整数 seed 偷换语义。CaseBundle 使用 bytes，不要求保存；完整 storage/alias 边界、oracle 与 materializer 验收留 D2。
+- `view/snapshot/status/stop/resume` 明确报未实现，不启动服务。离线身份上传、资源检测、同步器、前端资源、三系统 CI 尚未实现。
+- Linux aarch64 的无 Torch/NNSmith/numpy venv 已成功安装本项目 wheel（`--no-deps`），doctor/setup/run help/af-fuzz help 正常。仍保留旧项目 numpy 基础依赖，不宣称 Windows/macOS 运行通过。
+
+## 5. 下一步验收门槛
+
+1. 保留原五项基线失败；继续对生产生成器更广候选、dtype、动态/权重约束采样，获取用户原故障 seed/config/阶段证据。
+2. 固定最小 v1 profile 与 PRNG/物化协议，加入无缓存、多架构及旧版本 golden 验收后才开放 v1 run。
+3. 找到匹配的 Triton 构建，实测完整图编译、设备调优、产物序列化/异进程加载边界，未证明前保持 combined。
+4. D1 完善资源预算、依赖兼容/离线管理员配置检查和三 OS 干净安装 CI；D3 才交付预构建 Web 与 SQLite view。
+5. 全流程生成/编译/执行/报告的时间、RSS、磁盘预算尚未完成，不能用上面的单算子计时代替。
+
+## 6. 最终回归结果
+
+- `final.log`：**279 passed / 5 failed / 27.91s**；失败集合与基线完全相同。
+- `focused-final.log`：**38 passed / 3 deselected / 17.95s**；聚焦命令排除已有裸 API 候选顺序组三项，全量未排除。
+- `wheel-final.log`、`doctor-final.json`、`setup-final.json`、`run-help.log`、`alias-help.log`：最终 wheel 与轻量 CLI 验证。重复 setup 保留相同 source_id。初次安装被工作目录同版本 egg-info 误判为已安装；切出源码目录、清除 PYTHONPATH 后 force-reinstall 到隔离 venv 验证通过，不影响共享环境。
+- 动态 seed=42 在 PYTHONHASHSEED=123 新进程重放，trace 比较相同；`dynamic42-history.log` 的前序 seed=43 在目标 case 运行前因 unit/scalar-only graph 无合法动态轴而拒绝，故这次**动态前序历史实验未完成**，不能计为通过。
+- 最后复查共享仓库 status 与初检一致；没有在共享源码或依赖上应用本次修改。
+
+## 7. 第二批：资源与扩展重放（2026-11-09）
+
+远端工作副本 `round2/`；重新核对仓库、Python 与设备：共享仓库状态未变，NPU 无运行进程。未执行新的 NPU 性能测量，也未重试不匹配的 Triton 构建。
+
+### 资源/配置
+
+`round2-doctor.json` 实测宿主 CPU=40、affinity=40，但 cgroup CPU quota=36 核；memory limit=225485783040 bytes（210 GiB），物理内存=246360707072 bytes。解析的是本容器真实 cgroup v1 controller mount/member 路径，包含可见父级限制，不只看 `/sys/fs/cgroup/cpu.max`。磁盘探测使用数据目录最近存在的祖先，不为 doctor 创建目录。
+
+新预算只作持久配置/告警，不声称实现调度强制约束。密钥元数据检查不等于在线认证/唯一展示名校验，不读密钥内容。
+
+复现：
+
+```sh
+cd /mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/round2
+source ~/env.sh
+export PYTHONPATH=$PWD:../nnsmith
+python -m autofusedebugger fuzz doctor --data-dir ../setup-home
+python tools/fuzz_replay_audit.py --output-dir ../NEW-audit-directory
+```
+
+### 重放调查
+
+矩阵：core(Add/Mul/Neg/ReLU) 或 extended(另加 Transpose/Reshape/ReduceMin)，float32/float16，static/dynamic，seed 0/42/389609433，共 24 对、48 个新进程。第二个进程使用 hash seed 123（第一个 0）、OMP/MKL 线程环境 4（第一个 1），先调用 seed+1。生产物化自身仍固定 Torch 线程数，不能将环境变量实验描述成已验证多线程物化。
+
+第一遍 `replay-round2/summary.json`：24 对生成重放相同，16 个前序成功、8 个前序因动态轴不合法拒绝。扩展样本确实出现 ReduceMin、Transpose，不是只换候选目录但仍全是逐元素图。未承诺每个候选算子都被选中。
+
+检查 IR 后发现 `Transpose.extra_attrs['dim0'/'dim1']` 不在 `str(ir)` 中，首批文档“文本包含所有属性”的判断不充分。已修正诊断捕获并重跑，新增阶段为 graph_extra_attrs。原 legacy_seed42 fixture 指纹只适用于首批诊断格式，不是稳定生成协议。
+
+### 中间测试异常保留
+
+`round2-full-final.log` 一次与审计并发的全量测试：297 passed / 6 failed。额外失败为 `test_real_spawn_pool_rebalances_complete_performance_cases`：任务全部完成，但 slow worker 得到 4 个任务，不满足硬编码的 1:9 分配断言。未修改或跳过该测试；调查结束后串行复跑确认。该事件不能从记录中删除，也不能直接认定为确定性调度回归。
+
+新增轴属性后的矩阵位于 `replay-round2-attrs/summary.json`：仍为 **24 对成功重放 / 48 个新进程**，包括具体 extra_attrs。它只证明本次选定 seed/目录/环境的 trace 一致；没有复现用户原始故障，也不覆盖所有算子、设备或长期协议。
+
+新版 core/native seed42 trace digest 为 `d1155e01b59b591898ef08cf245b5fa8ef6c6e68e0188bab6f81ff2543b9368c`（4393 bytes）。fixture 同时保留旧诊断格式 digest，不能跨格式直接比较。
+
+资源/配置+诊断新增测试覆盖 cgroup v1/v2、嵌套父限制、unlimited sentinel、非法路径、损坏配置不覆盖、凭据不泄漏、预算更新保留 source ID、三平台路径逻辑和前序拒绝后继续重放。远端干净 wheel 环境再次验证新版 setup/doctor；没有 Torch/NNSmith/numpy，预算更新及再次 setup 保留原 source ID。
+
+审计结束后串行全量 `round2-serial-final.log`：**299 passed / 原 5 failed / 31.53s**。负载相关 1:9 分配断言此次通过；没有修改测试或调度代码来掩盖它。最后 wheel 的 pip list 仅 autofusedebugger 0.1.2、pip、setuptools（`round2-wheel-final.log`、`round2-light-doctor-final.json`、`round2-light-setup-final.json`）。
+
+## 8. 第三批：v1 纵向切片证据
+
+远端副本 `round3/`。复检共享源码/设备状态不变；所有安装、测试、生成 golden 都在远端；本地只接收需版本管理的 golden JSON，不保存运行缓存或日志。
+
+### 生成协议
+
+新 profile 的生成完全独立于 NNSmith/设备/历史数据，详见 `af_fuzz_seed_v1.md`。仅预览因素子集，不是对 legacy generator 的确定性背书。无 Torch/NNSmith/numpy 的 `light-venv` 使用 wheel 成功运行：
+
+```
+autofusedbg fuzz seed v1:preview-dynamic-v1:42
+```
+
+得到 workload_id `a72251ef070cf55af01a56c15c2f7a29bc86df64e5060cb501d6f0d11f952a9a`，三个 shape。同一轻量环境对六个 frozen golden 的 workload 与 oracle 哈希检查全部通过。记录：`round3-wheel.log`、`round3-light-seed.json`。
+
+### 执行
+
+- CPU eager 两 profile 各 32 seed（32 static + 96 dynamic shape）精确通过独立标量参考；覆盖全部 dtype/operation 组合。另有 128 seed 的广播轴/布局/规约因素可达性测试。
+- `round3-cpu-compile.json`：dynamic seed42 在 CPU Inductor 三个 shape 均通过，warmup=1、steps=2，mean wall-time 约 67.8/59.5/49.2 µs。只是功能性测量，不是稳定性能基线。首 shape combined 首次调用约 10.79s。
+- `round3-preview-static-v1-ascendc.log`：static seed42 通过，首次 combined 约 21.34s。
+- `round3-preview-dynamic-v1-ascendc.log`：三个 shape 均通过，首次 combined 约 18.72s / 0.255ms / 0.202ms。不能据此断言全部动态用例只编译一次。
+- NPU 使用既有 overlay paths.json 只读依赖，`round3-npu-cache`、`round3-triton-cache`、`round3-tmp` 为隔离产物目录。未修改共享源码/依赖，没有向默认归档保存 tensor。
+- 新适配器识别 profile 之外的图为 unsupported，不悄悄将未知 op 替换成已支持算子；后端失败不修改 seed/CaseSpec。
+- 严格 NPU performance 请求在依赖加载前拒绝：lease 尚未实现。Triton 只接入适配路径，本轮未绕过前轮 CANN 不匹配错误，不宣称已可用。
+
+本轮依然没有跨 CPU 架构验证。固定 IEEE 打包和 dyadic 算术是实现依据，不等于已经实测跨平台；同名 profile 的长期兼容必须由未来版本持续跑这些黄金向量保证。
+
+第三批最终测试：`round3-full-final.log` **322 passed / 原 5 failed / 31.58s**，比第二批增加 23 项通过，无新增全量失败。`round3-protocol-final.log` 是增加最终设备匹配测试之前的专项结果（22 passed / 2.68s）。所有最终改动均已纳入全量；最终 wheel 重建验证见 `round3-wheel-final.log`。
+
+## 9. 第四批：单数字 seed 重放
+
+用户撤销旧设计兼容要求，本轮使用全新数字协议。前几节长 token/两个 profile 的测试和指纹只作为历史证据，不代表当前协议支持。
+
+隔离目录 `round4/`，初检共享仓库状态未变，NPU 无运行进程。结果：
+
+- `round4-full.log`：**319 passed / 原 5 failed / 36.23s**；相对第三批去除重复 profile 参数化和旧初始化测试，新增数字 seed/未知版本/static-only 身份不变/单 seed CLI 回归。
+- `round4-cpu.json`：CPU Inductor 全三 shape 正确性及可选性能阶段通过。
+- `round4-ascendc-all.json`：`replay 42 --backend ascendc` 三个 shape 全部 pass。
+- `round4-ascendc-static.json`：同 seed 加 `--static-only`，基础样本 pass。
+- CPU、NPU 与 static-only 共用 workload ID `610516f468114ce745c01ab2d1cb78129c87e4395d60e19e034aee9a714e9daa`；seed 对外表示为十进制字符串 `42`。
+- `round4-wheel-final.log`：干净构建后轻量 venv 验证五个数字 golden，wheel 不含旧 console entry 或 fuzz/runtime.py。标准库生成无需 Torch/NNSmith/numpy。
+- 隔离 `round4-npu-cache`、`round4-cpu-cache`、`round4-triton-cache`、`round4-tmp` 存放运行产物；本地只保留需交付的源码、文档、golden JSON。
+
+未知数字版本不回退；旧长 token 不兼容；`--dynamic/--max-nodes/--dtype/--seed-token` 不接受作为 replay 生成覆盖参数。静态选择和性能开关不改变 bundle 指纹。尚无跨架构实测，不以这次单 NPU 环境结果替代跨设备验收。

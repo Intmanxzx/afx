@@ -132,9 +132,9 @@ def test_profile_config_rejects_empty_measurement():
 
 
 def test_perf_cli_uses_same_generation_flags():
-    from autofusedebugger.cli import build_parser
-    args=build_parser().parse_args(['af-fuzz','--out-dir','/tmp/test','--compare-performance','--repro-seed','42','--profile-steps','20'])
-    assert args.compare_performance and args.repro_seed==42 and args.profile_steps==20
+    from autofusedebugger.fuzz.cli import replay_parser
+    args = replay_parser().parse_args(['42', '--performance', '--measured-steps', '20'])
+    assert args.performance and args.seed == '42' and args.measured_steps == 20
 
 
 def test_backend_timeout_terminates_only_its_worker_group(tmp_path,monkeypatch):
