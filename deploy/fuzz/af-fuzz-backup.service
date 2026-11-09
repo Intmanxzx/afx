@@ -1,0 +1,12 @@
+[Unit]
+Description=Autofuse Fuzz private consistent database backup
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/bin/sh /home/ubuntu/af-fuzz/ops/backup.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/af-fuzz/private /home/ubuntu/af-fuzz/data

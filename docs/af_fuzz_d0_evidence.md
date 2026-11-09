@@ -302,3 +302,12 @@ oracle1真实Playwright public browser probe：URL https://esay.app，Chromium13
 round16-outage.log：before(total,ACK)=(157,157)，offline=(173,157)且URLError重试；恢复公网30秒后(total,ACK)=(186,183)，新增结果仍产生，证明上传不阻塞执行且自动补传，不应把不同采样时刻status文件的旧ACK视为丢失。
 
 1000例运行目前使用round17/tools/fuzz_acceptance_1000.py，两张NPU各自独立进程及缓存，统一execute路径。初始旧进程nohup导致SIGINT无效，随后仅对已核验PID366428使用SIGTERM，原进程消失后启动新进程；未保存的在途backend由resume重做，已完成记录不重复计数。最终验收需再核对1000唯一seed、2000唯一seed/backend、6000shape和中心ACK。
+
+### round21发布/公网/离线复验
+
+- 本地commit `7191f31`；remote wheel SHA256 `e1f06b40effa8ea1bca63332fbc458dc28da08359df6b873ae80fcb9d12b32bd`。oracle1先backup578条再新venv安装切服务；同版本旧venv保留可回退。healthz/API通过。
+- round21-full.log：480 passed/5既有失败/68.79s。round21-focused.log：26 passed。公网Chromium130通过桌面/390px移动布局、同seed比较、筛选URL刷新恢复、详情和复制命令，无pageerror。首次浏览器探针选“最新第10条”遇在途backend仅上传1条，并非页面漏记录；改用已完整执行seed v2+0后通过。
+- round21-offline-browser.log：十万记录的分页/筛选/复制/空结果/非法查询/移动布局/XSS-as-text全部通过；无pageerror。oracle1导出结果白名单快照并传至mlir进行check-db；private auth/source/receipt不进入快照。
+- round21-sync-latency.log：30秒上传、8条抽样记录创建至公网API观测可见10.24–20.61秒；是观测样本，不是SLA，页面每30秒刷新有额外等待。
+- oracle1 systemd daily backup timer已启用，首次手动触发Result=success，备份0600；源码模板deploy/fuzz。NPU容器无systemd，之前无效的本次创建上传unit已删除，实际daemon继续运行。
+- 1000验收当前捕获2条AscendC错误（entropy135、217），first_call_combined阶段因本次隔离缓存kernel.so权限775被拒。仅对隔离目录*.so移除group/other写权限，保留失败记录，待最终重放。不能计为精度通过。

@@ -73,3 +73,5 @@ autofusedbg fuzz view ./results.sqlite
 ```
 
 当前ETR v2范围是小型固定协议：Add和ReLU/Neg/Mul分支、显式Transpose(0,1)、可选Sum规约、三组shape；**不代表Elementwise/Reduce类别下所有算子已覆盖**。普通运行默认后台托管；单queue内仍保守串行worker，不宣称已实现CPU编译/NPU执行解耦流水线。不同设备可使用独立queue并行，物理UUID lease避免同工具同卡竞争。性能目前只提供CPU同步wall-time，NPU严格kernel-profiler测量入口保持拒绝。
+
+每日灾备：附带backup.sh及af-fuzz-backup.service/timer，默认每日私有一致性备份并保留7天（timer首次部署后手动start服务验证）。脚本当前默认使用已验证的venv-round21路径；其它安装通过AF_FUZZ_ROOT/AF_FUZZ_PYTHON覆盖。备份仍在同一主机，**不能替代异地灾备**；迁移前用SSH复制私有备份并在目标机器核对完整性，切勿公开托管含密钥hash的灾备库。
