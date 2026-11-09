@@ -15,7 +15,7 @@ import uuid
 from ..contracts import Seed, ExecutionConfig, EvaluationConfig, canonical_json
 
 APPLICATION_ID = 0x41465451
-VERSION = 1
+VERSION = 2
 DDL = '''
 CREATE TABLE queue_config (id INTEGER PRIMARY KEY CHECK(id=1), max_active INTEGER NOT NULL CHECK(max_active>0));
 CREATE TABLE tasks (
@@ -26,7 +26,8 @@ CREATE TABLE tasks (
  state TEXT NOT NULL CHECK(state IN ('pending','running','stop_requested','interrupted','completed','cancelled')),
  claim TEXT,
  attempt_id TEXT,
- revision INTEGER NOT NULL DEFAULT 0
+ revision INTEGER NOT NULL DEFAULT 0,
+ reason TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX task_queue ON tasks(state);
 '''
@@ -68,7 +69,7 @@ class TaskLedger:
                     conn.execute('PRAGMA user_version').fetchone()[0] != VERSION):
                 raise ValueError('not a supported task ledger')
             columns = tuple(row[1] for row in conn.execute('PRAGMA table_info(tasks)'))
-            if columns != ('id','seed','execution','evaluation','state','claim','attempt_id','revision'):
+            if columns != ('id','seed','execution','evaluation','state','claim','attempt_id','revision','reason'):
                 raise ValueError('invalid task ledger schema')
             capacity = conn.execute('SELECT max_active FROM queue_config WHERE id=1').fetchone()
             if capacity is None or type(capacity[0]) is not int or capacity[0] < 1:
@@ -84,23 +85,38 @@ class TaskLedger:
             conn.close()
 
     def enqueue(self, seed, execution, evaluation, *, task_id=None):
-        if not isinstance(execution, ExecutionConfig) or not isinstance(evaluation, EvaluationConfig):
-            raise TypeError('task requires execution/evaluation contracts')
-        seed = str(Seed.parse(seed))
-        execution, evaluation = canonical_json(asdict(execution)), canonical_json(asdict(evaluation))
-        identity = str(uuid.UUID(task_id)) if task_id else str(uuid.uuid4())
+        return self.enqueue_many([(seed, execution, evaluation, task_id)])[0]
+
+    def enqueue_many(self, specifications):
+        """All-or-nothing bounded batch; canonicalize every spec before SQL writes."""
+        prepared = {}
+        identities = []
+        for seed, execution, evaluation, task_id in specifications:
+            if len(identities) >= 10000:
+                raise ValueError('batch exceeds 10000 tasks')
+            if not isinstance(execution, ExecutionConfig) or not isinstance(evaluation, EvaluationConfig):
+                raise TypeError('task requires execution/evaluation contracts')
+            value = (str(Seed.parse(seed)), canonical_json(asdict(execution)), canonical_json(asdict(evaluation)))
+            identity = str(uuid.UUID(task_id)) if task_id else str(uuid.uuid4())
+            if identity in prepared and prepared[identity] != value:
+                raise ValueError('task ID conflicts within batch')
+            prepared[identity] = value
+            identities.append(identity)
         with self._connection() as conn:
-            row = conn.execute('SELECT * FROM tasks WHERE id=?', (identity,)).fetchone()
-            if row:
-                if (row['seed'], row['execution'], row['evaluation']) != (seed, execution, evaluation):
-                    raise ValueError('task ID conflicts with immutable specification')
-                return identity
+            additions = []
+            for identity, value in prepared.items():
+                row = conn.execute('SELECT seed,execution,evaluation FROM tasks WHERE id=?', (identity,)).fetchone()
+                if row is not None:
+                    if tuple(row) != value:
+                        raise ValueError('task ID conflicts with immutable specification')
+                else:
+                    additions.append((identity, *value))
             count = conn.execute("SELECT count(*) FROM tasks WHERE state NOT IN ('completed','cancelled')").fetchone()[0]
-            if count >= conn.execute('SELECT max_active FROM queue_config WHERE id=1').fetchone()[0]:
-                raise ValueError('active task budget exhausted; apply backpressure')
-            conn.execute("INSERT INTO tasks(id,seed,execution,evaluation,state) VALUES (?,?,?,?,'pending')",
-                         (identity, seed, execution, evaluation))
-        return identity
+            capacity = conn.execute('SELECT max_active FROM queue_config WHERE id=1').fetchone()[0]
+            if count + len(additions) > capacity:
+                raise ValueError('active task budget exhausted; entire batch rejected')
+            conn.executemany("INSERT INTO tasks(id,seed,execution,evaluation,state) VALUES (?,?,?,?,'pending')", additions)
+        return identities
 
     def claim(self):
         """Atomically claim one case/backend task; None means no pending work."""
@@ -108,7 +124,7 @@ class TaskLedger:
             row = conn.execute("SELECT id FROM tasks WHERE state='pending' ORDER BY rowid LIMIT 1").fetchone()
             if row is None:
                 return None
-            conn.execute("UPDATE tasks SET state='running',claim=?,attempt_id=?,revision=revision+1 WHERE id=?",
+            conn.execute("UPDATE tasks SET state='running',reason='',claim=?,attempt_id=?,revision=revision+1 WHERE id=?",
                          (str(uuid.uuid4()), str(uuid.uuid4()), row['id']))
             return dict(conn.execute('SELECT * FROM tasks WHERE id=?', (row['id'],)).fetchone())
 
@@ -127,15 +143,17 @@ class TaskLedger:
             state = {'pending': 'cancelled', 'interrupted': 'cancelled',
                      'running': 'stop_requested'}.get(row['state'])
             if state:
-                conn.execute('UPDATE tasks SET state=?,revision=revision+1 WHERE id=?', (state, identity))
+                conn.execute("UPDATE tasks SET state=?,reason='user_stop',revision=revision+1 WHERE id=?", (state, identity))
 
-    def _finish_claim(self, identity, claim, state):
+    def _finish_claim(self, identity, claim, state, reason=''):
+        if not isinstance(reason, str) or len(reason) > 500:
+            raise ValueError('reason must be short text')
         if not isinstance(claim, str) or not claim:
             raise ValueError('claim token required')
         with self._connection() as conn:
-            count = conn.execute("UPDATE tasks SET state=?,claim=NULL,revision=revision+1 "
+            count = conn.execute("UPDATE tasks SET state=?,reason=?,claim=NULL,revision=revision+1 "
                                  "WHERE id=? AND claim=? AND state IN ('running','stop_requested')",
-                                 (state, identity, claim)).rowcount
+                                 (state, reason, identity, claim)).rowcount
             if count != 1:
                 raise ValueError('stale claim or invalid task transition')
 
@@ -147,9 +165,9 @@ class TaskLedger:
         """
         self._finish_claim(identity, claim, 'completed')
 
-    def interrupt(self, identity, claim):
+    def interrupt(self, identity, claim, reason='worker_lost'):
         """Supervisor-only: call AFTER worker death/reaping, not on timeout alone."""
-        self._finish_claim(identity, claim, 'interrupted')
+        self._finish_claim(identity, claim, 'interrupted', reason)
 
     def resume(self, identity):
         with self._connection() as conn:
@@ -158,7 +176,7 @@ class TaskLedger:
                 count = conn.execute("SELECT count(*) FROM tasks WHERE state NOT IN ('completed','cancelled')").fetchone()[0]
                 if count >= conn.execute('SELECT max_active FROM queue_config WHERE id=1').fetchone()[0]:
                     raise ValueError('active task budget exhausted; apply backpressure')
-            changed = conn.execute("UPDATE tasks SET state='pending',claim=NULL,attempt_id=NULL,revision=revision+1 "
+            changed = conn.execute("UPDATE tasks SET state='pending',reason='',claim=NULL,attempt_id=NULL,revision=revision+1 "
                                    "WHERE id=? AND state IN ('interrupted','cancelled')", (identity,)).rowcount
             if changed != 1:
                 raise ValueError('only interrupted or cancelled tasks can resume')

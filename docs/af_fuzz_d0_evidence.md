@@ -250,3 +250,11 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 本轮验证的是POSIX CPU进程树，不是设备租约。子进程清理使用独立进程组TERM/KILL+wait；测试允许被init尚未回收的僵尸，但不允许继续执行。自行脱离进程组的helper、孤儿设备进程以及SSH断连后的自动托管未验收。父进程SIGKILL时worker可继续完成，但继承锁阻止另一supervisor并发接管；不得删除/替换活跃队列或自行强制解锁。
 
 最终专项 `round9-focused-final.log` **26 passed / 35.14s**；旧时序测试独立复验 `round9-legacy-timing-rerun.log` **1 passed / 4.18s**。静态CPU性能用例断言 status=ok、1个shape、performance=measured；不与NPU kernel profiler比较。
+
+## 15. D4 原子批次与任务 schema2
+
+隔离源码 `refactor-d0-Nh5vfp/round10-batches`；实施前复查Autofuse c1b46272 clean、NNSmith bc0af42 原9项修改；NPU无列示运行进程但HBM有占用，本阶段不运行NPU。
+
+`round10-focused.log` **33 passed / 13.76s**，包含7项新增批次/升级测试：容量及晚到冲突全回滚、非法规格不入队、并发批次预算、schema1一致性备份→schema2保留task身份、备份发布失败不升级、活跃锁拒绝、reason限长与重新打开持久化。最终全量见下方。未知版本不猜测迁移；不将此任务库升级等同结果库未来升级或断电验收。
+
+`round10-full.log` 最终 **414 passed / 原5 failed / 52.19s**，新增7项全部通过，未出现上一轮额外时序失败。

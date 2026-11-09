@@ -56,3 +56,5 @@ cli -> generation registry -> versioned generation/v1 -> contracts + tensors
 - `scheduling/cli.py`：前台 CPU 命令编排；后台托管、NPU 设备映射/租约与 setup 完整资源预算仍待接入。
 
 操作库及 `.results.json` 绑定文件应放在稳定本机路径，不可在运行中替换数据库 inode。备份结果使用 snapshot；不能用结果恢复命令恢复正在运行的队列。管理命令可运行而不导入 Torch，只有 worker 加载后端依赖。
+
+`scheduling/migrations.py` 只处理操作库显式schema1→2，要求独立新备份及非活跃队列；普通连接拒绝旧/未知版本。schema2 的reason是短生命周期摘要，不是模型结果。enqueue_many拥有原子批次边界，CLI不再逐个提交可能失败的半批。

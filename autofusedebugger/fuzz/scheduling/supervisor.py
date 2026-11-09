@@ -88,7 +88,7 @@ def _reconcile(ledger, database):
         if _has_result(database, task):
             ledger.complete(task['id'], task['claim']); recovered += 1
         else:
-            ledger.interrupt(task['id'], task['claim']); interrupted += 1
+            ledger.interrupt(task['id'], task['claim'], 'worker_lost_before_ack'); interrupted += 1
     return {'recovered': recovered, 'interrupted': interrupted}
 
 
@@ -133,6 +133,7 @@ def drain(ledger, database, *, timeout=120):
             if task is None:
                 return summary
             child = None
+            reason = 'worker_exited_without_result'
             try:
                 _validate_task(task)
                 env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
@@ -141,9 +142,21 @@ def drain(ledger, database, *, timeout=120):
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 deadline = time.monotonic() + timeout
                 while child.poll() is None:
-                    if time.monotonic() >= deadline or ledger.get(task['id'])['state'] == 'stop_requested':
+                    if ledger.get(task['id'])['state'] == 'stop_requested':
+                        reason = 'user_stop'
+                        break
+                    if time.monotonic() >= deadline:
+                        reason = 'timeout'
                         break
                     time.sleep(.05)
+                if child.poll() is not None:
+                    reason = f'worker_exit:{child.returncode}:without_result'
+            except KeyboardInterrupt:
+                reason = 'supervisor_interrupted'
+                raise
+            except Exception as exc:
+                reason = f'supervisor_error:{type(exc).__name__}'
+                raise
             finally:
                 if child is not None:
                     _terminate_group(child)
@@ -151,7 +164,7 @@ def drain(ledger, database, *, timeout=120):
                     ledger.complete(task['id'], task['claim'])
                     summary['completed'] += 1
                 else:
-                    ledger.interrupt(task['id'], task['claim'])
+                    ledger.interrupt(task['id'], task['claim'], reason)
                     summary['interrupted'] += 1
 
 

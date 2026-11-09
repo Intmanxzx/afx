@@ -77,7 +77,7 @@ def main(argv=None):
     register(sub)
     args = parser.parse_args(argv)
     try:
-        if args.command in {"run", "status", "stop", "resume"}:
+        if args.command in {"run", "status", "stop", "resume", "upgrade-queue"}:
             from .scheduling.cli import dispatch
             result = dispatch(args)
         elif args.command == "setup":

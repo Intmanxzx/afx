@@ -5,6 +5,9 @@ from .ledger import TaskLedger
 
 
 def register(sub):
+    upgrade = sub.add_parser('upgrade-queue', help='offline task schema 1 -> 2 with a required new backup')
+    upgrade.add_argument('queue')
+    upgrade.add_argument('backup')
     for name in ('run', 'status', 'stop', 'resume'):
         parser = sub.add_parser(name, help='managed CPU tasks (foreground preview)')
         parser.add_argument('--data-dir')
@@ -29,6 +32,9 @@ def register(sub):
 
 
 def dispatch(args):
+    if args.command == 'upgrade-queue':
+        from .migrations import upgrade_queue
+        return upgrade_queue(args.queue, args.backup)
     home = data_home(args.data_dir)
     ledger = TaskLedger(args.queue or home/'tasks/tasks.sqlite')
     if args.command == 'status':
@@ -51,8 +57,6 @@ def dispatch(args):
                for backend in dict.fromkeys(args.backend or ['cpu-eager'])]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
-    # Enqueue is individually durable. Backpressure may leave a partial batch pending;
-    # never silently delete accepted tasks if capacity or execution later fails.
-    ids = [ledger.enqueue(seed, config, evaluation) for seed in seeds for config in configs]
+    ids = ledger.enqueue_many((seed, config, evaluation, None) for seed in seeds for config in configs)
     return dict(drain(ledger, database, timeout=args.timeout), enqueued=ids,
                 queue=str(ledger.path), mode='serial_foreground_cpu')

@@ -323,3 +323,13 @@ D4 首批最终验证：任务账本专项 **10 passed / 0.97s**；远端全量 
 边界：目前仅 POSIX CPU 托管执行，NPU 管理入口拒绝（直接 replay 既有功能不变，NPU performance 仍 unsupported）。进程组清理验证普通同组子进程，不保证清理自行 setsid/double-fork 的 helper；父进程与 worker 同时死亡而仍有不继承 FD 的 helper、断电、SSH 自动重启/托管尚未验收。不会把队列锁称为设备锁，不会承诺严格性能同卡独占。当前 run 为部分入队语义，达到容量/后续失败时保留已接受任务；通过 status 查看，取消或不带 seed 继续排队任务，不自动重交整批。
 
 第二批全量最终 **407 passed / 原5 failed / 50.31s**，新增16项通过；真实 CLI 的 CPU eager/Inductor 两个 seed42 任务均ok且完整workload ID一致。安装wheel的无模型依赖 status 成功。首次全量旧并行分配测试另有时序断言失败，最终全量复验通过，过程保留在证据第14节，不隐去。下一批先完善失败原因/批次事务与后台监督，再实现同机设备身份/租约及NPU进程清理；这些未完成前保持NPU托管禁用和显式前台要求。
+
+## 16. D4 第三批：原子批次、短中断原因与操作库升级
+
+- enqueue_many 规范化整个批次后，在单个 IMMEDIATE 事务内检查幂等/冲突/容量，再写入；任何失败不留下半批任务。单批最多10000任务，active容量仍是持久化队列配置。
+- run 使用原子批次入队，取代上一批部分入队语义。容量/晚到非法seed/ID冲突的失败不提交任何新任务。
+- 操作库 schema2 新增短 reason，记录 timeout、user_stop、worker_exit、supervisor_interrupted、worker_lost_before_ack 等；不记录长stderr/日志，恢复重试清空旧reason。
+- 明确命令 `upgrade-queue <queue> <new-backup>`：仅支持 task schema1→2，在队列POSIX锁和SQLite写事务内冻结写入、生成完整一致性备份，再ALTER+版本号事务提交。备份不覆盖、活跃队列拒绝、普通访问不隐式升级。长期结果schema仍为1，不受此操作迁移影响。
+- 任务操作库备份是管理文件，可能包含运行状态，不能直接当结果快照公开分享。无新格式兼容别名；此迁移只为本次已提交的重构操作库升级。
+
+第三批最终远端全量 **414 passed / 原5 failed / 52.19s**；阶段测试后提交，再进入后台CPU启动握手。
