@@ -63,7 +63,11 @@ def main(argv=None):
     results.add_argument("--after", type=int)
     results.add_argument("--seed")
     results.add_argument("--attempt")
-    for command in ("view", "status", "stop", "resume"):
+    view = sub.add_parser("view", help="open an offline read-only SQLite viewer on this computer")
+    view.add_argument("database")
+    view.add_argument("--port", type=int, default=0, help="loopback port; default chooses a free port")
+    view.add_argument("--no-browser", action="store_true")
+    for command in ("status", "stop", "resume"):
         p = sub.add_parser(command, help="reserved; not implemented in D1")
         p.add_argument("target", nargs="?")
     args = parser.parse_args(argv)
@@ -83,6 +87,9 @@ def main(argv=None):
         elif args.command == "snapshot":
             from .storage import ResultRepository
             result = {"snapshot": ResultRepository(args.source).snapshot(args.destination)}
+        elif args.command == "view":
+            from .view.server import serve
+            return serve(args.database, port=args.port, open_browser=not args.no_browser)
         elif args.command == "results":
             from .storage import ResultRepository
             repo = ResultRepository(args.database)

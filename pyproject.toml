@@ -25,4 +25,4 @@ include = ["autofusedebugger*"]
 [tool.setuptools.package-data]
 # Legacy compatibility patches are only applied to an explicitly selected isolated
 # dependency copy. Import and execution never modify shared NNSmith sources.
-autofusedebugger = ["nnsmith_integration/patches/*.patch"]
+autofusedebugger = ["nnsmith_integration/patches/*.patch", "fuzz/view/static/*"]

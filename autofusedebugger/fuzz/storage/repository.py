@@ -1,7 +1,6 @@
 """Transactional lightweight results, bounded reads and consistent safe snapshots."""
 from contextlib import closing
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import sqlite3
@@ -105,33 +104,17 @@ class ResultRepository:
         return attempt_id
 
     def list(self, *, limit=50, after=None, seed=None):
-        if type(limit) is not int or not 1 <= limit <= 200:
-            raise ValueError('limit must be between 1 and 200')
-        where, params = [], []
-        if after is not None:
-            where.append('rowid > ?'); params.append(int(after))
-        if seed is not None:
-            where.append('seed = ?'); params.append(str(seed))
-        sql = 'SELECT rowid,id,seed,workload_id,backend,status,created_at FROM attempts'
-        if where:
-            sql += ' WHERE ' + ' AND '.join(where)
-        sql += ' ORDER BY rowid LIMIT ?'; params.append(limit)
-        with closing(_connect(self.path)) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = [dict(row) for row in conn.execute(sql, params)]
-        return {'items': rows, 'next_cursor': rows[-1]['rowid'] if len(rows) == limit else None}
+        # Queries reuse the validated connection; import lazily to avoid a cycle.
+        from .queries import ResultQueries
+        return ResultQueries(self.path).page(limit=limit, after=0 if after is None else after,
+                                             seed=seed)
 
     def detail(self, attempt_id):
-        with closing(_connect(self.path)) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute('SELECT * FROM attempts WHERE id=?', (attempt_id,)).fetchone()
-            if row is None:
-                raise ValueError('attempt not found')
-            result = dict(row)
-            result['shape_results'] = [dict(r) for r in conn.execute('SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index', (attempt_id,))]
-            result['contexts'] = {kind: json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?', (row[kind+'_id'],)).fetchone()[0])
-                                  for kind in ('execution','evaluation','environment')}
-            return result
+        from .queries import ResultQueries
+        try:
+            return ResultQueries(self.path).detail(attempt_id)
+        except LookupError as exc:
+            raise ValueError('attempt not found') from exc
 
     def snapshot(self, destination):
         """Read transaction includes committed WAL content; export owned tables only.

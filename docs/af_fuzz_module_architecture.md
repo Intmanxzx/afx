@@ -34,4 +34,10 @@ cli -> generation registry -> versioned generation/v1 -> contracts + tensors
 
 `snapshot` 在 SQLite read transaction 中从白名单表分页复制，包含源 WAL 中已提交数据，排除额外表/lease/outbox/secrets。新文件完整性检查后原子无覆盖发布。不是直接复制 WAL 主文件，不执行源 SQL/pickle。
 
-第一版仅 schema1；未知/损坏/无归属数据库拒绝写入，不伪装为迁移成功。网页、outbox/revision、升级迁移与快照可信导入尚未实现。当前 snapshot 面向本工具生成的数据库，不是任意外来 SQLite 的安全清洗服务。
+第一版仅 schema1；未知/损坏/无归属数据库拒绝写入，不伪装为迁移成功。离线网页与共享查询已实现（见下节）；outbox/revision、升级迁移与快照可信导入尚未实现。当前 snapshot 面向本工具生成的数据库，不是任意外来 SQLite 的安全清洗服务。
+
+## 离线 view 与共享查询
+
+`storage/queries.py` 拥有只读过滤/游标分页/汇总/详情契约，repository 的 list/detail 和 view 都复用该实现，不维护两套查询语义。`view/server.py` 只负责 loopback HTTP 适配；`view/static/` 是 wheel 内的预构建 HTML/CSS/JS，不需要 Node、前端构建器或模型依赖。
+
+`view <database>` 是用户主动启动、Ctrl+C 退出的临时 PC 服务；只绑定 127.0.0.1，随机 capability 路径、Host/Origin 限制、CSP、只读连接、参数/分页/查询耗时限制。不是公网服务，也不是 NPU 常驻 API。该边界不是任意恶意 SQLite 文件的安全沙箱；仅打开可信来源的本工具结果/快照。中心服务的认证、授权、上传协议、线程/连接资源隔离将独立实现。

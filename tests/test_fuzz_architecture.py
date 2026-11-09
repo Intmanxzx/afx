@@ -43,3 +43,15 @@ runpy.run_module('autofusedebugger.fuzz',run_name='__main__')
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert '"seed": "42"' in result.stdout
+
+
+def test_view_and_storage_do_not_depend_on_execution_layers():
+    forbidden = {'generation', 'execution', 'backends', 'torch', 'numpy', 'nnsmith'}
+    for folder in ('storage', 'view'):
+        for path in (ROOT / folder).rglob('*.py'):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if isinstance(node, ast.ImportFrom):
+                    assert not set((node.module or '').split('.')) & forbidden, path
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        assert not set(alias.name.split('.')) & forbidden, path

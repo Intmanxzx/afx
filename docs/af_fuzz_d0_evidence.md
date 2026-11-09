@@ -200,3 +200,20 @@ D3 首批工作副本 `round5-storage/`。`round5-storage-final-focused.log` 10 
 快照测试保留一个 WAL writer 的未提交修改，另一个连接一致性导出已提交状态；额外 secrets 表不出现在导出 DB。故障注入 trigger 验证 shapes 失败时 attempts 和新增 context 一起回滚。未知 schema、损坏文件及其它 SQLite 均拒绝，不覆盖用户文件。
 
 最终 `round5-final.log`：332 passed / 原 5 failed / 42.15s。`round5-wheel.log` 构建安装同包 wheel 到无重依赖 light-venv；`round5-light-query.json` 验证独立模块查询快照成功。本轮所有测试/构建在 npussh mlir；本地只编辑、Git 检查和 commit，没有安装/运行测试或创建临时测试产物。
+
+## 11. D3 离线查看器验收（2026-11-09）
+
+隔离根目录 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp`；本阶段源码 `round6-view/`。实施前复查 Python 3.11.4、共享仓库及设备：Autofuse 无改动，NNSmith 仍为既有 9 处修改；npu-smi 当时 AICore 为 0%，无列示进程（仍有 HBM 占用），本阶段不执行 NPU 工作。
+
+证据：
+- `round6-focused.log`：初始 view+storage 专项 33 passed。
+- `round6-full.log`：357 passed / 原 5 failed / 73.35s（最终架构测试新增前）。
+- `round6-final.log`：**358 passed / 原 5 failed / 33.85s**；新增 26 个通过项，无新增失败。
+- `round6-scale.json`：100,000 attempt / 300,000 shape；74,817,536 bytes；page 0.564ms、deep_page 0.548ms、seed_filter 0.433ms、status_filter 0.576ms、summary 36.124ms；单页 12,231 bytes。
+- `round6-wheel.log` / `round6-light-view.log`：wheel 内资源 + 无模型/Node 环境，安装 CLI HTTP 启动/资产/API/退出验收成功。
+- `round6-browser.log` / `round6-screenshots/{desktop,mobile}.png`：真实 Chromium 130 浏览器交互、响应式无整页横向溢出、零 page error。
+- `round6-browser-install.log` / `round6-browser-libs.log`：新版 Playwright 平台不支持；旧版所需 .deb 下载后只解包到 `view-browser-libs`，以该测试进程 LD_LIBRARY_PATH 使用，没有系统安装。
+
+中间失败均保留原因：首次 wheel 使用 --no-build-isolation 时 light-venv 缺 bdist_wheel，改回 pip 隔离构建成功；首次轻量检查在含 nnsmith 源码目录的父目录运行，发现 namespace spec，移至空 cwd 后无该依赖；首次浏览器测试发现 reset DOM 命名冲突，修复后重新验证。没有通过忽略断言/静默跳过来宣称通过。
+
+未验证：跨 CPU 架构/跨 OS 重放、Windows/macOS 浏览器与 wheel 运行、任意恶意数据库沙箱隔离、schema 升级/恢复导入、中心服务及自动上传。性能数据是合成查询单次测量；不代表 NPU 测试性能或真实生产库上界。

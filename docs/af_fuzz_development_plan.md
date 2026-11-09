@@ -271,3 +271,17 @@ CPU Inductor `replay 42 --performance` 三个 shape 通过；AscendC 同 seed �
 远端独立 CLI 已实际完成 replay 42 -> results.sqlite -> snapshot -> 只读 results 查询。后续继续预构建静态 view 与共享查询界面，再做规模/bytes-case 验证；本轮不部署网站、不实现 SSH 查看助手。
 
 D3 首批最终远端全量：**332 passed / 原 5 failed / 42.15s**（`round5-final.log`）；storage 专项 10 passed。wheel 在无 Torch/NNSmith/numpy 的 light-venv 中独立运行 results，读取 snapshot 成功（`round5-wheel.log` / `round5-light-query.json`）。本阶段测试通过后提交；下一阶段为离线 view 与分页/规模验收。原 5 项历史基线失败继续列示，不等于全库全绿。
+
+## 12. D3 第二批：同包离线 view 与规模验证（2026-11-09）
+
+- 已接通 `autofusedbg fuzz view ./snapshot.sqlite`，默认浏览器打开本机随机端口，支持 `--no-browser/--port`、Ctrl+C 退出；不部署 NPU 常驻服务。
+- `storage/queries` 统一 CLI 与 HTTP 只读查询：seed/状态筛选、keyset 分页、汇总、逐 shape/共享上下文详情和单 seed 重放命令。最多 200 条/请求，页面每页 50 条；查询设 3 秒 SQLite progress budget，响应上限 2 MiB。
+- `view/server` 与 `view/static` 分层；wheel 内含预构建资源，无 Node/模型运行时需求。固定 loopback、随机 capability 路径、Host/Origin 校验、CSP、无 CORS、无写路由。仅面向可信结果/快照，不宣称可安全打开任意恶意 SQLite。
+- 真浏览器测试发现 `id=reset` 遮蔽原生 `form.reset()`，已修复并加浏览器回归；编辑但未提交的筛选不影响当前翻页。seed 全程作为字符串，错误/数据库文本只走 textContent。
+- 十万 attempt + 三十万 shape 合成库：74,817,536 bytes（约 748 B/attempt）；首页/深页查询约 0.56/0.55 ms，状态汇总约 36.1 ms，分页响应约 12.2 KB。只是当前 ARM64 机器单次合成数据结果，不是生产吞吐承诺，也不是持久化 NPU 结果的 bytes/case 上界。
+- 远端 light-venv 安装 wheel，从源码目录外启动 CLI；无 Torch/NNSmith/numpy，PATH 不含 Node，静态资产、results/summary API、SIGINT 正常退出均通过。
+- 远端 Playwright 1.48 + Chromium 130 实测筛选、翻页、复制、详情、空结果/非法查询、重置、超大 seed 字符串、XSS 文本及 390px 无横向页面溢出。浏览器依赖只 apt download + dpkg-deb 解包到隔离目录，未 apt install、未改系统/共享依赖。新版 Playwright 不支持该 Ubuntu20.04 ARM64，故使用测试专用旧版，非产品依赖。
+
+本阶段新增 25 项 view 测试 + 1 项架构边界测试；最终全量 **358 passed / 原 5 failed / 33.85s**，日志见证据第 11 节。历史 5 项失败继续保留，不以新增模块通过冒充整个仓库全绿。所有执行位于 npussh mlir；本地仅编辑/Git，临时检查截图已删除。
+
+D3 仍待：Windows/macOS 实测、可信快照导入/恢复与 schema 升级迁移、异常聚类/指标配对比较。D4 任务持久化/恢复与设备独占 lease，D5 自动 outbox/revision/ACK + 网站，D6 部署迁移/备份演练均未完成。接下来先补 D3 恢复/升级边界与故障注入，再推进 D4；不可将本机 viewer 变成 NPU 常驻查看 API，也不把现有后端 prepare 当纯 CPU 编译完成。

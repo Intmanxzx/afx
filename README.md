@@ -201,3 +201,13 @@ OUT_DIR/
 | [docs/manifest_schema.md](docs/manifest_schema.md) | manifest 文件的字段、数据格式和状态码说明 |
 | [docs/feature_gallery.md](docs/feature_gallery.md) | 精度对比、图展示和生命周期分析等功能示例 |
 | [docs/agent_normalization.md](docs/agent_normalization.md) | Agent 归一化协议、配置方式和失败诊断流程 |
+
+### Fuzz 离线结果查看
+
+```sh
+autofusedbg fuzz snapshot ./results.sqlite ./snapshot.sqlite
+# 将快照复制到个人电脑，安装同版本包后：
+autofusedbg fuzz view ./snapshot.sqlite
+```
+
+查看模式仅使用 Python 标准库和 wheel 内置前端，不需要 Torch、NNSmith、CANN、NPU 或 Node。页面支持 seed/状态筛选、分页、逐 shape 详情和复制 `autofusedbg fuzz replay <seed>`。它是仅本机可访问的只读临时服务，Ctrl+C 退出；不是公网结果入口的替代品。请只打开可信快照。可选 `--no-browser`、`--port`；无需 SSH 查看助手。

@@ -55,7 +55,7 @@ digest 是 big-endian uint256；N 个候选使用 rejection sampling，接受 `<
 
 后端适配器只处理准备/绑定/执行/同步/输出检查，不改变生成。正确性和性能沿同一循环，逐 shape 分别记录；首次调用为 combined，不把 lazy callable 当编译完成。CPU 可选 wall-time 测量；NPU 严格计时因设备 lease 未实现而明确 unsupported。不同后端使用相同 bundle，设备不支持就报错/unsupported，绝不重抽 seed。
 
-此版仍是有限算子/布局/shape 子集预览：未完成跨架构验收、完整 NPU 因素矩阵、Triton 可用环境、任意 alias/state、编译产物跨进程移交、后台批测/SQLite/view。不能以本地算法推导代替跨设备/长期版本实测。
+此版仍是有限算子/布局/shape 子集预览：未完成跨架构验收、完整 NPU 因素矩阵、Triton 可用环境、任意 alias/state、编译产物跨进程移交、后台批测/同步/三 OS 验收。不能以本地算法推导代替跨设备/长期版本实测。
 
 ## 结果归档（D3 首批）
 
@@ -66,6 +66,7 @@ autofusedbg fuzz replay 42 --database ./results.sqlite
 autofusedbg fuzz results ./results.sqlite --limit 50
 autofusedbg fuzz snapshot ./results.sqlite ./snapshot.sqlite
 python -m autofusedebugger.fuzz results ./snapshot.sqlite
+autofusedbg fuzz view ./snapshot.sqlite
 ```
 
-查询与快照不需要 Torch/NNSmith/CANN/Node。view 尚未实现；此阶段 CLI 查询不是个人 NPU 常驻查看服务。
+查询、快照与 view 不需要 Torch/NNSmith/CANN/NPU/Node。view 默认在当前电脑打开浏览器，只监听本机随机端口；可用 --no-browser 禁止自动打开、--port 指定端口，Ctrl+C 退出。前端随同一 wheel 分发，不需另装前端。请先将一致性快照复制到个人电脑，再运行 view；这不是个人 NPU 常驻查看服务。只打开可信来源的结果文件；Windows/macOS 的实际运行验收仍待 CI。
