@@ -77,6 +77,9 @@ def create_server(database, *, port=0):
                         if key in params:
                             params[key] = int(params[key])
                     value = queries.page(**params) if route == 'api/results' else queries.summary(**params)
+                elif route == 'api/compare' and set(params) == {'left', 'right'}:
+                    from ..storage.comparison import compare
+                    value = compare(database, params['left'], params['right'])
                 elif route.startswith('api/attempts/') and not params:
                     value = queries.detail(route[len('api/attempts/'):])
                 else:

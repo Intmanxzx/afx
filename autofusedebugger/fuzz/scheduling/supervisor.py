@@ -1,6 +1,6 @@
-"""Serial foreground CPU supervisor with process-group cleanup/reconciliation.
+"""Serial foreground supervisor with process-group cleanup/reconciliation.
 
-No NPU, daemon hosting, throughput claims, or CPU/compile-stage splitting yet.
+No throughput claims or CPU/compile-stage splitting. NPU correctness uses UUID leases.
 """
 from contextlib import closing
 import json
@@ -48,9 +48,18 @@ def _tasks(ledger):
 
 def _validate_task(task):
     config = ExecutionConfig(**json.loads(task['execution']))
-    EvaluationConfig(**json.loads(task['evaluation']))
-    if config.backend not in {'cpu-eager', 'cpu-compile'} or config.device != 'cpu':
-        raise ValueError('managed execution currently supports CPU only; device lease pending')
+    evaluation = EvaluationConfig(**json.loads(task['evaluation']))
+    if config.backend in {'cpu-eager', 'cpu-compile'}:
+        if config.device != 'cpu':
+            raise ValueError('backend/device mismatch')
+    elif config.backend in {'ascendc', 'triton'}:
+        import re
+        if not re.fullmatch(r'npu:[0-9]+', config.device):
+            raise ValueError('NPU requires explicit logical npu:index')
+        if evaluation.performance:
+            raise ValueError('strict NPU performance requires site-wide external workload coordination')
+    else:
+        raise ValueError('unsupported managed backend')
     if type(config.compile_threads) is not int or not 1 <= config.compile_threads <= (os.cpu_count() or 1):
         raise ValueError('compile thread budget exceeds available CPU count')
 
@@ -116,7 +125,7 @@ def _worker_command(ledger, database, task):
 
 
 def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
-    """Drain pending CPU tasks; stale claims are recovered, never auto-retried."""
+    """Drain pending tasks; stale claims are recovered, never auto-retried."""
     if not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('timeout must be finite and positive')
     database = Path(database).expanduser().resolve()

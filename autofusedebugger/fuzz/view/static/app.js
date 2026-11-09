@@ -2,7 +2,9 @@
 const $ = id => document.getElementById(id);
 const form = $('filters');
 const labels = {ok:'通过',fail:'精度失败',error:'异常',unsupported:'不支持'};
-let applied = new URLSearchParams();
+const initial = new URLSearchParams(location.search);
+for (const name of ['seed','status']) if(initial.has(name)) form.elements[name].value = initial.get(name);
+let applied = parameters();
 let cursors = [0], page = 0, next = null, generation = 0, detailGeneration = 0;
 function parameters() {
   const p = new URLSearchParams();
@@ -62,7 +64,7 @@ async function load() {
     for(const id of ['total','ok','fail','errors']) $(id).textContent = '—';
     $('page-label').textContent = '读取失败';}}
 }
-form.addEventListener('submit',event=>{event.preventDefault();applied=parameters();page=0;cursors=[0];detailGeneration++;$('detail').hidden=true;load();});
+form.addEventListener('submit',event=>{event.preventDefault();applied=parameters();history.replaceState(null,'',location.pathname+(applied.size?'?'+applied:''));page=0;cursors=[0];detailGeneration++;$('detail').hidden=true;load();});
 $('reset-filters').addEventListener('click',()=>{form.reset();form.requestSubmit();});
 $('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;load();}});
 $('previous').addEventListener('click',()=>{if(page>0){page--;load();}});
@@ -70,3 +72,35 @@ $('copy').addEventListener('click',async()=>{try{await navigator.clipboard.write
 load();
 
 if (location.pathname === '/') setInterval(() => { if (!document.hidden) load(); }, 30000);
+
+// Compare explicit attempt IDs from a bounded same-seed list, never join by name.
+$('compare').addEventListener('click', async () => {
+  const seed = $('command').value.split(' ').at(-1);
+  $('comparison').hidden = false;
+  $('comparison-content').textContent = '';
+  $('comparison-message').textContent = '加载同 seed 结果…';
+  try {
+    const result = await api('api/results?limit=200&seed=' + encodeURIComponent(seed));
+    const select = document.createElement('select');
+    for (const item of result.items) {
+      const option = document.createElement('option'); option.value = item.id;
+      option.textContent = `${item.backend} · ${item.created_at} · ${item.id.slice(0,8)}`;
+      select.append(option);
+    }
+    const left = select.cloneNode(true), right = select;
+    left.setAttribute('aria-label','左侧结果'); right.setAttribute('aria-label','右侧结果');
+    if (right.options.length > 1) right.selectedIndex = 1;
+    const button = document.createElement('button'); button.textContent = '比较';
+    button.disabled = result.items.length < 2;
+    button.addEventListener('click', async () => {
+      try {
+        const value = await api('api/compare?left=' + encodeURIComponent(left.value) + '&right=' + encodeURIComponent(right.value));
+        $('comparison-content').textContent = JSON.stringify(value,null,2);
+      } catch (error) { $('comparison-content').textContent = error.message; }
+    });
+    $('comparison-message').replaceChildren(left,document.createTextNode(' ↔ '),right,document.createTextNode(' '),button);
+    if(result.next_cursor !== null) $('comparison-message').append('仅显示最近/前200条，请用 CLI 指定 attempt ID 查看更多。');
+    if(result.items.length < 2) $('comparison-content').textContent = '至少需要两条同 seed 结果。';
+    $('comparison').scrollIntoView({behavior:'smooth',block:'start'});
+  } catch(error) { $('comparison-message').textContent = error.message; }
+});

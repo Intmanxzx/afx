@@ -11,6 +11,14 @@ from .backends.base import UnsupportedBackend
 
 
 def execute(bundle, adapter, evaluation):
+    try:
+        return _execute(bundle, adapter, evaluation)
+    finally:
+        if hasattr(adapter, 'close'):
+            adapter.close()
+
+
+def _execute(bundle, adapter, evaluation):
     result = {"seed": str(bundle.spec.seed), "workload_id": workload_id(bundle),
               "oracle_id": oracle_id(bundle), "backend": adapter.name, "shape_results": [],
               "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}

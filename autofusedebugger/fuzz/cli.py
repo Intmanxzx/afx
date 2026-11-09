@@ -27,7 +27,7 @@ def doctor(home):
             "python": platform.python_version(), "platform": platform.platform(),
             "sqlite": sqlite3.sqlite_version, "home": str(data_home(home)),
             "packages": versions, "device_probe": "not_run", "split_execution": "unverified",
-            "v1_generation": "numeric version 1; cross-architecture acceptance pending", "sync": "not_implemented"}
+            "v1_generation": "frozen numeric v1/v2; aarch64 and x86_64 goldens verified", "sync": "independent_outbox_daemon"}
 
 
 def main(argv=None):
@@ -41,6 +41,8 @@ def main(argv=None):
         p = sub.add_parser(command)
         p.add_argument("--data-dir")
         if command == "setup":
+            p.add_argument("--sync-endpoint")
+            p.add_argument("--sync-interval", type=float, default=30)
             p.add_argument("--display-name")
             p.add_argument("--user-id")
             p.add_argument("--key-file")
@@ -54,6 +56,10 @@ def main(argv=None):
     compare = sub.add_parser("diagnose", help="compare two opt-in generation traces")
     compare.add_argument("expected")
     compare.add_argument("actual")
+    pair = sub.add_parser("compare", help="compare two result attempts with explicit comparability checks")
+    pair.add_argument("database")
+    pair.add_argument("left")
+    pair.add_argument("right")
     snapshot = sub.add_parser("snapshot", help="export a consistent lightweight SQLite snapshot")
     snapshot.add_argument("source")
     snapshot.add_argument("destination")
@@ -83,8 +89,12 @@ def main(argv=None):
     admin.add_argument("database")
     admin.add_argument("display_name")
     admin.add_argument("key_file")
+    rotate = sub.add_parser("admin-rotate-key", help="offline administrator rotates an existing upload key")
+    rotate.add_argument("database")
+    rotate.add_argument("user_id")
+    rotate.add_argument("key_file")
     sync = sub.add_parser("sync", help="configure/run independent automatic upload")
-    sync.add_argument("action", choices=("configure", "once", "run", "start", "status"))
+    sync.add_argument("action", choices=("configure", "once", "run", "start", "status", "reset-epoch", "verify"))
     sync.add_argument("--data-dir", required=True)
     sync.add_argument("--database")
     sync.add_argument("--endpoint")
@@ -104,25 +114,43 @@ def main(argv=None):
             from .central.repository import create_user
             result = create_user(args.database, args.display_name, args.key_file)
         elif args.command == "sync":
-            from .sync.client import configure, once, run, start
+            from .sync.client import configure, once, run, start, status, reset, verify_identity
             home = data_home(args.data_dir)
             if args.action == "configure":
                 if not args.endpoint or not args.key_file:
                     raise ValueError("configure requires endpoint and administrator key file")
                 result = configure(home, args.endpoint, args.key_file, args.interval)
+            elif args.action == "verify":
+                result = verify_identity(home)
             elif args.action == "status":
-                result = json.loads((home / "sync-status.json").read_text()) if (home / "sync-status.json").exists() else {"state":"not_started"}
+                result = status(home, args.database or home / "results/results.sqlite")
             else:
                 database = args.database or home / "results/results.sqlite"
-                result = {"once": once, "run": run, "start": start}[args.action](home, database)
+                result = {"once": once, "run": run, "start": start, "reset-epoch": reset}[args.action](home, database)
         elif args.command in {"run", "status", "stop", "resume", "upgrade-queue"}:
             from .scheduling.cli import dispatch
             result = dispatch(args)
+        elif args.command == "admin-rotate-key":
+            from .central.repository import rotate_key
+            result = rotate_key(args.database, args.user_id, args.key_file)
         elif args.command == "setup":
             result = setup(args.data_dir, display_name=args.display_name, user_id=args.user_id,
                            key_file=args.key_file, cpu_workers=args.cpu_workers,
                            compile_threads=args.compile_threads, memory_budget_bytes=args.memory_budget_bytes,
                            cache_budget_bytes=args.cache_budget_bytes)
+            if args.sync_endpoint:
+                from .sync.client import configure, start, verify_identity
+                config = load_config(args.data_dir)
+                key_file = (config or {}).get("identity", {}).get("key_file")
+                if not key_file:
+                    raise ValueError("automatic sync requires administrator key-file")
+                home = data_home(args.data_dir)
+                result["sync"] = configure(home, args.sync_endpoint, key_file, args.sync_interval)
+                try:
+                    result["server_identity"] = verify_identity(home)
+                except (OSError, ValueError):
+                    result["server_identity"] = {"state": "unverified_offline_or_rejected"}
+                result["sync_daemon"] = start(home, home / "results/results.sqlite")
         elif args.command == "seed":
             from .generation import materialize, content_manifest, workload_id
             bundle = materialize(args.token)
@@ -130,6 +158,9 @@ def main(argv=None):
                       "preview": True, "shape_count": len(bundle.spec.shape_samples)}
             if args.show_spec:
                 result["manifest"] = content_manifest(bundle)
+        elif args.command == "compare":
+            from .storage.comparison import compare
+            result = compare(args.database, args.left, args.right)
         elif args.command == "snapshot":
             from .storage import ResultRepository
             result = {"snapshot": ResultRepository(args.source).snapshot(args.destination)}

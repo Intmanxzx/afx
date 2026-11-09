@@ -33,7 +33,7 @@ def test_detached_run_finishes_after_launcher_exits(tmp_path):
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
     response = json.loads(output.stdout)
-    assert response['mode'] == 'serial_background_cpu' and response['state'] == 'running'
+    assert response['mode'] == 'serial_background' and response['state'] == 'running'
     ledger = TaskLedger(response['queue'])
     final = wait_finished(ledger)
     assert final['state'] == 'finished', final
@@ -141,6 +141,21 @@ sys.exit(hosting._child(*sys.argv[1:-1]))
 
 def test_background_rejects_npu_before_enqueue(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
-    with pytest.raises(ValueError, match='CPU only'):
-        hosting.launch(ledger,tmp_path/'results',[('42',ExecutionConfig('ascendc','npu:0'),EV,None)])
+    with pytest.raises(ValueError, match='strict NPU performance'):
+        hosting.launch(ledger,tmp_path/'results',[('42',ExecutionConfig('ascendc','npu:0'),EvaluationConfig(performance=True),None)])
     assert ledger.page()['items'] == []
+
+
+def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, tmp_path, capsys):
+    import json
+    from autofusedebugger.fuzz.cli import main
+    from autofusedebugger.fuzz.contracts import Seed
+    def launch(ledger, database, specs, **kwargs):
+        rows = list(specs)
+        return {'seeds': [row[0] for row in rows]}
+    monkeypatch.setattr(hosting, 'launch', launch)
+    assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0
+    value = json.loads(capsys.readouterr().out)
+    assert len(value['seeds']) == 4
+    assert all(Seed.parse(seed).version == 2 for seed in value['seeds'])
+    assert main(['run', '42', '--data-dir', str(tmp_path), '--count', '4']) == 2

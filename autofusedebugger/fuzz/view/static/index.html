@@ -9,6 +9,7 @@
 <form id="filters"><label>Seed <input name="seed" placeholder="例如 42" inputmode="numeric" autocomplete="off"></label><label>状态 <select name="status"><option value="">全部状态</option value="ok">通过</option><option value="fail">精度失败</option><option value="error">异常</option><option value="unsupported">不支持</option></select></label><button type="submit">筛选</button><button id="reset-filters" type="button" class="secondary">重置</button></form>
 <p id="message" role="status" aria-live="polite"></p>
 <section class="panel"><div class="table-scroll"><table><thead><tr><th>Seed</th><th>后端 / 来源</th><th>状态</th><th>时间</th><th>详情</th></tr></thead><tbody id="rows"></tbody></table></div><div class="pagination"><span id="page-label">每页 50 条</span><div><button id="previous" class="secondary" disabled>上一页</button><button id="next" disabled>下一页</button></div></div></section>
-<section class="panel detail" id="detail" hidden><h2>实验详情</h2><label class="command">重放命令 <input id="command" readonly></label><button id="copy">复制命令</button><p id="detail-message" role="status"></p><pre id="detail-content"></pre></section>
+<section class="panel detail" id="detail" hidden><h2>实验详情</h2><label class="command">重放命令 <input id="command" readonly></label><button id="copy">复制命令</button> <button id="compare" class="secondary">对比同 seed 结果</button><p id="detail-message" role="status"></p><pre id="detail-content"></pre></section>
+<section class="panel detail" id="comparison" hidden><h2>后端对比</h2><p id="comparison-message" role="status"></p><pre id="comparison-content"></pre></section>
 <footer>CPU wall-time 与 NPU kernel profiler 不可混用。不同环境或执行配置的指标不自动视为可比。</footer>
 </main></body></html>

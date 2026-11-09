@@ -1,4 +1,4 @@
-"""Finite detached CPU queue drain, not a permanent API/service or restart daemon.
+"""Finite detached queue drain, not a permanent API/service or restart daemon.
 
 POSIX inherited queue lock + bounded socket handshake. Startup never claims tasks
 before the submitting process authorizes execution. Acknowledgement means started,
@@ -111,7 +111,7 @@ def launch(ledger, database, specifications, *, timeout=120, foreground=False, s
         ids = ledger.enqueue_many(prepared)
         if foreground:
             return dict(drain(ledger, database, timeout=timeout, _owned_fd=fd),
-                        enqueued=ids, queue=str(ledger.path), mode='serial_foreground_cpu',
+                        enqueued=ids, queue=str(ledger.path), mode='serial_foreground',
                         budget=asdict(effective_budget), active_workers=1, enforcement='sampled_not_hard_isolation')
         run_id = str(uuid.uuid4())
         _write_status(ledger, {'run_id': run_id, 'state': 'starting'})
@@ -135,7 +135,7 @@ def launch(ledger, database, specifications, *, timeout=120, foreground=False, s
             # Reap in long-lived embedding callers; ordinary CLI exits immediately.
             threading.Thread(target=child.wait, daemon=True).start()
             return {'run_id': run_id, 'state': 'running', 'supervisor_pid': child.pid,
-                    'enqueued': ids, 'queue': str(ledger.path), 'mode': 'serial_background_cpu',
+                    'enqueued': ids, 'queue': str(ledger.path), 'mode': 'serial_background',
                     'budget': asdict(effective_budget), 'active_workers': 1, 'enforcement': 'sampled_not_hard_isolation'}
         finally:
             parent.close(); child_socket.close()

@@ -138,8 +138,8 @@ def test_worker_spawn_failure_releases_claim(tmp_path, monkeypatch):
 
 def test_npu_and_invalid_timeout_never_claim(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('42', ExecutionConfig('ascendc','npu:0'), EV)
-    with pytest.raises(ValueError, match='CPU only'):
+    identity = ledger.enqueue('42', ExecutionConfig('ascendc','npu:0'), EvaluationConfig(performance=True))
+    with pytest.raises(ValueError, match='strict NPU performance'):
         supervisor.drain(ledger, tmp_path/'result.sqlite')
     assert ledger.get(identity)['state'] == 'pending'
     for timeout in (0, -1, float('nan'), float('inf')):
@@ -182,7 +182,7 @@ with own_queue(TaskLedger(sys.argv[1])) as fd:
 def test_cli_rejects_npu_and_exposes_lightweight_status(tmp_path, capsys):
     from autofusedebugger.fuzz.cli import main
     with pytest.raises(SystemExit):
-        main(['run', '42', '--backend', 'ascendc'])
+        main(['run', '42', '--backend', 'invalid'])
     ledger, identity, _ = setup(tmp_path)
     assert main(['status', identity, '--queue', str(ledger.path)]) == 0
     assert main(['stop', identity, '--queue', str(ledger.path)]) == 0

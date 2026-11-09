@@ -63,7 +63,8 @@ def _connect(path, writable=False):
             _initialize(conn)
         _check(conn)
         if writable:
-            conn.execute('PRAGMA journal_mode=WAL')
+            from .sqlite_utils import enable_wal
+            enable_wal(conn)
         else:
             conn.execute('PRAGMA query_only=ON')
         return conn

@@ -32,6 +32,14 @@ class TorchAdapter:
             except ImportError as exc:
                 raise UnsupportedBackend("torch_npu unavailable") from exc
         self.device = torch.device(self.config.device)
+        if npu:
+            from .device_lease import DeviceLease
+            identity = str(torch.npu.get_device_properties(self.device).uuid)
+            self.lease = DeviceLease(identity).acquire()
+
+    def close(self):
+        if hasattr(self, 'lease'):
+            self.lease.close()
 
     def _tensor(self, bundle, spec):
         from ..tensors import storage_values

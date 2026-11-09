@@ -32,3 +32,44 @@ autofusedbg fuzz sync run --data-dir ./fuzz-data
 Docker可选：把wheel放本目录，`mkdir data; chown 10001 data; docker compose up --build -d`。固定Python镜像标签和应用版本；Linux host networking仅监听loopback，TLS代理在host。生产建议进一步记录镜像digest。不需要Redis/Postgres。Compose路径需另行实测，不能以本机pip部署成功代替Docker验证。
 
 容器无systemd时使用 `autofusedbg fuzz sync start --data-dir ./fuzz-data`，独立session+flock运行；重复start不会启动第二个上传器。可配置容器entrypoint启动它，但本工具不擅自改用户shell启动文件。`sync configure` 后需首次start或安装系统服务，之后不逐批操作。status读取持久化短状态。公网部署实测使用pip+systemd+Caddy；NPU容器使用POSIX sync daemon，二者不能混称systemd均可用。
+
+## 首次设置与恢复操作
+
+一次完成本地setup和30秒后台上传（不需逐批操作）：
+
+```sh
+autofusedbg fuzz setup --data-dir ./fuzz-data --key-file ./upload.key --sync-endpoint https://esay.app --sync-interval 30
+autofusedbg fuzz sync status --data-dir ./fuzz-data
+```
+
+`sync status`返回当前待传条数/ACK/上次状态，密钥不输出。`sync configure --interval 5 ...`可调整为5秒；现有daemon下一周期读取，不需要重启。页面每30秒刷新，上传30秒意味着最坏通常需再等一个页面周期，不能宣称严格5秒实时。
+
+中心恢复旧备份后如client ACK领先，**确认恢复完成后**在客户端显式执行：
+
+```sh
+autofusedbg fuzz sync reset-epoch --data-dir ./fuzz-data
+```
+
+该操作持上传锁，保留所有本地结果，创建新source epoch并重传轻量记录；中心按不可变attempt ID+内容+归属去重，不重复统计。不要删除本地尚未完成灾备同步的结果。
+
+离线管理员轮换泄露/到期密钥：`fuzz admin-rotate-key results.sqlite USER_UUID ./new-upload.key`。旧key立即失效，用户名和所有历史归属保留；安全分发新文件并重新configure。密钥丢失时不提供在线申请。
+
+附带`af-fuzz.service`和`af-fuzz-sync.service`模板。前者路径与oracle1实际部署一致；后者需改站点路径。PID1不是systemd的NPU容器请用`sync start`并由容器entrypoint在重启时调用，daemon单实例锁保证幂等；本工具不会修改共享shell配置。
+
+Compose已在oracle1备用端口实际build/up/healthz，私有备份恢复核对37条结果通过；当前公网由pip+systemd承载。固定镜像/应用版本与实际wheel SHA256一并记录于验收文档；不能仅凭版本号判断开发期wheel相同。
+
+## 使用入口
+
+```sh
+# 生成并后台执行100个新自包含数字seed，限定当前ETR v2候选范围。
+# 建议先运行少量确认环境；不将此命令当作1000例验收证据。
+autofusedbg fuzz run --count 100 --backend ascendc --device npu:0 --data-dir ./fuzz-data
+# 加 --backend cpu-eager 可为同一seed同时入队独立CPU参考任务。
+autofusedbg fuzz status --data-dir ./fuzz-data
+# 网站复制出的一个seed即可重新生成相同case；backend/device只改变执行。
+autofusedbg fuzz replay SEED --backend ascendc --device npu:0
+# 查看快照无Torch、CANN、NNSmith或Node依赖。
+autofusedbg fuzz view ./results.sqlite
+```
+
+当前ETR v2范围是小型固定协议：Add和ReLU/Neg/Mul分支、显式Transpose(0,1)、可选Sum规约、三组shape；**不代表Elementwise/Reduce类别下所有算子已覆盖**。普通运行默认后台托管；单queue内仍保守串行worker，不宣称已实现CPU编译/NPU执行解耦流水线。不同设备可使用独立queue并行，物理UUID lease避免同工具同卡竞争。性能目前只提供CPU同步wall-time，NPU严格kernel-profiler测量入口保持拒绝。

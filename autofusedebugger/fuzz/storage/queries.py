@@ -39,15 +39,18 @@ class ResultQueries:
         with reading(path):
             pass
 
-    def page(self, *, limit=50, after=0, seed=None, status=None):
+    def page(self, *, limit=50, after=0, seed=None, status=None, newest=False):
         if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
             raise ValueError('invalid pagination')
+        if type(newest) is not bool:
+            raise ValueError('invalid ordering')
         clauses, values = filters(seed, status)
-        clauses.append('rowid>?'); values.extend((after, limit + 1))
+        clauses.append('rowid<?' if newest else 'rowid>?')
+        values.extend((after if after or not newest else 2**63-1, limit + 1))
         with reading(self.path) as conn:
             rows = [dict(row) for row in conn.execute(
                 'SELECT rowid,id,seed,workload_id,backend,status,created_at FROM attempts WHERE '
-                + ' AND '.join(clauses) + ' ORDER BY rowid LIMIT ?', values)]
+                + ' AND '.join(clauses) + (' ORDER BY rowid DESC LIMIT ?' if newest else ' ORDER BY rowid LIMIT ?'), values)]
         more = len(rows) > limit
         return {'items': rows[:limit], 'next_cursor': rows[limit-1]['rowid'] if more else None}
 

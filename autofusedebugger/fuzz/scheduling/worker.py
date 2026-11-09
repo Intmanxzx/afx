@@ -1,4 +1,4 @@
-"""One disposable CPU worker; uses the SAME execution loop as replay.
+"""One disposable worker; uses the SAME execution loop as replay.
 
 Parent owns lifecycle/acknowledgement; worker only persists its assigned attempt.
 """
@@ -19,14 +19,14 @@ def run(queue, database, identity, claim):
         raise ValueError('worker claim is stale')
     config = ExecutionConfig(**json.loads(task['execution']))
     evaluation = EvaluationConfig(**json.loads(task['evaluation']))
-    if config.backend not in {'cpu-eager', 'cpu-compile'} or config.device != 'cpu':
-        raise ValueError('managed NPU execution requires validated device leases')
+    from .supervisor import _validate_task
+    _validate_task(task)
     bundle = materialize(task['seed'])
     result = execute(bundle, create_backend(config), evaluation)
     from importlib.metadata import version, PackageNotFoundError
     environment = {'python': platform.python_version(), 'platform': sys.platform,
                    'machine': platform.machine()}
-    for package, key in [('torch', 'torch'), ('autofusedebugger', 'package_version')]:
+    for package, key in [('torch', 'torch'), ('torch-npu', 'torch_npu'), ('triton-ascend', 'triton'), ('autofusedebugger', 'package_version')]:
         try:
             environment[key] = version(package)
         except PackageNotFoundError:

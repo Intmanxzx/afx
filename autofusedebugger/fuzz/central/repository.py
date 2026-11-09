@@ -104,3 +104,25 @@ def ingest(path, key, payload):
             ack=revision
         conn.execute('UPDATE sources SET ack=? WHERE id=?',(ack,source))
         return {'source_id':source,'ack':ack,'accepted':len(items)}
+
+
+def rotate_key(path, user_id, key_file):
+    """Offline administrator key rotation; identity and all data ownership persist."""
+    from pathlib import Path
+    import os
+    identity = str(uuid.UUID(user_id))
+    target = Path(key_file).expanduser().resolve()
+    key = secrets.token_urlsafe(40)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, 'w') as out:
+            out.write(key+'\n'); out.flush(); os.fsync(out.fileno())
+        with closing(_connect(path, writable=True)) as conn, conn:
+            cursor = conn.execute('UPDATE users SET key_hash=? WHERE id=? AND active=1',
+                                  (hashlib.sha256(key.encode()).hexdigest(), identity))
+            if cursor.rowcount != 1:
+                raise ValueError('active administrator-managed user not found')
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return {'user_id': identity, 'key_file': str(target), 'rotated': True}

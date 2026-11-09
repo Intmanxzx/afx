@@ -39,7 +39,7 @@ def configure(home, endpoint, key_file, interval=30):
     return {'configured':True,'interval':interval,'endpoint':config['endpoint']}
 
 
-def once(home, database, *, opener=None):
+def _once(home, database, *, opener=None):
     home=Path(home); config=json.loads((home/'sync.json').read_text())
     batch=pending(database)
     if not batch['items']:return {'pending':0,'ack':batch['after']}
@@ -57,6 +57,14 @@ def once(home, database, *, opener=None):
         raise ValueError('unexpected sync ACK')
     acknowledge(database,batch['source_id'],ack['ack'])
     return {'uploaded':len(batch['items']),'ack':ack['ack']}
+
+
+def once(home, database, *, opener=None):
+    import fcntl
+    home=Path(home)
+    with (home/'sync-upload.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        return _once(home,database,opener=opener)
 
 
 def run(home,database, _fd=None):
@@ -102,3 +110,51 @@ def start(home, database):
         import threading
         threading.Thread(target=child.wait,daemon=True).start()
         return {'state':'started','pid':child.pid,'interval':json.loads((home/'sync.json').read_text())['interval']}
+
+
+def reset(home, database):
+    """Administrative explicit resynchronization, serialized against daemon uploads."""
+    import fcntl
+    from .outbox import reset_epoch
+    with (Path(home)/'sync-upload.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return reset_epoch(database)
+
+
+def status(home, database):
+    """Local-only status; never expose administrator credentials."""
+    import sqlite3
+    result = {'state': 'not_started', 'pending': 0, 'ack': 0}
+    home = Path(home)
+    state = home/'sync-status.json'
+    if state.exists():
+        result.update(json.loads(state.read_text()))
+    if Path(database).exists():
+        with sqlite3.connect(Path(database).resolve().as_uri()+'?mode=ro', uri=True) as conn:
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sync_identity'").fetchone():
+                source, ack = conn.execute('SELECT source_id,ack FROM sync_identity WHERE id=1').fetchone()
+                total = conn.execute('SELECT count(*) FROM attempts').fetchone()[0]
+                acknowledged = conn.execute('SELECT count(*) FROM sync_outbox WHERE revision<=?', (ack,)).fetchone()[0]
+                result.update(source_id=source, ack=ack, pending=total-acknowledged)
+    if (home/'sync.json').exists():
+        config = json.loads((home/'sync.json').read_text())
+        result.update(endpoint=config['endpoint'], interval=config['interval'])
+    return result
+
+
+def verify_identity(home, *, opener=None):
+    """Validate administrator-issued credentials without changing local results."""
+    config = json.loads((Path(home)/'sync.json').read_text())
+    key = Path(config['key_file']).read_text().strip()
+    request = Request(config['endpoint']+'/api/identity', headers={
+        'Authorization': 'Bearer '+key, 'User-Agent': 'AutofuseDebugger/0.1.2 (+https://esay.app)'})
+    with (opener or build_opener(NoRedirect).open)(request, timeout=15) as response:
+        data = response.read(4097)
+        if len(data) > 4096:
+            raise ValueError('oversized identity response')
+        identity = json.loads(data)
+    import uuid
+    uuid.UUID(identity['user_id'])
+    if not isinstance(identity['display_name'], str) or not 1 <= len(identity['display_name']) <= 80:
+        raise ValueError('invalid administrator identity')
+    return identity

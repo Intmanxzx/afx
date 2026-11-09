@@ -384,3 +384,38 @@ D4 首批最终验证：任务账本专项 **10 passed / 0.97s**；远端全量 
 - oracle1(x86_64/Python3.12)与mlir(aarch64/Python3.11)已比对seed42/v2首例workload指纹一致；更大golden待验收。
 - 初次NPU试跑因覆盖PYTHONPATH漏掉CANN Autofuse而error，恢复原PYTHONPATH后3个v2 seed×CPU/AscendC×3shape全部ok。错误probe不计入1000正式验收。
 - NPU容器存在systemctl二进制但PID1不是systemd，因此不宣称systemd同步托管成功，改用独立带flock的POSIX daemon；自动机器重启恢复仍需容器启动器接入。
+
+## 20. 中心上线后加固与设备锁边界
+
+- 中心结果列表改为最新优先的keyset分页，离线列表保持原有升序；30秒刷新首页现在能看到新结果，而不是只有计数变化。
+- 本地once/daemon通过独立上传锁串行化，避免手动诊断与daemon并发ACK竞争。
+- 新增按torch_npu物理UUID映射的POSIX独占lease（逻辑index不作为身份）；同用户所有新版直接执行共享默认锁目录，可配置受保护共享目录用于站点跨用户协调。只约束遵守同协议的程序，不能宣称外部NPU任务不存在。
+- execute finally释放lease；错误/prepare失败仍清理；跨进程竞争、不同UUID并行、崩溃释放测试通过。NPU1真实v2 seed42三shape ok。正在运行的旧1000验收进程没有新lease，不能据此开启NPU严格性能模式或全局调度承诺。
+- 公网真实Chromium130筛选、复制重放命令/详情、390px移动布局通过（round14-public-browser.log），无JS错误。
+- Docker Compose在oracle1备用8091验证全新库健康通过；私有backup恢复到容器验证进行中，不切换当前线上pip服务。
+
+### 进一步可用性验证
+
+最新托管入口允许AscendC/Triton正确性、显式--device npu:index，统一worker持物理UUID lease；NPU性能入口仍拒绝。round16-managed.json实际npu:1 seed v2+42 completed=1，结果ok且3shape；不是仅fake adapter通过。默认锁同OS用户，跨用户需管理员共享受保护锁目录，不控制外部非本工具进程。
+
+中心Compose固定Python3.12.8镜像构建成功，image ff1966f94d92c73f5a30754cd88d857a3eb06016df70ee00fb81f50d19549c23；备用8091新库healthz通过，完整私有backup恢复后summary=37条ok，与备份相同；验证容器已down，线上pip服务不受影响。一次cp因data目录属10001被拒，改sudo复制并设置正确属主后通过，没有放宽整个目录权限。
+
+setup新增--sync-endpoint/--sync-interval，使用管理员key-file完成同步配置并首次启动独立daemon；之后无需每批publish/start。容器机器重启启动挂钩仍需容器管理器接入，不擅改用户启动脚本。
+
+## 21. 可用交付加固与验收进行中（2026-11-09）
+
+当前公网入口为 https://esay.app，oracle1 的 babynews 已停止并禁用（原源码/配置保留备份），Caddy继续提供TLS，单应用+SQLite由systemd运行。上传器在NPU容器以独立POSIX daemon运行，默认30秒，可配置；不是systemd，容器重启后的自动拉起需entrypoint接入。
+
+新增：物理UUID设备lease、托管NPU正确性任务、同seed比较API/离线view与公网UI、分享筛选URL、最新结果优先；管理员离线轮换key、认证identity校验、sync实时本地待传统计；恢复旧中心备份后显式reset-epoch全量幂等补传。普通run支持--count生成独立ETR v2种子，默认后台运行。
+
+测试证据：round16全量469通过/5原有失败；round18聚焦42通过；round19全量发现额外WAL切换并发锁失败，新增只针对BUSY/LOCKED的有界重试后round20全量478通过/5原有失败（63.18s）。不把该新失败归咎于环境或隐藏为skip。
+
+断网实测：本地结果157→173期间ACK维持157、状态retrying，网络恢复后自动补传；配置已恢复https://esay.app、30秒。1000例验收分为entropy [0,500)、[500,1000)，分别npu:0/1执行CPU-eager+AscendC，每seed三shape。旧进程停止前已保存的结果按seed/backend/workload且三shape完备条件跳过；完成量最终以SQLite核对，不能用日志行数或仅生成数替代。
+
+### 未决边界（不是本次已完成功能）
+
+- 真正CPU编译/NPU执行拆分、跨进程编译产物移交仍未证实；combined首次调用仍包含惰性编译。单queue内worker串行，不宣称流水性能收益。
+- NPU严格性能/kernel-profiler仍显式拒绝；UUID租约只约束遵守协议程序，不保证外部任务不存在。
+- 当前v2只覆盖Add、ReLU/Neg/Mul、Transpose、可选Sum的小型图协议，不覆盖类别内所有算子。旧NNSmith原始广播故障未因此宣称修复。
+- Linux aarch64/x86_64有实际wheel/黄金样本证据；Windows/macOS本机验收未进行。当前版本package依赖仍有numpy，但view本身不导入，--no-deps干净venv可用。
+- cgroup硬内存限制、全站跨用户预算、容器重启托管，以及未可工作的Triton后端仍是后续能力，不以“网站可用”替代验收。

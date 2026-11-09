@@ -76,7 +76,8 @@ class TaskLedger:
                 raise ValueError('invalid persisted task capacity')
             if self.max_active is not None and self.max_active != capacity[0]:
                 raise ValueError('task capacity differs from persisted configuration')
-            conn.execute('PRAGMA journal_mode=WAL')
+            from ..storage.sqlite_utils import enable_wal
+            enable_wal(conn)
             conn.row_factory = sqlite3.Row
             with conn:
                 conn.execute('BEGIN IMMEDIATE')

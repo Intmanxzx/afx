@@ -54,6 +54,17 @@ def create_server(database,port=8090):
                 if len(self.path)>2048:
                     return self.send(414,{'error':'URL too long'})
                 url=urlsplit(self.path);route=url.path
+                if route=='/api/identity':
+                    from contextlib import closing
+                    from ..storage.repository import _connect
+                    from .repository import authenticate
+                    auth = self.headers.get('Authorization', '')
+                    if not auth.startswith('Bearer ') or len(auth) > 256:
+                        return self.send(401, {'error': 'credential required'})
+                    with closing(_connect(database)) as conn:
+                        user = authenticate(conn, auth[7:])
+                        name = conn.execute('SELECT display_name FROM users WHERE id=?', (user,)).fetchone()[0]
+                    return self.send(200, {'user_id': user, 'display_name': name})
                 if route=='/healthz':
                     return self.send(200,{'status':'ok','protocol':1})
                 if route in {'/','/app.js','/style.css'}:
@@ -66,13 +77,16 @@ def create_server(database,port=8090):
                 if any(len(v)!=1 for v in raw.values()):
                     raise ValueError('duplicate field')
                 params={k:v[0] for k,v in raw.items()}
+                if route=='/api/compare' and set(params)=={'left','right'}:
+                    from ..storage.comparison import compare
+                    return self.send(200,compare(database,params['left'],params['right']))
                 if route in {'/api/results','/api/summary'}:
                     allowed={'seed','status'}|({'limit','after'} if route=='/api/results' else set())
                     if set(params)-allowed:
                         raise ValueError('unknown field')
                     for key in ('limit','after'):
                         if key in params:params[key]=int(params[key])
-                    result=queries.page(**params) if route=='/api/results' else queries.summary(**params)
+                    result=queries.page(**params,newest=True) if route=='/api/results' else queries.summary(**params)
                     if route=='/api/results':
                         from contextlib import closing
                         from ..storage.repository import _connect
@@ -84,6 +98,8 @@ def create_server(database,port=8090):
                 if route.startswith('/api/attempts/') and not params:
                     return self.send(200,queries.detail(route[len('/api/attempts/'):]))
                 return self.send(404,{'error':'not found'})
+            except PermissionError:
+                self.send(401, {'error': 'invalid credential'})
             except LookupError:
                 self.send(404,{'error':'not found'})
             except (ValueError,TypeError):

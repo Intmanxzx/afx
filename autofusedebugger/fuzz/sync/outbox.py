@@ -54,3 +54,18 @@ def acknowledge(path, source, revision):
         if identity is None or source!=identity[0] or type(revision) is not int or not identity[1]<=revision<=maximum:
             raise ValueError('invalid sync ACK')
         conn.execute('UPDATE sync_identity SET ack=? WHERE id=1',(revision,))
+
+
+def reset_epoch(path):
+    """Explicit recovery after restoring an older central backup; retain all results.
+
+    A new source replays immutable attempt IDs. The central owner/content checks
+    deduplicate already present records; missing records are restored normally.
+    Caller must hold the upload lock so no old-epoch request can race this reset.
+    """
+    with closing(_connect(path, writable=True)) as conn, conn:
+        conn.execute('BEGIN IMMEDIATE')
+        initialize(conn)
+        source = str(uuid.uuid4())
+        conn.execute('UPDATE sync_identity SET source_id=?,ack=0 WHERE id=1', (source,))
+        return {'source_id': source, 'ack': 0, 'recovery': 'full_idempotent_resync'}

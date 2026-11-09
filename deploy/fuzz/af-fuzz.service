@@ -1,0 +1,19 @@
+[Unit]
+Description=Autofuse Fuzz public result service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/af-fuzz
+ExecStart=/home/ubuntu/af-fuzz/venv/bin/autofusedbg fuzz serve /home/ubuntu/af-fuzz/data/results.sqlite --port 8090
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/af-fuzz/data
+
+[Install]
+WantedBy=multi-user.target

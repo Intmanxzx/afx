@@ -288,3 +288,17 @@ mlir round13/14：初始同步/存储/架构专项17 passed；v2+sync专项15 pa
 NPU首轮3例失败原因是覆盖PYTHONPATH漏掉CANN Autofuse；保留原环境路径后3例×CPU/AscendC×3shape均ok。正式1000组诊断runner已启动，使用v2 seed区间0..999，逐seed两个后端三个shape，轻量结果实时同步；未完成前不能报1000通过。日志acceptance-1000.log，数据库acceptance-home/results/results.sqlite。该长验收不是托管NPU租约已完成证明。
 
 round14-final-focused **48 passed / 59.68s**（v1/v2黄金、同步幂等/ACK丢失/断网、备份及view）。公网首次Cloudflare UA限制已使用产品UA修复，自动daemon状态ok/ACK递增，公网摘要已出现真实验收结果。1000组执行仍进行中，不能提前完成goal。
+
+## 19. 网站/设备锁进一步实测
+
+round15-lease.log **27 passed / 3.64s**（新device lease3项、sync7项、v2 golden17项）；round15-device1.json真实AscendC npu:1的v2 seed42三shape ok。物理UUID分别为设备0/1不同值，取torch.npu.get_device_properties而不是猜npu-smi逻辑编号。默认lease只同用户，不宣称跨用户/外部任务隔离。NPU性能仍unsupported。
+
+oracle1真实Playwright public browser probe：URL https://esay.app，Chromium130，筛选/详情/重放命令/移动布局全部通过，page_errors=[]。x86_64/Python3.12五个v2 workload golden与aarch64/Python3.11一致，旧v1 seed42同样不漂移。
+
+## 20. 公网与恢复加固证据
+
+隔离根 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp`：round18-focused.log=42 passed；round20-focused.log=28 passed；round20-full.log=478 passed/5原有失败。round19额外出现TaskLedger PRAGMA journal_mode=WAL锁冲突，在新并发负载下捕获；storage/sqlite_utils.py统一有限重试后全量不再出现。后续继续保留并发初始化测试。
+
+round16-outage.log：before(total,ACK)=(157,157)，offline=(173,157)且URLError重试；恢复公网30秒后(total,ACK)=(186,183)，新增结果仍产生，证明上传不阻塞执行且自动补传，不应把不同采样时刻status文件的旧ACK视为丢失。
+
+1000例运行目前使用round17/tools/fuzz_acceptance_1000.py，两张NPU各自独立进程及缓存，统一execute路径。初始旧进程nohup导致SIGINT无效，随后仅对已核验PID366428使用SIGTERM，原进程消失后启动新进程；未保存的在途backend由resume重做，已完成记录不重复计数。最终验收需再核对1000唯一seed、2000唯一seed/backend、6000shape和中心ACK。
