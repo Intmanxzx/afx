@@ -25,6 +25,6 @@
 
 
 .cards #errors{color:var(--viz-gen-error)}.cards #fail{color:var(--viz-fail)}.cards #ok{color:var(--viz-pass)}
-th,thead td{text-align:center}
+th,thead td{text-align:left}
 
 .legend button{display:inline-flex;align-items:center;gap:5px}

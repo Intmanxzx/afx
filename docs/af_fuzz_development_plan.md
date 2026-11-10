@@ -614,3 +614,8 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 统一STATUS_LABELS映射用于环图及柱图tooltip，内部gen_error不再泄漏到悬浮文案；当前该键实际聚合error/unsupported功能错误，不仅是图生成失败。
 - Unknown计数为0时隐藏图例，有未知判定时仍显示；未知不能伪造成功能Failed。隔离fixture覆盖非零Unknown恢复展示。
 - 验收：npussh mlir 定向9 passed；隔离浏览器通过（首次测试误发mouseenter，修为实际pointerenter事件后通过）。公网六图逐一验证纯名称色块图例、零Unknown隐藏、tooltip无gen_error、点击显隐正常，JS errors=[]。部署venv-round54，wheel SHA256 fcd2f6bf6d4299fcfad7e4dc61070b035894a58127e6c82bf2c976eac7a29c1a；备份private/before-round54.sqlite。无结果数据变更，本地无新增测试或构建产物。
+
+## Round55：表头与内容对齐（2026-11-10）
+
+- 根据用户截图，撤销表头居中，统一左对齐以匹配正文；表头/正文列边界和左内边距一致。未变更列宽、数据口径或查询。
+- npussh mlir隔离浏览器通过；公网浏览器逐列检查边界差<1px、padding一致、全部表头左对齐、JS错误为空。纯样式改动未重复跑Python全量；所有浏览器测试和wheel构建在远端。部署venv-round55，wheel SHA256 26dd982f63a116cfc77bd7a560a2cd282451a10aad9c2ba9da811f4ca0359de9；保留上一服务配置用于回退，不修改结果库。本地无新增临时产物。

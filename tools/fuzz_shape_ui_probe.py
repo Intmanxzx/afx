@@ -23,7 +23,7 @@ with create_server(repo.path) as server:
    for identity,color in [('errors','rgb(211, 79, 67)'),('fail','rgb(185, 133, 0)'),('ok','rgb(20, 125, 104)')]:
     assert page.locator('#'+identity).evaluate('(e)=>getComputedStyle(e).color')==color
    assert page.locator('.log-length').evaluate('(e)=>getComputedStyle(e).flexDirection')=='row'
-   assert page.locator('th').evaluate_all('(els)=>els.every(e=>getComputedStyle(e).textAlign==="center")')
+   assert page.locator('th').evaluate_all('(els)=>els.every(e=>getComputedStyle(e).textAlign==="left")')
    log_input=page.locator('.log-length input')
    log_input.fill('60');log_input.press('Enter')
    expect(log_input).to_have_value('60')
