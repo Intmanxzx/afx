@@ -45,8 +45,8 @@ class Budget:
     def admit(self, path, task=None):
         inventory = resource_inventory(path)
         ceiling = inventory['cpu_worker_ceiling']
-        if ceiling is None or self.compile_threads > ceiling:
-            raise ValueError('compile thread budget exceeds effective affinity/cgroup CPU capacity')
+        if ceiling is None or self.compile_threads * self.cpu_workers > ceiling:
+            raise ValueError('worker × compile thread budget exceeds effective affinity/cgroup CPU capacity')
         if task is not None and json.loads(task['execution'])['compile_threads'] > self.compile_threads:
             raise ValueError('queued task compile threads exceed current budget; do not alter the task')
         memory = inventory['effective_memory_bytes']

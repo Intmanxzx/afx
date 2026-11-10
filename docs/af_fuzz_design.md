@@ -101,4 +101,4 @@ POSIX后台启动已实现；容器/主机重启后需由systemd或entrypoint拉
 
 当前验证见本轮远端日志。历史模板结果不能作为NNSmith能力证据。未完成：动态shape协议、更广算子和dtype、跨平台全域seed确定性、准确编译/kernel指标、自动重建已补丁依赖与真实发布联调。旧NNSmith代码和patches保留用于依赖准备及迁移，公开执行只有当前统一流程。
 
-CLI：`--fg`、`--perf`；run/replay默认不保存结果，`--save`才写结果及outbox。setup成功后记住数据目录。当前C协议只有一个shape，记录标记static；不把单shape标记dynamic。
+CLI：`--fg`、`--perf`；run/replay默认不保存结果，`--save`才写结果及outbox。setup成功后记住数据目录。C 协议保留单 Shape 静态语义；D 协议使用同一 NNSmith 图的 3 个合法不同 Shape。随机 campaign 按 entropy 奇偶选择 C/D；静态模式不展示 S0，动态样本标签与 seed 分离。

@@ -1,7 +1,4 @@
-"""Serial foreground supervisor with process-group cleanup/reconciliation.
-
-No throughput claims or CPU/compile-stage splitting. NPU correctness uses UUID leases.
-"""
+"""Bounded concurrent workers with process-group cleanup and per-device exclusion."""
 from contextlib import closing
 import json
 import math
@@ -61,7 +58,7 @@ def _validate_task(task):
     else:
         raise ValueError('unsupported managed backend')
     from ..contracts import Seed
-    if 'seed' in task and Seed.parse(task['seed']).version != 3:
+    if 'seed' in task and Seed.parse(task['seed']).version not in {3,4}:
         raise ValueError('retired template task; cannot resume with NNSmith')
     if type(config.compile_threads) is not int or not 1 <= config.compile_threads <= (os.cpu_count() or 1):
         raise ValueError('compile thread budget exceeds available CPU count')
@@ -83,13 +80,29 @@ def _has_result(database, task):
         if row is None:
             return False
         contexts, _ = _record(conn, row)
-        bundle = materialize(task['seed'])
+        generation_failed=row['oracle_id']=='generation-failed/1' and row['error_stage']=='generation' and row['status']=='error'
+        if generation_failed:
+            from ..contracts import fingerprint
+            expected_workload=fingerprint({'generation_failed':task['seed']})
+            expected_oracles={'generation-failed/1'}
+        elif contexts['execution'].get('case_spec'):
+            from ..case_spec import decode
+            from ..generation.nnsmith_v3 import materialize_spec
+            spec=decode(contexts['execution']['case_spec'])
+            if str(spec.seed)!=task['seed']:
+                raise ValueError('saved case seed conflicts with task')
+            bundle=materialize_spec(spec)
+        else:
+            bundle = materialize(task['seed'])
+        if not generation_failed:
+            expected_workload=workload_id(bundle)
+            expected_oracles={oracle_id(bundle),'torch-eager-cpu/1'}
         saved_execution = dict(contexts['execution'])
         task_execution = json.loads(task['execution'])
         saved_execution.setdefault('save_results', True)
         task_execution.setdefault('save_results', True)
-        if (row['seed'] != task['seed'] or row['workload_id'] != workload_id(bundle) or
-                row['oracle_id'] not in {oracle_id(bundle), 'torch-eager-cpu/1'} or
+        if (row['seed'] != task['seed'] or row['workload_id'] != expected_workload or
+                row['oracle_id'] not in expected_oracles or
                 row['backend'] != json.loads(task['execution'])['backend'] or
                 {k:v for k,v in saved_execution.items() if k not in {'telemetry','diagnostics','case_spec'}} != task_execution or
                 contexts['evaluation'] != json.loads(task['evaluation'])):
@@ -140,10 +153,15 @@ def _save_worker_failure(ledger, database, task, reason, log):
     from ..generation import materialize, workload_id
     from ..storage import ResultRepository
     from ..environment import collect
-    bundle = materialize(task['seed'])
+    try:
+        bundle = materialize(task['seed'])
+        workload = workload_id(bundle)
+    except Exception:
+        from ..contracts import fingerprint
+        workload = fingerprint({'generation_failed':task['seed']})
     execution = json.loads(task['execution'])
     execution['diagnostics'] = json.dumps({'version': 1, 'error': (reason+'\n'+log)[-1600:], 'shapes': {}})
-    result = {'seed': task['seed'], 'workload_id': workload_id(bundle),
+    result = {'seed': task['seed'], 'workload_id': workload,
               'oracle_id': 'torch-eager-cpu/1', 'backend': execution['backend'],
               'execution': execution, 'evaluation': json.loads(task['evaluation']),
               'status': 'error', 'error_stage': 'worker', 'error_summary': reason,
@@ -178,68 +196,77 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
         summary = dict(_reconcile(ledger, database), completed=0)
         if _ready is not None:
             _ready()
-        while True:
-            task = ledger.claim()
-            if task is None:
+        active = {}
+        def finish(identity, reason):
+            state=active.pop(identity); task=state['task']; child=state['child']
+            if child is not None: _terminate_group(child)
+            log=state['tail'].finish() if state['tail'] is not None else ''
+            state['scratch'].cleanup()
+            ephemeral_done=(not json.loads(task['execution']).get('save_results',True)
+                            and reason=='worker_exit:0:without_result')
+            if ephemeral_done or _has_result(database,task):
+                ledger.complete(task['id'],task['claim']); summary['completed']+=1
+            else:
+                if reason=='timeout' or reason.startswith('worker_exit:'):
+                    _save_worker_failure(ledger,database,task,reason,log)
+                ledger.interrupt(task['id'],task['claim'],reason); summary['interrupted']+=1
+
+        try:
+            while True:
                 from .campaign import refill
-                if refill(ledger):continue
-                return summary
-            child = None
-            output_tail = None
-            scratch = None
-            reason = 'worker_exited_without_result'
-            try:
-                _validate_task(task)
-                budget.admit(ledger.path.parent, task)
-                budget.admit(database.parent)
-                database.parent.mkdir(parents=True, exist_ok=True)
-                scratch = tempfile.TemporaryDirectory(prefix='.fuzz-worker-', dir=ledger.path.parent)
-                env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
-                env.update(TMPDIR=scratch.name, TORCHINDUCTOR_CACHE_DIR=str(Path(scratch.name)/'inductor'),
-                           TRITON_CACHE_DIR=str(Path(scratch.name)/'triton'),
-                           TORCHINDUCTOR_COMPILE_THREADS=str(json.loads(task['execution'])['compile_threads']))
-                child = subprocess.Popen(_worker_command(ledger, database, task),
-                    start_new_session=True, pass_fds=(fd,), env=env,
-                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                from ..core_logs import ProcessTail
-                output_tail = ProcessTail(child.stdout)
-                deadline = time.monotonic() + timeout
-                while child.poll() is None:
-                    exceeded = violation(budget, child.pid, scratch.name, database.parent)
-                    if exceeded:
-                        reason = exceeded
-                        break
-                    if ledger.get(task['id'])['state'] == 'stop_requested':
-                        reason = 'user_stop'
-                        break
-                    if time.monotonic() >= deadline:
-                        reason = 'timeout'
-                        break
-                    time.sleep(.05)
-                if child.poll() is not None:
-                    reason = f'worker_exit:{child.returncode}:without_result'
-            except KeyboardInterrupt:
-                reason = 'supervisor_interrupted'
-                raise
-            except Exception as exc:
-                reason = f'supervisor_error:{type(exc).__name__}'
-                raise
-            finally:
-                if child is not None:
-                    _terminate_group(child)
-                log = output_tail.finish() if output_tail is not None else ''
-                if scratch is not None:
-                    scratch.cleanup()
-                ephemeral_done = (not json.loads(task['execution']).get('save_results', True)
-                                  and reason == 'worker_exit:0:without_result')
-                if ephemeral_done or _has_result(database, task):
-                    ledger.complete(task['id'], task['claim'])
-                    summary['completed'] += 1
-                else:
-                    if reason == 'timeout' or reason.startswith('worker_exit:'):
-                        _save_worker_failure(ledger, database, task, reason, log)
-                    ledger.interrupt(task['id'], task['claim'], reason)
-                    summary['interrupted'] += 1
+                for _ in range(budget.cpu_workers):
+                    if not refill(ledger, target_pending=budget.cpu_workers): break
+                busy={json.loads(state['task']['execution'])['device'] for state in active.values()}
+                for candidate in _tasks(ledger):
+                    if len(active)>=budget.cpu_workers: break
+                    if candidate['state']!='pending': continue
+                    execution=json.loads(candidate['execution'])
+                    device=execution['device']
+                    if device!='cpu' and device in busy: continue
+                    _validate_task(candidate)
+                    budget.admit(ledger.path.parent,candidate); budget.admit(database.parent)
+                    scratch=tempfile.TemporaryDirectory(prefix='.fuzz-worker-',dir=ledger.path.parent)
+                    task=ledger.claim(candidate['id'])
+                    if task is None:
+                        scratch.cleanup(); continue
+                    state={'task':task,'scratch':scratch,'child':None,'tail':None,'deadline':time.monotonic()+timeout}
+                    active[task['id']]=state
+                    database.parent.mkdir(parents=True,exist_ok=True)
+                    env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
+                    env.update(TMPDIR=scratch.name,TORCHINDUCTOR_CACHE_DIR=str(Path(scratch.name)/'inductor'),
+                               TRITON_CACHE_DIR=str(Path(scratch.name)/'triton'),
+                               TORCHINDUCTOR_COMPILE_THREADS=str(execution['compile_threads']))
+                    state['child']=subprocess.Popen(_worker_command(ledger,database,task),start_new_session=True,
+                        pass_fds=(fd,),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+                    from ..core_logs import ProcessTail
+                    state['tail']=ProcessTail(state['child'].stdout)
+                    busy.add(device)
+                if not active:
+                    if refill(ledger,target_pending=budget.cpu_workers): continue
+                    return summary
+                # Budgets cover the complete active pool, not one budget per worker.
+                from .budgets import group_rss, scratch_size
+                pool_reason=None
+                if budget.memory_budget_bytes and sum(group_rss(s['child'].pid) for s in active.values())>budget.memory_budget_bytes:
+                    pool_reason='memory_budget_exceeded'
+                if budget.cache_budget_bytes and sum(scratch_size(s['scratch'].name) for s in active.values())>budget.cache_budget_bytes:
+                    pool_reason='scratch_budget_exceeded'
+                for identity,state in list(active.items()):
+                    child=state['child']; task=state['task']; reason=pool_reason
+                    if not reason: reason=violation(budget,child.pid,state['scratch'].name,database.parent)
+                    if not reason and ledger.get(identity)['state']=='stop_requested': reason='user_stop'
+                    if not reason and time.monotonic()>=state['deadline']: reason='timeout'
+                    if not reason and child.poll() is not None: reason=f'worker_exit:{child.returncode}:without_result'
+                    if reason: finish(identity,reason)
+                time.sleep(.05)
+        except BaseException as exc:
+            reason='supervisor_interrupted' if isinstance(exc,KeyboardInterrupt) else f'supervisor_error:{type(exc).__name__}'
+            # Reap every worker even if one acknowledgement fails.
+            for identity in list(active):
+                try: finish(identity,reason)
+                except Exception:
+                    pass
+            raise
 
 
 def resume(ledger, database, identity):

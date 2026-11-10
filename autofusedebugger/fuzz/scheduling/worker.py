@@ -23,7 +23,25 @@ def run(queue, database, identity, claim):
     _validate_task(task)
     import time
     generation_start=time.perf_counter_ns()
-    bundle = materialize(task['seed'])
+    try:
+        bundle = materialize(task['seed'])
+    except Exception as exc:
+        from dataclasses import asdict
+        from ..contracts import fingerprint
+        from ..failure_details import excerpt
+        from ..environment import collect
+        from pathlib import Path
+        message=excerpt(exc)
+        result={'seed':task['seed'],'workload_id':fingerprint({'generation_failed':task['seed']}),
+                'oracle_id':'generation-failed/1','backend':config.backend,'status':'error',
+                'error_stage':'generation','error_summary':message[-500:],'shape_results':[],
+                'execution':dict(asdict(config),diagnostics=json.dumps({'version':1,'error':message,'shapes':{}})),
+                'evaluation':asdict(evaluation)}
+        if config.save_results:
+            ResultRepository(database).save(result,environment=collect(Path(queue).parent.parent),attempt_id=task['attempt_id'])
+        else:
+            print(json.dumps({'seed':task['seed'],'status':'error','stage':'generation','saved':False}))
+        return 0
     generation_ns=time.perf_counter_ns()-generation_start
     from ..core_logs import capture_tail
     with capture_tail(forward=True) as core_log:

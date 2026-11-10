@@ -26,7 +26,7 @@ def test_configured_budget_resolves_cli_and_rejects_override():
     with pytest.raises(ValueError, match='setup budget'):
         Budget.configured(config,3)
     assert Budget.configured(None).compile_threads == 1
-    assert Budget.configured(config).cpu_workers == 4  # ceiling, not requested concurrency
+    assert Budget.configured(config).cpu_workers == 4  # shared worker concurrency limit
 
 
 @pytest.mark.parametrize('options,values,message', [

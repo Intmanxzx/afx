@@ -15,6 +15,9 @@ def dag():
     node = shutil.which('node')
     if not node:
         pytest.skip('Node.js is needed to test the browser DAG transform')
+    version = subprocess.check_output([node, '--version'], text=True)
+    if int(version.lstrip('v').split('.')[0]) < 16:
+        pytest.skip('DAG tests need Node.js 16+; viewer runs in modern browsers')
     source = (Path(__file__).parents[1]/'autofusedebugger/fuzz/view/static/app.js').read_text()
     transform = source[source.index('function caseDag('):source.index('function renderCaseDag(')]
 

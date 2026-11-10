@@ -40,12 +40,13 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
     from autofusedebugger.fuzz.contracts import Seed
     from autofusedebugger.fuzz.storage.queries import ResultQueries
     monkeypatch.setenv('AUTOFUSEDBG_HOME',str(tmp_path))
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.campaign.secrets.randbelow',lambda _:42)
     def launch(ledger,database,specifications,**kw):
         initialize(ledger,*kw['campaign']);refill(ledger)
         tasks=ledger.page()['items']
         assert len(tasks)==2
         for task in tasks:
-            seed=Seed.parse(task['seed']);assert seed.short.startswith('C') and len(seed.short)==10
+            seed=Seed.parse(task['seed']);assert seed.short.startswith(('C','D')) and len(seed.short)==10
             assert json.loads(materialize(seed).spec.graph_json)['generator']=='nnsmith.graph_gen.model_gen'
         return {'verified':True}
     monkeypatch.setattr(hosting,'launch',launch)

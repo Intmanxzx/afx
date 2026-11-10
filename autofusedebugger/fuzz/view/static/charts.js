@@ -213,7 +213,7 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
   });
 }
 
-const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['gen_error'])]));let latestStatistics=null;
+const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['gen_error','unknown'])]));let latestStatistics=null;
 window.updateStatistics = result => {
  latestStatistics=result;
  const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_error:0,unknown:0});const key=r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};

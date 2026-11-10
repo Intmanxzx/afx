@@ -14,7 +14,7 @@ const initial = new URLSearchParams(location.search);
 form.elements.q.value=initial.get('q')||initial.get('user_id')||initial.get('seed')||'';
 let applied=parameters();
 let cursors=[0],page=0,next=null,generation=0,detailGeneration=0;
-let pageSize=50;
+let pageSize=10;
 try{const size=Number(localStorage.getItem('af-fuzz.page-size'));if([10,25,50,100,200].includes(size))pageSize=size;}catch{}
 $('page-size').value=String(pageSize);
 function parameters(){const p=new URLSearchParams();const q=form.elements.q.value.trim();if(q)p.set('q',q);return p;}
@@ -45,7 +45,7 @@ async function details(identity, shapeIndex=null) {
     $('detail-content').parentElement.hidden=true;
     $('detail-message').textContent = ''; $('copy').disabled = false;
     document.querySelectorAll('.page').forEach(el=>el.hidden=true);
-    $('page-title').textContent='用例详情 · '+result.seed_short+' / S'+(shapeIndex??'—');
+    $('page-title').textContent='用例详情 · '+result.seed_short;
     $('detail').scrollIntoView({behavior:'smooth',block:'start'});
   } catch(error) {if(request === detailGeneration) $('detail-message').textContent = error.message;}
 }
@@ -91,7 +91,7 @@ function renderRecords(items){
  const fragment=document.createDocumentFragment();
  for(const item of items){const tr=document.createElement('tr');
  for(const c of definitions){const td=cell(tr,'');td.dataset.column=c.key;let populated=false;
- if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short+' / S'+(item.shape_index<0?'—':item.shape_index);td.append(strong);populated=true;}
+ if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short;td.append(strong);if(item.shape_mode==='dynamic'&&item.shape_index>=0){const tag=document.createElement('small');tag.className='shape-tag';tag.textContent='S'+item.shape_index;td.append(tag);}populated=true;}
  else if(c.key==='ops'){const ops=graphText(item.metadata);if(ops){const text=document.createElement('span');text.className='case-ops';text.textContent=ops;text.title=ops;td.append(text);populated=true;}}
  else if(c.key==='inputs'){td.textContent=tensorText(item.sample?.input_shapes,item.metadata.weights,item.sample?.input_dtypes||item.metadata.input_dtypes);populated=!!td.textContent;}
  else if(c.key==='mode'){td.textContent=item.shape_mode==='static'?'静态':'动态';populated=true;}
@@ -208,7 +208,7 @@ function renderCaseInfo(result){
  const box=$('case-meta');box.replaceChildren();
  const heading=document.createElement('h3');heading.textContent='用例节点 DAG';box.append(heading);
  const note=document.createElement('p');note.className='muted';
- note.textContent=result.seed_short+' / S'+(result.shape_index??'—')+' · '+(result.backend_display||result.backend)+' · '+(result.contexts.execution.static_only?'静态':'动态')+'；箭头表示张量依赖，节点标注输出 Shape / Dtype（中间张量推导值以 * 标记）。';box.append(note);
+ note.textContent=result.seed_short+' · '+(result.backend_display||result.backend)+' · '+(result.contexts.execution.static_only?'静态':'动态');if(!result.contexts.execution.static_only&&result.shape_index>=0){const tag=document.createElement('small');tag.className='shape-tag';tag.textContent='S'+result.shape_index;note.append(tag);}box.append(note);
  renderCaseDag(box,result);
 }
 function renderProvenance(result){
@@ -219,9 +219,9 @@ function renderProvenance(result){
  const telemetry=result.contexts.execution.telemetry?JSON.parse(result.contexts.execution.telemetry):{stages:{},shapes:{}};
  const host=$('timing-detail');host.replaceChildren();
  const headingTime=document.createElement('h3');headingTime.textContent='用例执行耗时';host.append(headingTime);
- const note=document.createElement('p');note.className='muted';note.textContent='本次运行全部 Shape 的计时。执行总计包含能力检查、准备和全部 Shape；生成耗时单独记录。下列指标不能逐项相加。';host.append(note);
+ const note=document.createElement('p');note.className='muted';note.textContent='本次运行 '+result.shape_count+' 个 Shape 的计时。执行总计包含能力检查、准备和这些 Shape；生成耗时单独记录。下列指标不能逐项相加。';host.append(note);
  const tableTime=document.createElement('table'),head=document.createElement('tr');cell(head,'阶段','th');cell(head,'耗时','th');tableTime.append(head);
- for(const [key,value] of Object.entries(telemetry.stages||{})){const row=document.createElement('tr');cell(row,stageName(key));cell(row,duration(value));tableTime.append(row);}
+ for(const [key,value] of Object.entries(telemetry.stages||{})){const row=document.createElement('tr');cell(row,stageName(key));cell(row,(value/1e9).toFixed(3)+' s');tableTime.append(row);}
  if(tableTime.children.length>1)host.append(tableTime);else{const empty=document.createElement('p');empty.textContent='未采集本次运行计时';host.append(empty);}
 
 }
@@ -240,7 +240,7 @@ function renderFailureDetails(result){
  // Full saved run log already contains its extracted shared lines; do not repeat them.
  const log=view.run_log||view.shared_log||view.shared_lines?.join('\n')||view.summary||'未保存报错日志';
  const box=section('failure-details','报错日志摘要',log);
- if(view.shared_explanation){const note=document.createElement('p');note.className='muted';note.textContent=view.shared_explanation;box.append(note);}
+
 }
 
 // Pure metadata layout: no graph execution or model/runtime dependencies.

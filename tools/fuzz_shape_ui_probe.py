@@ -20,6 +20,7 @@ with create_server(repo.path) as server:
   with sync_playwright() as p:
    browser=p.chromium.launch();page=browser.new_page(viewport={'width':1800,'height':1100});errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
    page.goto(server.viewer_url+'#records',wait_until='networkidle')
+   expect(page.locator('#page-size')).to_have_value('10')
    assert page.locator('.workspace>header').count()==0
    assert page.locator('.topbar #refresh-time').count()==1
    assert page.locator('.cards').bounding_box()['y']-page.locator('.topbar').bounding_box()['height']<32
@@ -48,6 +49,11 @@ with create_server(repo.path) as server:
    expect(toggle).to_have_attribute('aria-pressed','false');toggle.click()
    page.evaluate("updateStatistics({...latestStatistics,overall:[{label:'全部',status:'unknown',count:1}]})")
    expect(page.locator('#legendOverall [data-status=unknown]')).to_have_text('Unkown')
+   expect(page.locator('#legendOverall [data-status=unknown]')).to_have_attribute('aria-pressed','false')
+   expect(page.locator('#chartOverall .seg[data-key=unknown]')).to_have_count(0)
+   page.locator('#legendOverall [data-status=unknown]').click()
+   expect(page.locator('#legendOverall [data-status=unknown]')).to_have_attribute('aria-pressed','true')
+   expect(page.locator('#chartOverall .seg[data-key=unknown]')).to_have_count(1)
    page.reload(wait_until='networkidle')
    page.locator('nav [data-page=records]').click()
    expect(page.locator('[data-column="af-mlir:function"] .failed')).to_have_text('功能Failed')
@@ -79,6 +85,11 @@ with create_server(repo.path) as server:
    expect(page.locator('#field-tooltip')).to_contain_text('x2[1,1,1,1,1,fp32]')
    assert 'add ·' in page.locator('#rows [data-column=ops]').first.inner_text()
    assert '→' not in page.locator('#rows [data-column=ops]').first.inner_text()
+   expect(page.locator('#rows tr').first.locator('.shape-tag')).to_have_text('S0')
+   page.evaluate("const staticRows=structuredClone(lastRows);for(const row of staticRows)row.shape_mode='static';renderRecords(staticRows)")
+   expect(page.locator('#rows .shape-tag')).to_have_count(0)
+   assert '/ S0' not in page.locator('#rows tr').first.locator('[data-column=seed]').inner_text()
+   page.evaluate('renderRecords(lastRows)')
    assert page.locator('#rows [data-column=inputs]').nth(0).inner_text()!=page.locator('#rows [data-column=inputs]').nth(1).inner_text()
    page.locator('.log-length input').fill('40');page.locator('.log-length input').press('Tab')
    button=page.locator('#rows tr').nth(1).locator('[data-column="af-mlir:logs"] .error-preview')
@@ -98,7 +109,10 @@ with create_server(repo.path) as server:
    assert page.locator('#detail h3').all_inner_texts()==['用例节点 DAG','ASCIR 表达的图结构','报错日志摘要','用例执行耗时','运行环境']
    expect(page.locator('#detail details:visible')).to_have_count(0)
    assert page.locator('#failure-details').inner_text().count('UnsupportedOperation')==1
-   expect(page.locator('#timing-detail')).to_contain_text('9000.000 ms')
+   expect(page.locator('#timing-detail')).to_contain_text('9.000 s')
+   expect(page.locator('#timing-detail')).to_contain_text('3 个 Shape')
+   assert '箭头表示张量依赖' not in page.locator('#case-meta').inner_text()
+   assert '本次运行触发AF-MLIR严格模式' not in page.locator('#failure-details').inner_text()
    page.locator('.dag-node').first.hover();expect(page.locator('#field-tooltip')).to_contain_text('float32')
    page.keyboard.press('Escape');expect(page.locator('#field-tooltip')).not_to_be_visible()
    page.screenshot(path=str(root/'detail.png'),full_page=True)

@@ -34,7 +34,7 @@ def test_detached_run_finishes_after_launcher_exits(tmp_path):
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
     response = json.loads(output.stdout)
-    assert response['mode'] == 'serial_background' and response['state'] == 'running'
+    assert response['mode'] == 'bounded_background' and response['state'] == 'running'
     ledger = TaskLedger(response['queue'])
     final = wait_finished(ledger)
     assert final['state'] == 'finished', final
@@ -153,7 +153,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     from autofusedebugger.fuzz.contracts import Seed
     def launch(ledger, database, specs, **kwargs):
         assert list(specs) == []
-        configs, evaluation, count = kwargs['campaign']
+        configs, evaluation, count, devices = kwargs['campaign']
         return {'count': count, 'backends': [c.backend for c in configs]}
     monkeypatch.setattr(hosting, 'launch', launch)
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0

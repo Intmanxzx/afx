@@ -119,10 +119,12 @@ class TaskLedger:
             conn.executemany("INSERT INTO tasks(id,seed,execution,evaluation,state) VALUES (?,?,?,?,'pending')", additions)
         return identities
 
-    def claim(self):
+    def claim(self, identity=None):
         """Atomically claim one case/backend task; None means no pending work."""
         with self._connection() as conn:
-            row = conn.execute("SELECT id FROM tasks WHERE state='pending' ORDER BY rowid LIMIT 1").fetchone()
+            row = conn.execute("SELECT id FROM tasks WHERE state='pending'" +
+                               (" AND id=?" if identity is not None else "") + " ORDER BY rowid LIMIT 1",
+                               (identity,) if identity is not None else ()).fetchone()
             if row is None:
                 return None
             conn.execute("UPDATE tasks SET state='running',reason='',claim=?,attempt_id=?,revision=revision+1 WHERE id=?",

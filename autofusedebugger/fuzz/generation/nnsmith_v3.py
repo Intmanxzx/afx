@@ -3,6 +3,7 @@
 Static single-shape protocol; pinned source/solver gate fails rather than changing
 cases. Cross-platform solver determinism is not yet a qualified guarantee.
 """
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -39,6 +40,7 @@ def _tensor(name, abstract, alias=0):
     return TensorSpec(name, str(abstract.dtype), shape, stride, alias_group=alias)
 
 
+@lru_cache(maxsize=8)
 def plan(token):
     seed = Seed.parse(token)
     if seed.version != 3:
@@ -94,12 +96,17 @@ def plan(token):
 
 
 def materialize(token):
-    spec = plan(token)
+    return materialize_spec(plan(token))
+
+
+def materialize_spec(spec):
+    """Rebuild canonical bytes from captured metadata without another solver run."""
     storages = [None] * (len(spec.inputs)+len(spec.weights))
     for tensor in (*spec.inputs, *spec.weights):
         # Independent canonical values: no Torch/NumPy RNG or numeric-search state.
         values = []
-        for index in range(math.prod(tensor.shape)):
+        size=max(math.prod(t.shape) for t in (*spec.inputs,*spec.weights,*(t for sample in spec.shape_samples for t in sample)) if t.alias_group==tensor.alias_group)
+        for index in range(size):
             raw = hashlib.sha256(f'nnsmith-v3/{spec.seed}/{tensor.name}/{index}'.encode()).digest()
             values.append((int.from_bytes(raw[:4], 'little') % 65 - 32) / 16)
         storages[tensor.alias_group] = struct.pack('<'+'f'*len(values), *values)

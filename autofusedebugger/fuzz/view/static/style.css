@@ -46,3 +46,6 @@ th,thead td{text-align:left}
 .dag-node .dag-op{font-size:14px;font-weight:600}.dag-node .dag-name{fill:#60766b}
 .field-tooltip{position:fixed;z-index:1000;max-width:min(640px,calc(100vw - 16px));max-height:min(480px,calc(100vh - 16px));overflow:auto;padding:10px 14px;background:#203b31;color:#fff;border:1px solid #527667;border-radius:8px;box-shadow:0 6px 24px #0003;font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:auto}
 .field-tooltip[hidden]{display:none}
+
+.shape-tag{display:inline-block;margin-left:8px;font-size:11px;font-weight:400;color:var(--muted);vertical-align:middle}
+.case-table .case-seed{display:inline}

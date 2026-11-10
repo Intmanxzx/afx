@@ -229,13 +229,13 @@ def replay_parser():
 
 def execute_args(args):
     try:
-        from .contracts import ExecutionConfig, EvaluationConfig
+        from .contracts import ExecutionConfig, EvaluationConfig, Seed
         from .generation import materialize
         from .execution import execute
         from .backends import create_backend
         from .resources import adaptive_defaults
         threads = args.compile_threads or adaptive_defaults(data_home())["compile_threads"]
-        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=True, save_results=args.save)
+        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only or Seed.parse(args.seed).version==3, save_results=args.save)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         import time
         generation_start = time.perf_counter_ns()

@@ -15,7 +15,7 @@ def test_short_seed_is_lossless_and_protocol_hashes_unchanged():
     assert len(Seed(2*2**128 + 36**9-1).short) == 10
     for value in (2*2**128, 2*2**128+42, 3*2**128-1):
         assert Seed.parse(Seed(value).short).value == value
-    for invalid in ('B-1','b16','D0','B'+'Z'*25):
+    for invalid in ('B-1','b16','E0','B'+'Z'*25):
         with pytest.raises(ValueError): Seed.parse(invalid)
 
 
@@ -29,10 +29,13 @@ def test_report_short_query_detail_and_no_heavy_import(tmp_path):
     assert query.detail(identity)['replay_command']=='autofusedbg fuzz replay C000000016'
 
 
-def test_mlir_fails_closed_without_runtime_evidence():
+def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
     pytest.importorskip("torch")
     from autofusedebugger.fuzz.backends import create_backend
     from autofusedebugger.fuzz.execution import execute
+    from autofusedebugger.fuzz.backends.base import UnsupportedBackend
+    def unavailable(): raise UnsupportedBackend('af-mlir runtime verification failed: test missing runtime')
+    monkeypatch.setattr('autofusedebugger.fuzz.backends.mlir_capability.verify_runtime',unavailable)
     result=execute(materialize('C16'),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
     assert result['status']=='unsupported'
     assert 'runtime verification failed' in result['error_summary']

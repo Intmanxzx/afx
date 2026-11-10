@@ -30,16 +30,19 @@ autofusedbg fuzz stop                # 停止当前批次
 ```sh
 autofusedbg fuzz run --count 100 --save                  # 有限批次
 autofusedbg fuzz run --count 10 --fg      # 前台观察
+autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
 autofusedbg fuzz run --backend triton-npu         # 在 CPU、AF-MLIR 外增加后端
 autofusedbg fuzz replay C000000016               # 只靠 seed 重建并运行
 autofusedbg fuzz replay C000000016 --backend af-mlir  # 单后端诊断
-autofusedbg fuzz replay C000000016 --static-only  # 仅基础 shape，静态编译
+autofusedbg fuzz replay D000000016 --static-only  # 仅基础 shape，静态编译
 autofusedbg fuzz replay C000000016 --save      # 保存结果并加入自动上传队列
 ```
 
 - 默认 CPU 为对照、AF-MLIR 为被测后端；AF-MLIR 对 CPU 精度不一致时用 eager-npu 复核，记录判定依据。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
-- 当前NNSmith C协议运行单个静态shape；CPU仅作为对照，不重复计数。动态shape接入尚未完成。
+- C seed 保留单个静态 Shape；新增 D seed 在同一 NNSmith 图和固定权重上生成 3 个不同的合法 Shape，使用动态编译。新随机批跑按 seed 奇偶约 1:1 选择静态/动态；`--static-only` 可只产生静态用例。无法生成 3 个合法样本的 D seed 显式失败，不偷换成静态用例。旧 C seed 的重放内容不变。
+- 默认探测所有可见 NPU，并在不同逻辑卡间轮转分配用例。同一逻辑卡同一时刻只运行一个任务，跨进程仍由物理 UUID 锁保护。CPU 与不同 NPU 卡可并发；总并发受 `cpu_workers`（`--workers`）约束，workers × compile_threads 不得超过有效 CPU 核数，内存和缓存预算按整个活动池合计。
+- 老 setup 若保存了 `cpu_workers=1`，仍尊重该配置；双卡机器可显式用 `--workers 4 --compile-threads 1`，提供两个 NPU 任务及 CPU 任务的并发余量。吞吐提升取决于生成、编译、执行耗时，不保证单个 kernel 更快。
 - `--perf` 请求性能采集；目前无法可靠拆分的编译/kernel 指标留空，不能把首次调用或总耗时当 kernel 性能。
 - 使用--save时，功能失败保存短错误、阶段和已采集上下文；精度失败保存误差统计。长日志、tensor、编译产物不默认上传。
 - 停止测试不会删除数据或凭据，也不会停止独立上传进程。

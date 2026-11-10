@@ -99,7 +99,7 @@ def condition(q):
         if state is None:
             return "p.status IN ('function_failed','accuracy_failed')", []
         return 'p.status=? COLLATE NOCASE', [state]
-    if re.fullmatch(r'C[0-9A-Z]{9}', q):
+    if re.fullmatch(r'[CD][0-9A-Z]{9}', q):
         from ..contracts import Seed
         return 'p.seed=?', [str(Seed.parse(q))]
     return 'instr(lower(p.search),lower(?))>0', [q]

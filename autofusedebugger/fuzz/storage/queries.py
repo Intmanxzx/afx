@@ -114,6 +114,7 @@ class ResultQueries:
         result['seed_short'] = Seed.parse(result['seed']).short
         result['backend_display'] = display_backend(result['backend'])
         result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
+        result['shape_count'] = len(result['shape_results'])
         if shape_index is not None:
             if type(shape_index) is not int or not -1 <= shape_index < 1024:
                 raise ValueError('invalid shape index')

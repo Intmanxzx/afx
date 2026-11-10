@@ -20,7 +20,8 @@ def register(sub, maintenance):
             parser.add_argument('--fg', dest='foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
             parser.add_argument('--backend', action='append', choices=('cpu', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'))
-            parser.add_argument('--device', help='NPU logical device (default npu:0); does not alter generated case')
+            parser.add_argument('--device', action='append', help='logical npu:index; repeat for multiple cards; default: all visible NPUs')
+            parser.add_argument('--workers', type=int, help='maximum concurrent workers (CPU and NPU combined)')
             parser.add_argument('--compile-threads', type=int, help=__import__('argparse').SUPPRESS)
             parser.add_argument('--static-only', action='store_true')
             parser.add_argument('--perf', dest='performance', action='store_true')
@@ -64,8 +65,8 @@ def dispatch(args):
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError('timeout must be finite and positive')
     parsed = [Seed.parse(s) for s in args.seeds]
-    if any(seed.version != 3 for seed in parsed):
-        raise ValueError('only NNSmith C seeds can run; retired template seeds are not regenerated')
+    if any(seed.version not in {3,4} for seed in parsed):
+        raise ValueError('only NNSmith C/D seeds can run; retired template seeds are not regenerated')
     from ..generation.nnsmith_v3 import source_evidence
     source_evidence()  # Fail before creating a campaign if the dependency is absent/wrong.
     seeds = [str(seed) for seed in parsed]
@@ -78,13 +79,17 @@ def dispatch(args):
     from .budgets import Budget
     from ..resources import adaptive_defaults
     budget = Budget.configured(load_config(home) or adaptive_defaults(home), args.compile_threads)
+    from dataclasses import replace
+    if args.workers is not None: budget=replace(budget,cpu_workers=args.workers)
+    from .devices import select_devices
+    devices=select_devices(args.device)
     import uuid
     batch_id = str(uuid.uuid4())
-    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=True, batch_id=batch_id, save_results=args.save)
+    configs = [ExecutionConfig(backend, devices[0] if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id, save_results=args.save)
                for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
     from .hosting import launch
-    return launch(ledger, database, ((seed, config, evaluation, None) for seed in seeds for config in configs),
+    return launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version==3,device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
                   timeout=args.timeout, foreground=args.foreground, budget=budget,
-                  campaign=(configs,evaluation,count) if not seeds else None)
+                  campaign=(configs,evaluation,count,devices) if not seeds else None)

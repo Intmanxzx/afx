@@ -5,6 +5,9 @@ from .fingerprint import content_manifest, workload_id
 
 def _protocol(seed):
     seed = Seed.parse(seed)
+    if seed.version == 4:
+        from . import nnsmith_dynamic
+        return nnsmith_dynamic
     if seed.version != 3:
         raise ValueError('retired template seed: only NNSmith C seeds can be generated; no fallback')
     from . import nnsmith_v3
@@ -12,11 +15,11 @@ def _protocol(seed):
 
 
 def plan(seed):
-    return _protocol(seed).plan(seed)
+    return _protocol(seed).plan(Seed.parse(seed))
 
 
 def materialize(seed):
-    return _protocol(seed).materialize(seed)
+    return _protocol(seed).materialize(Seed.parse(seed))
 
 
 def oracle_id(bundle):

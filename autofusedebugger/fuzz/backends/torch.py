@@ -96,7 +96,13 @@ class TorchAdapter:
                              dynamic=not self.config.static_only and len(bundle.spec.shape_samples) > 1, options=options)
 
     def inputs(self, bundle, index):
-        return tuple(self._tensor(bundle, spec) for spec in bundle.spec.shape_samples[index])
+        tensors=tuple(self._tensor(bundle, spec) for spec in bundle.spec.shape_samples[index])
+        if not self.config.static_only and len(bundle.spec.shape_samples)>1 and self.name not in {'cpu','cpu-eager','npu-eager','eager-npu'}:
+            for position,tensor in enumerate(tensors):
+                for axis in range(tensor.ndim):
+                    if len({sample[position].shape[axis] for sample in bundle.spec.shape_samples})>1:
+                        self.torch._dynamo.mark_dynamic(tensor,axis)
+        return tensors
 
     def invoke(self, prepared, inputs):
         with self.torch.no_grad():
