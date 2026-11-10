@@ -38,7 +38,7 @@ def test_mlir_fails_closed_without_runtime_evidence():
     from autofusedebugger.fuzz.execution import execute
     result=execute(materialize('B16'),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
     assert result['status']=='unsupported'
-    assert 'silent legacy fallback' in result['error_summary']
+    assert 'runtime verification failed' in result['error_summary']
 
 
 def test_report_endpoint_csp_and_html_escapes_errors(tmp_path):

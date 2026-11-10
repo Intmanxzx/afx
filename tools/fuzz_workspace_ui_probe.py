@@ -13,6 +13,10 @@ if not repo.path.exists():
             result={'seed':seed,'workload_id':workload_id(materialize(seed)),'oracle_id':'ref/1','backend':backend,'status':'error' if i==0 else 'fail' if i==1 else 'ok',
               'execution':{'backend':backend,'telemetry':json.dumps({'version':1,'stages':{'execution_total':1234567890},'shapes':{}})},
               'shape_results':[{'shape_index':0,'correctness':'error' if i==0 else 'fail' if i==1 else 'pass','performance':'not_requested'}]}
+            if i==0 and backend=='npu-eager':
+                result['execution']['diagnostics']=json.dumps({'version':1,'error':'compiler error: unsupported Transpose','shapes':{}})
+            if i==1 and backend=='npu-eager':
+                result['execution']['diagnostics']=json.dumps({'version':1,'shapes':{'0':{'cpu_pass':False,'secondary_used':True,'secondary_pass':False,'max_abs':0.25,'mismatches':2,'elements':32,'basis':'cpu+eager-npu'}}})
             repo.save(result,environment={'device_name':'niuyuhu' if i%2 else 'tester','user_id':str(i%2),'cann':'9.3'})
 with create_server(repo.path) as server:
     thread=threading.Thread(target=server.serve_forever);thread.start()
@@ -23,7 +27,7 @@ with create_server(repo.path) as server:
             expect(page.locator('#rows tr')).to_have_count(12)
             headers=page.locator('#case-columns').inner_text()
             assert 'cpu 精度' not in headers and 'cpu 性能' not in headers and '设备' not in headers and '性能' not in headers
-            assert 'npu-eager 精度' in headers and 'cpu 总耗时' in headers
+            assert 'eager-npu 精度' in headers and 'cpu 总耗时' in headers
             assert '1.2 s' in page.locator('#rows').inner_text()
             expect(page.locator('#rows .pass').first).to_have_text('Pass')
             assert page.locator('#rows .pass').first.evaluate('e=>getComputedStyle(e).borderWidth')=='0px'
@@ -42,6 +46,16 @@ with create_server(repo.path) as server:
             page.locator('#column-picker>summary').click();page.locator('#all-columns').click();expect(page.locator('#case-columns [data-column=cann]')).to_be_visible()
             page.locator('#reset-columns').click();page.locator('h1').click();assert not page.locator('#column-picker').evaluate('e=>e.open')
             page.screenshot(path=str(root/'records.png'),full_page=True)
+            # Details use the same UI for native functional failures and precision metrics.
+            import sqlite3
+            with sqlite3.connect(repo.path) as conn:
+                failure=conn.execute("SELECT id FROM attempts WHERE status='error' AND backend='npu-eager' LIMIT 1").fetchone()[0]
+                accuracy=conn.execute("SELECT id FROM attempts WHERE status='fail' AND backend='npu-eager' LIMIT 1").fetchone()[0]
+            page.evaluate('(id)=>details(id)',failure)
+            expect(page.locator('#failure-details')).to_contain_text('unsupported Transpose')
+            page.evaluate('(id)=>details(id)',accuracy)
+            expect(page.locator('#failure-details')).to_contain_text('最大绝对误差')
+            expect(page.locator('#failure-details')).to_contain_text('0.25')
             page.locator('nav [data-page=overview]').click()
             legend=page.locator('#legendOverall button[data-status=gen_error]');legend.click();expect(legend).to_have_attribute('aria-pressed','false')
             assert '90.9%' in page.locator('#legendOverall').inner_text()

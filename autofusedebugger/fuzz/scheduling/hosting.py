@@ -77,7 +77,7 @@ def _command(ledger, database, timeout, fd, connection, run_id):
             str(ledger.path), str(database), str(timeout), str(fd), str(connection), run_id]
 
 
-def launch(ledger, database, specifications, *, timeout=120, foreground=False, startup_timeout=15, budget=None):
+def launch(ledger, database, specifications, *, timeout=120, foreground=False, startup_timeout=15, budget=None, campaign=None):
     """Bind and enqueue under ownership before handing lock to a child supervisor."""
     if not math.isfinite(timeout) or timeout <= 0 or not math.isfinite(startup_timeout) or startup_timeout <= 0:
         raise ValueError('timeouts must be finite and positive')
@@ -108,6 +108,14 @@ def launch(ledger, database, specifications, *, timeout=120, foreground=False, s
                 _validate_task(task)
                 effective_budget.admit(ledger.path.parent, task)
         write_policy(ledger, effective_budget)
+        from .campaign import initialize
+        if campaign is not None:
+            initialize(ledger, *campaign)
+        else:
+            # A finite explicit-seed run must not resume a prior infinite feeder.
+            with ledger._connection() as conn:
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='campaign'").fetchone():
+                    conn.execute('UPDATE campaign SET stopped=1')
         ids = ledger.enqueue_many(prepared)
         if foreground:
             return dict(drain(ledger, database, timeout=timeout, _owned_fd=fd),

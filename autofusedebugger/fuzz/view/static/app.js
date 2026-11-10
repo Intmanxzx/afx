@@ -36,6 +36,7 @@ async function details(identity) {
     const meta=result.metadata||caseMetadata.get(identity);
     $('case-meta').textContent=meta ? '算子：'+meta.op_types.join(' · ')+' ｜ 输入：'+JSON.stringify(meta.input_shapes)+' ｜ 输出：'+JSON.stringify(meta.output_shapes)+' ｜ 输入dtype：'+JSON.stringify(meta.input_dtypes)+' ｜ 输出dtype：'+JSON.stringify(meta.output_dtypes)+' ｜ Shape样本：'+JSON.stringify(meta.shape_variants) : '';
     renderProvenance(result);
+    renderFailureDetails(result);
     result.created_at = beijing(result.created_at);
     $('detail-content').textContent = JSON.stringify(result,null,2);
     const table = document.createElement('table');
@@ -198,4 +199,17 @@ function renderStatisticsTables(result){
  const t=document.createElement('table'),head=document.createElement('tr');for(const label of ['后端','指标','样本','均值','最大'])cell(head,label);t.append(head);
  for(const r of result.precise_metrics||[]){const row=document.createElement('tr');for(const value of [r.backend,r.stage==='compile'?'编译耗时':'Kernel 耗时',r.samples,duration(r.mean_ns),duration(r.max_ns)])cell(row,value);t.append(row);}
  $('performance-table').replaceChildren(t);$('metric-empty').hidden=!!result.precise_metrics?.length;
+}
+
+function renderFailureDetails(result){
+ let box=$('failure-details');if(!box){box=document.createElement('section');box.id='failure-details';$('shape-detail').after(box);}box.replaceChildren();
+ const raw=result.contexts.execution.diagnostics;if(!raw)return;
+ const data=JSON.parse(raw);
+ const title=document.createElement('h3');title.textContent='核心日志与精度误差';box.append(title);
+ if(data.error){const log=document.createElement('pre');log.textContent=data.error;box.append(log);}
+ for(const [index,metrics] of Object.entries(data.shapes||{})){
+  const heading=document.createElement('h4');heading.textContent='Shape '+index+' · 判定标准：'+(metrics.basis||'cpu');box.append(heading);
+  const table=document.createElement('table');for(const [key,label] of [['cpu_pass','CPU一致'],['secondary_used','已运行 eager-npu'],['secondary_pass','eager-npu一致'],['max_abs','最大绝对误差'],['mean_abs','平均绝对误差'],['max_rel','最大相对误差'],['mismatches','不一致元素'],['elements','总元素'],['nonfinite','非有限元素']]){if(metrics[key]===undefined)continue;const row=document.createElement('tr');cell(row,label);cell(row,String(metrics[key]));table.append(row);}box.append(table);
+  if(metrics.error){const log=document.createElement('pre');log.textContent=metrics.error;box.append(log);}
+ }
 }

@@ -517,3 +517,20 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 远端round36重新检查：CANN9.3.0、Torch2.10.0+cpu、torch_npu2.10.0.post7.dev20261015，共享autofuse HEAD c1b46272，无NPU进程。已安装AFMLIR能力仍未证明，保持fail closed。共享依赖不改。SSH曾断连/认证失败，后续重连可用。
 - 第一轮5项CLI新测试通过；迁移旧测试后60项重点通过。全量中3项失败为隔离传输遗漏tools和测试旧backend展示名，已补齐tools并更新为eager-npu后重新验证。用户原有index.html搜索占位符改动保留且不纳入本阶段commit。
 - round36最终完整fuzz回归：250 passed，1条原有pygraphviz缺失warning；172.23秒。测试全部npussh mlir，无本地安装/运行。
+
+## 31. 九项反馈续修（2026-11-10，round38，进行中）
+
+- 普通 run 强制 CPU + AF-MLIR，默认无限；--count 惰性逐 case 投放，stop 原子关闭 feeder 并取消/终止当前任务，避免预分配无限队列。默认 replay 执行两者，显式 --backend 用于单后端故障诊断。
+- 精度标杆使用实际 eager CPU 输出。仅 AF-MLIR 与 CPU 不一致时，重新绑定输入并独立执行 eager-npu；一致则最终 Pass，同时保存 CPU 分歧、判定标准和误差指标。不是忽略 CPU 分歧，也不把编译失败转成 eager 成功。
+- SQLite 保存有界标量诊断：max/mean absolute、max relative、mismatch/elements/nonfinite、secondary 判定；网页详情展示。worker stdout/stderr 在内存有界收集，优先核心错误/MLIR严格判定，脱敏后最多1600字符，无长日志归档。进程硬崩溃/超时的结果诊断仍需完善，不宣称已覆盖所有 native 崩溃。
+- 已重新检查 mlir：c1b46272 工作树干净，设备空闲；默认 CANN codegen 无 MLIR bridge。复制已有 dev-install 到隔离 mlir-runtime（未改共享源码/依赖）。加载库路径及 RunMlirCodegen 动态符号校验，强制 --mlir_codegen_config=mlir。冻结图无 Cube（严格模式唯一允许 fallback 的范围外路径）。这不是通用后端能力API。
+- 真实 seed B000000016 产生 RunMlirCodegen IR，Elementwise 接管成功，Transpose 报 `Schedule buffer-form bridge does not support node ... Transpose` / `gate=lowering shortfall=yes`；不以 legacy 冒充 AF-MLIR。首次探测还发现导入顺序的 static TLS 错误，改为先导入 Torch，再加载 Autofuse。
+- 远端首轮 42 项定向回归通过；round38-full3 257 passed；12 case/24 attempt 浏览器回归通过（布局、筛选、分页、刷新不跳、列偏好、图例、移动端）。后续补 CPU oracle、全量清理保护与 replay 默认矩阵后需重新全量验证。
+- 第9项尚未验收：100组真实 AF-MLIR 批次和公网部署/清理/自动30秒同步将使用最终验证版本重跑。性能指标不以首次调用或墙钟时间冒充编译/kernel时间。
+
+### round40 回归与部署证据
+
+- 最终核心代码 `round40-tests.log`：260 passed（251.45s），唯一warning为隔离NNSmith未装可选pygraphviz。全部在mlir运行；light-venv缺wheel，已仅在隔离venv补齐，未改共享Python。
+- `round40-ui.log`：12 case/24 attempt，额外验证核心错误、最大绝对误差渲染；浏览器执行仍在mlir，截图保留远端。
+- round40 wheel SHA256 `a305b60d15a74f990bf3ea677b70dda2626f4e700f22a1b29abad406b3f5b493`；公网独立venv升级，服务命令切换admin serve。原3条记录先完整私有备份，再按expected_count=3清理，保留身份、ACK及防复活tombstone。
+- 100组最终批次在round40-home进行，默认CPU与AF-MLIR、3个shape，真实严格MLIR并非全失败：早期已有2组AF-MLIR成功。失败核心包含Transpose lowering和exec_condition cache guard；不修改seed规避失败。

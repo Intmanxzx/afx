@@ -37,7 +37,7 @@ def test_detached_run_finishes_after_launcher_exits(tmp_path):
     ledger = TaskLedger(response['queue'])
     final = wait_finished(ledger)
     assert final['state'] == 'finished', final
-    assert final['summary']['completed'] == 1
+    assert final['summary']['completed'] == 2  # mandatory CPU + AF-MLIR
     task = ledger.get(response['enqueued'][0])
     assert task['state'] == 'completed'
     result = ResultRepository(tmp_path/'results/results.sqlite').detail(task['attempt_id'])
@@ -151,12 +151,27 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     from autofusedebugger.fuzz.cli import main
     from autofusedebugger.fuzz.contracts import Seed
     def launch(ledger, database, specs, **kwargs):
-        rows = list(specs)
-        return {'seeds': [row[0] for row in rows]}
+        assert list(specs) == []
+        configs, evaluation, count = kwargs['campaign']
+        return {'count': count, 'backends': [c.backend for c in configs]}
     monkeypatch.setattr(hosting, 'launch', launch)
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0
     value = json.loads(capsys.readouterr().out)
-    assert len(value['seeds']) == 4
-    assert all(Seed.parse(seed).version == 2 for seed in value['seeds'])
-    assert all(len(Seed.parse(seed).short) <= 10 for seed in value['seeds'])
+    assert value == {'count': 4, 'backends': ['cpu', 'af-mlir']}
     assert main(['run', '42', '--data-dir', str(tmp_path), '--count', '4']) == 2
+
+
+def test_background_infinite_campaign_stops_without_refilling(tmp_path):
+    from autofusedebugger.fuzz.scheduling.campaign import stop
+    ledger = TaskLedger(tmp_path/'queue')
+    hosting.launch(ledger, tmp_path/'results', [], campaign=([EX], EV, None))
+    deadline = time.monotonic() + 20
+    while not ledger.page()['items'] and time.monotonic() < deadline:
+        time.sleep(.05)
+    assert ledger.page()['items']
+    stop(ledger)
+    assert wait_finished(ledger)['state'] == 'finished'
+    count = len(ledger.page()['items'])
+    time.sleep(.1)
+    assert len(ledger.page()['items']) == count
+    assert all(t['state'] not in {'running', 'pending', 'stop_requested'} for t in ledger.page()['items'])

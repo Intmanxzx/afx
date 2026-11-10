@@ -54,7 +54,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     user_id=user_id or (existing[2] if existing else None) or env.get('user_id')
     conn.execute('INSERT OR REPLACE INTO report_devices VALUES (?,?,?)',(source_id,user_id,device_name))
     versions={key:env.get(key) for key in ('python','platform','machine','torch','torch_npu','triton','package_version','cann','autofuse_commit','autofuse_binary')}
-    config={key:value for key,value in ex.items() if key not in {'backend','device','telemetry','batch_id'}}
+    config={key:value for key,value in ex.items() if key not in {'backend','device','telemetry','diagnostics','batch_id'}}
     batch=ex.get('batch_id') or 'historical-unrecorded'
     group=digest({'workload':row['workload_id'],'oracle':row['oracle_id'],'source':source_id,
                   'versions':versions,'config':config,'evaluation':ev,'batch':batch,'environment':env})

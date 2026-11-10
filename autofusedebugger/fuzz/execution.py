@@ -17,8 +17,11 @@ def execute(bundle, adapter, evaluation):
         import json
         stages = result.pop('_timings', {})
         stages['execution_total'] = time.perf_counter_ns()-started
+        diagnostics = result.pop('_diagnostics', {'version':1,'shapes':{}})
+        result.setdefault('execution', {})['diagnostics'] = json.dumps(diagnostics)
         shapes = {str(row['shape_index']): row.pop('_timings', {}) for row in result['shape_results']}
         result.setdefault('execution', {})['telemetry'] = json.dumps({'version':1,'stages':stages,'shapes':shapes})
+        result.pop('_secondary', None)
         return result
     finally:
         if hasattr(adapter, 'close'):
@@ -28,9 +31,11 @@ def execute(bundle, adapter, evaluation):
 def _execute(bundle, adapter, evaluation):
     result = {"seed": str(bundle.spec.seed), "workload_id": workload_id(bundle),
               "oracle_id": oracle_id(bundle), "backend": adapter.name, "shape_results": [],
-              "_timings": {}, "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}
+              "_timings": {}, "_diagnostics": {"version":1,"shapes":{}}, "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}
     if hasattr(adapter, "config"):
         result["execution"] = asdict(adapter.config)
+    if hasattr(adapter, 'cpu_reference'):
+        result['oracle_id'] = 'torch-eager-cpu/1'
     stage = "capability"
     try:
         started = time.perf_counter_ns()
@@ -51,6 +56,8 @@ def _execute(bundle, adapter, evaluation):
                 result['_timings']['compile'] = value
     except Exception as exc:
         result['_timings'][stage] = time.perf_counter_ns()-started
+        from .failure_details import excerpt
+        result['_diagnostics']['error'] = excerpt(exc)
         result.update(status="unsupported" if isinstance(exc, UnsupportedBackend) else "error",
                       error_stage=stage, error_summary=f"{type(exc).__name__}: {exc}"[:500])
         return result
@@ -74,7 +81,22 @@ def _execute(bundle, adapter, evaluation):
             if evaluation.correctness:
                 stage = "correctness"
                 started=time.perf_counter_ns()
-                row["correctness"] = "pass" if adapter.compare(output, reference(bundle, index)) else "fail"
+                expected=(adapter.cpu_reference(bundle,index) if hasattr(adapter,'cpu_reference')
+                          else reference(bundle,index))
+                cpu_pass=adapter.compare(output,expected)
+                row['correctness']='pass' if cpu_pass else 'fail'
+                if not cpu_pass and hasattr(adapter,'diagnose_accuracy'):
+                    diagnostic=adapter.diagnose_accuracy(output,expected)
+                    diagnostic.update(cpu_pass=False,secondary_used=False,basis='cpu')
+                    result['_diagnostics']['shapes'][str(index)]=diagnostic
+                    if adapter.name=='af-mlir':
+                        diagnostic['secondary_used']=True
+                        secondary=adapter.secondary_output(bundle,index)
+                        secondary_pass=adapter.outputs_equal(output,secondary)
+                        diagnostic['secondary_pass']=secondary_pass
+                        diagnostic['basis']='eager-npu' if secondary_pass else 'cpu+eager-npu'
+                        row['correctness']='pass' if secondary_pass else 'fail'
+                        result.setdefault('_secondary',[]).append({'shape_index':index,'matches_af_mlir':secondary_pass})
                 row['_timings']['correctness']=time.perf_counter_ns()-started
             if evaluation.performance:
                 # Only explicit device-profiler measurements qualify. Wall time
@@ -91,6 +113,8 @@ def _execute(bundle, adapter, evaluation):
                 else:
                     row['performance'] = 'skipped'
         except Exception as exc:
+            from .failure_details import excerpt
+            if index<3:result['_diagnostics']['shapes'].setdefault(str(index),{})['error']=excerpt(exc)
             if stage not in row['_timings']:
                 row['_timings'][stage]=time.perf_counter_ns()-started
             row.update(error_stage=stage, error_summary=f"{type(exc).__name__}: {exc}"[:500])

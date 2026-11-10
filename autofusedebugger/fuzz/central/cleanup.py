@@ -8,15 +8,27 @@ from ..storage.repository import _connect
 
 
 def purge_incomplete(path, *, expected_count):
+    return _purge(path, expected_count=expected_count, incomplete=True)
+
+
+def purge_all_results(path, *, expected_count):
+    """Explicit reviewed reset; caller must take a private central backup first."""
+    return _purge(path, expected_count=expected_count, incomplete=False)
+
+
+def _purge(path, *, expected_count, incomplete):
     with closing(_connect(path, writable=True)) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
-        rows=conn.execute("""SELECT a.id,a.result_hash,o.user_id FROM attempts a
+        query="""SELECT a.id,a.result_hash,o.user_id FROM attempts a
             JOIN owners o ON o.attempt_id=a.id JOIN contexts c ON c.id=a.environment_id
-            WHERE json_extract(c.payload,'$.cann') IS NULL
+            """
+        if incomplete:
+            query += """WHERE json_extract(c.payload,'$.cann') IS NULL
             AND json_extract(c.payload,'$.autofuse_binary') IS NULL
-            AND json_extract(c.payload,'$.autofuse_commit') IS NULL""").fetchall()
+            AND json_extract(c.payload,'$.autofuse_commit') IS NULL"""
+        rows=conn.execute(query).fetchall()
         if len(rows)!=expected_count:
-            raise ValueError('incomplete record count changed; review before deleting')
+            raise ValueError('record count changed; review before deleting')
         conn.execute('CREATE TABLE IF NOT EXISTS deleted_attempts (id TEXT PRIMARY KEY, result_hash TEXT NOT NULL, user_id TEXT NOT NULL)')
         conn.executemany('INSERT OR IGNORE INTO deleted_attempts VALUES (?,?,?)',rows)
         for identity, _, _ in rows:

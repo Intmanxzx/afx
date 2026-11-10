@@ -136,7 +136,7 @@ def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
     seen = []
     monkeypatch.setattr(fuzz_cli, "execute_args", lambda args: seen.append(args.seed) or 0)
     assert cli.main(["fuzz", "replay", "42"]) == 0
-    assert seen == ["42"]
+    assert seen == ["42", "42"]
     with pytest.raises(SystemExit):
         fuzz_cli.main(["run", "--seed-token", "v1:preview-dynamic-v1:42"])
 

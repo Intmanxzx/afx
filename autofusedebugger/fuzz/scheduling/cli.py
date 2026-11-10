@@ -16,7 +16,7 @@ def register(sub, maintenance):
         parser.add_argument('--queue', help=__import__('argparse').SUPPRESS)
         if name == 'run':
             parser.add_argument('seeds', nargs='*', help='self-contained short seeds')
-            parser.add_argument('--count', type=int, help='generate 1..1000 self-contained short seeds')
+            parser.add_argument('--count', type=int, help='number of cases; omitted means continuous until fuzz stop')
             parser.add_argument('--foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
             parser.add_argument('--backend', action='append', choices=('cpu', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'))
@@ -50,11 +50,9 @@ def dispatch(args):
         if args.task:
             ledger.stop(args.task)
             return ledger.get(args.task)
-        from .supervisor import _tasks
-        tasks=list(_tasks(ledger))
-        for task in tasks:
-            ledger.stop(task['id'])
-        return {'state':'stop_requested','tasks':len(tasks)}
+        from .campaign import stop
+        stop(ledger)
+        return {'state':'stop_requested'}
     database = args.database or home/'results/results.sqlite'
     from .supervisor import resume, _validate_task
     if args.command == 'resume':
@@ -67,10 +65,9 @@ def dispatch(args):
     seeds = [str(Seed.parse(s)) for s in args.seeds]
     count = getattr(args, 'count', None)
     if count is not None:
-        if seeds or not 1 <= count <= 1000:
-            raise ValueError('--count requires 1..1000 cases and no explicit seeds')
-        import secrets
-        seeds = [str(2**128 + secrets.randbelow(36**9)) for _ in range(count)]
+        if seeds or count < 1:
+            raise ValueError('--count requires a positive count and no explicit seeds')
+
     evaluation = EvaluationConfig(performance=args.performance)
     from .budgets import Budget
     from ..resources import adaptive_defaults
@@ -78,9 +75,10 @@ def dispatch(args):
     import uuid
     batch_id = str(uuid.uuid4())
     configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id)
-               for backend in dict.fromkeys(args.backend or ['cpu'])]
+               for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
     from .hosting import launch
     return launch(ledger, database, ((seed, config, evaluation, None) for seed in seeds for config in configs),
-                  timeout=args.timeout, foreground=args.foreground, budget=budget)
+                  timeout=args.timeout, foreground=args.foreground, budget=budget,
+                  campaign=(configs,evaluation,count) if not seeds else None)

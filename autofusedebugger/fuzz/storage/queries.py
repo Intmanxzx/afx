@@ -145,6 +145,7 @@ class ResultQueries:
                 for row in rows:
                     backend = display_backend(row['backend'])
                     member = {key:row[key] for key in ('id','status','created_at','total_ns','duration_scope','error_stage','error_summary')}
+                    member['has_diagnostics'] = bool(json.loads(row['execution']).get('diagnostics'))
                     member['device'] = json.loads(row['execution']).get('device')
                     member['stages'] = [dict(r) for r in conn.execute('SELECT shape_index,stage,duration_ns FROM stage_metrics WHERE attempt_id=? ORDER BY shape_index,stage',(row['id'],))]
                     member['shapes'] = [dict(r) for r in conn.execute('SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index',(row['id'],))]

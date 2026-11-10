@@ -80,9 +80,9 @@ def _has_result(database, task):
         contexts, _ = _record(conn, row)
         bundle = materialize(task['seed'])
         if (row['seed'] != task['seed'] or row['workload_id'] != workload_id(bundle) or
-                row['oracle_id'] != oracle_id(bundle) or
+                row['oracle_id'] not in {oracle_id(bundle), 'torch-eager-cpu/1'} or
                 row['backend'] != json.loads(task['execution'])['backend'] or
-                {k:v for k,v in contexts['execution'].items() if k != 'telemetry'} != json.loads(task['execution']) or
+                {k:v for k,v in contexts['execution'].items() if k not in {'telemetry','diagnostics'}} != json.loads(task['execution']) or
                 contexts['evaluation'] != json.loads(task['evaluation'])):
             raise ValueError('saved attempt conflicts with task; refusing acknowledgement')
         return True
@@ -153,6 +153,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
         while True:
             task = ledger.claim()
             if task is None:
+                from .campaign import refill
+                if refill(ledger):continue
                 return summary
             child = None
             scratch = None

@@ -22,18 +22,18 @@ class TorchAdapter:
         if npu and evaluation.performance:
             raise UnsupportedBackend("strict NPU measurement requires a device lease; not implemented yet")
         import os
-        if self.name == 'af-mlir':
-            # Current runtime may silently use legacy when built without MLIR.
-            # Do not mislabel success until a runtime capability API exists.
-            raise UnsupportedBackend('af-mlir runtime capability cannot be verified; refusing silent legacy fallback')
-        if self.name == 'af-legacy':
+        if self.name in {'af-legacy', 'af-mlir'}:
             flags = os.environ.get('AUTOFUSE_DFX_FLAGS', '')
             parts = [p for p in flags.split(';') if p and not p.strip().startswith('--mlir_codegen_config=')]
             self.old_dfx = os.environ.get('AUTOFUSE_DFX_FLAGS')
-            os.environ['AUTOFUSE_DFX_FLAGS'] = ';'.join(parts + ['--mlir_codegen_config=none'])
+            mode = 'mlir' if self.name == 'af-mlir' else 'none'
+            os.environ['AUTOFUSE_DFX_FLAGS'] = ';'.join(parts + ['--mlir_codegen_config=' + mode])
         os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(self.config.compile_threads)
         import torch
         self.torch = torch
+        if self.name == 'af-mlir':
+            from .mlir_capability import verify_runtime
+            verify_runtime()
         if npu:
             try:
                 import torch_npu  # noqa: F401
@@ -85,7 +85,7 @@ class TorchAdapter:
             return (value,)
         if self.name in {"cpu", "cpu-eager", "npu-eager", "eager-npu"}:
             return forward
-        target = {'af-legacy': 'ascendc', 'triton-npu': 'triton'}.get(self.name, self.name)
+        target = {'af-legacy': 'ascendc', 'af-mlir': 'ascendc', 'triton-npu': 'triton'}.get(self.name, self.name)
         options = {"npu_backend": target} if target in {"ascendc", "triton"} else {}
         return torch.compile(forward, backend="inductor", fullgraph=True,
                              dynamic=not self.config.static_only and len(bundle.spec.shape_samples) > 1, options=options)
@@ -106,6 +106,8 @@ class TorchAdapter:
         from ..tensors import DTYPES
         if not isinstance(output, tuple) or len(output) != len(expected):
             return False
+        if expected and isinstance(expected[0], self.torch.Tensor):
+            return self.outputs_equal(tuple(value.detach().cpu() for value in output), expected)
         for actual, (spec, raw) in zip(output, expected):
             if not isinstance(actual, self.torch.Tensor) or tuple(actual.shape) != spec.shape or str(actual.dtype) != "torch." + spec.dtype:
                 return False
@@ -115,3 +117,54 @@ class TorchAdapter:
             if not self.torch.equal(actual.detach().cpu(), reference_tensor):
                 return False
         return True
+
+    def cpu_reference(self, bundle, index):
+        """Run the actual eager CPU implementation, independent of NPU output."""
+        original_name, original_device = self.name, self.device
+        try:
+            self.name, self.device = 'cpu', self.torch.device('cpu')
+            return self.invoke(self.prepare(bundle), self.inputs(bundle, index))
+        finally:
+            self.name, self.device = original_name, original_device
+
+    def outputs_equal(self, left, right):
+        return isinstance(left,tuple) and isinstance(right,tuple) and len(left)==len(right) and all(
+            a.shape==b.shape and a.dtype==b.dtype and self.torch.equal(a,b) for a,b in zip(left,right))
+
+    def secondary_output(self, bundle, index):
+        # Independent eager invocation only after a CPU disagreement. Reuse the
+        # already held device lease rather than acquiring it a second time.
+        original=self.name
+        try:
+            self.name='eager-npu'
+            prepared=self.prepare(bundle)
+            output=self.invoke(prepared,self.inputs(bundle,index))
+            self.synchronize()
+            return output
+        finally:
+            self.name=original
+
+    def diagnose_accuracy(self, output, expected):
+        import struct
+        from ..tensors import DTYPES
+        total=mismatches=nonfinite=0
+        max_abs=max_rel=absolute_sum=0.0
+        for actual, reference_value in zip(output,expected):
+            if isinstance(reference_value, self.torch.Tensor):
+                reference = reference_value.detach().cpu().to(self.torch.float64)
+            else:
+                spec, raw = reference_value
+                fmt,width=DTYPES[spec.dtype]
+                values=struct.unpack('<'+fmt*(len(raw)//width),raw)
+                reference=self.torch.tensor(values,dtype=self.torch.float64).reshape(spec.shape)
+            actual=actual.detach().cpu().to(self.torch.float64)
+            if actual.shape!=reference.shape:
+                return {'error':'output shape mismatch','basis':'cpu'}
+            finite=self.torch.isfinite(actual)&self.torch.isfinite(reference)
+            diff=(actual-reference).abs()
+            total+=actual.numel();mismatches+=int((actual!=reference).sum());nonfinite+=int((~finite).sum())
+            if bool(finite.any()):
+                absolute=diff[finite];relative=absolute/reference[finite].abs().clamp_min(1e-30)
+                max_abs=max(max_abs,float(absolute.max()));max_rel=max(max_rel,float(relative.max()));absolute_sum+=float(absolute.sum())
+        return {'max_abs':max_abs,'mean_abs':absolute_sum/max(1,total-nonfinite),'max_rel':max_rel,
+                'mismatches':mismatches,'elements':total,'nonfinite':nonfinite}

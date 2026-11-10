@@ -212,7 +212,7 @@ def test_static_selection_preserves_entire_case_and_base_input():
 def test_replay_requires_only_one_seed_and_rejects_generation_overrides(capsys):
     from autofusedebugger.fuzz.cli import main
     pytest.importorskip("torch")
-    assert main(["replay", "42", "--no-save"]) == 0
+    assert main(["replay", "42", "--backend", "cpu", "--no-save"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["seed"] == "42" and len(result["shape_results"]) == 3
     for flag in ("--dynamic", "--max-nodes", "--dtype", "--seed-token"):

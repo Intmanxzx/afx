@@ -14,7 +14,10 @@ autofusedbg fuzz view RESULTS.sqlite
 - setup默认连接https://autofuse.online，核对管理员登记姓名与token，不接受用姓名冒充另一身份。用户不再指定UUID或密钥文件。
 - token作为命令参数可能留在shell历史或短暂可见于进程列表，请使用安全终端。无人值守同步需要持久凭据，工具内部以0600私有文件保存；不输出到日志/结果/返回JSON。这不等于不落盘。
 - 资源默认按有效CPU/cgroup/亲和性/内存/磁盘余量保守计算。目前调度器串行，cpu_workers=1；compile_threads=min(8,有效核数的一半)，内存预算50%，缓存预算最多空闲磁盘20%且上限20GiB。不是未经基准测试宣称全局最优。
-- stop不传任务ID取消全部待执行任务并请求停止运行任务；高级单任务控制仅保留内部兼容参数。
+- run默认持续运行，直到`fuzz stop`。`--count 100`表示100个case，每个都执行CPU和AF-MLIR；`--backend`只增加其他后端，不能移除必选项。
+- stop关闭持续生成器，取消全部待执行任务并请求停止运行任务；高级单任务控制仅保留内部参数。
+- replay默认执行CPU和AF-MLIR；显式`--backend`用于已知故障的单后端诊断。所有后端使用同一执行流程。
+- AF-MLIR与实际eager CPU输出不一致时，自动独立执行eager-npu复核；与eager-npu一致可判Pass，但保留CPU分歧与误差。编译/运行错误不会通过这一规则被掩盖。
 - replay和run隐藏底层queue/database/data-dir/compile-threads参数，普通帮助不展示。工作目录可用AUTOFUSEDBG_HOME隔离。
 
 低频维护：
@@ -46,4 +49,4 @@ fuzz admin backup DATABASE DESTINATION
 
 管理员导出token的文件是离线分发产物，不是用户setup参数。轮换按姓名查询，不要求用户知道UUID。
 
-本阶段尚未完成（不能按目标描述成已实现）：默认无限run、CPU+af-mlir强制配对、eager-npu二级精度判定、误差统计/核心日志展示、100条AF MLIR真实采集。当前run仍为有限队列；不传seed/count仍处理现有队列。AF MLIR继续fail closed直到验证已安装二进制真实能力。老版本公网服务命令仍保持原样，部署新版时必须同步切换成fuzz admin serve。
+AF-MLIR运行时必须实际加载带RunMlirCodegen的库，并使用严格MLIR模式；默认CANN库没有该能力时明确拒绝，不静默回退legacy。当前验证范围仅冻结Elementwise/Reduce/Transpose图，不代表任意图能力。错误日志与精度指标通过SQLite同步至详情页；硬崩溃/超时日志尚未完整接入。真实编译/kernel性能仍不能可靠拆分，保持为空。部署新版需使用`fuzz admin serve`。

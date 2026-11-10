@@ -25,7 +25,13 @@ def run(queue, database, identity, claim):
     generation_start=time.perf_counter_ns()
     bundle = materialize(task['seed'])
     generation_ns=time.perf_counter_ns()-generation_start
-    result = execute(bundle, create_backend(config), evaluation)
+    from ..core_logs import capture_tail
+    with capture_tail() as core_log:
+        result = execute(bundle, create_backend(config), evaluation)
+    if result['status'] in {'error', 'unsupported'} and core_log():
+        diagnostics = json.loads(result['execution']['diagnostics'])
+        diagnostics['error'] = core_log()
+        result['execution']['diagnostics'] = json.dumps(diagnostics)
     telemetry=json.loads(result['execution']['telemetry'])
     telemetry['stages']['generation']=generation_ns
     result['execution']['telemetry']=json.dumps(telemetry)

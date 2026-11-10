@@ -56,6 +56,11 @@ def normalize(result, environment):
     if telemetry is not None:
         from ..telemetry import validate
         contexts['execution']['telemetry'] = validate(telemetry)
+    diagnostics=result.get('execution',{}).get('diagnostics')
+    if diagnostics is not None:
+        from ..failure_details import validate as validate_diagnostics
+        contexts['execution']['diagnostics']=validate_diagnostics(diagnostics)
+    if len(canonical(contexts['execution']))>16384:raise ValueError('execution context too large')
     row = {key: text(result[key], limit) for key, limit in
            (('seed',128),('workload_id',64),('oracle_id',128),('backend',64),('status',32))}
     row.update(prepare_ns=integer(result.get('prepare_ns')),

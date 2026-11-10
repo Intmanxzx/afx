@@ -198,6 +198,17 @@ def main(argv=None):
 def replay(argv):
     parser = replay_parser()
     args = parser.parse_args(argv)
+    if args.backend is None:
+        # Normal replay includes both mandatory standards. Explicit --backend
+        # remains useful for focused debugging of an already identified failure.
+        import copy
+        codes = []
+        for backend in ('cpu', 'af-mlir'):
+            selected = copy.copy(args)
+            selected.backend = backend
+            selected.device = 'cpu' if backend == 'cpu' else (args.device or 'npu:0')
+            codes.append(execute_args(selected))
+        return max(codes)
     return execute_args(args)
 
 
@@ -205,7 +216,7 @@ def replay_parser():
     parser = argparse.ArgumentParser(prog="autofusedbg fuzz replay")
     parser.add_argument("seed", help="self-contained short seed")
     parser.add_argument("--static-only", action="store_true", help="execute base sample only; does not change case or workload ID")
-    parser.add_argument("--backend", choices=BACKEND_NAMES, default="cpu")
+    parser.add_argument("--backend", choices=BACKEND_NAMES, help="focused backend diagnostic; default replays CPU and AF-MLIR")
     parser.add_argument("--device")
     parser.add_argument("--database", help=argparse.SUPPRESS)
     parser.add_argument("--no-save", action="store_true", help="explicit ephemeral execution")
