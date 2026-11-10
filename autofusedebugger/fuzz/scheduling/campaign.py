@@ -6,7 +6,7 @@ from dataclasses import asdict
 from ..contracts import canonical_json
 
 
-def initialize(ledger, configs, evaluation, count, devices=None):
+def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None):
     if count is not None and (type(count) is not int or count < 1):
         raise ValueError('campaign count must be positive or unlimited')
     with ledger._connection() as conn:
@@ -14,7 +14,7 @@ def initialize(ledger, configs, evaluation, count, devices=None):
             raise ValueError('campaign backend matrix exceeds task capacity')
         conn.execute('CREATE TABLE IF NOT EXISTS campaign (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, remaining INTEGER, stopped INTEGER NOT NULL)')
         conn.execute('INSERT OR REPLACE INTO campaign VALUES (1,?,?,0)',
-                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0}),count))
+                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or []}),count))
 
 
 def stop(ledger):

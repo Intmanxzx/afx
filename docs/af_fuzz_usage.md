@@ -203,3 +203,19 @@ autofusedbg fuzz replay C16 --backend cpu --scheduling combined
 CPU 参考现在每个 Shape 只运行一次，自身显示“未校验”，这表示它是精度基准，不是用同一个输出验证自己。目标 backend 才显示与 CPU 比较后的通过/失败。工具效率不把 CPU 参考重复计入目标吞吐。窗口取消和写库失败单独列出；没有 Shape 的错误仍单独统计。
 
 round64 的独立同步 daemon 也已重启到新安装，原结果 ACK 保留；其私有数据库备份在 mlir `stages-audit-1110/private-sync-backup/`。回滚客户端时同步回滚 uploader 的 Python/PYTHONPATH（旧启动参数保存在该私有目录），不要把旧数据库覆盖回去。生产历史记录没有新阶段事实时，页面继续显示“未采集”，不会用 0 或接收时间补造指标。
+
+### 随机长跑、阶段显示与尺寸分布（2026-11-10）
+
+```sh
+autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --device npu:1 --save
+```
+
+不传 `--count` 会持续运行，使用相同 home 的 `autofusedbg fuzz stop` 停止。`--exclude-op transpose` 仅用于随机 staged campaign：先按原 C/D 协议生成，在生成 worker 中跳过含 transpose 的候选，既不启动 backend，也不记录成成功/失败 Shape；队列 reason 为 `excluded_op`。不会更改历史 seed、算子定义或输入字节。有限 `--count` 表示候选数，可能因过滤而少于最终执行数。
+
+`--auto-resources` 根据 CPU/cgroup、内存及设备数选择进程预算，compile_threads=1，并保留原内存/缓存上限；不与手工 workers/compile-threads 混用。双 Ascend 910 的 8 个固定无 Transpose Case 对照：4 worker 61.42 s、8 worker 63.60 s，两组执行槽使用率约 94%/83%，8 worker 无收益，因此双卡起始预算选 4 worker。该样本 AF-MLIR 全失败，只能校准工具开销/槽使用，不能证明 AICore 高使用率或成功编译吞吐最优。CPU 期望结果与 NPU 首调同依赖生成、可并行；结果校验等待两者。就绪 NPU 首调优先，避免后处理积压延迟空闲卡启动。
+
+生命周期显示 UTC `HH:mm:ss.SSS`，悬停保留完整日期和时区；用例执行耗时保留一位小数。阶段名称为 CPU 期望结果、CPU 结果校验、NPU首调(惰性编译/执行/同步)。缺失数值仍显示未采集，但删除冗余解释文案。
+
+分布分析工具：`python tools/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 C/D，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前协议轴范围 1–8、最多 4096 元素；D 变体按固定顺序选合法尺寸，不是新的均匀抽样。若要扩大范围/改变分布，必须另立可编码生成协议，不修改 C/D 重放语义。
+
+当前 oracle1 环境为 `/home/ubuntu/af-fuzz/venv-continuous-1110`，旧版本/旧备份/旧结果已按要求清除；systemd 主服务直接引用新环境，不再叠加历史 override。身份与 ACK、防旧数据回流的 tombstone 保留。后续自动备份只备份新数据，不再使用已经删除的旧环境。客户端新安装为 `/mnt/workspace/af-fuzz/continuous-1110/installed`。

@@ -31,8 +31,9 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
     ownership = own_queue(ledger) if _owned_fd is None else nullcontext(_owned_fd)
     with ownership as fd, tempfile.TemporaryDirectory(prefix='.stage-window-',dir=ledger.path.parent) as scratch:
         _bind_results(ledger,database)
-        summary = dict(_reconcile(ledger,database),completed=0,failed=0,cancelled=0,record_failed=0)
+        summary = dict(_reconcile(ledger,database),completed=0,failed=0,cancelled=0,record_failed=0,skipped=0)
         names = set()
+        exclude_ops = []
         for task in _tasks(ledger):
             if task['state']=='pending':
                 _validate_task(task)
@@ -40,7 +41,9 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
         with ledger._connection() as conn:
             if conn.execute("SELECT 1 FROM sqlite_master WHERE name='campaign'").fetchone():
                 row=conn.execute('SELECT payload FROM campaign WHERE id=1').fetchone()
-                if row: names.update(json.loads(row[0]).get('devices',[]))
+                if row:
+                    policy=json.loads(row[0]);names.update(policy.get('devices',[]))
+                    exclude_ops=policy.get('exclude_ops',[])
         pool = Pool(budget,scratch,fd,discover(sorted(names)),max_tasks=budget.worker_max_tasks)
         if budget.device_budget_bytes:
             for device in pool.devices: device.capacity=min(device.capacity,budget.device_budget_bytes)
@@ -85,7 +88,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             config=json.loads(session.task['execution']) if session else asdict(ExecutionConfig('cpu','cpu',budget.compile_threads,scheduling='staged'))
             ev=json.loads(session.task['evaluation']) if session else json.loads(case.tasks[0]['evaluation'])
             job={'kind':s.kind.value,'directory':case.directory,'bundle':case.bundle,'config':config,'evaluation':ev}
-            if s.kind==Kind.GENERATE:job['seed']=case.seed
+            if s.kind==Kind.GENERATE:job.update(seed=case.seed,exclude_ops=exclude_ops)
             elif s.kind==Kind.REFERENCE:
                 job['output_file']='reference.npz'
                 job['config']['static_only']=all(json.loads(t['execution'])['static_only'] for t in case.tasks)
@@ -134,6 +137,11 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     for t in case.tasks:
                         ss=next(x for x in sessions.values() if x.task['id']==t['id'])
                         make_record(case,ss,failure(t,'generation',response['error']),())
+                    return
+                if response['value'].get('excluded'):
+                    for t in case.tasks:
+                        ledger._finish_claim(t['id'],t['claim'],'cancelled','excluded_op')
+                        t['done']=True;summary['skipped']+=1
                     return
                 case.bundle=response['value'];s.output=case.bundle
                 ref=stage(Kind.REFERENCE,case,(s,))
@@ -266,7 +274,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                         del cases[case.identity]
                 now=time.monotonic_ns()
                 ready=[s for s in stages.values() if s.ready(stages,now)]
-                ready.sort(key=lambda s:(0 if s.kind in {Kind.COMPARE,Kind.RECORD} else 1,s.ready_ns))
+                ready.sort(key=lambda s:(0 if s.kind==Kind.COMBINED else 1 if s.kind in {Kind.COMPARE,Kind.RECORD} else 2,s.ready_ns))
                 for s in ready:
                     try:lease=pool.reserve(s)
                     except ValueError as exc:

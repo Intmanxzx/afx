@@ -346,3 +346,15 @@ Case/Backend Session/Stage Task 公共执行契约、依赖 DAG、一次生成�
 最终源码回归：mlir **305 passed / 4 skipped**（旧 Node）；日志 `/mnt/workspace/af-fuzz/stages-audit-1110/complete-tests.log`。本地页面/DAG **29 passed**；本地 CLI 源码门禁用例因未安装固定 NNSmith 失败，该用例以完整远端结果为准，不宣称 macOS 全量通过。隔离中心验证 **89 条事实** 的结果先 ACK、事实独立 ACK、幂等重传与时间线。独立安装入口在 `/tmp` 下重放 D16 eager-npu：3 Shape 通过，避免源码工作目录遮蔽安装产物。
 
 oracle1 已切换到新环境，服务 active；公开 app.js SHA256 `fd8108a52b347efd79a2a68bc8139a6793a5e4927fa2ac4579e480cb20f45975` 与本地一致。生产 users=1、sources=5、receipts=2409、owners=200、attempts=200 保持，integrity_check=ok。公开页保留历史数据的“未采集”，没有上传测试结果伪造线上吞吐。round64 独立上传器已从旧 round64 源码切换至新安装，私有库备份在 mlir `stages-audit-1110/private-sync-backup/`，启动后 state=ok、pending=0、原结果 ACK=200 保持；没有改动 token 或身份配置。
+
+### 9.13 随机长跑与输入轴分布审计
+
+本次 256 对固定随机 seed：C 256 成功生成，D 188 成功、68 无三组合法 Shape；不含 Transpose 的 C/D 分别 129/85。C S0 输入轴直方图（1..8）为 `[744,130,76,70,66,83,83,70]`，1 占 56.3%；排除 Transpose 后为 `[364,55,26,29,32,33,33,32]`，1 占 60.3%。D S0/S1/S2 分别为 `[589,119,74,70,64,78,80,67]`、`[589,145,131,41,51,61,67,56]`、`[589,8,103,206,51,61,67,56]`。因此最终输入轴**不是独立均匀分布**；它符合当前小尺寸/广播约束/确定性变体实现，但不符合广范围覆盖的假设。
+
+初始 concrete placeholder 使用 1..8 均匀抽样，元素预算超限时改为 1 并打乱轴；后续符号求解和广播产生更多单例轴，不能用初始抽样公式推断最终分布。D 按升序尝试 `{2,3,4,max(2,extent-1),extent+1}`，取前两个合法变体，使 S1/S2 偏向 2/3/4。审计保存 816 组分层直方图与每个输入的实际 Shape。未扩大历史协议；新增 campaign 过滤只影响候选是否执行。
+
+部署清理按用户本次明确要求：新版验证后移除 oracle1 旧环境、旧发布包、旧备份和旧结果，保留当前身份/token/来源/ACK，以及防止旧结果恢复上传的删除标记；不再承诺已删除环境可原地回滚。自动备份脚本改用新环境，未来仍可备份新数据。
+
+可复核分层计数归档在 `docs/benchmarks/shape-distribution-20261110.json`，完整逐输入样本在 mlir `/mnt/workspace/af-fuzz/continuous-1110/shape-distribution.json`。双卡预算对照与日志位于同目录 `tune-4/`、`tune-8/`；对照期间同时运行测试，有 CPU 干扰，不能当严格性能排名，只支持“不盲目增加 worker”的保守选择。
+
+最终空闲环境全量回归：**307 passed / 5 skipped**（旧 Node），日志 `continuous-1110/final-idle-tests.log`。并跑校准时两个短超时测试失败，停止基准后完整回归通过；未通过放宽生产超时或删除断言隐藏失败。本地页面/DAG 单独 **30 passed**。细分每个输入/rank/轴后多数分组样本很少，不据此声称每个轴都通过统计拟合；唯一达到 20 样本的无 Transpose C 分组 input0/rank1/axis0 共 29 个值，89.7% 为 1，进一步说明约束引入明显偏置。

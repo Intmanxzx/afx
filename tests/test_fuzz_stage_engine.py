@@ -335,3 +335,21 @@ def test_compressed_artifact_bound_checked_before_loading(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match='unpacked'):
         artifacts.read_arrays(tmp_path, dict(version=1, file=path.name, counts=[1],
             sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+
+
+def test_excluded_graph_never_runs_backend(tmp_path, monkeypatch):
+    from fuzz_fixtures import bundle
+    from autofusedebugger.fuzz import generation
+    from autofusedebugger.fuzz.scheduling.stage_worker import perform
+    monkeypatch.setattr(generation, 'materialize', lambda _: bundle())
+    assert perform({'kind':'generate','seed':'C16','directory':str(tmp_path),
+                    'exclude_ops':['transpose']}) == {'excluded':True}
+    assert not list(tmp_path.iterdir())
+
+
+def test_npu_first_resource_budget_respects_limits(monkeypatch):
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'cpu_worker_ceiling':40,'effective_memory_bytes':200*1024**3})
+    assert resources.npu_first_defaults('.',2,Budget()) == {'cpu_workers':4,'compile_threads':1}
+    assert resources.npu_first_defaults('.',2,Budget(memory_budget_bytes=4*1024**3))['cpu_workers']==2

@@ -19,7 +19,7 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None):
             'processing': [r for r in result['stages'] if r['stage']=='shape_processing'],
             'success_shapes_per_min': None, 'completed_shapes_per_min': None,
             'cpu_pool_utilization': None, 'npu_slot_utilization': None,
-            'note': '未采集完整调度窗口及资源租约；不能从阶段和推导吞吐或使用率。'}
+            'note': ''}
         from .efficiency import statistics as efficiency
         selected_ids={r[0] for r in conn.execute(cte+'SELECT a.id'+base+where,values)}
         result['tool_efficiency']['windows']=efficiency(conn,selected_ids if any((seed,status,user_id,q)) else None)

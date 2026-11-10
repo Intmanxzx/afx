@@ -16,6 +16,8 @@ def register(sub, maintenance):
         parser.add_argument('--queue', help=__import__('argparse').SUPPRESS)
         if name == 'run':
             parser.add_argument('seeds', nargs='*', help='self-contained short seeds')
+            parser.add_argument('--exclude-op', action='append', choices=('transpose',), help='skip random candidates containing this op; seed semantics are unchanged')
+            parser.add_argument('--auto-resources', action='store_true', help='derive NPU-first stage worker budget from current resource limits')
             parser.add_argument('--count', type=int, help='number of cases; omitted means continuous until fuzz stop')
             parser.add_argument('--fg', dest='foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
@@ -78,6 +80,8 @@ def dispatch(args):
         if seeds or count < 1:
             raise ValueError('--count requires a positive count and no explicit seeds')
 
+    if getattr(args,'exclude_op',None) and (seeds or args.scheduling!='staged'):
+        raise ValueError('--exclude-op requires a random staged campaign')
     evaluation = EvaluationConfig(performance=args.performance)
     from .budgets import Budget
     from ..resources import adaptive_defaults
@@ -88,6 +92,11 @@ def dispatch(args):
     if getattr(args,'device_memory_bytes',None) is not None:budget=replace(budget,device_budget_bytes=args.device_memory_bytes)
     from .devices import select_devices
     devices=select_devices(args.device)
+    if getattr(args,'auto_resources',False):
+        if args.workers is not None or args.compile_threads is not None:
+            raise ValueError('--auto-resources cannot be combined with explicit worker/thread overrides')
+        from ..resources import npu_first_defaults
+        budget=replace(budget,**npu_first_defaults(home,len(devices),budget))
     import uuid
     batch_id = str(uuid.uuid4())
     configs = [ExecutionConfig(backend, devices[0] if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, scheduling=getattr(args,'scheduling','staged'), static_only=args.static_only, batch_id=batch_id, save_results=args.save)
@@ -97,4 +106,4 @@ def dispatch(args):
     from .hosting import launch
     return launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version==3,device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
                   timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
-                  campaign=(configs,evaluation,count,devices) if not seeds else None)
+                  campaign=((configs,evaluation,count,devices,args.exclude_op) if getattr(args,'exclude_op',None) else (configs,evaluation,count,devices)) if not seeds else None)

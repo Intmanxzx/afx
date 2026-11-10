@@ -70,3 +70,18 @@ def test_dag_does_not_invent_invalid_broadcast_shape(dag):
     graph = dag({'metadata': {'input_shapes': {'a': [2], 'b': [3]},
                              'graph': {'nodes': [{'op': 'add', 'inputs': ['a', 'b'], 'output': 'c'}]}}})
     assert 'shape' not in next(n for n in graph['nodes'] if n['name'] == 'c')
+
+
+def test_compact_lifecycle_and_stage_labels():
+    node=shutil.which('node')
+    if not node:pytest.skip('Node needed')
+    if int(subprocess.check_output([node,'--version'],text=True).lstrip('v').split('.')[0])<16:
+        pytest.skip('viewer tests need Node.js 16+')
+    source=(Path(__file__).parents[1]/'autofusedebugger/fuzz/view/static/app.js').read_text()
+    helpers=source[source.index('function lifecycleTime('):]
+    name=source[source.index('function stageName('):].split('\n')[0]
+    script=name+'\n'+helpers+"\nconsole.log(JSON.stringify([lifecycleTime('2026-11-10T12:42:30.803558+00:00'),stageLabel({kind:'reference'}),stageLabel({kind:'compare'}),stageLabel({kind:'first_call_combined',lease:{device_uuid:'u'}})]));"
+    out=json.loads(subprocess.check_output([node,'-e',script],text=True))
+    assert out==['12:42:30.803','CPU 期望结果','CPU 结果校验','NPU首调(惰性编译/执行/同步)']
+    assert '(value/1e9).toFixed(3)' not in source
+    assert 'result.tool_efficiency?.note' not in source

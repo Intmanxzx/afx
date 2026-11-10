@@ -152,3 +152,20 @@ def adaptive_defaults(home):
         result['memory_budget_bytes']=max(1,int(memory*.5))
     if disk:result['cache_budget_bytes']=max(1,min(20*1024**3,int(disk*.2)))
     return result
+
+
+def npu_first_defaults(home, devices, budget):
+    """Reserve CPU pipeline capacity around each device, bounded by RAM/cores.
+
+    A starting policy, not a claim of a global optimum. Real utilization and
+    backend successes must be measured; failed compilation is not useful load.
+    """
+    inventory = resource_inventory(home)
+    cores = inventory.get('cpu_worker_ceiling') or 1
+    memory = min(v for v in (inventory.get('effective_memory_bytes'),
+                            budget.memory_budget_bytes) if v) if any(
+                                (inventory.get('effective_memory_bytes'), budget.memory_budget_bytes)) else 2*1024**3
+    # Dual-910 calibration: 8 workers did not improve slot use over 4;
+    # avoid doubling idle runtime memory without measured benefit.
+    workers = max(1, min(cores, memory//(2*1024**3), max(4, 2*devices)))
+    return {'cpu_workers': workers, 'compile_threads': 1}

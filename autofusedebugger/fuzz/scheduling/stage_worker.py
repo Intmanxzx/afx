@@ -47,6 +47,8 @@ def perform(job):
         from ..generation import materialize, workload_id
         from ..case_spec import encode
         bundle = materialize(job['seed'])
+        if set(job.get('exclude_ops',[])) & {n['op'] for n in json.loads(bundle.spec.graph_json)['nodes']}:
+            return {'excluded': True}
         return write_bundle(job['directory'],bundle)
     if kind == 'record':
         from ..storage import ResultRepository
