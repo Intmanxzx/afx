@@ -58,3 +58,9 @@ oracle1：af-fuzz.service + Caddy；应用loopback8090，公网80/443由Caddy终
 左侧“总览 / 实验记录 / 后端”导航；所有图表、记录和详情在同一套页面与样式中展示，不再打开旧HTML。旧/report书签也进入统一网站。当前线上venv-round29。
 
 默认seed固定10字符：`B000000016`；`fuzz replay B000000016 --backend af-legacy --device npu:0`。更早的短输入和数值输入仍解析同case；历史全128bit随机seed不会为压缩长度而截断。列表中的历史AF模式未记录是数据缺失提示，不是新增执行后端。
+
+### 记录页偏好与测量口径
+
+- 初始化可用 `--user-name niuyuhu` 指定管理员发放的展示名；公网身份以token对应的管理员记录为准，不可用展示名冒充他人。
+- 单框搜索匹配姓名、seed、版本、算子、状态等列；分页大小与列顺序/显隐保存在当前浏览器。
+- CPU只显示总耗时（秒，1位小数）。NPU性能仅展示可靠kernel profiler数据；无采集值时默认隐藏。编译耗时未能独立测量时为空，不用prepare/first-call时间替代。

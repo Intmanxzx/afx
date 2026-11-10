@@ -9,18 +9,13 @@ function beijing(value) {
 const caseMetadata = new Map();
 const labels = {ok:'执行成功',fail:'精度失败',error:'异常',unsupported:'不支持'};
 const initial = new URLSearchParams(location.search);
-for (const name of ['seed','status','user_id']) if(initial.has(name)) form.elements[name].value = initial.get(name);
-let applied = parameters();
-let cursors = [0], page = 0, next = null, generation = 0, detailGeneration = 0;
-function parameters() {
-  const p = new URLSearchParams();
-  const seed = form.elements.seed.value.trim();
-  const status = form.elements.status.value;
-  if(seed) p.set('seed',seed);
-  if(status) p.set('status',status);
-  if(form.elements.user_id.value.trim())p.set('user_id',form.elements.user_id.value.trim());
-  return p;
-}
+form.elements.q.value=initial.get('q')||initial.get('user_id')||initial.get('seed')||'';
+let applied=parameters();
+let cursors=[0],page=0,next=null,generation=0,detailGeneration=0;
+let pageSize=50;
+try{const size=Number(localStorage.getItem('af-fuzz.page-size'));if([10,25,50,100,200].includes(size))pageSize=size;}catch{}
+$('page-size').value=String(pageSize);
+function parameters(){const p=new URLSearchParams();const q=form.elements.q.value.trim();if(q)p.set('q',q);return p;}
 async function api(path) {
   const response = await fetch(path, {cache:'no-store',credentials:'omit'});
   const value = await response.json();
@@ -49,7 +44,7 @@ async function details(identity) {
     table.append(header);
     for(const shape of result.shape_results) {
       const row = document.createElement('tr');
-      for(const value of [shape.shape_index,shape.correctness,shape.performance,shape.first_call_combined_ns == null ? '—' : (shape.first_call_combined_ns/1e6).toFixed(3),shape.mean_wall_ns == null ? '—' : (shape.mean_wall_ns/1e6).toFixed(3),shape.error_stage || '—',shape.error_summary || '—']) cell(row,value);
+      for(const value of [shape.shape_index,({pass:'Pass',fail:'Failed',error:'Failed'}[shape.correctness]||'Unkown'),(shape.performance==='error'?'Failed':shape.performance==='measured'?'已记录（见口径）':'Unkown'),shape.first_call_combined_ns == null ? '—' : (shape.first_call_combined_ns/1e6).toFixed(3),shape.mean_wall_ns == null ? '—' : (shape.mean_wall_ns/1e6).toFixed(3),shape.error_stage || '—',shape.error_summary || '—']) cell(row,value);
       table.append(row);
     }
     $('shape-detail').replaceChildren(table);
@@ -60,111 +55,75 @@ async function details(identity) {
   } catch(error) {if(request === detailGeneration) $('detail-message').textContent = error.message;}
 }
 const extraColumns=[['cann','CANN'],['torch','Torch'],['torch_npu','Torch NPU'],['autofuse_commit','Autofuse commit'],['autofuse_binary','Autofuse binary'],['triton','Triton'],['python','Python'],['package_version','Debugger'],['machine','架构'],['platform','系统'],['source_id','来源 ID'],['batch_id','批次']];
-const preferenceKey='af-fuzz.record-columns.v1';
-let columnPreferences={order:[],hidden:extraColumns.map(([key])=>key)}, currentColumns=[];
-try{const saved=JSON.parse(localStorage.getItem(preferenceKey));if(saved && Array.isArray(saved.order)&&saved.order.every(x=>typeof x==='string')&&Array.isArray(saved.hidden)&&saved.hidden.every(x=>typeof x==='string'))columnPreferences=saved;}catch{}
-if(!columnPreferences.outcomesV2){
- columnPreferences.order=columnPreferences.order.flatMap(key=>key.startsWith('backend:')?['accuracy','performance','duration'].map(kind=>key+':'+kind):[key]);
- columnPreferences.order=columnPreferences.order.filter(key=>key!=='user_id');columnPreferences.order.splice(1,0,'user_id');
- columnPreferences.hidden=columnPreferences.hidden.filter(key=>key!=='user_id');columnPreferences.outcomesV2=true;
-}
+const preferenceKey='af-fuzz.record-columns.v3';
+let columnPreferences={order:[],visibility:{}},currentColumns=[],lastData='',lastRows=[];
+try{const saved=JSON.parse(localStorage.getItem(preferenceKey));if(saved&&Array.isArray(saved.order)&&saved.visibility&&typeof saved.visibility==='object')columnPreferences=saved;}catch{}
+function orderedColumns(){return [...columnPreferences.order.map(key=>currentColumns.find(c=>c.key===key)).filter(Boolean),...currentColumns.filter(c=>!columnPreferences.order.includes(c.key))];}
+function isVisible(c){return columnPreferences.visibility[c.key]??(c.defaultVisible&&c.populated);}
 function saveColumns(){try{localStorage.setItem(preferenceKey,JSON.stringify(columnPreferences));}catch{}applyColumns();renderColumnPicker();}
-function configureColumns(definitions){
- currentColumns=definitions;
- for(const [key] of definitions)if(!columnPreferences.order.includes(key))columnPreferences.order.push(key);
- applyColumns();renderColumnPicker();
-}
-function orderedColumns(){return columnPreferences.order.map(key=>currentColumns.find(c=>c[0]===key)).filter(Boolean);}
+function configureColumns(definitions){currentColumns=definitions;applyColumns();if(!$('column-picker').open)renderColumnPicker();}
 function applyColumns(){
- const visible=orderedColumns().filter(([key])=>!columnPreferences.hidden.includes(key));
- if(!visible.length)return;
- const table=$('rows').closest('table');table.querySelector('colgroup')?.remove();
+ const visible=orderedColumns().filter(isVisible),table=$('rows').closest('table');table.querySelector('colgroup')?.remove();
  const cols=document.createElement('colgroup'),header=document.createElement('tr');
- for(const [key,label,width] of visible){const col=document.createElement('col');col.style.width=width+'px';cols.append(col);const th=document.createElement('th');th.textContent=label;th.dataset.column=key;header.append(th);}
- table.prepend(cols);table.style.minWidth=visible.reduce((sum,c)=>sum+c[2],0)+'px';$('case-columns').replaceChildren(header);
- for(const row of $('rows').children){const cells=new Map([...row.children].map(td=>[td.dataset.column,td]));for(const [key] of orderedColumns()){const td=cells.get(key);if(td){td.hidden=columnPreferences.hidden.includes(key);row.append(td);}}}
+ for(const c of visible){const col=document.createElement('col');col.style.width=c.width+'px';cols.append(col);const th=document.createElement('th');th.textContent=c.label;th.dataset.column=c.key;header.append(th);}
+ table.prepend(cols);table.style.minWidth=visible.reduce((sum,c)=>sum+c.width,0)+'px';$('case-columns').replaceChildren(header);
+ for(const row of $('rows').children){const cells=new Map([...row.children].map(td=>[td.dataset.column,td]));for(const c of orderedColumns()){const td=cells.get(c.key);if(td){td.hidden=!isVisible(c);row.append(td);}}row.hidden=!visible.length;}
 }
 function renderColumnPicker(){
  const options=$('column-options');options.replaceChildren();const columns=orderedColumns();
- columns.forEach(([key,label],index)=>{
-   const row=document.createElement('div');row.className='column-option';const control=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.checked=!columnPreferences.hidden.includes(key);box.dataset.column=key;
-   box.disabled=box.checked&&columns.filter(([k])=>!columnPreferences.hidden.includes(k)).length===1;
-   box.addEventListener('change',()=>{columnPreferences.hidden=columnPreferences.hidden.filter(k=>k!==key);if(!box.checked)columnPreferences.hidden.push(key);saveColumns();});control.append(box,document.createTextNode(label));row.append(control);
-   for(const [offset,text] of [[-1,'上移'],[1,'下移']]){const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=offset<0?'↑':'↓';button.setAttribute('aria-label',label+text);button.disabled=index+offset<0||index+offset>=columns.length;button.addEventListener('click',()=>{const other=columns[index+offset][0],a=columnPreferences.order.indexOf(key),b=columnPreferences.order.indexOf(other);[columnPreferences.order[a],columnPreferences.order[b]]=[columnPreferences.order[b],columnPreferences.order[a]];saveColumns();});row.append(button);}options.append(row);
+ columns.forEach((c,index)=>{
+ const row=document.createElement('div');row.className='column-option';const label=document.createElement('label'),box=document.createElement('input');box.type='checkbox';box.checked=isVisible(c);box.dataset.column=c.key;
+ box.addEventListener('change',()=>{columnPreferences.visibility[c.key]=box.checked;saveColumns();});label.append(box,document.createTextNode(c.label));row.append(label);
+ for(const [offset,text] of [[-1,'上移'],[1,'下移']]){const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=offset<0?'↑':'↓';button.setAttribute('aria-label',c.label+text);button.disabled=index+offset<0||index+offset>=columns.length;button.addEventListener('click',()=>{const order=columns.map(c=>c.key);[order[index],order[index+offset]]=[order[index+offset],order[index]];columnPreferences.order=order;saveColumns();});row.append(button);}options.append(row);
  });
 }
-$('reset-columns').addEventListener('click',()=>{columnPreferences={order:currentColumns.map(c=>c[0]),hidden:extraColumns.map(c=>c[0]),outcomesV2:true};saveColumns();});
-async function load() {
-
-  const request = ++generation;
-  $('message').textContent = '加载中…'; $('next').disabled = true; $('previous').disabled = true;
-  const p = applied, list = new URLSearchParams(p);
-  list.set('limit','50'); list.set('after',String(cursors[page]));
-  try {
-    const [summary,result] = await Promise.all([api('api/summary?' + p),api('api/cases?' + list)]);
-    if(request !== generation) return;
-    $('refresh-time').textContent = '更新于 ' + beijing(new Date());
-    $('total').textContent = summary.total.toLocaleString();
-    $('ok').textContent = (summary.by_status.ok || 0).toLocaleString();
-    $('fail').textContent = (summary.by_status.fail || 0).toLocaleString();
-    $('errors').textContent = ((summary.by_status.error || 0)+(summary.by_status.unsupported || 0)).toLocaleString();
-    $('rows').replaceChildren();
-    const present=new Set(result.items.flatMap(item=>Object.keys(item.backends)));
-    const order=['cpu','npu-eager','triton-npu','af-legacy','af-mlir'];
-    const backends=[...order.filter(b=>present.has(b)),...Array.from(present).filter(b=>!order.includes(b)).sort()];
-    const table=$('rows').closest('table');
-    table.querySelector('colgroup')?.remove();
-    const columns=document.createElement('colgroup');
-    for(const width of [220,260,...backends.map(()=>190),180]){const col=document.createElement('col');col.style.width=width+'px';columns.append(col);}
-    table.prepend(columns);table.style.minWidth=(660+190*backends.length)+'px';
-    const header=document.createElement('tr');
-    for(const label of ['Seed / 测试配置','设备',...backends,'时间']){const th=document.createElement('th');th.textContent=label;header.append(th);}
-    $('case-columns').replaceChildren(header);
-    for(const item of result.items) {
-      const tr=document.createElement('tr');
-      const seedCell=cell(tr,'');const seed=document.createElement('strong');seed.className='case-seed';seed.textContent=item.seed_short;seedCell.append(seed);
-      const meta=document.createElement('small');meta.className='case-ops';meta.textContent=(item.metadata.op_types||[]).join(' · ')+' ｜ '+(item.metadata.n_nodes??'—')+' 节点';seedCell.append(meta);
-      const mode=document.createElement('span');mode.className='config-label';mode.textContent=(item.execution?.static_only?'静态':'动态')+' · '+(item.evaluation?.performance?'正确性 + 性能':'正确性');seedCell.append(mode);
-      const device=cell(tr,'');const name=document.createElement('strong');name.textContent=item.device_name||'设备未记录';device.append(name);
-      const userCell=cell(tr,'');
-      const userButton=document.createElement('button');userButton.className='user-filter secondary';userButton.textContent=item.user_id||'未采集';userButton.title='只看此用户';userButton.disabled=!item.user_id;
-      userButton.addEventListener('click',()=>{form.elements.user_id.value=item.user_id;form.requestSubmit();});userCell.append(userButton);
-      for(const backend of backends){
-        const attempts=item.backends[backend]||[], latest=attempts[0];
-        const accuracyCell=cell(tr,''),performanceCell=cell(tr,''),timeCell=cell(tr,'');
-        if(!latest){for(const td of [accuracyCell,performanceCell,timeCell])td.textContent='未运行';continue;}
-        const correctness={pass:'精度通过',fail:'精度失败',error:'校验异常',unsupported:'不支持',not_checked:'未校验',not_requested:'未请求'};
-        const measurement={measured:'已测量',partial:'部分测量',error:'测量失败',not_completed:'未完成',not_requested:'未测量'};
-        for(const [td,text] of [[accuracyCell,correctness[latest.correctness_status]||'未校验'],[performanceCell,measurement[latest.measurement_status]||'未测量']]){const button=document.createElement('button');button.className='outcome-button secondary';button.textContent=text;button.addEventListener('click',()=>details(latest.id));td.append(button);}
-        for(const shape of latest.shapes.filter(s=>s.performance==='measured')){const metric=document.createElement('small');metric.textContent='S'+shape.shape_index+' · '+duration(shape.mean_wall_ns);performanceCell.append(metric);}
-        if(latest.shapes.some(s=>s.performance==='measured')){const metric=document.createElement('small');metric.textContent='同步 wall-time / 次';performanceCell.append(metric);}
-        timeCell.textContent=duration(latest.total_ns);const scope=document.createElement('small');scope.textContent=latest.duration_scope==='partial_recorded_only'?'仅已记录阶段':'生成 + 执行';timeCell.append(scope);
-        if(attempts.length>1){const history=document.createElement('details'),title=document.createElement('summary');history.className='history';title.textContent=attempts.length+' 次运行';history.append(title);for(const attempt of attempts){const button=document.createElement('button');button.className='history-result secondary';button.textContent=beijing(attempt.created_at)+' · '+(correctness[attempt.correctness_status]||'未校验')+' / '+(measurement[attempt.measurement_status]||'未测量');button.addEventListener('click',()=>details(attempt.id));history.append(button);}accuracyCell.append(history);}
-        caseMetadata.set(latest.id,item.metadata);
-      }
-      const date=cell(tr,'');date.className='case-date';date.textContent=beijing(item.created_at);
-      const keys=['seed','device','user_id',...backends.flatMap(b=>['accuracy','performance','duration'].map(kind=>'backend:'+b+':'+kind)),'time'];
-      for(const [key,label] of extraColumns){cell(tr,item.versions[key]??item[key]??'未采集');keys.push(key);}
-      [...tr.children].forEach((td,i)=>td.dataset.column=keys[i]);$('rows').append(tr);
-    }
-    const definitions=[['seed','Seed / 测试配置',220],['user_id','用户 ID',170],['device','设备',150],...backends.flatMap(b=>[['backend:'+b+':accuracy',b+' · 精度',130],['backend:'+b+':performance',b+' · 性能测量',170],['backend:'+b+':duration',b+' · 总耗时',150]]),['time','时间',180],...extraColumns.map(([key,label])=>[key,label,210])];
-    configureColumns(definitions);
-    next = result.next_cursor;
-    $('next').disabled = next === null; $('previous').disabled = page === 0;
-    $('page-label').textContent = `第 ${page+1} 页 · 本页 ${result.items.length} 条 · 每页最多 50 条`;
-    $('message').textContent = result.items.length ? '' : '没有符合条件的结果。';
-  } catch(error) {if(request === generation) {$('message').textContent = error.message; $('rows').replaceChildren();
-    for(const id of ['total','ok','fail','errors']) $(id).textContent = '—';
-    $('page-label').textContent = '读取失败';}}
+$('column-picker').addEventListener('toggle',()=>{if($('column-picker').open)renderColumnPicker();});
+document.addEventListener('click',event=>{if(!$('column-picker').contains(event.target))$('column-picker').open=false;});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')$('column-picker').open=false;});
+$('all-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=true;saveColumns();});
+$('no-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=false;saveColumns();});
+$('reset-columns').addEventListener('click',()=>{columnPreferences={order:[],visibility:{}};saveColumns();});
+function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unkown';return span;}
+function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
+function renderRecords(items){
+ const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
+ const definitions=[{key:'seed',label:'Seed / 用例',width:220,defaultVisible:true},{key:'user_name',label:'用户',width:140,defaultVisible:true}];
+ for(const b of backends){if(b!=='cpu')definitions.push({key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:true});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:true});}
+ definitions.push({key:'time',label:'时间',width:180,defaultVisible:true},...extraColumns.map(([key,label])=>({key,label,width:210,defaultVisible:false})));
+ const fragment=document.createDocumentFragment();
+ for(const item of items){const tr=document.createElement('tr');
+ for(const c of definitions){const td=cell(tr,'');td.dataset.column=c.key;let populated=false;
+ if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short;const meta=document.createElement('small');meta.textContent=(item.metadata.op_types||[]).join(' · ');td.append(strong,meta);populated=true;}
+ else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
+ else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
+ else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
+ if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':['fail','error'].includes(latest.correctness_status)?'failed':'';text=state==='pass'?'Pass':state==='failed'?'Failed':null;}
+ if(kind==='kernel'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
+ if(kind==='total')text=seconds(latest.total_ns);
+ if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;button.addEventListener('click',()=>details(latest.id));td.append(button);populated=true;}
+ if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unkown');button.addEventListener('click',()=>details(attempt.id));history.append(button);}td.append(history);}
+ caseMetadata.set(latest.id,item.metadata);}}
+ else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
+ if(!populated)td.append(unknown());if(populated)c.populated=true;
+ }fragment.append(tr);}
+ $('rows').replaceChildren(fragment);configureColumns(definitions);
+}
+async function load(silent=false){
+ const request=++generation,list=new URLSearchParams(applied);list.set('limit',String(pageSize));list.set('after',String(cursors[page]));
+ if(!silent)$('message').textContent='加载中…';
+ try{const [summary,result]=await Promise.all([api('api/summary?'+applied),api('api/cases?'+list)]);if(request!==generation)return;
+ $('refresh-time').textContent='更新于 '+beijing(new Date());
+ $('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)).toLocaleString();
+ const signature=JSON.stringify(result.items);if(signature!==lastData){if(silent&&($('column-picker').open||$('rows').querySelector('details[open]')))return;lastData=signature;lastRows=result.items;renderRecords(result.items);}
+ next=result.next_cursor;$('next').disabled=next===null;$('previous').disabled=page===0;$('page-label').textContent=`第 ${page+1} 页 · ${result.items.length} 条`;$('message').textContent=result.items.length?'':'没有符合条件的结果。';
+ }catch(error){if(request===generation)$('message').textContent=error.message;}
 }
 form.addEventListener('submit',event=>{event.preventDefault();applied=parameters();history.replaceState(null,'',location.pathname+(applied.size?'?'+applied:'')+location.hash);page=0;cursors=[0];detailGeneration++;$('detail').hidden=true;load();loadCharts();});
 $('reset-filters').addEventListener('click',()=>{form.reset();form.requestSubmit();});
-$('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;load();}});
-$('previous').addEventListener('click',()=>{if(page>0){page--;load();}});
-$('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('command').value);$('detail-message').textContent='已复制';}catch{ $('command').select();$('detail-message').textContent='请复制已选中的命令';}});
-load();
-
-setInterval(() => { if (!document.hidden) { load(); loadCharts(); } }, 30000);
+$('page-size').addEventListener('change',()=>{pageSize=Number($('page-size').value);try{localStorage.setItem('af-fuzz.page-size',String(pageSize));}catch{}page=0;cursors=[0];load();});
+$('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;load();}});$('previous').addEventListener('click',()=>{if(page>0){page--;load();}});
+$('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('command').value);$('detail-message').textContent='已复制';}catch{$('command').select();}});
+load();setInterval(()=>{if(!document.hidden){load(true);loadCharts();}},30000);
 
 // Compare explicit attempt IDs from a bounded same-seed list, never join by name.
 $('compare').addEventListener('click', async () => {
@@ -198,14 +157,14 @@ $('compare').addEventListener('click', async () => {
   } catch(error) { $('comparison-message').textContent = error.message; }
 });
 
-let chartGeneration=0;
+let chartGeneration=0,lastChartData="";
 async function loadCharts(){
   const current=++chartGeneration;
   try{
     const result=await api('api/statistics?'+applied);
     if(current!==chartGeneration)return;
-    updateStatistics(result);
-    renderStatisticsTables(result);
+    const signature=JSON.stringify(result);
+    if(signature!==lastChartData){lastChartData=signature;updateStatistics(result);renderStatisticsTables(result);}
     $('chart-message').textContent='';
   }catch(error){if(current===chartGeneration)$('chart-message').textContent=error.message;}
 }
@@ -223,7 +182,7 @@ window.addEventListener('hashchange',navigate);
 $('close-detail').addEventListener('click',()=>{location.hash='records';navigate();});
 loadCharts();navigate();
 
-function duration(ns){return ns==null?'未采集':(ns/1e6).toFixed(3)+' ms';}
+function duration(ns){return ns==null?'Unkown':(ns/1e6).toFixed(3)+' ms';}
 function versionText(v){return ['cann','torch','torch_npu','autofuse_commit'].map(k=>({cann:'CANN',torch:'Torch',torch_npu:'Torch NPU',autofuse_commit:'Autofuse'}[k])+': '+(v[k]||(k==='autofuse_commit'&&v.autofuse_binary?'binary '+v.autofuse_binary.slice(0,12):'未采集'))).join(' ｜ ');}
 function renderProvenance(result){
   const env=result.contexts.environment;
@@ -236,7 +195,7 @@ function renderProvenance(result){
 }
 
 function renderStatisticsTables(result){
- function table(target,headers,rows){const t=document.createElement('table');t.className='metric-table';const h=document.createElement('tr');headers.forEach(v=>cell(h,v));t.append(h);for(const values of rows){const r=document.createElement('tr');values.forEach(v=>cell(r,v));t.append(r);}$(target).replaceChildren(t);}
- table('performance-table',['后端','Shape模式','正确性','性能状态','口径','Shape数','均值','最小','最大'],result.performance.map(r=>[r.backend,r.mode,r.correctness,r.performance,r.metric||'未测量',r.samples,duration(r.mean_ns),duration(r.min_ns),duration(r.max_ns)]));
- table('stage-table',['后端','阶段','样本数','累计','均值','最大'],result.stages.map(r=>[r.backend,r.stage,r.samples,duration(r.total_ns),duration(r.mean_ns),duration(r.max_ns)]));
+ const t=document.createElement('table'),head=document.createElement('tr');for(const label of ['后端','指标','样本','均值','最大'])cell(head,label);t.append(head);
+ for(const r of result.precise_metrics||[]){const row=document.createElement('tr');for(const value of [r.backend,r.stage==='compile'?'编译耗时':'Kernel 耗时',r.samples,duration(r.mean_ns),duration(r.max_ns)])cell(row,value);t.append(row);}
+ $('performance-table').replaceChildren(t);$('metric-empty').hidden=!!result.precise_metrics?.length;
 }

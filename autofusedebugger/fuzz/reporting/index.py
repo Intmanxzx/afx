@@ -9,6 +9,7 @@ from contextlib import closing
 from ..storage.records import canonical, digest
 
 DDL = '''
+CREATE TABLE IF NOT EXISTS report_search(attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), content TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS report_schema(version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS case_facts(
  workload_id TEXT PRIMARY KEY, seed TEXT NOT NULL, metadata TEXT NOT NULL,
@@ -74,7 +75,22 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
         if row['prepare_ns'] is not None:pairs.append((-1,'prepare',row['prepare_ns']))
         pairs += [(r[0],'first_call_combined',r[1]) for r in conn.execute('SELECT shape_index,first_call_combined_ns FROM shapes WHERE attempt_id=? AND first_call_combined_ns IS NOT NULL',(identity,))]
     conn.executemany('INSERT INTO stage_metrics VALUES (?,?,?,?)',[(identity,*pair) for pair in pairs])
-    if conn.execute('SELECT 1 FROM case_facts WHERE workload_id=?',(row['workload_id'],)).fetchone():return
+    metadata = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(row['workload_id'],)).fetchone()
+    from ..contracts import Seed
+    from ..backend_names import display_backend
+    from datetime import datetime, timezone, timedelta
+    text = ' '.join(str(v) for v in [Seed.parse(row['seed']).short, display_backend(row['backend']), device_name, user_id, source_id, batch, row['created_at'], datetime.fromisoformat(row['created_at']).astimezone(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S'), canonical(versions), row['error_stage'], row['error_summary'], ('Pass' if row['status']=='ok' else 'Failed' if row['status'] in {'fail','error'} else 'Unkown'), 'static 静态' if ex.get('static_only') else 'dynamic 动态', str(round(total/1e9,1))+' s' if total is not None else 'Unkown'])
+    # Include displayed precise metric values and independent correctness states.
+    for _, stage, value in pairs:
+        if stage in {'compile','kernel_mean'}:
+            text += ' '+format(value/1e6,'.3f')+' ms'
+    states=[r[0] for r in conn.execute('SELECT correctness FROM shapes WHERE attempt_id=?',(identity,))]
+    if 'pass' in states:text+=' Pass'
+    if 'fail' in states or 'error' in states:text+=' Failed'
+    if any(value is None for value in versions.values()):text+=' Unkown'
+    if metadata:
+        conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text+' '+metadata[0]))
+        return
     from .report import case_metadata
     from ..generation import plan
     try:
@@ -87,6 +103,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     except (ValueError,KeyError):
         metadata={};max_dim=max_elements=None
     conn.execute('INSERT INTO case_facts VALUES (?,?,?,?,?,?,?)',(row['workload_id'],row['seed'],canonical(metadata),metadata.get('n_nodes'),max_dim,max_elements,len(metadata.get('shape_variants',[]))))
+    conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text+' '+canonical(metadata)))
     dimensions={'op':metadata.get('op_types',[]),'dtype':sorted(set(metadata.get('input_dtypes',{}).values())|set(metadata.get('output_dtypes',{}).values()))}
     categories={'Elementwise':{'add','mul','neg','relu'},'Reduce':{'sum'},'Transpose':{'transpose'}}
     dimensions['category']=[name for name,ops in categories.items() if ops.intersection(dimensions['op'])]

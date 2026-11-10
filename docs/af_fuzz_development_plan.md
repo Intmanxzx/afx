@@ -487,3 +487,16 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 用户ID默认列、点击ID填入筛选；精确ID参数化SQL作用于分页、汇总、statistics。筛选进入URL可收藏/分享，不读token、不把公开筛选当鉴权。旧列偏好迁移展开后端列，保留版本选择并默认启用用户ID。
 - 小批12case/24attempt验证：独立状态、ID点击/无结果/重置、列偏好、桌面和手机布局均通过；focused=50 passed。公网浏览器验证同样通过，目前仍3条真实记录，无新增大批测试。
 - 公网round33，备份private/before-round33.sqlite；wheel SHA256 6ef5aae7042a5ffe0cef06154c8636777eb8da2b27e8e2de98af4e80edd7bc9b。测试/安装全部远端，本地无生成文件。
+
+## 28. 精简记录与可信指标框架（2026-11-09）
+
+- CPU仅默认提供总耗时；不展示CPU精度/kernel性能，执行引擎停止把CPU重复调用wall-time作为性能测量。总耗时为秒/1位小数，不附生成+执行文案。
+- NPU精度无边框绿色Pass/红色Failed；未知值灰色Unkown（按用户指定拼写）。NPU性能仅接受显式kernel profiler指标，无值的列默认隐藏。旧wall-time保留于历史事实/详情，不转义为kernel性能。
+- 统一execute新增可选compile_duration_ns()/measure_kernel()适配器钩子，telemetry/stage_metrics存compile/kernel_mean，查询和汇总接通；真实Torch适配器尚无可靠分离证据，因此不实现这些钩子，性能页留空。测试假适配器验证传输/索引，不代表NPU profiler已实现。
+- 设备列删除；公开用户列取管理员发行的display_name，不再暴露UUID作为姓名。setup新增--user-name别名；姓名不参与鉴权，仍由已发token对应身份确定。目前线上既有身份名MLIR NPU保留，未擅自归给niuyuhu。
+- 单搜索框：大小写不敏感子串匹配，report_search在写入/显式索引时保存轻量搜索文档，覆盖seed/用户名/版本/算子/状态/时间/指标；参数化SQL跨分页搜索，卡片与图表共用筛选。旧库需要index-results；公网3条已索引。
+- 每页10/25/50/100/200条，浏览器保存；列设置浮动层不挤布局，外部点击/Escape关闭，全选/全不选/恢复默认，允许0列且刷新保留。默认隐藏全空列，手动显隐优先。删除顶部AUTOFUSE / FUZZ和底部wall-time文案。
+- 图例按钮独立显隐pass/fail/gen_error，隐藏后重算可见数据数量比例；图例状态在30秒数据刷新间保留。无变化刷新不替换记录/图表DOM，不清空表格或重置页按钮；展开历史/列设置时推迟后台换表。
+- 远端小批12case/24attempt浏览器验证：CPU/NPU列口径、秒格式、border=0、搜索、分页、列全不选持久化、弹层不移位、图例90.9%重算、刷新DOM身份/MutationObserver无变化、390px布局全部通过。fuzz回归244通过。第一次SSH在测试结束后断开，读取日志确认完成，未将断线当测试通过。
+- 公网round34，备份private/before-round34.sqlite，wheel SHA256 315122c64b616254ba32e5019a7f6237d58619a86c9dd198c6ef3d655470932c。未跑大批NPU测试、未新增线上记录。
+- 最终重点回归37通过；公网浏览器验证列/颜色/秒值/搜索/浮层/图例/手机布局通过，无pageerror。一次公网probe失败为SSH shell剥离JS字符串引号（Private field #rows语法错误），改为远端脚本文件重跑通过，非网站故障。截图只存远端round34-public-records.png。

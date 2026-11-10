@@ -150,7 +150,8 @@ class ResultRepository:
                 if source.execute("SELECT 1 FROM sqlite_master WHERE name='report_schema'").fetchone():
                     from ..reporting.index import initialize
                     initialize(target)
-                    for table in ('case_facts','attempt_facts','stage_metrics','case_dimensions','report_devices'):
+                    for table in ('case_facts','attempt_facts','stage_metrics','case_dimensions','report_devices','report_search'):
+                        if not source.execute('SELECT 1 FROM sqlite_master WHERE name=?',(table,)).fetchone(): continue
                         rows=source.execute('SELECT * FROM '+table)
                         for values in rows:
                             target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in values)+')',tuple(values))

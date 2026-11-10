@@ -77,12 +77,12 @@ def create_server(database,port=8090):
                 if any(len(v)!=1 for v in raw.values()):
                     raise ValueError('duplicate field')
                 params={k:v[0] for k,v in raw.items()}
-                if route == '/api/statistics' and not set(params)-{'seed','status','user_id'}:
+                if route == '/api/statistics' and not set(params)-{'seed','status','user_id','q'}:
                     from ..reporting.statistics import statistics
                     self.send(200, statistics(database, **params))
                     return
                 if route == '/api/cases':
-                    if set(params)-{'seed','status','user_id','limit','after'}:
+                    if set(params)-{'seed','status','user_id','q','limit','after'}:
                         raise ValueError('unknown field')
                     for key in ('limit','after'):
                         if key in params: params[key]=int(params[key])
@@ -99,7 +99,7 @@ def create_server(database,port=8090):
                     from ..storage.comparison import compare
                     return self.send(200,compare(database,params['left'],params['right']))
                 if route in {'/api/results','/api/summary'}:
-                    allowed={'seed','status','user_id'}|({'limit','after'} if route=='/api/results' else set())
+                    allowed={'seed','status','user_id','q'}|({'limit','after'} if route=='/api/results' else set())
                     if set(params)-allowed:
                         raise ValueError('unknown field')
                     for key in ('limit','after'):

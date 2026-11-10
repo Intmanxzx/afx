@@ -42,6 +42,13 @@ def _execute(bundle, adapter, evaluation):
         result["prepare_ns"] = time.perf_counter_ns() - started
         result['_timings']['prepare'] = result['prepare_ns']
         result["prepare_is_compile_complete"] = False
+        compile_duration = getattr(adapter, 'compile_duration_ns', None)
+        if callable(compile_duration):
+            value = compile_duration()
+            if value is not None:
+                if type(value) is not int or not 0 <= value < 2**63:
+                    raise ValueError('invalid isolated compile duration')
+                result['_timings']['compile'] = value
     except Exception as exc:
         result['_timings'][stage] = time.perf_counter_ns()-started
         result.update(status="unsupported" if isinstance(exc, UnsupportedBackend) else "error",
@@ -70,26 +77,19 @@ def _execute(bundle, adapter, evaluation):
                 row["correctness"] = "pass" if adapter.compare(output, reference(bundle, index)) else "fail"
                 row['_timings']['correctness']=time.perf_counter_ns()-started
             if evaluation.performance:
-                stage = "warmup"
-                # Reset inputs outside timing even though the frozen minimal profile is functional.
-                started=time.perf_counter_ns()
-                for _ in range(evaluation.warmup_steps):
-                    adapter.invoke(prepared, adapter.inputs(bundle, index))
-                    adapter.synchronize()
-                row['_timings']['warmup']=time.perf_counter_ns()-started
-                stage = "measurement"
-                measurement_start=time.perf_counter_ns()
-                durations = []
-                for _ in range(evaluation.measured_steps):
-                    inputs = adapter.inputs(bundle, index)
-                    adapter.synchronize()
+                # Only explicit device-profiler measurements qualify. Wall time
+                # and first invocation cannot stand in for kernel or compile time.
+                measure = getattr(adapter, 'measure_kernel', None)
+                if callable(measure) and adapter.name not in {'cpu', 'cpu-eager'}:
+                    stage = 'measurement'
                     started = time.perf_counter_ns()
-                    adapter.invoke(prepared, inputs)
-                    adapter.synchronize()
-                    durations.append(time.perf_counter_ns() - started)
-                row['_timings']['measurement']=time.perf_counter_ns()-measurement_start
-                row.update(performance="measured", mean_wall_ns=sum(durations) // len(durations),
-                           measured_steps=len(durations), metric="synchronized_wall_time_not_kernel_profiler")
+                    value = measure(prepared, inputs, evaluation)
+                    if type(value) is not int or not 0 <= value < 2**63:
+                        raise ValueError('invalid kernel profiler duration')
+                    row['_timings']['kernel_mean'] = value
+                    row['performance'] = 'measured'
+                else:
+                    row['performance'] = 'skipped'
         except Exception as exc:
             if stage not in row['_timings']:
                 row['_timings'][stage]=time.perf_counter_ns()-started

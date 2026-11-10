@@ -81,6 +81,10 @@ class FakeAdapter:
         if self.fail_measurement and self.calls > 1:
             raise RuntimeError("measurement failed")
         return (inputs[0],)
+    def measure_kernel(self, prepared, inputs, evaluation):
+        if self.fail_measurement:
+            raise RuntimeError('measurement failed')
+        return 1000
     def synchronize(self):
         pass
     def compare(self, output, expected):
@@ -92,7 +96,7 @@ def test_correctness_failure_still_measures_each_dynamic_shape():
     adapter = FakeAdapter(mismatch=True)
     result = execute(bundle, adapter, EvaluationConfig(performance=True, warmup_steps=1, measured_steps=2))
     assert result["status"] == "fail"
-    assert adapter.calls == 12
+    assert adapter.calls == 3
     assert len(result["shape_results"]) == 3
     assert all(r["correctness"] == "fail" and r["performance"] == "measured" for r in result["shape_results"])
     assert result["prepare_is_compile_complete"] is False

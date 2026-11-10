@@ -2,7 +2,7 @@
 import json
 
 STAGES = {'generation','capability','prepare','input_binding','first_call_combined',
-          'correctness','warmup','measurement','execution_total'}
+          'correctness','warmup','measurement','execution_total','compile','kernel_mean'}
 
 
 def validate(raw):

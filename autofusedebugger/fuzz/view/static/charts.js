@@ -308,9 +308,15 @@ function renderStats() {
 
 window.updateCharts = cases => { CASES=cases; renderStats(); };
 
+const legendHidden=new Map();let latestStatistics=null;
 window.updateStatistics = result => {
-  const convert=rows=>{const groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_error:0});groups.get(r.label)[r.status==='ok'?'pass':r.status==='fail'?'fail':'gen_error']+=r.count;}return [...groups.values()];};
-  const overall=convert(result.overall)[0]||{};
-  drawDonut('chartOverall','legendOverall',STATUS_KEYS.map(s=>({label:s,value:overall[s]||0,color:STATUS_COLORS[s]})));
-  for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,convert(result[key]));
+ latestStatistics=result;
+ const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_error:0});const key=r.status==='ok'?'pass':r.status==='fail'?'fail':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};
+ const overall=convert(result.overall,'Overall')[0]||{};
+ drawDonut('chartOverall','legendOverall',STATUS_KEYS.map(s=>({label:s,value:overall[s]||0,color:STATUS_COLORS[s]})));
+ for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,convert(result[key],id));
+ for(const [key,id] of [['overall','Overall'],['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']]){
+  const legend=document.getElementById('legend'+id);legend.replaceChildren();const hidden=legendHidden.get(id)||new Set();const raw=convert(result[key],'__raw');const counts=Object.fromEntries(STATUS_KEYS.map(s=>[s,raw.reduce((n,r)=>n+r[s],0)]));const total=STATUS_KEYS.filter(s=>!hidden.has(s)).reduce((n,s)=>n+counts[s],0);
+  for(const status of STATUS_KEYS){const button=document.createElement('button');button.type='button';button.dataset.status=status;button.setAttribute('aria-pressed',String(!hidden.has(status)));button.textContent=status+' '+counts[status]+(hidden.has(status)?'': ' · '+(total?counts[status]/total*100:0).toFixed(1)+'%');button.addEventListener('click',()=>{if(hidden.has(status))hidden.delete(status);else hidden.add(status);legendHidden.set(id,hidden);updateStatistics(latestStatistics);});legend.append(button);}
+ }
 };

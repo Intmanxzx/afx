@@ -3,8 +3,8 @@ from ..storage.queries import reading, filters
 from ..backend_names import display_backend
 
 
-def statistics(database, *, seed=None, status=None, user_id=None):
-    clauses, values = filters(seed, status, user_id)
+def statistics(database, *, seed=None, status=None, user_id=None, q=None):
+    clauses, values = filters(seed, status, user_id, q)
     where = ' WHERE ' + ' AND '.join('a.'+c for c in clauses) if clauses else ''
     with reading(database) as conn:
         conn.execute('BEGIN')
@@ -21,6 +21,7 @@ def statistics(database, *, seed=None, status=None, user_id=None):
         result['mode']=grouped("CASE WHEN json_extract(f.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END")
         result['stages']=[dict(r) for r in conn.execute('SELECT a.backend,m.stage,count(*) AS samples,sum(m.duration_ns) AS total_ns,avg(m.duration_ns) AS mean_ns,max(m.duration_ns) AS max_ns'+base+' JOIN stage_metrics m ON m.attempt_id=a.id'+where+' GROUP BY a.backend,m.stage',values)]
         result['performance']=[dict(r) for r in conn.execute("SELECT a.backend,CASE WHEN json_extract(f.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END AS mode,s.correctness,s.performance,s.metric,count(*) AS samples,avg(s.mean_wall_ns) AS mean_ns,min(s.mean_wall_ns) AS min_ns,max(s.mean_wall_ns) AS max_ns"+base+' JOIN shapes s ON s.attempt_id=a.id'+where+' GROUP BY a.backend,mode,s.correctness,s.performance,s.metric',values)]
+        result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
         result['errors']=[dict(r) for r in conn.execute("SELECT a.backend,a.error_stage,count(*) AS count"+base+where+' GROUP BY a.backend,a.error_stage',values) if r['error_stage']]
         result['case_groups']=conn.execute('SELECT count(DISTINCT f.group_id)'+base+where,values).fetchone()[0]
         result['attempts']=sum(r['count'] for r in result['overall'])

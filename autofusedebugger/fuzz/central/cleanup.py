@@ -20,7 +20,7 @@ def purge_incomplete(path, *, expected_count):
         conn.execute('CREATE TABLE IF NOT EXISTS deleted_attempts (id TEXT PRIMARY KEY, result_hash TEXT NOT NULL, user_id TEXT NOT NULL)')
         conn.executemany('INSERT OR IGNORE INTO deleted_attempts VALUES (?,?,?)',rows)
         for identity, _, _ in rows:
-            for table,column in [('stage_metrics','attempt_id'),('attempt_facts','attempt_id'),('shapes','attempt_id'),('owners','attempt_id'),('attempts','id')]:
+            for table,column in [('report_search','attempt_id'),('stage_metrics','attempt_id'),('attempt_facts','attempt_id'),('shapes','attempt_id'),('owners','attempt_id'),('attempts','id')]:
                 conn.execute(f'DELETE FROM {table} WHERE {column}=?',(identity,))
         conn.execute('DELETE FROM case_dimensions WHERE workload_id NOT IN (SELECT workload_id FROM attempts)')
         conn.execute('DELETE FROM case_facts WHERE workload_id NOT IN (SELECT workload_id FROM attempts)')
