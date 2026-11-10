@@ -30,7 +30,7 @@ def wait_finished(ledger, timeout=30):
 
 def test_detached_run_finishes_after_launcher_exits(tmp_path):
     pytest.importorskip("torch")
-    output = subprocess.run([sys.executable, '-m', 'autofusedebugger.fuzz', 'run', '42',
+    output = subprocess.run([sys.executable, '-m', 'autofusedebugger.fuzz', 'run', '42', '--save',
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
     response = json.loads(output.stdout)
@@ -159,7 +159,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0
     value = json.loads(capsys.readouterr().out)
     assert value == {'count': 4, 'backends': ['cpu', 'af-mlir']}
-    assert main(['run', '42', '--data-dir', str(tmp_path), '--count', '4']) == 2
+    assert main(['run', '42', '--save', '--data-dir', str(tmp_path), '--count', '4']) == 2
 
 
 def test_background_infinite_campaign_stops_without_refilling(tmp_path):

@@ -69,6 +69,8 @@ def _has_result(database, task):
     from ..storage.transfer import _record
     from ..generation import materialize, workload_id, oracle_id
     import sqlite3
+    if not json.loads(task['execution']).get('save_results', True):
+        return False
     if not database.exists():
         return False
     with closing(_connect(database)) as conn:
@@ -79,10 +81,14 @@ def _has_result(database, task):
             return False
         contexts, _ = _record(conn, row)
         bundle = materialize(task['seed'])
+        saved_execution = dict(contexts['execution'])
+        task_execution = json.loads(task['execution'])
+        saved_execution.setdefault('save_results', True)
+        task_execution.setdefault('save_results', True)
         if (row['seed'] != task['seed'] or row['workload_id'] != workload_id(bundle) or
                 row['oracle_id'] not in {oracle_id(bundle), 'torch-eager-cpu/1'} or
                 row['backend'] != json.loads(task['execution'])['backend'] or
-                {k:v for k,v in contexts['execution'].items() if k not in {'telemetry','diagnostics'}} != json.loads(task['execution']) or
+                {k:v for k,v in saved_execution.items() if k not in {'telemetry','diagnostics'}} != task_execution or
                 contexts['evaluation'] != json.loads(task['evaluation'])):
             raise ValueError('saved attempt conflicts with task; refusing acknowledgement')
         return True
@@ -126,6 +132,8 @@ def _worker_command(ledger, database, task):
 
 def _save_worker_failure(ledger, database, task, reason, log):
     """Persist a terminated attempt, but keep its task explicitly resumable."""
+    if not json.loads(task['execution']).get('save_results', True):
+        return
     from ..generation import materialize, workload_id
     from ..storage import ResultRepository
     from ..environment import collect
@@ -219,7 +227,9 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 log = output_tail.finish() if output_tail is not None else ''
                 if scratch is not None:
                     scratch.cleanup()
-                if _has_result(database, task):
+                ephemeral_done = (not json.loads(task['execution']).get('save_results', True)
+                                  and reason == 'worker_exit:0:without_result')
+                if ephemeral_done or _has_result(database, task):
                     ledger.complete(task['id'], task['claim'])
                     summary['completed'] += 1
                 else:

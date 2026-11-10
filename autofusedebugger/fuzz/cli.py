@@ -93,7 +93,7 @@ def main(argv=None):
     rotate.add_argument("user")
     sync = maintenance.add_parser("sync", help="configure/run independent automatic upload")
     sync.add_argument("action", choices=("configure", "once", "run", "start", "status", "reset-epoch", "verify"))
-    sync.add_argument("--data-dir", required=True)
+    sync.add_argument("--data-dir", help="override the remembered/default data directory")
     sync.add_argument("--database")
     sync.add_argument("--endpoint")
     sync.add_argument("--key-file")
@@ -143,6 +143,8 @@ def main(argv=None):
         elif args.command == "setup":
             from .onboarding import initialize_user
             result = initialize_user(args.data_dir, args.token, args.sync_interval)
+            from .config import remember_home
+            remember_home(data_home(args.data_dir))
         elif args.command == "seed":
             from .generation import materialize, content_manifest, workload_id
             import time
@@ -217,9 +219,9 @@ def replay_parser():
     parser.add_argument("--backend", choices=BACKEND_NAMES, help="focused backend diagnostic; default replays CPU and AF-MLIR")
     parser.add_argument("--device")
     parser.add_argument("--database", help=argparse.SUPPRESS)
-    parser.add_argument("--no-save", action="store_true", help="explicit ephemeral execution")
+    parser.add_argument("--save", action="store_true", help="save results and enqueue automatic upload; default: neither")
     parser.add_argument("--compile-threads", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--performance", action="store_true", help="request precise metrics where supported; unavailable metrics remain empty")
+    parser.add_argument("--perf", dest="performance", action="store_true", help="request precise metrics where supported; unavailable metrics remain empty")
     parser.add_argument("--warmup-steps", type=int, default=3)
     parser.add_argument("--measured-steps", type=int, default=10)
     return parser
@@ -233,7 +235,7 @@ def execute_args(args):
         from .backends import create_backend
         from .resources import adaptive_defaults
         threads = args.compile_threads or adaptive_defaults(data_home())["compile_threads"]
-        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only)
+        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only, save_results=args.save)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         import time
         generation_start = time.perf_counter_ns()
@@ -243,7 +245,7 @@ def execute_args(args):
         telemetry=json.loads(result['execution']['telemetry'])
         telemetry['stages']['generation']=generation_ns
         result['execution']['telemetry']=json.dumps(telemetry)
-        if not args.no_save:
+        if args.save:
             from .storage import ResultRepository
             database = args.database or data_home() / "results/results.sqlite"
             from .environment import collect

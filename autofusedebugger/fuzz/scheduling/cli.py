@@ -17,13 +17,14 @@ def register(sub, maintenance):
         if name == 'run':
             parser.add_argument('seeds', nargs='*', help='self-contained short seeds')
             parser.add_argument('--count', type=int, help='number of cases; omitted means continuous until fuzz stop')
-            parser.add_argument('--foreground', action='store_true',
+            parser.add_argument('--fg', dest='foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
             parser.add_argument('--backend', action='append', choices=('cpu', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'))
             parser.add_argument('--device', help='NPU logical device (default npu:0); does not alter generated case')
             parser.add_argument('--compile-threads', type=int, help=__import__('argparse').SUPPRESS)
             parser.add_argument('--static-only', action='store_true')
-            parser.add_argument('--performance', action='store_true')
+            parser.add_argument('--perf', dest='performance', action='store_true')
+            parser.add_argument('--save', action='store_true', help='save results and enqueue upload; default: neither')
             parser.add_argument('--timeout', type=float, default=120)
         elif name == 'status':
             parser.add_argument('task', nargs='?')
@@ -74,7 +75,7 @@ def dispatch(args):
     budget = Budget.configured(load_config(home) or adaptive_defaults(home), args.compile_threads)
     import uuid
     batch_id = str(uuid.uuid4())
-    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id)
+    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id, save_results=args.save)
                for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})

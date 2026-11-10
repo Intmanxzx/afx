@@ -1,0 +1,120 @@
+diff --git a/nnsmith/abstract/op.py b/nnsmith/abstract/op.py
+index 0d44dab..825b9cc 100644
+--- a/nnsmith/abstract/op.py
++++ b/nnsmith/abstract/op.py
+@@ -1072,6 +1072,75 @@ class Slice(UnaryOpBase):
+         return [(out_abs_tensor[0].ndims, out_abs_tensor[0].dtype)]
+ 
+ 
++@mark_materialize("core")
++class IndexSelect(AbsOpBase):
++    """torch.index_select(data, axis, index) -- selects along `axis` using a
++    1D integer index tensor, output's `axis` dim becomes len(index).
++
++    NOTE on a framework gap this op works around: NNSmith's z3-driven input
++    generation only ever constrains *shape* and *dtype* of a tensor -- there
++    is no existing mechanism anywhere in the codebase to constrain a
++    tensor's *runtime values* (e.g. "every element of this int tensor must
++    be < N"). random_tensor() in symbolnet.py generates index's concrete
++    values the same way it would for any other int tensor (roughly centered
++    in [3,7] by default), which can easily be >= the selected axis's size or
++    even negative, and torch.index_select has undefined/crashing behavior
++    for out-of-range indices. Rather than threading a new "this is an index
++    input, clamp it" concept through random_tensor()/get_random_inps() (a
++    framework-wide change touching every op, not just this one), the forward
++    pass below clamps the raw generated index tensor into [0, dim_size) with
++    `torch.remainder` right before calling the real op -- fully contained in
++    this op's own forward_fn, zero changes to shared input-generation code.
++    """
++
++    # (data_dtype, index_dtype) pairs. Real aten.index_select (and ascendc's
++    # since=Soc.A5 _LoweringGuard.support registration for it) requires the
++    # index tensor to be int32 or int64 -- never any of the float/bool/etc
++    # dtypes a same-dtype BinaryOpBase-style pairing would allow.
++    in_dtypes = [(i, DType.int32) for i in DTYPE_GEN_FLOATS] + [
++        (i, DType.int64) for i in DTYPE_GEN_FLOATS
++    ]
++    out_dtypes = [(i,) for i in DTYPE_GEN_FLOATS] + [(i,) for i in DTYPE_GEN_FLOATS]
++
++    def __init__(self):
++        super().__init__()
++        # data: rank >= 1 (torch.index_select has no notion of an "axis" on
++        # a 0-d/scalar tensor -- confirmed hit in practice: rank_all()
++        # includes 0 since __MIN_RANK__ == 0, and _get_axis() below would
++        # call random.randint(0, -1) for a 0-d data tensor, which raises
++        # "empty range in randrange(0, 0)"). index: 1D only.
++        self.inp_ranks = [rank_from(1), (1,)]
++        self.out_ranks = [rank_all()]
++
++    def _get_axis(self, ndims):
++        if "axis" not in self.extra_attrs:
++            self.extra_attrs["axis"] = random.randint(0, ndims - 1)
++        return self.extra_attrs["axis"]
++
++    def requires(self, input_shapes: List[AbsTensor]):
++        data, index = input_shapes
++        self._get_axis(data.ndims)
++        # index must carry at least one element to select; its own length
++        # is otherwise a free symbol (it becomes the output's axis-dim size).
++        return [nnsmith_ge(index.shape[0], 1)]
++
++    def type_transfer(self, input_shapes: List[AbsTensor]) -> List[AbsTensor]:
++        data, index = input_shapes
++        axis = self._get_axis(data.ndims)
++        s = list(data.shape)
++        s[axis] = index.shape[0]
++        return [AbsTensor(s, data.dtype)]
++
++    def deduct_inp_ranks_and_dtype(
++        self, out_abs_tensor: List[AbsTensor]
++    ) -> List[Tuple[int, DType]]:
++        # Only called to *infer* a compatible input when this op is placed
++        # as a graph's last node and the output type is already fixed --
++        # index dtype defaults to int64 here (both int32/int64 are valid;
++        # int64 matches torch's own index_select default index dtype).
++        return [(out_abs_tensor[0].ndims, out_abs_tensor[0].dtype), (1, DType.int64)]
++
++
+ def _pad_num_var_param(rstart=1, max=None):
+     r = rstart  # rank
+     ret = []
+diff --git a/nnsmith/materialize/torch/forward.py b/nnsmith/materialize/torch/forward.py
+index 02615f0..877487b 100644
+--- a/nnsmith/materialize/torch/forward.py
++++ b/nnsmith/materialize/torch/forward.py
+@@ -336,6 +336,35 @@ def forward_fn(op: Transpose):
+     return lambda x: x.transpose(dim0, dim1)
+ 
+ 
++@operator_impl(IndexSelect)
++def forward_fn(op: IndexSelect):
++    axis = op.extra_attrs["axis"]
++
++    def _index_select(data, index):
++        # random_tensor() has no notion of "this is an index tensor" and may
++        # generate values outside [0, dim_size) or negative ones; remainder
++        # folds them back into range without biasing towards any one index
++        # (unlike clamp, which would pile everything onto the boundary).
++        dim_size = data.shape[axis]
++        safe_index = torch.remainder(index, dim_size)
++        # torch.index_select requires int64 index regardless of what dtype
++        # ascendc's _LoweringGuard registration allows at the aten-node
++        # level (int32 index is a legal *node* dtype but eager/aten rejects
++        # it at the kernel level with "Expected dtype int64 for index").
++        # Unconditional .to() -- NOT an `if safe_index.dtype != ...:` guard
++        # (confirmed hit in practice): AscendC.make_backend traces this
++        # forward_fn with torch.fx.symbolic_trace(), where `index` is a
++        # Proxy, not a real tensor, so `safe_index.dtype != torch.int64`
++        # cannot be evaluated as a Python bool -- that raises
++        # "TraceError: symbolically traced variables cannot be used as
++        # inputs to control flow". .to(torch.int64) is itself a no-op when
++        # already int64, so the conditional bought nothing anyway.
++        safe_index = safe_index.to(torch.int64)
++        return torch.index_select(data, axis, safe_index)
++
++    return _index_select
++
++
+ # NearestInterp
+ @operator_impl(NearestInterp)
+ def forward_fn(op: NearestInterp):

@@ -274,3 +274,30 @@ def test_native_worker_failure_persists_core_log(tmp_path, monkeypatch):
     assert record['status'] == 'error' and record['error_stage'] == 'worker'
     diagnostics = json.loads(record['contexts']['execution']['diagnostics'])
     assert 'compiler fatal' in diagnostics['error'] and 'topsecret' not in diagnostics['error']
+
+
+def test_unsaved_worker_completes_without_result_or_outbox(tmp_path):
+    pytest.importorskip('torch')
+    from dataclasses import replace
+    ledger, identity, database = setup(tmp_path)
+    # Use a fresh queue so each task's persisted save policy is unambiguous.
+    from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
+    ephemeral = TaskLedger(tmp_path/'ephemeral.sqlite')
+    identity = ephemeral.enqueue('42', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EvaluationConfig())
+    summary = supervisor.drain(ephemeral, database)
+    assert summary['completed'] == 1
+    assert ephemeral.get(identity)['state'] == 'completed'
+    assert not database.exists()
+    # A later saved task on the same queue still works.
+    saved = ephemeral.enqueue('43', ExecutionConfig('cpu', 'cpu', 1, save_results=True), EvaluationConfig())
+    assert supervisor.drain(ephemeral, database)['completed'] == 1
+    assert ResultRepository(database).detail(ephemeral.get(saved)['attempt_id'])['seed'] == '43'
+
+
+def test_unsaved_failure_does_not_archive(tmp_path):
+    ledger = TaskLedger(tmp_path/'queue')
+    identity = ledger.enqueue('42', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EV)
+    task = ledger.claim()
+    database = tmp_path/'results.sqlite'
+    supervisor._save_worker_failure(ledger, database, task, 'timeout', 'should not persist')
+    assert not database.exists()

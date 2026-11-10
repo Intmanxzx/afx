@@ -35,6 +35,9 @@ def run(queue, database, identity, claim):
     telemetry=json.loads(result['execution']['telemetry'])
     telemetry['stages']['generation']=generation_ns
     result['execution']['telemetry']=json.dumps(telemetry)
+    if not config.save_results:
+        print(json.dumps({"seed": task["seed"], "backend": config.backend, "status": result["status"], "saved": False}))
+        return 0
     from ..environment import collect
     from pathlib import Path
     environment=collect(Path(queue).parent.parent)

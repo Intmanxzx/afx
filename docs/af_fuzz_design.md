@@ -4,7 +4,7 @@
 
 ## 1. 模块与依赖
 
-同一wheel、同一版本线提供NPU客户端、中心服务和个人电脑查看。Fuzz不依赖旧debugger或NNSmith，不在import时初始化NPU或修改依赖。
+同一wheel、同一版本线提供NPU客户端、中心服务和个人电脑查看。Fuzz不依赖旧debugger；普通import不初始化NPU或修改依赖。NNSmith是广泛随机图生成的必需组件，不能用有限模板替代。
 
 ```
 cli / scheduling -> generation -> contracts + tensors
@@ -25,7 +25,7 @@ cli / scheduling -> generation -> contracts + tensors
 | reporting | 持久派生索引、shape级汇总、错误摘要、安全WHERE条件 |
 | view/static | 同一套预构建网页，无Node运行依赖；公开网站与离线view复用 |
 
-架构测试禁止生成/契约反向依赖执行与存储，禁止fuzz引用旧debugger/NNSmith。扩展必须补协议golden、adapter能力、存储白名单/迁移及查询测试，不增加第二套执行引擎。
+架构测试禁止生成/契约反向依赖执行与存储，禁止fuzz引用旧debugger，NNSmith由生成适配层延迟加载。扩展必须补协议golden、adapter能力、存储白名单/迁移及查询测试，不增加第二套执行引擎。
 
 ## 2. Seed、图与数据
 
@@ -104,6 +104,16 @@ POSIX后台启动已实现；容器/主机重启后需由systemd或entrypoint拉
 
 未验证/未完成：通用算子覆盖；当前CANN下Triton兼容；准确独立编译/kernel采集；纯CPU编译流水线/产物移交；Windows/macOS原生执行验收；GitCode远端真实发布与PyPI权限联调。不得用文档或mock通过冒充这些能力。
 
-本次整理验收（2026-11-10，全部在 mlir 隔离目录执行）：原版本相关测试36通过；整理后fuzz/发布脚本及非fuzz HTML/CLI回归312通过；无Torch构建环境271通过、20项执行依赖测试明确跳过；当前shape页面浏览器验收通过。已删除旧NNSmith执行引擎、旧报告渲染器及只适用旧页面/旧引擎的测试探针，保留当前shape页面探针与协议golden。发布脚本使用mock验证创建、上传、hash幂等和凭据脱敏；不代表真实GitCode/PyPI发布已验证。
+本次整理验收（2026-11-10，全部在 mlir 隔离目录执行）：原版本相关测试36通过；整理后fuzz/发布脚本及非fuzz HTML/CLI回归312通过；无Torch构建环境271通过、20项执行依赖测试明确跳过；当前shape页面浏览器验收通过。该轮曾误删NNSmith集成及patches，现已恢复；生成能力是重构必需项，不属于废弃功能，保留当前shape页面探针与协议golden。发布脚本使用mock验证创建、上传、hash幂等和凭据脱敏；不代表真实GitCode/PyPI发布已验证。
 
 打包验收：固定 `SOURCE_DATE_EPOCH` 连续构建两次wheel的SHA256一致，`twine check`和隔离Git fixture的Tag/版本dry-run通过。无模型依赖的独立wheel环境已验证CLI；HTTP/静态资源检查由 `tools/fuzz_wheel_smoke.py` 自动执行，发布流水线包含此门禁。构建依赖固定直接版本，尚未提供全部传递依赖的hash锁，不能据此声称跨时间构建完全可复现。
+
+## NNSmith恢复与接入边界
+
+已恢复 `nnsmith_integration`、全部patches、种子诊断和生成回归；wheel携带patches。补丁仅允许显式应用到隔离副本，不能import时修改共享依赖。恢复文件不等于当前 `fuzz run` 已使用NNSmith：现有A/B协议仍是有限模板，广泛随机图接入当前CaseBundle/执行/统计流程尚未完成。下一协议必须冻结NNSmith/Z3及补丁版本、算子集合和生成规则，补齐任意图执行与shape元数据；不能重定义已有A/B seed，也不能把环境内重放测试宣称为跨设备永久确定性。恢复的旧执行入口仅供迁移取证，不作为第二套长期公开引擎。
+
+CLI：`--fg`、`--perf`；run/replay默认不归档结果，`--save`才写结果及outbox。每个后台任务保存其归档策略，恢复时不改变；无归档任务成功退出即完成，进程崩溃无结果可恢复时标记interrupted。任务控制元数据仍持久化。setup成功后记住数据目录，sync不再强制要求`--data-dir`。
+
+恢复验收（mlir隔离副本）：CLI/任务/存储/发布回归298通过，补充监督器与轻量导入37通过；恢复的NNSmith测试28通过、1失败。失败是直接调用原始model_gen时seed 42的候选顺序/历史污染，tensor shape不同。使用生产generate_case（包含独立Z3 context）的扩展目录seed 42，在空历史及先生成43之后两次轨迹完全一致（SHA256 `493d79d349b04012b2350f334ba5064f4ce5469ad6196a5c3c2a872e2c0d9a8c`）。这只证明该受限样本，不等于全域确定性或已接回run。日志在远端round61-tests.log、round61-nnsmith.log及round61-nnsmith-{trace,history}.json。
+
+后续验证：生产Z3 scope在3个seed上跨候选顺序/前序历史回归通过；最终CLI/重放/发布定向54通过。恢复后的wheel包含全部14个patches，twine check和无模型依赖的view/central HTTP检查通过。原始model_gen的失败保留，不改为跳过或宣称已全域修复。

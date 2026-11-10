@@ -20,7 +20,7 @@ python -m pip install /path/to/autofusedebugger-<版本>-py3-none-any.whl
 
 ```sh
 autofusedbg fuzz setup --token '管理员发放的TOKEN' --sync-interval 30
-autofusedbg fuzz run                 # 默认后台持续测试
+autofusedbg fuzz run --save          # 无限后台测试，保存并自动上报
 autofusedbg fuzz status
 autofusedbg fuzz stop                # 停止当前批次
 ```
@@ -28,32 +28,32 @@ autofusedbg fuzz stop                # 停止当前批次
 `--sync-interval` 单位为秒，默认 30。独立同步进程上传轻量记录，网络失败不阻塞测试，outbox/ACK 落盘后可续传。命令行可能被 shell 历史及进程列表记录，客户端凭据文件权限为仅当前用户可读。
 
 ```sh
-autofusedbg fuzz run --count 100                  # 有限批次
-autofusedbg fuzz run --count 10 --foreground      # 前台观察
+autofusedbg fuzz run --count 100 --save                  # 有限批次
+autofusedbg fuzz run --count 10 --fg      # 前台观察
 autofusedbg fuzz run --backend triton-npu         # 在 CPU、AF-MLIR 外增加后端
 autofusedbg fuzz replay B000000016               # 只靠 seed 重建并运行
 autofusedbg fuzz replay B000000016 --backend af-mlir  # 单后端诊断
 autofusedbg fuzz replay B000000016 --static-only  # 仅基础 shape，静态编译
-autofusedbg fuzz replay B000000016 --no-save      # 不保存本次结果
+autofusedbg fuzz replay B000000016 --save      # 保存结果并加入自动上传队列
 ```
 
 - 默认 CPU 为对照、AF-MLIR 为被测后端；AF-MLIR 对 CPU 精度不一致时用 eager-npu 复核，记录判定依据。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
 - 默认运行动态 shape 样本；同图不同 shape 在网站中分别计数，CPU 对照不重复计数。
-- `--performance` 请求性能采集；目前无法可靠拆分的编译/kernel 指标留空，不能把首次调用或总耗时当 kernel 性能。
-- 功能失败保存短错误、阶段和已采集上下文；精度失败保存误差统计。长日志、tensor、编译产物不默认上传。
+- `--perf` 请求性能采集；目前无法可靠拆分的编译/kernel 指标留空，不能把首次调用或总耗时当 kernel 性能。
+- 使用--save时，功能失败保存短错误、阶段和已采集上下文；精度失败保存误差统计。长日志、tensor、编译产物不默认上传。
 - 停止测试不会删除数据或凭据，也不会停止独立上传进程。
 
 数据根目录可用 `AUTOFUSEDBG_HOME` 指定。默认 Linux 为 `${XDG_DATA_HOME:-~/.local/share}/autofusedbg`，macOS 为 `~/Library/Application Support/autofusedbg`，Windows 为 `%LOCALAPPDATA%/autofusedbg`。结果在 `results/results.sqlite`，任务在 `tasks/tasks.sqlite`。后台执行/同步进程目前以 POSIX 环境为主；Windows 支持的是本地查看，不承诺 NPU 后台运行。
 
 ```sh
 autofusedbg fuzz maintenance doctor
-autofusedbg fuzz maintenance sync status --data-dir "$AUTOFUSEDBG_HOME"
-autofusedbg fuzz maintenance sync once --data-dir "$AUTOFUSEDBG_HOME"
-autofusedbg fuzz maintenance sync start --data-dir "$AUTOFUSEDBG_HOME"
+autofusedbg fuzz maintenance sync status
+autofusedbg fuzz maintenance sync once
+autofusedbg fuzz maintenance sync start
 ```
 
-上述维护示例需要先设置 `AUTOFUSEDBG_HOME` 为实际数据目录。默认上报站点为 `https://autofuse.online`；私有部署使用维护级 `sync configure --endpoint` 配置。开机后须通过客户端入口或进程管理器重新启动同步，不把一个后台进程当作系统开机服务。
+setup成功后会记住数据目录，不必每次指定。优先级：显式--data-dir、AUTOFUSEDBG_HOME、已记住目录、系统默认目录。默认上报站点为 `https://autofuse.online`；私有部署使用维护级 `sync configure --endpoint` 配置。开机后须通过客户端入口或进程管理器重新启动同步，不把一个后台进程当作系统开机服务。
 
 ## 二、云端：身份、汇总、网站
 
@@ -141,8 +141,16 @@ python tools/release_wheel.py --tag v0.1.2 --repository niuyuhu/Autofuse-Debugge
 # 默认只校验及展示计划，不上传；真实发布仅由可信 Tag 流水线加 --publish
 ```
 
-Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修改；构建 wheel 必须含网页资源且不含旧引擎。发布不覆盖已有文件：同名同 SHA256 可跳过，不同内容报错；GitCode 成功而 PyPI 失败时重跑相同产物可以续发，**不能重建不同内容覆盖同一版本**。PyPI 版本不可覆盖，版本已占用时必须升版本。
+Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修改；构建 wheel 必须含网页资源且包含NNSmith patches。发布不覆盖已有文件：同名同 SHA256 可跳过，不同内容报错；GitCode 成功而 PyPI 失败时重跑相同产物可以续发，**不能重建不同内容覆盖同一版本**。PyPI 版本不可覆盖，版本已占用时必须升版本。
 
 本轮只进行脚本 mock 测试、构建及安装验证，不使用真实发布凭据，不创建 Tag/Release、不上传 PyPI。首次真实流水线及 GitCode 项目权限需维护者发布时验证。
 
 官方依据：[工作流结构](https://docs.gitcode.com/docs/help/home/org_project/pipeline/writing-pipelines/workflow-file-location-structure)、[Tag 触发器](https://docs.gitcode.com/docs/help/home/org_project/pipeline/writing-pipelines/configure-triggers)、[创建 Release](https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases)、[附件上传 URL（PUT）](https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url)。
+
+### 执行默认值与 NNSmith 状态
+
+- `run` 和 `replay` 默认不保存结果、不产生新的上传记录；显式 `--save` 才保存并进入自动上传队列。已有待上传记录不受新任务选项影响。
+- 后台任务的 seed、状态等调度元数据仍持久化，用于 status/stop/恢复；它们不等于结果归档。
+- `run` 不传 `--count` 且未指定 seed 列表时无限生成，直到 `fuzz stop`；指定 seed 列表则只执行该列表。
+- 前台使用 `--fg`，请求性能采集使用 `--perf`。
+- NNSmith 集成和全部 patches 已恢复，wheel 包含补丁；不在导入时打补丁，也不修改共享 NNSmith。当前 A/B 协议仍使用有限生成器，不能代表 NNSmith 泛化能力。广泛随机图接入统一执行流程尚未完成，不应将该版本当作完成此能力的正式发布版。

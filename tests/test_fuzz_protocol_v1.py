@@ -212,7 +212,7 @@ def test_static_selection_preserves_entire_case_and_base_input():
 def test_replay_requires_only_one_seed_and_rejects_generation_overrides(capsys):
     from autofusedebugger.fuzz.cli import main
     pytest.importorskip("torch")
-    assert main(["replay", "42", "--backend", "cpu", "--no-save"]) == 0
+    assert main(["replay", "42", "--backend", "cpu"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["seed"] == "42" and len(result["shape_results"]) == 3
     for flag in ("--dynamic", "--max-nodes", "--dtype", "--seed-token"):
@@ -235,3 +235,15 @@ assert main(['maintenance', 'seed','42','--show-spec'])==0
     result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
     assert json.loads(result.stdout)["shape_count"] == 3
     assert not list(tmp_path.iterdir())
+
+
+def test_replay_only_archives_with_save(tmp_path, monkeypatch, capsys):
+    pytest.importorskip('torch')
+    from autofusedebugger.fuzz.cli import main
+    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
+    assert main(['replay', 'A16', '--backend', 'cpu']) == 0
+    assert not (tmp_path/'results/results.sqlite').exists()
+    assert 'attempt_id' not in json.loads(capsys.readouterr().out)
+    assert main(['replay', 'A16', '--backend', 'cpu', '--save']) == 0
+    assert 'attempt_id' in json.loads(capsys.readouterr().out)
+    assert (tmp_path/'results/results.sqlite').exists()

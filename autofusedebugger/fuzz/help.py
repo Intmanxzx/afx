@@ -8,8 +8,8 @@ class ScenarioParser(argparse.ArgumentParser):
 
 客户端 · 执行、采集、自动上报
   setup --token TOKEN [--sync-interval 30]  初始化；用户名由云端解析
-  run [SEED ...] [--count N]               后台测试；默认持续运行
-  replay SEED [--backend NAME]            单 seed 重放
+  run [SEED ...] [--count N]               后台测试；不传 --count 无限运行，--save 才保存/上传
+  replay SEED [--save]            单 seed 重放
   status                                 查看任务状态
   stop                                   停止当前测试
 

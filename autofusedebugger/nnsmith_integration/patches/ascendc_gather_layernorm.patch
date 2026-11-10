@@ -1,0 +1,211 @@
+diff --git a/nnsmith/abstract/op.py b/nnsmith/abstract/op.py
+index 0d44dab..6be2731 100644
+--- a/nnsmith/abstract/op.py
++++ b/nnsmith/abstract/op.py
+@@ -1072,6 +1072,68 @@ class Slice(UnaryOpBase):
+         return [(out_abs_tensor[0].ndims, out_abs_tensor[0].dtype)]
+ 
+ 
++@mark_materialize("core")
++class Gather(AbsOpBase):
++    """torch.gather(data, dim, index) -- aten.gather. Unlike an index_select-style
++    op, `index` must have the SAME rank as `data`, and the same size as `data`
++    in every dim except `dim` itself (dim's size in `index` is free -- it
++    becomes the output's size at `dim`). ascendc's gather_lowering.py
++    registers aten.gather separately from aten.index_select (both
++    since=Soc.A5, both float_dtypes()+(int32,int64) on the `data` slot),
++    so this is a distinct op, not a duplicate of index_select's shape model.
++
++    z3 only constrains index's *shape*, never its runtime element values, so
++    out-of-range index values (>= dim_size or negative) are folded back into
++    [0, dim_size) with torch.remainder in forward_fn, not in requires().
++    """
++
++    in_dtypes = [(i, DType.int32) for i in DTYPE_GEN_FLOATS] + [
++        (i, DType.int64) for i in DTYPE_GEN_FLOATS
++    ]
++    out_dtypes = [(i,) for i in DTYPE_GEN_FLOATS]
++
++    def __init__(self):
++        super().__init__()
++        # data: rank >= 1 (dim must be a valid axis; a 0-d data tensor has
++        # no axis to gather along -- random.randint(0, -1) would raise).
++        # index: same rank as data (torch.gather requires index.dim() ==
++        # data.dim()), enforced by z3 equality on ndims via same inp_ranks
++        # pairing handled in requires() below (both operands independently
++        # drawn from rank_from(1), then requires() ties them together --
++        # NNSmith has no direct "two inputs must share rank" rank_choice
++        # mechanism, so the tie is a shape constraint instead).
++        self.inp_ranks = [rank_from(1), rank_from(1)]
++        self.out_ranks = [rank_all()]
++
++    def _get_axis(self, ndims):
++        if "axis" not in self.extra_attrs:
++            self.extra_attrs["axis"] = random.randint(0, ndims - 1)
++        return self.extra_attrs["axis"]
++
++    def requires(self, input_shapes: List[AbsTensor]):
++        data, index = input_shapes
++        axis = self._get_axis(data.ndims)
++        cons = [nnsmith_eq(data.ndims, index.ndims)]
++        for d in range(data.ndims):
++            if d != axis:
++                cons.append(nnsmith_eq(data.shape[d], index.shape[d]))
++        cons.append(nnsmith_ge(index.shape[axis], 1))
++        return cons
++
++    def type_transfer(self, input_shapes: List[AbsTensor]) -> List[AbsTensor]:
++        data, index = input_shapes
++        axis = self._get_axis(data.ndims)
++        s = list(data.shape)
++        s[axis] = index.shape[axis]
++        return [AbsTensor(s, data.dtype)]
++
++    def deduct_inp_ranks_and_dtype(
++        self, out_abs_tensor: List[AbsTensor]
++    ) -> List[Tuple[int, DType]]:
++        ndims = out_abs_tensor[0].ndims
++        return [(ndims, out_abs_tensor[0].dtype), (ndims, DType.int64)]
++
++
+ def _pad_num_var_param(rstart=1, max=None):
+     r = rstart  # rank
+     ret = []
+@@ -1288,6 +1350,93 @@ class BatchNorm2d(ElementWiseUnaryOp):
+         ]  # batch size = 1 -> fail training.
+ 
+ 
++@mark_materialize("core")
++class LayerNorm(ElementWiseUnaryOp):
++    """torch.nn.functional.layer_norm -- aten.native_layer_norm. ascendc has
++    no direct _LoweringGuard registration for this op; it only fuses via
++    decomposition.py's _layer_norm_decompose override, which only applies
++    when the input's numel is a static int (not a SymInt) -- i.e. this op's
++    fusability depends on NNSmith having already concretized the shape by
++    the time forward_fn runs (true for SymbolicGen's make_concrete() path,
++    but confirm with a real A5 run before relying on it, not by assumption).
++
++    normalized_shape is fixed to the input's last `norm_ndims` dims.
++    forward_fn never constructs or passes weight/bias (it calls
++    torch.nn.functional.layer_norm with the default weight=None, bias=None),
++    so this op has no affine parameters at all -- the [1, 128] bound in
++    requires() below is NOT about resolving normalized_shape into a concrete
++    size for some weight/bias tensor. It exists purely for solver-friendliness:
++    keeping generated shapes (and therefore z3 solving time) in a reasonable
++    range. inp.shape[d] remains a z3 symbol throughout requires() -- bounding
++    its range narrows the symbol, it does not turn it into a resolved integer.
++
++    __init__ takes no constructor parameters (like Gather), because nnsmith's
++    generator (graph_gen.py's try_insert_node_type) calls
++    node_t.get_num_var_param() z3.Int symbols into node_t(*op_params) --
++    get_num_var_param() defaults to counting __init__'s declared parameters,
++    so a parameterized norm_ndims would receive a z3 symbol, not a concrete
++    Python int. Doing `assert norm_ndims >= 1` or rank_from(norm_ndims + 1)
++    on that symbol raises (z3 expressions can't be cast to bool/int). Instead,
++    norm_ndims is decided lazily the first time it's needed (requires() /
++    deduct_inp_ranks_and_dtype()), cached in self.extra_attrs, exactly like
++    Gather._get_axis -- at that point the input rank is a concrete Python int
++    (AbsTensor.ndims), so random.randint is safe to call on it.
++    """
++
++    in_dtypes = [(DType.float32,)]
++    out_dtypes = [(DType.float32,)]
++
++    def __init__(self):
++        super().__init__()
++        # inp_ranks/out_ranks must not depend on norm_ndims (norm_ndims isn't
++        # even chosen yet at construction time). rank_from(2) requires at
++        # least one leading "batch" dim plus >=1 dim to normalize over --
++        # torch.nn.functional.layer_norm itself allows norm_ndims == input
++        # rank, but NNSmith's op model keeps a leading dim free so this op
++        # composes like other UnaryOpBase ops that preserve rank from a
++        # non-trivial predecessor.
++        self.inp_ranks = [rank_from(2)]
++        self.out_ranks = [rank_from(2)]
++
++    def _get_norm_ndims(self, ndims):
++        # Lazy, like Gather._get_axis: ndims here is a concrete Python int
++        # (AbsTensor.ndims), never a z3 symbol, so random.randint is safe.
++        # Picked once per op instance and cached, since requires() and
++        # deduct_inp_ranks_and_dtype()/forward_fn must all agree on the same
++        # value for a given instance.
++        if "norm_ndims" not in self.extra_attrs:
++            self.extra_attrs["norm_ndims"] = random.randint(1, ndims - 1)
++        return self.extra_attrs["norm_ndims"]
++
++    @property
++    def norm_ndims(self):
++        # forward_fn (nnsmith/materialize/torch/forward.py) reads op.norm_ndims
++        # directly; it always runs after requires()/deduct_inp_ranks_and_dtype()
++        # have already fixed the value in extra_attrs for this instance.
++        return self.extra_attrs["norm_ndims"]
++
++    def requires(self, input_shapes: List[AbsTensor]) -> List[Union[z3.BoolRef, bool]]:
++        inp = input_shapes[0]
++        norm_ndims = self._get_norm_ndims(inp.ndims)
++        # [1, 128] is a solver-friendliness bound on the normalized dims'
++        # sizes -- keeps generated shapes and z3 solving time reasonable.
++        # This op has no weight/bias (forward_fn passes none), so this is
++        # NOT about resolving normalized_shape into a concrete size for an
++        # affine parameter's shape. inp.shape[d] stays a free z3 symbol
++        # here; bounding it only narrows its range.
++        cons = []
++        for d in range(inp.ndims - norm_ndims, inp.ndims):
++            cons.append(nnsmith_ge(inp.shape[d], 1))
++            cons.append(nnsmith_le(inp.shape[d], 128))
++        return cons
++
++    def deduct_inp_ranks_and_dtype(
++        self, out_abs_tensor: List[AbsTensor]
++    ) -> List[Tuple[int, DType]]:
++        self._get_norm_ndims(out_abs_tensor[0].ndims)
++        return [(out_abs_tensor[0].ndims, DType.float32)]
++
++
+ @mark_materialize("core")
+ class Conv1d(UnaryOpBase):
+     in_dtypes = [(DType.float32,)]
+diff --git a/nnsmith/materialize/torch/forward.py b/nnsmith/materialize/torch/forward.py
+index 02615f0..ec120b6 100644
+--- a/nnsmith/materialize/torch/forward.py
++++ b/nnsmith/materialize/torch/forward.py
+@@ -296,6 +296,13 @@ def forward_fn(op: BatchNorm2d):
+     return torch.nn.BatchNorm2d(num_features=op.nfeat)
+ 
+ 
++@operator_impl(LayerNorm)
++def forward_fn(op: LayerNorm):
++    return lambda x: torch.nn.functional.layer_norm(
++        x, normalized_shape=x.shape[-op.norm_ndims :]
++    )
++
++
+ @operator_impl(Conv1d)
+ def forward_fn(op: Conv1d):
+     return torch.nn.Conv1d(
+@@ -336,6 +343,25 @@ def forward_fn(op: Transpose):
+     return lambda x: x.transpose(dim0, dim1)
+ 
+ 
++@operator_impl(Gather)
++def forward_fn(op: Gather):
++    axis = op.extra_attrs["axis"]
++
++    def _gather(data, index):
++        # random_tensor() has no notion of "this is an index tensor"; fold
++        # out-of-range/negative values back into [0, dim_size) uniformly
++        # (remainder, not clamp, to avoid piling density on the boundary).
++        dim_size = data.shape[axis]
++        safe_index = torch.remainder(index, dim_size)
++        # Unconditional .to() -- NOT an `if` dtype guard: AscendC.make_backend
++        # traces this with torch.fx.symbolic_trace(), where `index` is a
++        # Proxy, so a Python-level dtype comparison would raise TraceError.
++        safe_index = safe_index.to(torch.int64)
++        return torch.gather(data, axis, safe_index)
++
++    return _gather
++
++
+ # NearestInterp
+ @operator_impl(NearestInterp)
+ def forward_fn(op: NearestInterp):

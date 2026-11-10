@@ -1,0 +1,134 @@
+diff --git a/nnsmith/materialize/torch/input_gen.py b/nnsmith/materialize/torch/input_gen.py
+--- a/nnsmith/materialize/torch/input_gen.py
++++ b/nnsmith/materialize/torch/input_gen.py
+@@ -25,15 +25,15 @@
+         self.use_cuda = use_cuda
+
+     @abstractmethod
+-    def search_one(self, start_inp, timeout_ms: int = None) -> Dict[str, torch.Tensor]:
++    def search_one(self, start_inp, timeout_ms: int = None, max_steps: int = None) -> Dict[str, torch.Tensor]:
+         pass
+
+     def search(
+-        self, max_time_ms: int = None, max_sample: int = 1
++        self, max_time_ms: int = None, max_sample: int = 1, max_steps: int = None
+     ) -> Tuple[int, Dict[str, torch.Tensor]]:
+         n_try = 0
+         sat_inputs = None
+-        start_time = time.time()
++        start_time = time.time() if max_time_ms is not None else None
+
+         while (
+             max_time_ms is None or time.time() - start_time < max_time_ms / 1000
+@@ -53,7 +53,10 @@
+             else:
+                 cur_input = self.net.get_random_inps(use_cuda=self.use_cuda)
+
+-            res = self.search_one(cur_input, max_time_ms)
++            if max_steps is None:
++                res = self.search_one(cur_input, max_time_ms)
++            else:
++                res = self.search_one(cur_input, max_time_ms, max_steps=max_steps)
+             n_try += 1
+             if res is not None:
+                 sat_inputs = res
+@@ -64,7 +67,7 @@
+
+ class SamplingSearch(InputSearchBase):
+     # Think about how people trivially generate inputs.
+-    def search_one(self, start_inp, timeout_ms: int = None) -> Dict[str, torch.Tensor]:
++    def search_one(self, start_inp, timeout_ms: int = None, max_steps: int = None) -> Dict[str, torch.Tensor]:
+         with torch.no_grad():
+             self.net.check_intermediate_numeric = True
+             _ = self.net(*start_inp.values())
+@@ -75,10 +78,11 @@
+
+
+ class GradSearch(InputSearchBase):
+-    def search_one(self, start_inp, timeout_ms: int = None) -> Dict[str, torch.Tensor]:
++    def search_one(self, start_inp, timeout_ms: int = None, max_steps: int = None) -> Dict[str, torch.Tensor]:
+         timeout_s = None if timeout_ms is None else timeout_ms / 1000
+         return self.net.grad_input_gen(
+-            init_tensors=start_inp, use_cuda=self.use_cuda, max_time=timeout_s
++            init_tensors=start_inp, use_cuda=self.use_cuda, max_time=timeout_s,
++            max_steps=max_steps,
+         )
+
+
+@@ -99,12 +103,12 @@
+         else:
+             self.differentiable = False
+
+-    def search_one(self, start_inp, timeout_ms: int = None) -> Dict[str, torch.Tensor]:
++    def search_one(self, start_inp, timeout_ms: int = None, max_steps: int = None) -> Dict[str, torch.Tensor]:
+         # if this model is purely differentiable -> GradSearch
+         # otherwise                              -> SamplingSearch
+         # FIXME: Estimate gradient (e.g., proxy gradient) for non-differentiable inputs.
+
+         if self.differentiable:
+-            return GradSearch.search_one(self, start_inp, timeout_ms)
++            return GradSearch.search_one(self, start_inp, timeout_ms, max_steps=max_steps)
+         else:
+-            return SamplingSearch.search_one(self, start_inp, timeout_ms)
++            return SamplingSearch.search_one(self, start_inp, timeout_ms, max_steps=max_steps)
+diff --git a/nnsmith/materialize/torch/symbolnet.py b/nnsmith/materialize/torch/symbolnet.py
+--- a/nnsmith/materialize/torch/symbolnet.py
++++ b/nnsmith/materialize/torch/symbolnet.py
+@@ -337,10 +337,12 @@
+         init_tensors: Dict[str, torch.Tensor],
+         use_cuda=False,
+         max_time=None,
++        max_steps: int = None,
+         **kwargs,
+     ) -> Optional[Dict[str, torch.Tensor]]:
+-        # TODO: trim the param. max_iter is not used; remove getenv
+-        if max_time is None:
++        if max_steps is not None and max_steps < 1:
++            raise ValueError("max_steps must be positive")
++        if max_steps is None and max_time is None:
+             max_time = float(os.getenv("NNSMITH_GRAD_TIME", 0.5))
+
+         inputs: Dict[str, torch.Tensor] = {}
+@@ -361,10 +363,15 @@
+             self.use_cuda()
+
+         sat_inputs = None
+-        st = time.time()
++        st = time.time() if max_steps is None else None
+         self.n_iter = 0
+         self.cur_loss_name = None
+-        while time.time() - st < max_time:
++        # A fixed step budget makes seeded numeric refinement independent
++        # of machine load, debug logging and NNSMITH_GRAD_TIME.
++        while (
++            self.n_iter < max_steps if max_steps is not None
++            else time.time() - st < max_time
++        ):
+             self.training_reset()
+             self.n_iter += 1
+
+diff --git a/nnsmith/materialize/torch/__init__.py b/nnsmith/materialize/torch/__init__.py
+--- a/nnsmith/materialize/torch/__init__.py
++++ b/nnsmith/materialize/torch/__init__.py
+@@ -87,7 +87,9 @@
+     def gir_name() -> str:
+         return "gir.pkl"
+
+-    def refine_weights(self, value_dist_mode: str = "uniform") -> None:
++    def refine_weights(
++        self, value_dist_mode: str = "uniform", max_search_steps: Optional[int] = None
++    ) -> None:
+         self.torch_model.enable_proxy_grad()
+         use_cuda = self.device().type == "cuda"
+         max_sample = 2
+@@ -113,8 +115,9 @@
+         )
+         # TODO(@ganler): Can we directly get both inputs and outputs?
+         _, inputs = searcher.search(
+-            max_time_ms=20,
++            max_time_ms=20 if max_search_steps is None else None,
+             max_sample=max_sample,
++            max_steps=max_search_steps,
+         )
+         if inputs:
+             self.sat_inputs = inputs

@@ -177,3 +177,16 @@ def test_setup_short_user_flag(tmp_path, capsys):
     help_text = capsys.readouterr().out
     assert '--token ' in help_text and '--user ' not in help_text
     assert '--user-name' not in help_text and '--display-name' not in help_text
+
+
+def test_nnsmith_patch_check_does_not_apply_implicitly(monkeypatch):
+    from autofusedebugger.nnsmith_integration import _nnsmith_patch
+    assert callable(_nnsmith_patch.ensure_ascendc_patch_applied)
+    # Ordinary package import must not import NNSmith or apply patches.
+    code = '''
+import sys
+import autofusedebugger
+import autofusedebugger.nnsmith_integration
+assert not any(n == 'nnsmith' or n.startswith('nnsmith.') for n in sys.modules)
+'''
+    subprocess.run([sys.executable, '-c', code], check=True)

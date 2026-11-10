@@ -7,7 +7,7 @@
 
 ```sh
 autofusedbg fuzz setup --token "$FUZZ_TOKEN"
-autofusedbg fuzz run --count 100
+autofusedbg fuzz run --count 100 --save
 autofusedbg fuzz replay B000000016
 autofusedbg fuzz view ./results.sqlite
 ```
@@ -16,7 +16,7 @@ autofusedbg fuzz view ./results.sqlite
 
 [设计文档](docs/af_fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
 
-公网结果入口：https://autofuse.online 。客户端默认每30秒自动上报，CPU作为精度对照，按shape统计用例。
+公网结果入口：https://autofuse.online 。启用--save后客户端默认每30秒自动上报，CPU作为精度对照，按shape统计用例。
 
 ## 安装
 

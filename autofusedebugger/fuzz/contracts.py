@@ -145,8 +145,11 @@ class ExecutionConfig:
     scheduling: str = "combined"
     static_only: bool = False
     batch_id: str = ""
+    save_results: bool = True  # Old persisted tasks retain their explicit archival behavior.
 
     def __post_init__(self):
+        if type(self.save_results) is not bool:
+            raise ValueError("save_results must be boolean")
         if self.compile_threads < 1 or self.scheduling != "combined":
             raise ValueError("positive compile budget required; split execution is not validated")
 

@@ -89,3 +89,46 @@ def test_documented_command_help_is_reachable(args, capsys):
         main([*args, '-h'])
     assert exc.value.code == 0
     assert 'usage:' in capsys.readouterr().out
+
+
+def test_short_flags_and_explicit_save(capsys):
+    from autofusedebugger.fuzz.cli import replay_parser
+    args = replay_parser().parse_args(['B16', '--perf'])
+    assert args.performance and not args.save
+    assert replay_parser().parse_args(['B16', '--save']).save
+    with pytest.raises(SystemExit): main(['run', '-h'])
+    text = capsys.readouterr().out
+    assert '--fg' in text and '--perf' in text and '--save' in text
+    assert '--foreground' not in text and '--performance' not in text
+    assert 'continuous until fuzz stop' in ' '.join(text.split())
+
+
+def test_sync_uses_remembered_home(tmp_path, monkeypatch, capsys):
+    from autofusedebugger.fuzz import config
+    monkeypatch.delenv('AUTOFUSEDBG_HOME', raising=False)
+    monkeypatch.setattr(config, 'default_home', lambda: tmp_path/'default')
+    custom = tmp_path/'custom'
+    config.remember_home(custom)
+    assert config.data_home() == custom
+    monkeypatch.setattr('autofusedebugger.fuzz.sync.client.status', lambda home, database: {'directory': str(home)})
+    assert main(['maintenance', 'sync', 'status']) == 0
+    assert json.loads(capsys.readouterr().out)['directory'] == str(custom)
+    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path/'env'))
+    assert config.data_home() == tmp_path/'env'
+    assert config.data_home(tmp_path/'explicit') == tmp_path/'explicit'
+
+
+def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
+    observed = []
+    def launch(ledger, database, specifications, **kwargs):
+        observed.append(kwargs)
+        return {'state': 'test'}
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
+    assert main(['run', '--fg']) == 0
+    configs, evaluation, count = observed[-1]['campaign']
+    assert count is None and observed[-1]['foreground']
+    assert all(not c.save_results for c in configs)
+    assert main(['run', '--count', '3', '--save']) == 0
+    configs, _, count = observed[-1]['campaign']
+    assert count == 3 and all(c.save_results for c in configs)

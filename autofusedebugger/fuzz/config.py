@@ -8,9 +8,7 @@ import tempfile
 import uuid
 
 
-def data_home(override=None):
-    if override or os.environ.get("AUTOFUSEDBG_HOME"):
-        return Path(override or os.environ["AUTOFUSEDBG_HOME"]).expanduser().resolve()
+def default_home():
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
     elif sys.platform == "darwin":
@@ -18,6 +16,34 @@ def data_home(override=None):
     else:
         base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
     return (base / "autofusedbg").resolve()
+
+
+def data_home(override=None):
+    if override or os.environ.get("AUTOFUSEDBG_HOME"):
+        return Path(override or os.environ["AUTOFUSEDBG_HOME"]).expanduser().resolve()
+    pointer = default_home() / "active-home.json"
+    if pointer.exists():
+        value = json.loads(pointer.read_text(encoding="utf-8"))
+        if value.get("version") != 1 or not isinstance(value.get("home"), str) or not Path(value["home"]).is_absolute():
+            raise ValueError("invalid remembered data directory; use --data-dir to recover")
+        return Path(value["home"])
+    return default_home()
+
+
+def remember_home(home):
+    """Persist a successful CLI setup location; explicit argument/env still wins."""
+    directory = default_home()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, name = tempfile.mkstemp(prefix=".active-home-", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as out:
+            json.dump({"version": 1, "home": str(Path(home).resolve())}, out)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, directory / "active-home.json")
+        _sync_directory(directory)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def validate_config(config):
