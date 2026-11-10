@@ -24,7 +24,7 @@ def test_group_backend_retries_and_separate_provenance(tmp_path):
     q=ResultQueries(repo.path)
     item=q.case_page()['items'][0]
     assert len(item['backends'])==2 and len(item['backends']['cpu'])==2
-    assert item['backends']['cpu'][0]['total_ns']==110
+    assert item['backends']['cpu'][0]['total_ns']==15
     assert item['versions']['cann'] is None
     for e,b in [(dict(env,installation_id='device-b'),'run1'),(dict(env,torch_npu='2.11'),'run1'),(env,'run2')]:
         repo.save(record(batch=b),environment=e)
@@ -94,6 +94,6 @@ def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
     payload=pending(repo.path);ingest(central,key.read_text().strip(),payload)
     first=ResultQueries(central).case_page()['items'][0]
     assert first['device_name']=='管理员命名的设备'
-    assert first['backends']['cpu'][0]['total_ns']==110
+    assert first['backends']['cpu'][0]['total_ns']==15
     rebuild(central)
     assert ResultQueries(central).case_page()['items'][0]==first

@@ -100,8 +100,8 @@ def create_server(database, *, port=0):
                 elif route == 'api/compare' and set(params) == {'left', 'right'}:
                     from ..storage.comparison import compare
                     value = compare(database, params['left'], params['right'])
-                elif route.startswith('api/attempts/') and not params:
-                    value = queries.detail(route[len('api/attempts/'):])
+                elif route.startswith('api/attempts/') and not set(params)-{'shape'}:
+                    value = queries.detail(route[len('api/attempts/'):], shape_index=int(params['shape']) if 'shape' in params else None)
                 else:
                     self.respond(404, {'error': 'not found'}); return
                 self.respond(200, value)

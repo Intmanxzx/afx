@@ -30,10 +30,11 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None):
         for name in ('category','dtype','op'):
             result[name]=case_grouped('d.value'," JOIN case_dimensions d ON d.workload_id=a.workload_id AND d.dimension='"+name+"'")
         for name, column, bounds in [('dimension','max_dim',[(8,'≤8'),(64,'≤64'),(512,'≤512'),(4096,'≤4096'),(16384,'≤16384'),(65536,'≤65536'),(131072,'≤131072')]),('elements','max_elements',[(1000,'≤1K'),(16000,'≤16K'),(64000,'≤64K'),(256000,'≤256K'),(1000000,'≤1M'),(16000000,'≤16M'),(64000000,'≤64M')])]:
-            expression='CASE WHEN c.'+column+" IS NULL THEN '未采集' "+' '.join(f"WHEN c.{column}<={bound} THEN '{label}'" for bound,label in bounds)+f" ELSE '>{bounds[-1][1][1:]}' END"
+            value="CASE WHEN a.shape_index<0 THEN NULL ELSE json_extract(c.metadata,'$.shape_variants[' || a.shape_index || ']."+column+"') END"
+            expression='CASE WHEN '+value+" IS NULL THEN '未采集' "+' '.join(f"WHEN {value}<={bound} THEN '{label}'" for bound,label in bounds)+f" ELSE '>{bounds[-1][1][1:]}' END"
             result[name]=case_grouped(expression)
         result['mode']=case_grouped("CASE WHEN json_extract(a.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END")
-        result['unit']='case'
+        result['unit']='shape_case'
         # Kernel profiler isn't enabled by the executor. Null is intentional,
         # not a count of zero kernels or a zero-time measurement.
         result['kernel_profiler']={'collected':False,'kernel_count':None,'ascendc_kernel_count':None,'triton_kernel_count':None,'kernel_time_ns':None}

@@ -50,3 +50,9 @@ oracle1使用af-fuzz.service + Caddy，公网80/443，应用loopback8090。服�
 AF-MLIR必须加载带MLIR bridge的真实库，严格模式不能静默legacy回退。已验证的隔离运行时为Autofuse c1b46272；默认CANN库不具备该能力。真实测试仍存在Transpose/exec_condition lowering失败，这是测试发现，不用改seed掩盖。
 
 未完成能力：纯CPU编译/设备执行拆分、异进程编译产物移交、准确独立编译/kernel性能、当前CANN下Triton兼容、全机硬资源隔离，以及Windows/macOS原生验收。
+
+### Shape级用例（当前网站口径）
+
+同seed的每个实际shape独立占一行（S0/S1/S2），CPU仅对照不增加计数。100seed×3shape显示300用例；seed本身仍重放完整图和shape样本。列表展示所有输入及权重的Shape/Dtype、图节点关系、静态/动态。耗时只含当前shape阶段，整图共享开销在详情单独展示。
+
+失败日志列直接显示核心错误，默认100字符，可调整40–500并保存浏览器偏好；点击查看当前shape详情与结构化环境。旧共享native日志单独标识，旧采集时已截断的内容无法恢复。各后端列按当前结果自动生成，包括triton-npu；无可靠kernel数据时性能列仍默认隐藏。

@@ -83,7 +83,7 @@ class ResultQueries:
         from ..reporting.cases import summary
         return summary(self.path, **params)
 
-    def detail(self, identity):
+    def detail(self, identity, shape_index=None):
         identity = str(uuid.UUID(identity))
         with reading(self.path) as conn:
             conn.execute('BEGIN')
@@ -114,6 +114,29 @@ class ResultQueries:
         result['seed_short'] = Seed.parse(result['seed']).short
         result['backend_display'] = display_backend(result['backend'])
         result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
+        if shape_index is not None:
+            if type(shape_index) is not int or not -1 <= shape_index < 1024:
+                raise ValueError('invalid shape index')
+            chosen = [s for s in result['shape_results'] if s['shape_index'] == shape_index]
+            if not chosen and (shape_index != -1 or result['shape_results']):
+                raise LookupError('shape result not found')
+            result['shape_index'] = shape_index
+            result['shape_results'] = chosen
+            variants = result.get('metadata', {}).get('shape_variants', [])
+            result['sample'] = variants[shape_index] if 0 <= shape_index < len(variants) else {}
+            if chosen:
+                result['status'] = {'pass':'ok','fail':'fail','error':'error'}.get(chosen[0]['correctness'], 'unknown')
+                result['error_summary'] = chosen[0]['error_summary']
+                result['error_stage'] = chosen[0]['error_stage']
+            execution = result['contexts']['execution']
+            if execution.get('diagnostics'):
+                diag = json.loads(execution['diagnostics'])
+                diag['shapes'] = {k:v for k,v in diag.get('shapes',{}).items() if k == str(shape_index)}
+                execution['diagnostics'] = json.dumps(diag)
+            if execution.get('telemetry'):
+                telemetry = json.loads(execution['telemetry'])
+                telemetry['shapes'] = {k:v for k,v in telemetry.get('shapes',{}).items() if k == str(shape_index)}
+                execution['telemetry'] = json.dumps(telemetry)
         return result
 
     def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None):
@@ -128,11 +151,10 @@ class ResultQueries:
         where = ' WHERE ' + ' AND '.join('a.'+c for c in clauses) if clauses else ''
         with reading(self.path) as conn:
             conn.execute('BEGIN')
-            groups = conn.execute('SELECT f.group_id, max(a.rowid) AS cursor FROM attempts a '
-                'JOIN attempt_facts f ON f.attempt_id=a.id WHERE f.group_id IN '
-                '(SELECT f.group_id FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id'+where+') '
-                'GROUP BY f.group_id HAVING max(a.rowid)<? ORDER BY cursor DESC LIMIT ?',
-                (*values, after or 2**63-1, limit+1)).fetchall()
+            from ..reporting.cases import rollup
+            cte, values = rollup(seed, status, user_id, q)
+            groups = conn.execute(cte + 'SELECT * FROM cases WHERE cursor<? ORDER BY cursor DESC LIMIT ?',
+                                  (*values, after or 2**63-1, limit+1)).fetchall()
             items = []
             from ..contracts import Seed
             from ..backend_names import display_backend
@@ -146,6 +168,15 @@ class ResultQueries:
                 item.update(user_name=first['device_name'], case_id=group['group_id'], seed_short=Seed.parse(item['seed']).short,
                             execution=json.loads(first['execution']), evaluation=json.loads(first['evaluation']),
                             versions=json.loads(first['versions']), metadata=json.loads(meta[0]) if meta else {}, backends={})
+                # List pages carry only previews. Full logs/timing payloads are
+                # fetched on detail navigation, not repeated for every shape.
+                item['execution'] = {k:v for k,v in item['execution'].items() if k not in {'diagnostics','telemetry'}}
+                index = group['shape_index']
+                item['shape_index'] = index
+                item['case_id'] += ':' + str(index)
+                variants = item['metadata'].get('shape_variants', [])
+                item['sample'] = variants[index] if 0 <= index < len(variants) else {}
+                item['shape_mode'] = 'static' if item['execution'].get('static_only') else 'dynamic'
                 for row in rows:
                     backend = display_backend(row['backend'])
                     member = {key:row[key] for key in ('id','status','created_at','total_ns','duration_scope','error_stage','error_summary')}
@@ -153,6 +184,23 @@ class ResultQueries:
                     member['device'] = json.loads(row['execution']).get('device')
                     member['stages'] = [dict(r) for r in conn.execute('SELECT shape_index,stage,duration_ns FROM stage_metrics WHERE attempt_id=? ORDER BY shape_index,stage',(row['id'],))]
                     member['shapes'] = [dict(r) for r in conn.execute('SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index',(row['id'],))]
+                    member['shapes'] = [s for s in member['shapes'] if s['shape_index'] == index]
+                    if not member['shapes'] and index >= 0:
+                        continue
+                    member['stages'] = [m for m in member['stages'] if m['shape_index'] == index]
+                    # Profiler values are nested measurements, not additional
+                    # elapsed phases. Never add kernel/compile time twice.
+                    elapsed = [m['duration_ns'] for m in member['stages'] if m['stage'] not in {'kernel_mean','compile'}]
+                    member['total_ns'] = sum(elapsed) if elapsed else None
+                    member['duration_scope'] = 'shape_execution'
+                    if member['shapes']:
+                        shape = member['shapes'][0]
+                        member['status'] = {'pass':'ok','fail':'fail','error':'error'}.get(shape['correctness'], 'unknown')
+                        member['error_stage'] = shape['error_stage']
+                        member['error_summary'] = shape['error_summary']
+                    from ..failure_details import core_error
+                    diagnostics = json.loads(json.loads(row['execution']).get('diagnostics', '{}'))
+                    member['core_error'] = core_error(diagnostics, index, member['error_summary'])
                     member['compile_ns'] = next((m['duration_ns'] for m in member['stages'] if m['stage']=='compile' and m['shape_index']==-1),None)
                     member['kernel_ns'] = [{'shape_index':m['shape_index'],'duration_ns':m['duration_ns']} for m in member['stages'] if m['stage']=='kernel_mean'] if backend!='cpu' else []
                     from ..reporting.outcomes import outcomes

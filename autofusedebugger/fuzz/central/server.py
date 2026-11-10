@@ -113,8 +113,8 @@ def create_server(database,port=8090):
                                 owner=conn.execute('SELECT u.display_name FROM owners o JOIN users u ON u.id=o.user_id WHERE o.attempt_id=?',(item['id'],)).fetchone()
                                 item['display_name']=owner[0] if owner else 'unattributed'
                     return self.send(200,result)
-                if route.startswith('/api/attempts/') and not params:
-                    return self.send(200,queries.detail(route[len('/api/attempts/'):]))
+                if route.startswith('/api/attempts/') and not set(params)-{'shape'}:
+                    return self.send(200,queries.detail(route[len('/api/attempts/'):], shape_index=int(params['shape']) if 'shape' in params else None))
                 return self.send(404,{'error':'not found'})
             except PermissionError:
                 self.send(401, {'error': 'invalid credential'})

@@ -14,19 +14,31 @@ def capture_tail(limit=16384, *, forward=False):
     saved = [os.dup(fd) for fd in (1, 2)]
 
     def drain():
+        pending = b''
+        context_lines = 0
+        def collect(line):
+            nonlocal context_lines
+            if any(word in line.lower() for word in (b'error:', b'af_mlir_strict', b'unsupportedoperation', b'fatal')):
+                context_lines = 3
+            if context_lines:
+                important.extend(line + b'\n')
+                del important[:-1600]
+                context_lines -= 1
         try:
             while True:
                 chunk = os.read(read_fd, 4096)
                 if not chunk:
+                    if pending:
+                        collect(pending)
                     break
                 if forward:
                     os.write(saved[1], chunk)
                 chunks.extend(chunk)
                 del chunks[:-limit]
-                for line in chunk.splitlines():
-                    if any(word in line.lower() for word in (b'error:', b'af_mlir_strict', b'unsupportedoperation', b'fatal')):
-                        important.extend(line + b'\n')
-                        del important[:-1600]
+                lines = (pending + chunk).split(b'\n')
+                pending = lines.pop()[-limit:]
+                for line in lines:
+                    collect(line)
         finally:
             os.close(read_fd)
 

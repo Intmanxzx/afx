@@ -29,3 +29,14 @@ def validate(raw):
                 if not isinstance(v,str) or len(v)>1600:raise ValueError('invalid diagnostic text')
             elif not isinstance(v,(int,float,bool)) or not math.isfinite(v):raise ValueError('invalid diagnostic metric')
     return json.dumps(data,sort_keys=True,separators=(',',':'))
+
+
+def core_error(diagnostics, index, fallback=''):
+    """Prefer compiler diagnostics over wrapper code/traceback boilerplate."""
+    shape = diagnostics.get('shapes', {}).get(str(index), {})
+    texts = [shape.get('native_error', ''), diagnostics.get('error', ''), shape.get('error', ''), fallback or '']
+    for text in texts:
+        for line in text.splitlines():
+            if any(word in line.lower() for word in ('unsupportedoperation:', 'error:', 'fatal:', 'runtimeerror:')) and len(line.strip()) > 12:
+                return redact(line.strip())[:1600]
+    return redact(next((t.strip() for t in texts if t.strip()), ''))[:1600]

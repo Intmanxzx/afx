@@ -116,6 +116,10 @@ def rebuild(path):
     from ..storage.repository import _connect
     with closing(_connect(path,writable=True)) as conn,conn:
         conn.execute('BEGIN IMMEDIATE');initialize(conn)
+        # Derived metadata is reproducible; rebuild it to include graph edges and
+        # per-input dtypes added by newer viewers. Immutable attempts stay intact.
+        conn.execute('DELETE FROM case_dimensions')
+        conn.execute('DELETE FROM case_facts')
         central=conn.execute("SELECT 1 FROM sqlite_master WHERE name='owners'").fetchone()
         for identity, in conn.execute('SELECT id FROM attempts ORDER BY rowid').fetchall():
             source=name=user=None

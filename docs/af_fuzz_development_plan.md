@@ -575,3 +575,15 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 单元格上下padding收紧至10px，垂直居中；OP单行省略、悬停完整文本，日期和Seed不折行。不是把OP列表伪造为图拓扑。
 - 所有验证在mlir：38项API/查询测试通过，12case浏览器回归通过；公网实际行高41px，旧偏好迁移、日志入口和移动端页面宽度验证通过，JS errors=[]。
 - 网站部署venv-round46（先完整备份），wheel SHA256 a1a07750ec9d44045aa9eb36fb2c640d9160d572b457b279ae80a27b32cf8659；无数据变更。截图仅远端round46-public.png。
+
+## 35. Shape级用例与结构化详情（round47–51）
+
+- 用户明确修改计数语义：一个实际执行shape为一条用例。case分页、summary、质量/覆盖图共享shape级SQL投影；seed保持完整图的自包含标识，列表显示Seed / S0、S1、S2，不更改生成协议。CPU对照仍不重复计数；执行前整体失败无shape时保留S—记录，不伪造执行过的shape。
+- 列表增加真实graph节点连线、全部输入（含权重）的shape/dtype、静态/动态；派生索引重新生成graph/weights/逐shape元数据，原attempt和同步hash不修改。维度/元素统计取当前shape，不复用整个图最大值。
+- 日志列提取native核心错误，默认100字符，可在页面设置40–500并缓存，超出用...；详情查询接受shape，严格筛选shape结果/阶段/诊断。旧共享native日志明确标注整图共享，不声称能补回旧截断部分。
+- 详情以当前shape结果、图/张量信息、结构化版本表、阶段耗时和共享开销组成，移除可见JSON原始记录。shape行耗时仅汇总当前shape计时，kernel/compile嵌套指标不重复相加；不把整图耗时复制给每条用例。
+- 功能/精度/耗时/日志列按结果后端动态生成，新增fixture验证triton-npu自动出现；不代表本机Triton已可执行。
+- 新采集器按完整日志行拼接pipe分块并保留错误后的上下文，修复error行被任意读块切碎问题；仍保留轻量日志限额。
+- round50全fuzz 269 passed；新shape浏览器验证通过（3条shape、输入和权重、图、截断偏好、单shape详情刷新、triton列、移动端）。公网首次200行分页发现响应超2MiB，已移除列表重复携带的整图diagnostics/telemetry，完整内容只在详情请求。
+- round51定向42 passed。公网最终Playwright：300shape用例、100seed、27Pass/273功能失败；200+100分页无重复/遗漏，输入权重/shape/dtype/动态图/真实连线可见，日志60字符截断偏好、单shape详情刷新通过，JS errors=[]。线上venv-round51，wheel SHA256 ae2bd65636fdd573827b8b0813a7dd3dfb81a813b88775b11eec4bc17e3e5417。
+- 原始200后端attempt/600shape行不删除、不重跑，派生index在私有完整备份后重建。截图与构建文件仅远端，原用户index.html修改保留未提交。

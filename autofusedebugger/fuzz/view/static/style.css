@@ -14,3 +14,8 @@
 .case-table .case-seed{line-height:20px}
 .case-table .case-ops{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:20px;color:var(--muted)}
 .case-table .history{margin-top:4px}
+.case-table td[data-column="inputs"],.case-table td[data-column="dtypes"]{font-size:11px}
+.case-table .error-preview{display:block;max-width:100%;font-size:11px;color:#a63c31;line-height:18px}
+.log-length{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px}.log-length input{width:76px;min-width:0;padding:6px}
+#case-meta td,#provenance td{white-space:normal;overflow-wrap:anywhere}#case-meta td:first-child,#provenance td:first-child{width:180px;color:var(--muted)}
+#provenance h3{margin:24px 0 12px}.detail #timing-detail{margin-top:20px}

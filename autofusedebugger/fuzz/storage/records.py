@@ -72,7 +72,7 @@ def normalize(result, environment):
         raise ValueError('invalid or excessive shape results')
     for raw in raw_shapes:
         index = integer(raw['shape_index'])
-        if index is None or index in seen:
+        if index is None or index >= 1024 or index in seen:
             raise ValueError('duplicate or absent shape index')
         seen.add(index)
         if raw['correctness'] not in {'pass','fail','error','not_checked'} or raw['performance'] not in {'measured','not_requested','error','skipped'}:
