@@ -534,3 +534,13 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - `round40-ui.log`：12 case/24 attempt，额外验证核心错误、最大绝对误差渲染；浏览器执行仍在mlir，截图保留远端。
 - round40 wheel SHA256 `a305b60d15a74f990bf3ea677b70dda2626f4e700f22a1b29abad406b3f5b493`；公网独立venv升级，服务命令切换admin serve。原3条记录先完整私有备份，再按expected_count=3清理，保留身份、ACK及防复活tombstone。
 - 100组最终批次在round40-home进行，默认CPU与AF-MLIR、3个shape，真实严格MLIR并非全失败：早期已有2组AF-MLIR成功。失败核心包含Transpose lowering和exec_condition cache guard；不修改seed规避失败。
+- 真实二级判定故障注入（不入库）额外暴露多卡问题：npu:1输入并不保证Inductor使用当前卡，产生npu:0输出与npu:1 eager结果比较异常。补显式set_device并在close恢复，需在隔离round41复验；不能把单卡0通过扩展为多卡通过。
+
+### 二级标准与异常进程补测（round41/42）
+
+- 修复set_device后，同一个真实AF-MLIR成功seed在npu:1再次编译运行，对CPU判定注入不一致（只用于测试，不归档）触发真实eager-npu复核：3个shape全部secondary_pass=true，最终ok；保留cpu_pass=false及basis=eager-npu。实际误差为0，不冒充自然精度失败。
+- 公网浏览器已验证同case CPU/AF-MLIR并排、10字符seed、用户名、秒单位，以及详情实际`AF_MLIR_STRICT gate=lowering`核心日志。
+- 补父进程有界日志管道：worker超时/异常退出时持久化error attempt并保留任务interrupted、允许显式重试；用户stop不伪造功能失败。无长日志文件，日志脱敏后最多1600字符。
+- round42/round43各261项fuzz回归通过；追加CPU真实oracle/二级不一致仍Failed测试9项通过。round41定向39项通过。round43浏览器12组/24条记录通过。父进程异常日志测试含os._exit(7)、脱敏和SQLite持久化。
+- 扩展回归round42：503 passed / 5 failed（排除已单测的架构/hosting重复项）。对上一commit 0dd0fa4在独立baseline目录重跑5个失败：4个复现（CANN GE fork、旧NNSmith seed42、两项prefusion Linear.graph），1个单跑通过；当前版本也将单独复查该项，不能未经验证把全部失败归为历史。
+- 修正CLI收敛后部署模板遗漏：Dockerfile、systemd、backup.sh和操作文档统一admin/maintenance；公网定时备份也升级命令并实际触发验证。旧运维脚本不能长期依赖旧venv语义。

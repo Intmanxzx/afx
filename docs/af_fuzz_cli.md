@@ -49,4 +49,4 @@ fuzz admin backup DATABASE DESTINATION
 
 管理员导出token的文件是离线分发产物，不是用户setup参数。轮换按姓名查询，不要求用户知道UUID。
 
-AF-MLIR运行时必须实际加载带RunMlirCodegen的库，并使用严格MLIR模式；默认CANN库没有该能力时明确拒绝，不静默回退legacy。当前验证范围仅冻结Elementwise/Reduce/Transpose图，不代表任意图能力。错误日志与精度指标通过SQLite同步至详情页；硬崩溃/超时日志尚未完整接入。真实编译/kernel性能仍不能可靠拆分，保持为空。部署新版需使用`fuzz admin serve`。
+AF-MLIR运行时必须实际加载带RunMlirCodegen的库，并使用严格MLIR模式；默认CANN库没有该能力时明确拒绝，不静默回退legacy。当前验证范围仅冻结Elementwise/Reduce/Transpose图，不代表任意图能力。错误日志与精度指标通过SQLite同步至详情页；worker异常退出/超时也保存失败摘要和已捕获的日志尾部。父进程本身被强杀时只能通过任务恢复发现中断，不能保证抓到最后日志。真实编译/kernel性能仍不能可靠拆分，保持为空。部署新版需使用`fuzz admin serve`。

@@ -205,25 +205,27 @@ OUT_DIR/
 ### Fuzz 离线结果查看
 
 ```sh
-autofusedbg fuzz snapshot ./results.sqlite ./snapshot.sqlite
+autofusedbg fuzz maintenance snapshot ./results.sqlite ./snapshot.sqlite
 # 将快照复制到个人电脑，安装同版本包后：
 autofusedbg fuzz view ./snapshot.sqlite
 ```
 
 查看模式仅使用 Python 标准库和 wheel 内置前端，不需要 Torch、NNSmith、CANN、NPU 或 Node。页面支持 seed/状态筛选、分页、逐 shape 详情和复制 `autofusedbg fuzz replay <seed>`。它是仅本机可访问的只读临时服务，Ctrl+C 退出；不是公网结果入口的替代品。请只打开可信快照。可选 `--no-browser`、`--port`；无需 SSH 查看助手。
 
-### Fuzz 后台 CPU 批测（D4 预览）
+### Fuzz 后台测试
 
 ```sh
-autofusedbg fuzz run 42 43 --backend cpu-eager --data-dir ./fuzz-data
-autofusedbg fuzz status --data-dir ./fuzz-data
+autofusedbg fuzz setup --user niuyuhu --token "$FUZZ_TOKEN"
+autofusedbg fuzz run --count 100
+autofusedbg fuzz status
 # 需要在当前终端等待时：
-autofusedbg fuzz run --foreground --data-dir ./fuzz-data
+autofusedbg fuzz run --foreground
+autofusedbg fuzz stop
 ```
 
-目前仅 POSIX、串行 CPU worker。默认后台处理队列至空后退出；`--foreground` 复用同一执行流程。启动确认不代表正确性通过，用 results/view 看结果。容量或规格错误不会半批入队；已接受但启动失败的任务保留为 pending，用不带 seed 的 run 继续，不要重复提交整批。中断任务先显式 resume。NPU 托管、设备租约及机器重启后服务恢复尚未实现。
+默认持续运行，直到stop；--count限制case数。每条case必跑CPU和AF-MLIR，精度有分歧时自动eager-npu复核。结果默认每30秒同步至https://autofuse.online。当前POSIX串行worker，NPU使用设备租约；不宣称编译与执行已拆分并行。完整入口和能力边界见[快速开始](docs/af_fuzz_quickstart.md)及[命令说明](docs/af_fuzz_cli.md)。
 
 前阶段 task schema1 操作库需停用后显式升级（结果库仍schema1）：
 ```sh
-autofusedbg fuzz upgrade-queue ./fuzz-data/tasks/tasks.sqlite ./tasks-v1.backup.sqlite
+autofusedbg fuzz maintenance upgrade-queue ./fuzz-data/tasks/tasks.sqlite ./tasks-v1.backup.sqlite
 ```

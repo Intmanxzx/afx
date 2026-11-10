@@ -124,6 +124,23 @@ def _worker_command(ledger, database, task):
             str(ledger.path), str(database), task['id'], task['claim']]
 
 
+def _save_worker_failure(ledger, database, task, reason, log):
+    """Persist a terminated attempt, but keep its task explicitly resumable."""
+    from ..generation import materialize, workload_id
+    from ..storage import ResultRepository
+    from ..environment import collect
+    bundle = materialize(task['seed'])
+    execution = json.loads(task['execution'])
+    execution['diagnostics'] = json.dumps({'version': 1, 'error': (reason+'\n'+log)[-1600:], 'shapes': {}})
+    result = {'seed': task['seed'], 'workload_id': workload_id(bundle),
+              'oracle_id': 'torch-eager-cpu/1', 'backend': execution['backend'],
+              'execution': execution, 'evaluation': json.loads(task['evaluation']),
+              'status': 'error', 'error_stage': 'worker', 'error_summary': reason,
+              'shape_results': []}
+    ResultRepository(database).save(result, environment=collect(ledger.path.parent.parent),
+                                    attempt_id=task['attempt_id'])
+
+
 def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
     """Drain pending tasks; stale claims are recovered, never auto-retried."""
     if not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or timeout <= 0:
@@ -157,6 +174,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 if refill(ledger):continue
                 return summary
             child = None
+            output_tail = None
             scratch = None
             reason = 'worker_exited_without_result'
             try:
@@ -171,7 +189,9 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                            TORCHINDUCTOR_COMPILE_THREADS=str(json.loads(task['execution'])['compile_threads']))
                 child = subprocess.Popen(_worker_command(ledger, database, task),
                     start_new_session=True, pass_fds=(fd,), env=env,
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                from ..core_logs import ProcessTail
+                output_tail = ProcessTail(child.stdout)
                 deadline = time.monotonic() + timeout
                 while child.poll() is None:
                     exceeded = violation(budget, child.pid, scratch.name, database.parent)
@@ -196,12 +216,15 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             finally:
                 if child is not None:
                     _terminate_group(child)
+                log = output_tail.finish() if output_tail is not None else ''
                 if scratch is not None:
                     scratch.cleanup()
                 if _has_result(database, task):
                     ledger.complete(task['id'], task['claim'])
                     summary['completed'] += 1
                 else:
+                    if reason == 'timeout' or reason.startswith('worker_exit:'):
+                        _save_worker_failure(ledger, database, task, reason, log)
                     ledger.interrupt(task['id'], task['claim'], reason)
                     summary['interrupted'] += 1
 

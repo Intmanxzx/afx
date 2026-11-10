@@ -260,3 +260,16 @@ from autofusedebugger.fuzz.cli import main
 assert main(['status','--data-dir',sys.argv[1]]) == 0
 '''
     assert subprocess.run([sys.executable, '-c', code, str(tmp_path)]).returncode == 0
+
+
+def test_native_worker_failure_persists_core_log(tmp_path, monkeypatch):
+    ledger, identity, database = setup(tmp_path)
+    monkeypatch.setattr(supervisor, '_worker_command', lambda *a: [sys.executable, '-c',
+        "import os;os.write(2,b'compiler fatal token=topsecret\\n');os._exit(7)"])
+    summary = supervisor.drain(ledger, database)
+    assert summary['interrupted'] == 1
+    task = ledger.get(identity)
+    record = ResultRepository(database).detail(task['attempt_id'])
+    assert record['status'] == 'error' and record['error_stage'] == 'worker'
+    diagnostics = json.loads(record['contexts']['execution']['diagnostics'])
+    assert 'compiler fatal' in diagnostics['error'] and 'topsecret' not in diagnostics['error']

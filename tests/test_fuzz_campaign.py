@@ -101,3 +101,30 @@ def test_default_replay_uses_both_mandatory_backends(monkeypatch):
     monkeypatch.setattr(cli,'execute_args',lambda args: seen.append((args.backend,args.device)) or 0)
     assert cli.replay(['B000000016'])==0
     assert seen==[('cpu','cpu'),('af-mlir','npu:0')]
+
+
+def test_secondary_disagreement_stays_failed_and_cpu_uses_actual_reference():
+    from autofusedebugger.fuzz.execution import execute
+    from autofusedebugger.fuzz.generation import materialize
+    class Adapter:
+        name = 'af-mlir'
+        def check(self, *args): pass
+        def prepare(self, *args): return None
+        def inputs(self, *args): return None
+        def invoke(self, *args): return 'af-output'
+        def synchronize(self): pass
+        def cpu_reference(self, *args): return 'actual-cpu-output'
+        def compare(self, output, expected):
+            assert expected == 'actual-cpu-output'
+            return False
+        def diagnose_accuracy(self, *args): return {'max_abs': 2.0}
+        def secondary_output(self, *args): return 'eager-output'
+        def outputs_equal(self, left, right):
+            assert (left, right) == ('af-output', 'eager-output')
+            return False
+    result = execute(materialize('42'), Adapter(), EvaluationConfig())
+    assert result['status'] == 'fail'
+    assert result['oracle_id'] == 'torch-eager-cpu/1'
+    assert all(row['correctness'] == 'fail' for row in result['shape_results'])
+    assert all(not item['secondary_pass'] and item['basis'] == 'cpu+eager-npu'
+               for item in json.loads(result['execution']['diagnostics'])['shapes'].values())

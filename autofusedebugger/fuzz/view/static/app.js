@@ -205,6 +205,7 @@ function renderFailureDetails(result){
  let box=$('failure-details');if(!box){box=document.createElement('section');box.id='failure-details';$('shape-detail').after(box);}box.replaceChildren();
  const raw=result.contexts.execution.diagnostics;if(!raw)return;
  const data=JSON.parse(raw);
+ if(!data.error&&!Object.keys(data.shapes||{}).length)return;
  const title=document.createElement('h3');title.textContent='核心日志与精度误差';box.append(title);
  if(data.error){const log=document.createElement('pre');log.textContent=data.error;box.append(log);}
  for(const [index,metrics] of Object.entries(data.shapes||{})){
