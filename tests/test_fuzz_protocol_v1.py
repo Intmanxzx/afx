@@ -229,7 +229,7 @@ class Block(importlib.abc.MetaPathFinder):
   if name.split('.')[0] in {'torch','torch_npu','numpy','nnsmith'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
 from autofusedebugger.fuzz.cli import main
-assert main(['seed','42','--show-spec'])==0
+assert main(['maintenance', 'seed','42','--show-spec'])==0
 '''
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
     result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True, check=True)

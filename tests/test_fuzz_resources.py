@@ -91,7 +91,7 @@ def test_invalid_identity_and_empty_key_preserve_config(tmp_path):
 def test_doctor_redacts_invalid_json(tmp_path, capsys):
     from autofusedebugger.fuzz.cli import main
     (tmp_path / "config.json").write_text("my-secret-is-not-json")
-    assert main(["doctor", "--data-dir", str(tmp_path)]) == 2
+    assert main(["maintenance", "doctor", "--data-dir", str(tmp_path)]) == 2
     assert "my-secret" not in capsys.readouterr().err
 
 

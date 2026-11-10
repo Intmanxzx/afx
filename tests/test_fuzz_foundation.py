@@ -28,8 +28,9 @@ before = dict(os.environ)
 import autofusedebugger
 import autofusedebugger.cli
 from autofusedebugger.fuzz.cli import main
-assert main(['doctor']) == 0
-assert main(['setup', '--data-dir', sys.argv[1]]) == 0
+assert main(['maintenance', 'doctor']) == 0
+from autofusedebugger.fuzz.config import setup
+setup(sys.argv[1])
 from autofusedebugger.fuzz.cli import replay_parser
 replay_parser()
 assert before == dict(os.environ)
@@ -179,8 +180,6 @@ def test_graph_trace_captures_axes_omitted_from_ir_text():
 
 def test_setup_short_user_flag(tmp_path, capsys):
     from autofusedebugger.fuzz.cli import main
-    assert main(['setup', '--data-dir', str(tmp_path), '--user', 'niuyuhu']) == 0
-    assert json.loads((tmp_path/'config.json').read_text())['identity']['display_name'] == 'niuyuhu'
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc:
         main(['setup', '--help'])

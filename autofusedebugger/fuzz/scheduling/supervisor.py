@@ -52,7 +52,7 @@ def _validate_task(task):
     if config.backend in {'cpu', 'cpu-eager', 'cpu-compile'}:
         if config.device != 'cpu':
             raise ValueError('backend/device mismatch')
-    elif config.backend in {'ascendc', 'triton', 'npu-eager', 'triton-npu', 'af-legacy', 'af-mlir'}:
+    elif config.backend in {'ascendc', 'triton', 'npu-eager', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'}:
         import re
         if not re.fullmatch(r'npu:[0-9]+', config.device):
             raise ValueError('NPU requires explicit logical npu:index')

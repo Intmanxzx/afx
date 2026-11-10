@@ -4,22 +4,24 @@ from ..contracts import Seed, ExecutionConfig, EvaluationConfig
 from .ledger import TaskLedger
 
 
-def register(sub):
-    upgrade = sub.add_parser('upgrade-queue', help='offline task schema 1 -> 2 with a required new backup')
+def register(sub, maintenance):
+    upgrade = maintenance.add_parser('upgrade-queue', help='offline task schema 1 -> 2 with a required new backup')
+    upgrade.set_defaults(command='upgrade-queue')
     upgrade.add_argument('queue')
     upgrade.add_argument('backup')
     for name in ('run', 'status', 'stop', 'resume'):
-        parser = sub.add_parser(name, help='managed case/backend tasks')
-        parser.add_argument('--data-dir')
-        parser.add_argument('--queue', help='operational task database')
+        parser = (maintenance if name=='resume' else sub).add_parser(name, help='managed case/backend tasks')
+        parser.set_defaults(command=name)
+        parser.add_argument('--data-dir', help=__import__('argparse').SUPPRESS)
+        parser.add_argument('--queue', help=__import__('argparse').SUPPRESS)
         if name == 'run':
-            parser.add_argument('seeds', nargs='*', help='numeric seeds; omit to drain existing pending tasks')
-            parser.add_argument('--count', type=int, help='generate 1..1000 new self-contained ETR v2 numeric seeds')
+            parser.add_argument('seeds', nargs='*', help='self-contained short seeds')
+            parser.add_argument('--count', type=int, help='generate 1..1000 self-contained short seeds')
             parser.add_argument('--foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
-            parser.add_argument('--backend', action='append', choices=('cpu', 'npu-eager', 'triton-npu', 'af-legacy', 'af-mlir'))
+            parser.add_argument('--backend', action='append', choices=('cpu', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'))
             parser.add_argument('--device', help='NPU logical device (default npu:0); does not alter generated case')
-            parser.add_argument('--compile-threads', type=int)
+            parser.add_argument('--compile-threads', type=int, help=__import__('argparse').SUPPRESS)
             parser.add_argument('--static-only', action='store_true')
             parser.add_argument('--performance', action='store_true')
             parser.add_argument('--timeout', type=float, default=120)
@@ -28,9 +30,9 @@ def register(sub):
             parser.add_argument('--limit', type=int, default=50)
             parser.add_argument('--after', type=int, default=0)
         else:
-            parser.add_argument('task')
+            parser.add_argument('task', nargs='?' if name=='stop' else None)
         if name in {'run', 'resume'}:
-            parser.add_argument('--database', help='result archive; bound on first run')
+            parser.add_argument('--database', help=__import__('argparse').SUPPRESS)
 
 
 def dispatch(args):
@@ -45,8 +47,14 @@ def dispatch(args):
         from .hosting import status
         return dict(ledger.page(limit=args.limit, after=args.after), supervisor=status(ledger))
     if args.command == 'stop':
-        ledger.stop(args.task)
-        return ledger.get(args.task)
+        if args.task:
+            ledger.stop(args.task)
+            return ledger.get(args.task)
+        from .supervisor import _tasks
+        tasks=list(_tasks(ledger))
+        for task in tasks:
+            ledger.stop(task['id'])
+        return {'state':'stop_requested','tasks':len(tasks)}
     database = args.database or home/'results/results.sqlite'
     from .supervisor import resume, _validate_task
     if args.command == 'resume':
@@ -65,10 +73,11 @@ def dispatch(args):
         seeds = [str(2**128 + secrets.randbelow(36**9)) for _ in range(count)]
     evaluation = EvaluationConfig(performance=args.performance)
     from .budgets import Budget
-    budget = Budget.configured(load_config(home), args.compile_threads)
+    from ..resources import adaptive_defaults
+    budget = Budget.configured(load_config(home) or adaptive_defaults(home), args.compile_threads)
     import uuid
     batch_id = str(uuid.uuid4())
-    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','npu-eager','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id)
+    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id)
                for backend in dict.fromkeys(args.backend or ['cpu'])]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})

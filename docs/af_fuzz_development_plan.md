@@ -506,3 +506,14 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - setup姓名参数统一为--user，移除--user-name/--display-name选项；--user-id仍是现有内部身份参数，列入本次CLI评审，不擅自扩大改名范围。
 - replay --performance帮助文案去掉已废止的CPU wall-time承诺，明确仅请求后端支持的精确指标。
 - npussh mlir round35：foundation 18通过，实际--help核对23个顶级子命令及setup参数。本轮源码修改/提交，未重新打包部署CLI，不需要为参数改名重启公网网站。
+
+## 30. CLI收敛与token初始化（2026-11-09）
+
+- 顶层23命令收敛到setup/run/stop/status/replay/view + admin/maintenance。低频诊断、同步、数据维护归maintenance；用户创建/轮换/网站/私有备份归admin。轮换按展示名查内部UUID。
+- setup仅公开--user/--token/--sync-interval，默认autofuse.online；在线校验token和管理员登记姓名，不接受不匹配姓名，UUID自动获取。凭据内部0600保存用于无人值守上传，不输出到配置摘要或结果。token argv存在shell历史/进程可见风险，文档明确说明。
+- 自适应默认使用有效CPU/cgroup/亲和性/内存/磁盘，保守限额，不宣称最优；当前串行cpu_workers=1。replay/run未配置时采用同一启发式，公共帮助隐藏底层路径/编译线程。
+- stop默认对整个队列请求停止/取消，不再强迫用户提供单任务ID。新增eager-npu公开名，旧记录npu-eager展示映射，不修改既有结果hash。
+- 命令与实施边界见docs/af_fuzz_cli.md。默认无限run、强制CPU+af-mlir、二级精度判断、误差/核心日志、100条新采集尚未完成；本阶段未清除线上3条数据、未部署新版CLI（部署时服务命令需改admin serve）。
+- 远端round36重新检查：CANN9.3.0、Torch2.10.0+cpu、torch_npu2.10.0.post7.dev20261015，共享autofuse HEAD c1b46272，无NPU进程。已安装AFMLIR能力仍未证明，保持fail closed。共享依赖不改。SSH曾断连/认证失败，后续重连可用。
+- 第一轮5项CLI新测试通过；迁移旧测试后60项重点通过。全量中3项失败为隔离传输遗漏tools和测试旧backend展示名，已补齐tools并更新为eager-npu后重新验证。用户原有index.html搜索占位符改动保留且不纳入本阶段commit。
+- round36最终完整fuzz回归：250 passed，1条原有pygraphviz缺失warning；172.23秒。测试全部npussh mlir，无本地安装/运行。

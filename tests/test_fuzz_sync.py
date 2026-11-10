@@ -139,8 +139,12 @@ def test_setup_configures_and_starts_sync_once_with_admin_key(tmp_path,monkeypat
     key=tmp_path/'key';key.write_text('admin-private-key-0123456789');key.chmod(0o600)
     calls=[]
     monkeypatch.setattr(client,'start',lambda *args:calls.append(args) or {'state':'started'})
-    assert main(['setup','--data-dir',str(tmp_path),'--key-file',str(key),
-                 '--sync-endpoint','https://example.com','--sync-interval','30'])==0
+    import io,uuid
+    from autofusedebugger.fuzz import onboarding
+    actual=onboarding.initialize_user
+    monkeypatch.setattr(onboarding,'initialize_user',lambda home,user,token,interval: actual(home,user,token,interval,
+        opener=lambda *a,**k:io.BytesIO(json.dumps({'user_id':str(uuid.uuid4()),'display_name':user}).encode())))
+    assert main(['setup','--data-dir',str(tmp_path),'--user','Tester','--token',key.read_text(),'--sync-interval','30'])==0
     assert len(calls)==1
     assert json.loads((tmp_path/'sync.json').read_text())['interval']==30
 

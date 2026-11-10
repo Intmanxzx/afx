@@ -83,7 +83,7 @@ class TorchAdapter:
             if axis is not None:
                 value = value.sum(dim=axis)
             return (value,)
-        if self.name in {"cpu", "cpu-eager", "npu-eager"}:
+        if self.name in {"cpu", "cpu-eager", "npu-eager", "eager-npu"}:
             return forward
         target = {'af-legacy': 'ascendc', 'triton-npu': 'triton'}.get(self.name, self.name)
         options = {"npu_backend": target} if target in {"ascendc", "triton"} else {}

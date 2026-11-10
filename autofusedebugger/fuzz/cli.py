@@ -36,40 +36,38 @@ def main(argv=None):
         return replay(argv[1:])
     parser = argparse.ArgumentParser(prog="autofusedbg fuzz")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("replay", help="replay a complete numeric seed; use replay --help")
+    sub.add_parser("replay", help="replay a self-contained short seed")
+    maintenance = sub.add_parser('maintenance', help='diagnostics, sync and data maintenance').add_subparsers(dest='maintenance_command', required=True)
+    administration = sub.add_parser('admin', help='offline identities and server operations').add_subparsers(dest='admin_command', required=True)
     for command in ("setup", "doctor"):
-        p = sub.add_parser(command)
-        p.add_argument("--data-dir")
+        p = (sub if command == "setup" else maintenance).add_parser(command)
+        p.set_defaults(command=command)
+        p.add_argument("--data-dir", help=argparse.SUPPRESS if command=="setup" else None)
         if command == "setup":
-            p.add_argument("--sync-endpoint")
-            p.add_argument("--sync-interval", type=float, default=30)
-            p.add_argument("--user", dest="display_name", help="administrator-issued personal display name, e.g. niuyuhu")
-            p.add_argument("--user-id")
-            p.add_argument("--key-file")
-            p.add_argument("--cpu-workers", type=int)
-            p.add_argument("--compile-threads", type=int)
-            p.add_argument("--memory-budget-bytes", type=int)
-            p.add_argument("--cache-budget-bytes", type=int)
-    seed = sub.add_parser("seed", help="materialize a preview v1 seed without execution dependencies")
+            p.add_argument('--user', required=True, help='administrator-issued personal name')
+            p.add_argument('--token', required=True, help='administrator-issued secret; never printed')
+            p.add_argument('--sync-interval', type=float, default=30)
+    seed = maintenance.add_parser("seed", help="inspect a frozen short-seed case without execution")
     seed.add_argument("token")
     seed.add_argument("--show-spec", action="store_true")
-    compare = sub.add_parser("diagnose", help="compare two opt-in generation traces")
+    compare = maintenance.add_parser("diagnose", help="compare two opt-in generation traces")
     compare.add_argument("expected")
     compare.add_argument("actual")
-    pair = sub.add_parser("compare", help="compare two result attempts with explicit comparability checks")
+    pair = maintenance.add_parser("compare", help="compare two result attempts with explicit comparability checks")
     pair.add_argument("database")
     pair.add_argument("left")
     pair.add_argument("right")
-    snapshot = sub.add_parser("snapshot", help="export a consistent lightweight SQLite snapshot")
+    snapshot = maintenance.add_parser("snapshot", help="export a consistent lightweight SQLite snapshot")
     snapshot.add_argument("source")
     snapshot.add_argument("destination")
     for command in ("restore", "import"):
-        transfer = sub.add_parser(command, help="restore to a new database" if command == "restore" else "merge into an existing database atomically")
+        transfer = maintenance.add_parser(command, help="restore to a new database" if command == "restore" else "merge into an existing database atomically")
+        transfer.set_defaults(command=command)
         transfer.add_argument("source")
         transfer.add_argument("destination")
-    check = sub.add_parser("check-db", help="audit a trusted result database without modification")
+    check = maintenance.add_parser("check-db", help="audit a trusted result database without modification")
     check.add_argument("database")
-    results = sub.add_parser("results", help="read lightweight results without model dependencies")
+    results = maintenance.add_parser("results", help="read lightweight results without model dependencies")
     results.add_argument("database")
     results.add_argument("--limit", type=int, default=50)
     results.add_argument("--after", type=int)
@@ -79,31 +77,33 @@ def main(argv=None):
     view.add_argument("database")
     view.add_argument("--port", type=int, default=0, help="loopback port; default chooses a free port")
     view.add_argument("--no-browser", action="store_true")
-    central = sub.add_parser("serve", help="central service behind a TLS proxy")
+    central = administration.add_parser("serve", help="central service behind a TLS proxy")
     central.add_argument("database")
     central.add_argument("--port", type=int, default=8090)
-    indexing = sub.add_parser('index-results', help='build additive SQLite reporting index after backup')
+    indexing = maintenance.add_parser('index-results', help='build additive SQLite reporting index after backup')
     indexing.add_argument('database')
-    backup = sub.add_parser("server-backup", help="private complete central backup including identities and ACKs")
+    backup = administration.add_parser("backup", help="private complete central backup including identities and ACKs")
     backup.add_argument("database")
     backup.add_argument("destination")
-    admin = sub.add_parser("admin-user", help="offline administrator creates an upload identity")
+    admin = administration.add_parser("user", help="offline administrator creates an upload identity")
     admin.add_argument("database")
     admin.add_argument("display_name")
     admin.add_argument("key_file")
-    rotate = sub.add_parser("admin-rotate-key", help="offline administrator rotates an existing upload key")
+    rotate = administration.add_parser("rotate-token", help="offline administrator rotates an existing upload key")
     rotate.add_argument("database")
-    rotate.add_argument("user_id")
+    rotate.add_argument("user")
     rotate.add_argument("key_file")
-    sync = sub.add_parser("sync", help="configure/run independent automatic upload")
+    sync = maintenance.add_parser("sync", help="configure/run independent automatic upload")
     sync.add_argument("action", choices=("configure", "once", "run", "start", "status", "reset-epoch", "verify"))
     sync.add_argument("--data-dir", required=True)
     sync.add_argument("--database")
     sync.add_argument("--endpoint")
     sync.add_argument("--key-file")
     sync.add_argument("--interval", type=float, default=30)
+    for child, command in [(seed,'seed'),(compare,'diagnose'),(pair,'compare'),(snapshot,'snapshot'),(check,'check-db'),(results,'results'),(indexing,'index-results'),(sync,'sync'),(central,'serve'),(backup,'server-backup'),(admin,'admin-user'),(rotate,'admin-rotate-key')]:
+        child.set_defaults(command=command)
     from .scheduling.cli import register
-    register(sub)
+    register(sub, maintenance)
     args = parser.parse_args(argv)
     try:
         if args.command == 'index-results':
@@ -137,25 +137,14 @@ def main(argv=None):
             result = dispatch(args)
         elif args.command == "admin-rotate-key":
             from .central.repository import rotate_key
-            result = rotate_key(args.database, args.user_id, args.key_file)
+            from .storage.queries import reading
+            with reading(args.database) as conn:
+                row=conn.execute('SELECT id FROM users WHERE display_name=?',(args.user,)).fetchone()
+            if row is None:raise ValueError('unknown user')
+            result = rotate_key(args.database, row[0], args.key_file)
         elif args.command == "setup":
-            result = setup(args.data_dir, display_name=args.display_name, user_id=args.user_id,
-                           key_file=args.key_file, cpu_workers=args.cpu_workers,
-                           compile_threads=args.compile_threads, memory_budget_bytes=args.memory_budget_bytes,
-                           cache_budget_bytes=args.cache_budget_bytes)
-            if args.sync_endpoint:
-                from .sync.client import configure, start, verify_identity
-                config = load_config(args.data_dir)
-                key_file = (config or {}).get("identity", {}).get("key_file")
-                if not key_file:
-                    raise ValueError("automatic sync requires administrator key-file")
-                home = data_home(args.data_dir)
-                result["sync"] = configure(home, args.sync_endpoint, key_file, args.sync_interval)
-                try:
-                    result["server_identity"] = verify_identity(home)
-                except (OSError, ValueError):
-                    result["server_identity"] = {"state": "unverified_offline_or_rejected"}
-                result["sync_daemon"] = start(home, home / "results/results.sqlite")
+            from .onboarding import initialize_user
+            result = initialize_user(args.data_dir, args.user, args.token, args.sync_interval)
         elif args.command == "seed":
             from .generation import materialize, content_manifest, workload_id
             import time
@@ -214,13 +203,13 @@ def replay(argv):
 
 def replay_parser():
     parser = argparse.ArgumentParser(prog="autofusedbg fuzz replay")
-    parser.add_argument("seed", help="self-contained nonnegative decimal seed")
+    parser.add_argument("seed", help="self-contained short seed")
     parser.add_argument("--static-only", action="store_true", help="execute base sample only; does not change case or workload ID")
     parser.add_argument("--backend", choices=BACKEND_NAMES, default="cpu")
     parser.add_argument("--device")
-    parser.add_argument("--database", help="result SQLite path; defaults to data home/results/results.sqlite")
+    parser.add_argument("--database", help=argparse.SUPPRESS)
     parser.add_argument("--no-save", action="store_true", help="explicit ephemeral execution")
-    parser.add_argument("--compile-threads", type=int, default=1)
+    parser.add_argument("--compile-threads", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--performance", action="store_true", help="request precise metrics where supported; unavailable metrics remain empty")
     parser.add_argument("--warmup-steps", type=int, default=3)
     parser.add_argument("--measured-steps", type=int, default=10)
@@ -233,7 +222,9 @@ def execute_args(args):
         from .generation import materialize
         from .execution import execute
         from .backends import create_backend
-        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "npu-eager", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), args.compile_threads, static_only=args.static_only)
+        from .resources import adaptive_defaults
+        threads = args.compile_threads or adaptive_defaults(data_home())["compile_threads"]
+        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         import time
         generation_start = time.perf_counter_ns()

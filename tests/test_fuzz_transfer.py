@@ -173,9 +173,9 @@ class Block(importlib.abc.MetaPathFinder):
   if name.split('.')[0] in {'torch','numpy','nnsmith','torch_npu'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
 from autofusedebugger.fuzz.cli import main
-assert main(['restore',sys.argv[1],sys.argv[2]])==0
-assert main(['import',sys.argv[1],sys.argv[2]])==0
-assert main(['check-db',sys.argv[2]])==0
+assert main(['maintenance', 'restore',sys.argv[1],sys.argv[2]])==0
+assert main(['maintenance', 'import',sys.argv[1],sys.argv[2]])==0
+assert main(['maintenance', 'check-db',sys.argv[2]])==0
 '''
     result = subprocess.run([sys.executable, '-c', code, str(source.path), str(tmp_path/'new.sqlite')],
                             capture_output=True, text=True)

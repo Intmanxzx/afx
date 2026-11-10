@@ -1,7 +1,7 @@
 """Public backend taxonomy. Historical identifiers remain readable, not relabeled."""
-BACKEND_NAMES = ('cpu', 'npu-eager', 'triton-npu', 'af-legacy', 'af-mlir')
-HISTORICAL_NAMES = ('cpu-eager', 'cpu-compile', 'ascendc', 'triton')
-NPU_BACKENDS = {'npu-eager', 'triton-npu', 'af-legacy', 'af-mlir', 'ascendc', 'triton'}
+BACKEND_NAMES = ('cpu', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir')
+HISTORICAL_NAMES = ('npu-eager', 'cpu-eager', 'cpu-compile', 'ascendc', 'triton')
+NPU_BACKENDS = {'npu-eager', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir', 'ascendc', 'triton'}
 
 
 from ..backend_names import display_backend

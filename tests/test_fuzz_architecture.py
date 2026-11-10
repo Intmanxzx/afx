@@ -37,7 +37,7 @@ class Block(importlib.abc.MetaPathFinder):
   if name.split('.')[0] in {'torch','numpy','torch_npu','nnsmith'}: raise AssertionError(name)
   if name.startswith('autofusedebugger.') and not name.startswith('autofusedebugger.fuzz'): raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-sys.argv=['autofusedebugger.fuzz','seed','42']
+sys.argv=['autofusedebugger.fuzz','maintenance','seed','42']
 runpy.run_module('autofusedebugger.fuzz',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

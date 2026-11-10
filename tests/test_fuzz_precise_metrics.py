@@ -28,19 +28,19 @@ def test_cpu_no_wall_or_kernel_measurement():
 
 def test_metric_hooks_and_search(tmp_path):
     class Profiled(Adapter):
-        name='npu-eager'
+        name='eager-npu'
         def measure_kernel(self,*args):return 1234
         def compile_duration_ns(self):return 5678
     result=execute(materialize('42'),Profiled(),EvaluationConfig(performance=True))
     repo=ResultRepository(tmp_path/'db');repo.save(result,environment={'user_id':'uuid','device_name':'niuyuhu','cann':'9.3'})
     query=ResultQueries(repo.path)
-    for text in ['niu','9.3','A000000016','pass','npu-eager']:
+    for text in ['niu','9.3','A000000016','pass','eager-npu']:
         assert query.summary(q=text)['total']==1
         assert len(query.case_page(q=text)['items'])==1
         assert statistics(repo.path,q=text)['attempts']==1
     assert query.summary(q='%')['total']==0
     item=query.case_page()['items'][0]
     assert item['user_name']=='niuyuhu'
-    member=item['backends']['npu-eager'][0]
+    member=item['backends']['eager-npu'][0]
     assert member['compile_ns']==5678 and len(member['kernel_ns'])==3
     assert {r['stage'] for r in statistics(repo.path)['precise_metrics']}=={'compile','kernel_mean'}

@@ -134,3 +134,20 @@ def budget_warnings(config, inventory):
         if config.get(setting) and inventory.get(available) and config[setting] > inventory[available]:
             warnings.append(f"{setting} exceeds detected {available}")
     return warnings
+
+
+def adaptive_defaults(home):
+    """Conservative admission heuristic, not a claim of benchmark-optimal tuning.
+
+    Current supervisor is serial; reserving workers beyond one cannot improve it.
+    Respect effective cgroup/affinity limits and leave host/disk headroom.
+    """
+    inventory=resource_inventory(home)
+    cores=inventory.get('cpu_worker_ceiling') or 1
+    memory=inventory.get('effective_memory_bytes')
+    disk=inventory.get('disk_free_bytes')
+    result={'cpu_workers':1, 'compile_threads':max(1,min(8,cores//2 or 1))}
+    if memory and os.name=='posix' and Path('/proc').exists():
+        result['memory_budget_bytes']=max(1,int(memory*.5))
+    if disk:result['cache_budget_bytes']=max(1,min(20*1024**3,int(disk*.2)))
+    return result
