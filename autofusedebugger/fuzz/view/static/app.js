@@ -44,7 +44,7 @@ async function details(identity, shapeIndex=null) {
     $('detail-content').parentElement.hidden=true;
     const table = document.createElement('table');
     for(const shape of result.shape_results) {
-      for(const [label,value] of [['当前 Shape',shape.shape_index],['功能',shape.correctness==='error'?'Failed':'Pass'],['精度',({pass:'Pass',fail:'Failed'}[shape.correctness]||'Unkown')],['首次调用（含惰性编译）',duration(shape.first_call_combined_ns)],['错误阶段',shape.error_stage||'—']]){const row=document.createElement('tr');cell(row,label);cell(row,String(value));table.append(row);}
+      for(const [label,value] of [['当前 Shape',shape.shape_index],['功能',shape.correctness==='error'?'Failed':['pass','fail'].includes(shape.correctness)?'Pass':'Unknown'],['精度',({pass:'Pass',fail:'Failed'}[shape.correctness]||'Unknown')],['首次调用（含惰性编译）',duration(shape.first_call_combined_ns)],['错误阶段',shape.error_stage||'—']]){const row=document.createElement('tr');cell(row,label);const td=cell(row,String(value));if(['功能','精度'].includes(label))td.className=value==='Pass'?'pass':value==='Failed'?(label==='精度'?'accuracy-failed':'failed'):'unknown';table.append(row);}
     }
     $('shape-detail').replaceChildren(table);
     $('detail-message').textContent = ''; $('copy').disabled = false;
@@ -82,11 +82,11 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape')$('column-pi
 $('all-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=true;saveColumns();});
 $('no-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=false;saveColumns();});
 $('reset-columns').addEventListener('click',()=>{columnPreferences={order:[],visibility:{}};saveColumns();});
-function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unkown';return span;}
+function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unknown';return span;}
 function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
 function renderRecords(items){
  const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
- const definitions=[{key:'seed',label:'Seed / Shape',width:190,defaultVisible:true},{key:'ops',label:'图结构',width:320,defaultVisible:true},{key:'inputs',label:'所有输入 Shape',width:230,defaultVisible:true},{key:'dtypes',label:'输入 Dtype',width:170,defaultVisible:true},{key:'mode',label:'静态 / 动态',width:100,defaultVisible:true},{key:'user_name',label:'用户',width:120,defaultVisible:true}];
+ const definitions=[{key:'seed',label:'Seed / Shape',width:190,defaultVisible:true},{key:'ops',label:'关键 OP',width:220,defaultVisible:true},{key:'inputs',label:'输入 Shape / Dtype',width:230,defaultVisible:true},{key:'mode',label:'静态 / 动态',width:100,defaultVisible:true},{key:'user_name',label:'用户',width:120,defaultVisible:true}];
  // Existing column preferences keep their order; place the newly split column
  // beside Seed on the first visit, rather than at the far end of the table.
  if(columnPreferences.order.length&&!columnPreferences.order.includes('ops'))columnPreferences.order.splice(Math.max(0,columnPreferences.order.indexOf('seed')+1),0,'ops');
@@ -97,19 +97,19 @@ function renderRecords(items){
  for(const c of definitions){const td=cell(tr,'');td.dataset.column=c.key;let populated=false;
  if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short+' / S'+(item.shape_index<0?'—':item.shape_index);td.append(strong);populated=true;}
  else if(c.key==='ops'){const ops=graphText(item.metadata);if(ops){const text=document.createElement('span');text.className='case-ops';text.textContent=ops;text.title=ops;td.append(text);populated=true;}}
- else if(c.key==='inputs'){td.textContent=tensorText(item.sample?.input_shapes,item.metadata.weights);populated=!!td.textContent;}
+ else if(c.key==='inputs'){td.textContent=tensorText(item.sample?.input_shapes,item.metadata.weights,item.sample?.input_dtypes||item.metadata.input_dtypes);populated=!!td.textContent;}
  else if(c.key==='dtypes'){td.textContent=dtypeText(item.sample?.input_dtypes||item.metadata.input_dtypes,item.metadata.weights);populated=!!td.textContent;}
  else if(c.key==='mode'){td.textContent=item.shape_mode==='static'?'静态':'动态';populated=true;}
  else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
- if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'failed':'';text=state==='pass'?'Pass':state==='failed'?'Failed':null;}
+ if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'Failed':null;}
  if(kind==='function'){state=['error','unsupported'].includes(latest.status)?'failed':['ok','fail'].includes(latest.status)?'pass':'';text=state==='pass'?'Pass':state==='failed'?'Failed':null;}
  if(kind==='logs'&&['error','unsupported','fail'].includes(latest.status))text=shortLog(latest.core_error||(latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
  if(kind==='kernel'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
  if(kind==='total')text=seconds(latest.total_ns);
- if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='logs'){button.title=latest.core_error||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
- if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unkown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
+ if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape：输入绑定 + 首次调用（含惰性编译）+ 精度校验；不等于 Kernel 耗时';if(kind==='logs'){button.title=latest.core_error||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
+ if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unknown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
  caseMetadata.set(latest.id,item.metadata);}}
  else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
  if(!populated)td.append(unknown());if(populated)c.populated=true;
@@ -181,8 +181,8 @@ function navigate(){
   const fragment=location.hash.slice(1)||'overview';
   const attempt=new URLSearchParams(fragment).get('attempt');
   if(attempt){const shape=new URLSearchParams(fragment).get('shape');details(attempt,shape===null?null:Number(shape));return;}
-  const name=['overview','records','performance','backends'].includes(fragment)?fragment:'overview';
-  for(const key of ['overview','records','performance','backends'])$(key+'-page').hidden=key!==name;
+  const name=['overview','records','performance'].includes(fragment)?fragment:'overview';
+  for(const key of ['overview','records','performance'])$(key+'-page').hidden=key!==name;
   $('detail').hidden=true;$('comparison').hidden=true;
   $('page-title').textContent={overview:'总览',records:'测试记录',performance:'性能与耗时',backends:'后端'}[name];
   document.querySelectorAll('nav a').forEach(el=>{el.classList.toggle('active',el.dataset.page===name);if(el.dataset.page===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
@@ -191,22 +191,19 @@ window.addEventListener('hashchange',navigate);
 $('close-detail').addEventListener('click',()=>{location.hash='records';navigate();});
 loadCharts();navigate();
 
-function duration(ns){return ns==null?'Unkown':(ns/1e6).toFixed(3)+' ms';}
+function duration(ns){return ns==null?'Unknown':(ns/1e6).toFixed(3)+' ms';}
 function versionText(v){return ['cann','torch','torch_npu','autofuse_commit'].map(k=>({cann:'CANN',torch:'Torch',torch_npu:'Torch NPU',autofuse_commit:'Autofuse'}[k])+': '+(v[k]||(k==='autofuse_commit'&&v.autofuse_binary?'binary '+v.autofuse_binary.slice(0,12):'未采集'))).join(' ｜ ');}
-function graphText(meta={}){
- const nodes=meta.graph?.nodes;
- if(!nodes)return (meta.op_types||[]).join(' · ');
- const parts=nodes.map(n=>n.op+'('+n.inputs.join(', ')+') → '+n.output);
- if(meta.graph.reduce_axis!==null&&meta.graph.reduce_axis!==undefined)parts.push('sum(axis='+meta.graph.reduce_axis+') → output');
- return parts.join(' ; ');
+function graphText(meta={}){return (meta.op_types||[]).join(' · ');}
+function tensorText(shapes={},weights=[],types={}){
+ const short={float16:'fp16',float32:'fp32',float64:'fp64',bfloat16:'bf16'};
+ const entries=[...Object.entries(shapes).map(([n,s])=>({shape:s,dtype:types[n]})),...weights];
+ return entries.map((t,i)=>'x'+(i+1)+'['+[...t.shape,short[t.dtype]||t.dtype||'Unknown'].join(',')+']').join(', ');
 }
-function tensorText(shapes={},weights=[]){return [...Object.entries(shapes).map(([n,s])=>n+': ['+s.join(' × ')+']'),...weights.map(w=>w.name+' (权重): ['+w.shape.join(' × ')+']')].join(' · ');}
-function dtypeText(types={},weights=[]){return [...Object.entries(types).map(([n,t])=>n+': '+t),...weights.map(w=>w.name+': '+w.dtype)].join(' · ');}
 function shortLog(text){return text.length>logLength?text.slice(0,logLength)+'...':text;}
 function renderCaseInfo(result){
  const meta=result.metadata||{},sample=result.sample||meta.shape_variants?.[0]||{},box=$('case-meta');box.replaceChildren();
  const table=document.createElement('table');
- for(const [label,value] of [['用例',result.seed_short+' / S'+(result.shape_index??'—')],['后端',result.backend_display||result.backend],['运行方式',result.contexts.execution.static_only?'静态':'动态'],['图结构',graphText(meta)],['所有输入 Shape',tensorText(sample.input_shapes,meta.weights)],['输入 Dtype',dtypeText(sample.input_dtypes||meta.input_dtypes,meta.weights)],['输出 Shape',tensorText(sample.output_shapes)],['输出 Dtype',dtypeText(sample.output_dtypes||meta.output_dtypes)],['重放范围','seed重放完整图及其shape样本；本页只展示选中的shape']]){const row=document.createElement('tr');cell(row,label);cell(row,value);table.append(row);}box.append(table);
+ for(const [label,value] of [['用例',result.seed_short+' / S'+(result.shape_index??'—')],['后端',result.backend_display||result.backend],['运行方式',result.contexts.execution.static_only?'静态':'动态'],['图结构',graphText(meta)],['输入 Shape / Dtype',tensorText(sample.input_shapes,meta.weights,sample.input_dtypes||meta.input_dtypes)],['输出 Shape / Dtype',tensorText(sample.output_shapes,[],sample.output_dtypes||meta.output_dtypes)],['重放范围','seed重放完整图及其shape样本；本页只展示选中的shape']]){const row=document.createElement('tr');cell(row,label);cell(row,value);table.append(row);}box.append(table);
 }
 function renderProvenance(result){
  const box=$('provenance');box.replaceChildren();const heading=document.createElement('h3');heading.textContent='运行环境';box.append(heading);
@@ -216,7 +213,7 @@ function renderProvenance(result){
  const telemetry=result.contexts.execution.telemetry?JSON.parse(result.contexts.execution.telemetry):{stages:{},shapes:{}};
  const timings=document.createElement('table'),names={generation:'生成',capability:'能力检查',prepare:'准备（非编译完成）',input_binding:'输入绑定',first_call_combined:'首次调用（含惰性编译）',correctness:'精度校验',execution_total:'整图执行总计',compile:'独立编译',kernel_mean:'Kernel'};
  const head=document.createElement('tr');for(const name of ['范围','阶段','耗时'])cell(head,name);timings.append(head);
- for(const [scope,metrics] of [...Object.entries(telemetry.shapes||{}).map(([k,v])=>['当前用例 S'+k,v]),['整图共享开销（不计入单shape耗时）',telemetry.stages||{}]])for(const [key,value] of Object.entries(metrics)){const row=document.createElement('tr');cell(row,scope);cell(row,names[key]||key);cell(row,duration(value));timings.append(row);}
+ for(const [scope,metrics] of [...Object.entries(telemetry.shapes||{}).map(([k,v])=>['当前用例 S'+k,v]),['整图计时（总计包含各shape，不重复相加）',telemetry.stages||{}]])for(const [key,value] of Object.entries(metrics)){const row=document.createElement('tr');cell(row,scope);cell(row,names[key]||key);cell(row,duration(value));timings.append(row);}
  $('timing-detail').replaceChildren(timings);
 }
 

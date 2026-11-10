@@ -104,7 +104,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
         metadata={};max_dim=max_elements=None
     conn.execute('INSERT INTO case_facts VALUES (?,?,?,?,?,?,?)',(row['workload_id'],row['seed'],canonical(metadata),metadata.get('n_nodes'),max_dim,max_elements,len(metadata.get('shape_variants',[]))))
     conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text+' '+canonical(metadata)))
-    dimensions={'op':metadata.get('op_types',[]),'dtype':sorted(set(metadata.get('input_dtypes',{}).values())|set(metadata.get('output_dtypes',{}).values()))}
+    dimensions={'op':sorted(set(metadata.get('op_types',[]))),'dtype':sorted(set(metadata.get('input_dtypes',{}).values())|set(metadata.get('output_dtypes',{}).values()))}
     categories={'Elementwise':{'add','mul','neg','relu'},'Reduce':{'sum'},'Transpose':{'transpose'}}
     dimensions['category']=[name for name,ops in categories.items() if ops.intersection(dimensions['op'])]
     for dimension,values in dimensions.items():

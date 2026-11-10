@@ -21,7 +21,7 @@ def case_metadata(seed):
     ops = [node['op'] for node in graph['nodes']]
     if graph['reduce_axis'] is not None:
         ops.append('sum')
-    return {'graph': graph, 'weights': [{'name': t.name, 'shape': list(t.shape), 'dtype': t.dtype} for t in spec.weights], 'op_types': sorted(set(ops)), 'n_nodes': len(ops),
+    return {'graph': graph, 'weights': [{'name': t.name, 'shape': list(t.shape), 'dtype': t.dtype} for t in spec.weights], 'op_types': ops, 'n_nodes': len(ops),
             'input_shapes': {t.name: list(t.shape) for t in spec.inputs},
             'input_dtypes': {t.name: t.dtype for t in spec.inputs},
             'output_shapes': {t.name: list(t.shape) for t in spec.output_samples[0]},

@@ -17,11 +17,12 @@ from autofusedebugger.fuzz.view.server import create_server
 
 
 def record(seed='42', status='ok'):
-    return {'seed': seed, 'workload_id': 'a'*64, 'oracle_id': 'ref/1',
+    import hashlib
+    return {'seed': seed, 'workload_id': hashlib.sha256(seed.encode()).hexdigest(), 'oracle_id': 'ref/1',
             'backend': 'test', 'status': status,
             'execution': {'backend': 'test', 'device': 'cpu'},
             'evaluation': {'correctness': True, 'performance': False},
-            'shape_results': [{'shape_index': 0, 'correctness': 'pass',
+            'shape_results': [{'shape_index': 0, 'correctness': {'ok':'pass','fail':'fail','error':'error'}[status],
                                'performance': 'not_requested'}]}
 
 

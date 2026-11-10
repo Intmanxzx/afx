@@ -587,3 +587,16 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - round50全fuzz 269 passed；新shape浏览器验证通过（3条shape、输入和权重、图、截断偏好、单shape详情刷新、triton列、移动端）。公网首次200行分页发现响应超2MiB，已移除列表重复携带的整图diagnostics/telemetry，完整内容只在详情请求。
 - round51定向42 passed。公网最终Playwright：300shape用例、100seed、27Pass/273功能失败；200+100分页无重复/遗漏，输入权重/shape/dtype/动态图/真实连线可见，日志60字符截断偏好、单shape详情刷新通过，JS errors=[]。线上venv-round51，wheel SHA256 ae2bd65636fdd573827b8b0813a7dd3dfb81a813b88775b11eec4bc17e3e5417。
 - 原始200后端attempt/600shape行不删除、不重跑，派生index在私有完整备份后重建。截图与构建文件仅远端，原用户index.html修改保留未提交。
+
+## Round52：查询口径、Token-only 注册及紧凑展示（2026-11-10）
+
+- 先核对线上只读计时：200 attempts/100 seeds 对应300 shape cases；27 Pass shape 的执行阶段和为0.000697181–15.702961311秒。示例 BD0MYWOXCJ 整图34.570727549秒，S0=15.553260811秒、S1=14.170879074秒、S2=0.000732161秒；首次调用分别15.365682565/14.170107352/0.000254964秒。上一版shape投影已不复用整图总计；本轮明确总耗时提示及详情总计包含关系，不把首次调用当kernel、也不伪造独立编译耗时。为何旧执行更快尚无同环境A/B证据。
+- 查询统一按当前shape判定；`pass`不会因为CPU参考成功而选中AF-MLIR失败行。列表/总览/图表/性能筛选使用同一case投影；保留同shape CPU参考和多后端历史。模糊metadata搜索不再包含其他shape的输入规格。
+- 新增安全SQL WHERE子集：白名单字段/比较/LIKE/AND/OR/括号、绑定参数、长度/嵌套限制、SQLite查询超时；不执行用户原始SQL。支持短seed精确查找。页面列出字段、值域和示例。
+- 云端 `fuzz admin user DATABASE NAME` 创建唯一用户名并仅输出一次token，数据库只存hash；`admin rotate-token DATABASE NAME`同样不要求文件。客户端 `fuzz setup --token TOKEN` 通过identity API获取云侧姓名，不接受客户端用户名。后台周期仍默认30秒可配置。token内部0600保存，不能进入结果或普通日志。
+- 删除无数据价值的静态后端菜单，保留总览后端分布及自动后端列。输入shape/dtype合并为x1[2,3,fp32], x2[2,1,fp32]；OP按图顺序紧凑展示；统一Pass绿、精度Failed黄、功能Failed红、Unknown灰。
+- 基线round51定向11 passed。首次完整回归发现打包传输的macOS AppleDouble伪Python文件、旧setup断言、把所有seed错误写成同workload的旧fixture；已清除远端元数据文件，禁用tar xattrs，修正fixture真实shape状态与workload身份，未弱化产品语义。
+- 浏览器隔离fixture：shape分页/输入格式/OP/动态triton列/日志截断/shape详情刷新/Pass与SQL筛选/移动端通过，JS错误为空。真实HTTP token-only身份解析及生成/轮换hash验证已补回归。最终全量测试与公网部署证据见下方验收记录。
+- 最终验收：npussh mlir round52 全fuzz **275 passed**（188.81s，仅已有NNSmith可选pygraphviz告警）；最终隔离浏览器probe通过。公网浏览器：300shape/27Pass/273功能Failed、pass/Failed/SQL过滤与图表一致、短seed查询、15.6/14.2/0.0秒逐shape展示、紧凑输入与OP、日志详情通过，JS errors=[]。截图/日志只保存在远端round52-*。
+- 部署：oracle1 `venv-round52`；wheel SHA256 `21e9f9b486d0bb5f84767f35c80c224556e79ed07304b94ec5df10c08bd5f203`；部署前一致性备份 `private/before-round52.sqlite`。重建200条派生索引以保留OP顺序，原始attempt/shape数据与用户token没有清理、没有重跑。管理员生成/轮换token及客户端只传token用隔离HTTP测试验证，未在生产新增测试账户。
+- 未完成边界：没有旧版本/同环境冷暖缓存性能A/B，无法把首次调用15秒归因到某个编译子阶段；kernel/独立编译指标未伪造。SQL是WHERE安全子集，不开放任意数据库SQL。用户原有搜索placeholder修改保留于工作树，不纳入本轮commit。

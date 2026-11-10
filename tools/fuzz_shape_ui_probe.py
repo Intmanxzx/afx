@@ -19,10 +19,10 @@ with create_server(repo.path) as server:
    page.goto(server.viewer_url+'#records',wait_until='networkidle')
    expect(page.locator('#total')).to_have_text('3');expect(page.locator('#rows tr')).to_have_count(3)
    headers=page.locator('#case-columns').inner_text()
-   for title in ['所有输入 Shape','输入 Dtype','静态 / 动态','triton-npu 功能','triton-npu 日志']:assert title in headers
-   assert 'weight' in page.locator('#rows [data-column=inputs]').first.inner_text()
-   assert 'float32' in page.locator('#rows [data-column=dtypes]').first.inner_text()
-   assert 'add(x, weight)' in page.locator('#rows [data-column=ops]').first.inner_text()
+   for title in ['输入 Shape / Dtype','静态 / 动态','triton-npu 功能','triton-npu 日志']:assert title in headers
+   assert 'x1[2,3,fp32], x2[2,1,fp32]' in page.locator('#rows [data-column=inputs]').first.inner_text()
+   assert 'add ·' in page.locator('#rows [data-column=ops]').first.inner_text()
+   assert '→' not in page.locator('#rows [data-column=ops]').first.inner_text()
    assert page.locator('#rows [data-column=inputs]').nth(0).inner_text()!=page.locator('#rows [data-column=inputs]').nth(1).inner_text()
    page.locator('.log-length input').fill('40');page.locator('.log-length input').press('Tab')
    button=page.locator('[data-column="af-mlir:logs"] .error-preview').first
@@ -37,6 +37,13 @@ with create_server(repo.path) as server:
    page.reload(wait_until='networkidle');expect(page.locator('#shape-detail tr')).to_have_count(5)
    page.screenshot(path=str(root/'detail.png'),full_page=True)
    page.locator('#close-detail').click();expect(page.locator('.log-length input')).to_have_value('40')
+   for query,count in [('pass',2),('Failed',1),("WHERE backend = 'triton-npu' AND function_status = 'Failed'",1)]:
+    page.locator('[name=q]').fill(query);page.locator('#filters button[type=submit]').click()
+    expect(page.locator('#rows tr')).to_have_count(count);expect(page.locator('#total')).to_have_text(str(count))
+    assert not page.locator('#chart-message').inner_text()
+   page.locator('#reset-filters').click();expect(page.locator('#rows tr')).to_have_count(3)
+   assert page.locator('nav a').count()==3
+   assert page.locator('[data-column=dtypes]').count()==0
    page.set_viewport_size({'width':390,'height':844});assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
    assert not errors,errors;print('shape rows, input metadata, graph, log limit, selected detail, triton columns and mobile passed');browser.close()
  finally:server.shutdown();t.join()

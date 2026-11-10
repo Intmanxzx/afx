@@ -62,3 +62,43 @@ def test_split_error_line_retains_context():
         os.write(2,b'edOperation: missing lowering\nsource location detail\n')
     assert 'UnsupportedOperation: missing lowering' in tail()
     assert 'source location detail' in tail()
+
+
+def test_shape_search_and_sql_consistent_across_summary_charts_and_rows(tmp_path):
+    repo=ResultRepository(tmp_path/'db')
+    repo.save(record('cpu',['pass']*3))
+    repo.save(record('af-mlir',['pass','error','pass']))
+    q=ResultQueries(repo.path)
+    for term, indices in [('pass',[0,2]),('Failed',[1]),
+        ("WHERE status = 'Pass' AND backend = 'af-mlir'",[0,2]),
+        ("WHERE backend = 'af-mlir' AND function_status = 'Failed'",[1]),
+        ("WHERE shape_index = 1 OR (shape_index = 2 AND status = 'Pass')",[1,2]),
+        ("WHERE op LIKE '%transpose%'",[0,1,2])]:
+        rows=q.case_page(q=term)['items']
+        assert [r['shape_index'] for r in rows]==indices
+        assert q.case_summary(q=term)['total']==len(indices)
+        stat=statistics(repo.path,q=term)
+        assert sum(r['count'] for r in stat['overall'])==len(indices)
+        assert sum(r['count'] for r in stat['backend'])==len(indices)
+    assert q.case_summary(status='error')['total']==1
+
+
+def test_sql_rejects_arbitrary_statements():
+    import pytest
+    from autofusedebugger.fuzz.reporting.search import compile_where
+    for expression in ["status='Pass'; DELETE FROM attempts", "secret='x'", "status IN (SELECT status FROM attempts)",
+                       "status='Pass' -- comment", "random() > 0", "status=Pass", "("*20+"status='Pass'"+")"*20]:
+        with pytest.raises(ValueError): compile_where(expression)
+    sql,params=compile_where("user = 'O''Brien' AND shape_index >= 0")
+    assert "O'Brien" not in sql and params==["O'Brien",0]
+
+
+def test_short_seed_search_and_current_shape_metadata(tmp_path):
+    from autofusedebugger.fuzz.contracts import Seed
+    repo=ResultRepository(tmp_path/'db')
+    value=record('af-mlir',['pass','error','pass']);repo.save(value)
+    q=ResultQueries(repo.path);short=Seed.parse(value['seed']).short
+    assert q.case_summary(q=short)['total']==3
+    assert q.case_summary(q=f"WHERE seed = '{short}'")['total']==3
+    assert [r['shape_index'] for r in q.case_page(q='[2,4]')['items']]==[1]
+    assert q.case_summary(q="WHERE shape_index = -1")['total']==0

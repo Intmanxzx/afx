@@ -142,13 +142,11 @@ class ResultQueries:
     def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None):
         """Group comparable runs, retaining every attempt in backend history.
 
-        Status selects groups, not their members: a failure filter must still show
-        the passing peer backend and later retries. Cursor is a group high-water rowid.
+        Filters select current shape cases, retaining passing CPU peers and backend
+        history in each row. Cursor combines the group high-water mark and shape.
         """
         if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
             raise ValueError('invalid pagination')
-        clauses, values = filters(seed, status, user_id, q)
-        where = ' WHERE ' + ' AND '.join('a.'+c for c in clauses) if clauses else ''
         with reading(self.path) as conn:
             conn.execute('BEGIN')
             from ..reporting.cases import rollup

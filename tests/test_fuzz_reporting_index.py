@@ -54,7 +54,7 @@ def test_environment_is_lightweight_and_never_reads_key(tmp_path):
 
 def test_failed_filter_keeps_peer_backend(tmp_path):
     repo=ResultRepository(tmp_path/'db'); repo.save(record())
-    failed=record('af-legacy');failed['status']='fail';repo.save(failed)
+    failed=record('af-legacy');failed['status']='fail';failed['shape_results'][0]['correctness']='fail';repo.save(failed)
     page=ResultQueries(repo.path).case_page(status='fail')
     assert set(page['items'][0]['backends'])=={'cpu','af-legacy'}
 
