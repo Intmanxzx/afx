@@ -358,3 +358,5 @@ oracle1 已切换到新环境，服务 active；公开 app.js SHA256 `fd8108a52b
 可复核分层计数归档在 `docs/benchmarks/shape-distribution-20261110.json`，完整逐输入样本在 mlir `/mnt/workspace/af-fuzz/continuous-1110/shape-distribution.json`。双卡预算对照与日志位于同目录 `tune-4/`、`tune-8/`；对照期间同时运行测试，有 CPU 干扰，不能当严格性能排名，只支持“不盲目增加 worker”的保守选择。
 
 最终空闲环境全量回归：**307 passed / 5 skipped**（旧 Node），日志 `continuous-1110/final-idle-tests.log`。并跑校准时两个短超时测试失败，停止基准后完整回归通过；未通过放宽生产超时或删除断言隐藏失败。本地页面/DAG 单独 **30 passed**。细分每个输入/rank/轴后多数分组样本很少，不据此声称每个轴都通过统计拟合；唯一达到 20 样本的无 Transpose C 分组 input0/rank1/axis0 共 29 个值，89.7% 为 1，进一步说明约束引入明显偏置。
+
+无限任务 run_id `b84668f0-0219-41b2-8fcb-f3f8de47d152`，home 为 mlir `round64-home`，remaining=NULL、stopped=0、排除 transpose，实际预算 4 worker/1 compile thread。首轮观察新增图无 Transpose，两卡均有进程，CPU 期望结果与 NPU 阶段有实际重叠。上线联调另修复 facts 请求缺少与结果上传相同的 User-Agent 导致网关 HTTP 403/1010；补充请求头断言，真实 `/api/facts` 已返回 ACK（每批 25 条），并重启独立上传器。未改动运行中的测试任务。

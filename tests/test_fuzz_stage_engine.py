@@ -235,6 +235,7 @@ def test_fact_http_disconnect_retry_and_ack_loss(tmp_path):
         with pytest.raises(OSError):once(tmp_path,tmp_path/'local',opener=disconnected)
         assert once(tmp_path,tmp_path/'local',opener=urlopen)['uploaded']==1
         def lost_ack(request,**kwargs):
+            assert request.get_header('User-agent') == 'AutofuseDebugger/0.1.2 (+https://esay.app)'
             response=urlopen(request,**kwargs);response.read();response.close()
             raise OSError('ACK lost after central commit')
         with pytest.raises(OSError):once(tmp_path,tmp_path/'local',opener=lost_ack)

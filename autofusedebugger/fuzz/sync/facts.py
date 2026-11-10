@@ -65,7 +65,7 @@ def upload(home,path,opener=None):
     key=Path(config['key_file']).read_text().strip()
     body=canonical(batch).encode()
     if len(body)>2*1024*1024:raise ValueError('fact batch too large')
-    request=Request(config['endpoint']+'/api/facts',body,headers={'Content-Type':'application/json','Authorization':'Bearer '+key})
+    request=Request(config['endpoint']+'/api/facts',body,headers={'Content-Type':'application/json','Authorization':'Bearer '+key,'User-Agent':'AutofuseDebugger/0.1.2 (+https://esay.app)'})
     with (opener or build_opener(NoRedirect).open)(request,timeout=15) as response:
         raw=response.read(8193)
         if len(raw)>8192:raise ValueError('oversized fact ACK')
