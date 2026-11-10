@@ -10,7 +10,7 @@ import webbrowser
 
 from ..storage.queries import ResultQueries
 
-ASSETS = {'': ('index.html', 'text/html; charset=utf-8'),
+ASSETS = {'report': ('index.html', 'text/html; charset=utf-8'), 'charts.js': ('charts.js', 'text/javascript; charset=utf-8'), '': ('index.html', 'text/html; charset=utf-8'),
           'app.js': ('app.js', 'text/javascript; charset=utf-8'),
           'style.css': ('style.css', 'text/css; charset=utf-8')}
 
@@ -34,17 +34,17 @@ def create_server(database, *, port=0):
         def log_message(self, *args):
             pass  # Do not log the local capability or database contents.
 
-        def respond(self, status, data, content_type='application/json; charset=utf-8'):
+        def respond(self, status, data, content_type='application/json; charset=utf-8', policy=None):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=True).encode('utf-8')
-            if len(data) > 2 * 1024 * 1024:
+            if len(data) > (16 if content_type.startswith('text/html') else 2) * 1024 * 1024:
                 status, data = 413, b'{"error":"response too large"}'
             self.send_response(status)
             for key, value in {
                 'Content-Type': content_type, 'Content-Length': str(len(data)),
                 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
                 'Referrer-Policy': 'no-referrer',
-                'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+                'Content-Security-Policy': policy or "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
             }.items():
                 self.send_header(key, value)
             self.end_headers()
@@ -69,6 +69,15 @@ def create_server(database, *, port=0):
                 if any(len(v) != 1 for v in raw.values()):
                     raise ValueError('duplicate query field')
                 params = {k: v[0] for k,v in raw.items()}
+                if route == 'api/report' and not set(params)-{'seed','status'}:
+                    from ..reporting.report import report_data
+                    self.respond(200, {'cases': report_data(database, **params)})
+                    return
+                if route == 'report' and not set(params)-{'seed','status'}:
+                    from ..reporting.report import render, content_policy
+                    page = render(database, **params)
+                    self.respond(200, page, 'text/html; charset=utf-8', content_policy(page))
+                    return
                 if route in {'api/results','api/summary'}:
                     allowed = {'seed','status'} | ({'limit','after'} if route == 'api/results' else set())
                     if set(params) - allowed:

@@ -158,4 +158,5 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     value = json.loads(capsys.readouterr().out)
     assert len(value['seeds']) == 4
     assert all(Seed.parse(seed).version == 2 for seed in value['seeds'])
+    assert all(len(Seed.parse(seed).short) <= 10 for seed in value['seeds'])
     assert main(['run', '42', '--data-dir', str(tmp_path), '--count', '4']) == 2

@@ -12,15 +12,25 @@ class TorchAdapter:
         from ..generation import plan
         if bundle.spec != plan(bundle.spec.seed):
             raise UnsupportedBackend("adapter accepts only the frozen minimal profile, not arbitrary graphs")
-        if self.name not in {"cpu-eager", "cpu-compile", "ascendc", "triton"}:
+        from . import BACKEND_NAMES, HISTORICAL_NAMES, NPU_BACKENDS
+        if self.name not in BACKEND_NAMES + HISTORICAL_NAMES:
             raise UnsupportedBackend("unknown backend")
-        npu = self.name in {"ascendc", "triton"}
+        npu = self.name in NPU_BACKENDS
         device_type = self.config.device.split(":", 1)[0]
         if device_type != ("npu" if npu else "cpu"):
             raise UnsupportedBackend("backend/device mismatch")
         if npu and evaluation.performance:
             raise UnsupportedBackend("strict NPU measurement requires a device lease; not implemented yet")
         import os
+        if self.name == 'af-mlir':
+            # Current runtime may silently use legacy when built without MLIR.
+            # Do not mislabel success until a runtime capability API exists.
+            raise UnsupportedBackend('af-mlir runtime capability cannot be verified; refusing silent legacy fallback')
+        if self.name == 'af-legacy':
+            flags = os.environ.get('AUTOFUSE_DFX_FLAGS', '')
+            parts = [p for p in flags.split(';') if p and not p.strip().startswith('--mlir_codegen_config=')]
+            self.old_dfx = os.environ.get('AUTOFUSE_DFX_FLAGS')
+            os.environ['AUTOFUSE_DFX_FLAGS'] = ';'.join(parts + ['--mlir_codegen_config=none'])
         os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(self.config.compile_threads)
         import torch
         self.torch = torch
@@ -38,6 +48,12 @@ class TorchAdapter:
             self.lease = DeviceLease(identity).acquire()
 
     def close(self):
+        if hasattr(self, 'old_dfx'):
+            import os
+            if self.old_dfx is None:
+                os.environ.pop('AUTOFUSE_DFX_FLAGS', None)
+            else:
+                os.environ['AUTOFUSE_DFX_FLAGS'] = self.old_dfx
         if hasattr(self, 'lease'):
             self.lease.close()
 
@@ -67,9 +83,10 @@ class TorchAdapter:
             if axis is not None:
                 value = value.sum(dim=axis)
             return (value,)
-        if self.name == "cpu-eager":
+        if self.name in {"cpu", "cpu-eager", "npu-eager"}:
             return forward
-        options = {"npu_backend": self.name} if self.name in {"ascendc", "triton"} else {}
+        target = {'af-legacy': 'ascendc', 'triton-npu': 'triton'}.get(self.name, self.name)
+        options = {"npu_backend": target} if target in {"ascendc", "triton"} else {}
         return torch.compile(forward, backend="inductor", fullgraph=True,
                              dynamic=not self.config.static_only and len(bundle.spec.shape_samples) > 1, options=options)
 

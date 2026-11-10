@@ -327,3 +327,17 @@ round16-outage.log：before(total,ACK)=(157,157)，offline=(173,157)且URLError�
 中心最终SQL核对：2004 attempts（CPU ok1001、AscendC ok1001、AscendC error2）、6012 shape rows。验收source ACK=2002，另正式托管E2E source ACK=2，无需手动once。网站summary与库一致；另运行每日backup服务生成完成后的私有备份。
 
 隔离安装实际replay：round21-installed-replay.log npu:1 v2+42 status=ok/3shape；runtime-venv安装wheel且只读引用既有Torch，light-venv上传器无Torch/NNSmith/NumPy。验收结束后设备工作负载释放，后台只保留轻量同步服务。
+
+## 22. 短seed和报表UI回归
+
+round23-backends.sqlite：B16在cpu/npu-eager/af-legacy各3shape通过；af-mlir返回unsupported（运行时MLIR编译能力无法确认，拒绝静默回退），triton-npu当前基础环境Device npu not supported。未将后端名称可选等同全部后端可用。
+
+round25/26-browser.log：真实Chromium验证B16查询、单seed重放、北京时间样例2026-11-09 21:59:40、3shape详细表、旧HTML分类/后端图表、后端筛选及每条详情跳转，无pageerror。报告用原图表renderer，不重新画一个近似版本。
+
+实现过程中完整回归发现移动renderer遗漏shape_summary相对依赖及薄转发导出，已修正；旧性能报告回归必须恢复通过才能部署。不把这些新失败当原有基线忽略。
+
+round26部署wheel SHA256：50a4710920ab2bfe66dcea5ebbb2873ebb295ad4573ec7538ba94bbaef253095。oracle1先private/before-round26.sqlite备份，再新venv-round26安装并切systemd；旧venv保留，结果库不改写seed/backend身份。公网short query B16、healthz通过；round26-public-browser.log真实浏览器通过短seed、北京时间、原版图表、后端透视/筛选、逐记录shape详情链接。
+
+round26首轮全量483 passed/6 failed：5原有失败外，旧performance_parallel测试的严格分配[1,9]出现[2,8]（基于计时，不是数据丢失）；同组、mixed shapes、架构、短seed报表聚焦重跑16 passed。未改动该断言掩盖失败。安装版短seed npu-eager托管运行completed=1，round26-managed.json。
+
+round29-public-browser.log：公网统一导航、六类图表、固定10字符seed、后端显示名、筛选、复制replay、逐shape详情、390px移动布局通过，无pageerror。公网不再有“打开原版HTML”链接；旧/report路径同一shell。round29-final-focused.log=16 passed。阶段测试修正包括抽取图表时意外残留Python模板尾部、旧首页标题断言，均已通过针对性复验。

@@ -11,9 +11,9 @@ https://esay.app 。页面自动刷新30秒；按数字seed筛选后URL可分享
 ```sh
 npussh mlir
 AF=/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/bin/autofusedbg-npu
-$AF fuzz run --count 10 --backend ascendc --device npu:0
+$AF fuzz run --count 10 --backend af-legacy --device npu:0
 $AF fuzz status
-$AF fuzz replay 340282366920938463463374607431768211498 --backend ascendc --device npu:0
+$AF fuzz replay 340282366920938463463374607431768211498 --backend af-legacy --device npu:0
 $AF fuzz sync status --data-dir /mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/acceptance-home
 ```
 
@@ -39,8 +39,22 @@ $AF fuzz sync configure --data-dir /mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/acc
 
 oracle1：af-fuzz.service + Caddy；应用loopback8090，公网80/443由Caddy终止TLS。babynews已停止/禁用，源码及切换前配置在备份目录保留。每日af-fuzz-backup.timer生成私有备份，保留7天；请另行建立异地备份策略。
 
-升级/恢复/迁移步骤与模板见deploy/fuzz/README.md。当前线上使用venv-round21；原venv保留供回退。无需Docker时同wheel即可；Compose已在备用端口实际验证。
+升级/恢复/迁移步骤与模板见deploy/fuzz/README.md。当前线上使用venv-round26；原venv保留供回退。无需Docker时同wheel即可；Compose已在备用端口实际验证。
 
 ## 明确未承诺的能力
 
 真实编译/执行拆分与异进程编译产物移交、NPU严格性能测量、Triton当前CANN适配、跨用户全机硬资源隔离、Windows/macOS原生运行验收仍未完成。对应入口保守拒绝或报告能力边界，不伪称全功能完成。
+
+## 短seed与后端（本轮更新）
+
+现在可用`autofusedbg fuzz replay B16 --backend af-legacy --device npu:0`；B16无损对应原v2 entropy42。网站、复制命令和seed命令显示短形式；新生成编号最多10字符，内含固定协议版本，无数据库映射。内部数据库保留规范数值用于已有指纹/同步身份，不修改历史数据。
+
+后端入口：cpu（eager CPU）、npu-eager、triton-npu、af-legacy、af-mlir。后三种名称不表示当前安装一定可用；当前MLIR未有安全能力检测，显式unsupported；Triton仍有环境问题。历史ascendc未记录legacy/mlir模式，页面明确提示。
+
+页面时间统一北京时间。点击“原版 HTML · 透视汇总 / 用例列表”使用原有分类、dtype、shape汇总和排序记录表；增加按后端图表及筛选。逐记录链接返回统一详情查看每shape结果。该视图最多5000条，超限请先筛选，未采集的性能数据不填造。
+
+### 当前网站布局（取代上文独立报告入口）
+
+左侧“总览 / 实验记录 / 后端”导航；所有图表、记录和详情在同一套页面与样式中展示，不再打开旧HTML。旧/report书签也进入统一网站。当前线上venv-round29。
+
+默认seed固定10字符：`B000000016`；`fuzz replay B000000016 --backend af-legacy --device npu:0`。更早的短输入和数值输入仍解析同case；历史全128bit随机seed不会为压缩长度而截断。列表中的历史AF模式未记录是数据缺失提示，不是新增执行后端。

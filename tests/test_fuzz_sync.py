@@ -64,7 +64,7 @@ def test_http_sync_lost_ack_retry_and_public_query(tmp_path):
         assert once(home,repo.path,opener=opener)['uploaded']==1
         assert once(home,repo.path,opener=opener)['pending']==0
         with opener(endpoint+'/api/summary') as response:assert json.load(response)['total']==1
-        with opener(endpoint+'/') as response:assert '团队结果' in response.read().decode()
+        with opener(endpoint+'/') as response:assert '主导航' in response.read().decode()
         repo.save(result('43'))
         def lost(request,**kw):
             response=opener(request,**kw);response.read();response.close()

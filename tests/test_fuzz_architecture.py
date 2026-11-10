@@ -42,7 +42,7 @@ runpy.run_module('autofusedebugger.fuzz',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert '"seed": "42"' in result.stdout
+    assert '"seed": "A000000016"' in result.stdout
 
 
 def test_view_and_storage_do_not_depend_on_execution_layers():

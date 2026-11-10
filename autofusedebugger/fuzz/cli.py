@@ -154,7 +154,7 @@ def main(argv=None):
         elif args.command == "seed":
             from .generation import materialize, content_manifest, workload_id
             bundle = materialize(args.token)
-            result = {"seed": str(bundle.spec.seed), "workload_id": workload_id(bundle),
+            result = {"seed": bundle.spec.seed.short, "seed_numeric": str(bundle.spec.seed), "workload_id": workload_id(bundle),
                       "preview": True, "shape_count": len(bundle.spec.shape_samples)}
             if args.show_spec:
                 result["manifest"] = content_manifest(bundle)
@@ -208,7 +208,7 @@ def replay_parser():
     parser = argparse.ArgumentParser(prog="autofusedbg fuzz replay")
     parser.add_argument("seed", help="self-contained nonnegative decimal seed")
     parser.add_argument("--static-only", action="store_true", help="execute base sample only; does not change case or workload ID")
-    parser.add_argument("--backend", choices=BACKEND_NAMES, default="cpu-eager")
+    parser.add_argument("--backend", choices=BACKEND_NAMES, default="cpu")
     parser.add_argument("--device")
     parser.add_argument("--database", help="result SQLite path; defaults to data home/results/results.sqlite")
     parser.add_argument("--no-save", action="store_true", help="explicit ephemeral execution")
@@ -225,7 +225,7 @@ def execute_args(args):
         from .generation import materialize
         from .execution import execute
         from .backends import create_backend
-        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton"} else "cpu"), args.compile_threads, static_only=args.static_only)
+        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "npu-eager", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), args.compile_threads, static_only=args.static_only)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         bundle = materialize(args.seed)
         result = execute(bundle, create_backend(config), evaluation)

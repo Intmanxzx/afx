@@ -23,6 +23,8 @@ def reading(path):
 def filters(seed=None, status=None):
     clauses, values = [], []
     if seed is not None:
+        from ..contracts import Seed
+        seed = str(Seed.parse(seed))
         if not seed.isascii() or not seed.isdecimal() or len(seed) > 128:
             raise ValueError('invalid seed filter')
         clauses.append('seed=?'); values.append(seed)
@@ -51,6 +53,11 @@ class ResultQueries:
             rows = [dict(row) for row in conn.execute(
                 'SELECT rowid,id,seed,workload_id,backend,status,created_at FROM attempts WHERE '
                 + ' AND '.join(clauses) + (' ORDER BY rowid DESC LIMIT ?' if newest else ' ORDER BY rowid LIMIT ?'), values)]
+        from ..contracts import Seed
+        from ..backend_names import display_backend
+        for row in rows:
+            row['seed_short'] = Seed.parse(row['seed']).short
+            row['backend_display'] = display_backend(row['backend'])
         more = len(rows) > limit
         return {'items': rows[:limit], 'next_cursor': rows[limit-1]['rowid'] if more else None}
 
@@ -82,5 +89,9 @@ class ResultQueries:
                 result['contexts'][kind] = json.loads(payload[0])
         # Copy command is based only on validated decimal seed, never stored shell text.
         filters(seed=result['seed'])
-        result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed']
+        from ..contracts import Seed
+        from ..backend_names import display_backend
+        result['seed_short'] = Seed.parse(result['seed']).short
+        result['backend_display'] = display_backend(result['backend'])
+        result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
         return result

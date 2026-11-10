@@ -17,7 +17,7 @@ def register(sub):
             parser.add_argument('--count', type=int, help='generate 1..1000 new self-contained ETR v2 numeric seeds')
             parser.add_argument('--foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
-            parser.add_argument('--backend', action='append', choices=('cpu-eager', 'cpu-compile', 'ascendc', 'triton'))
+            parser.add_argument('--backend', action='append', choices=('cpu', 'npu-eager', 'triton-npu', 'af-legacy', 'af-mlir'))
             parser.add_argument('--device', help='NPU logical device (default npu:0); does not alter generated case')
             parser.add_argument('--compile-threads', type=int)
             parser.add_argument('--static-only', action='store_true')
@@ -62,12 +62,12 @@ def dispatch(args):
         if seeds or not 1 <= count <= 1000:
             raise ValueError('--count requires 1..1000 cases and no explicit seeds')
         import secrets
-        seeds = [str(2**128 + secrets.randbits(128)) for _ in range(count)]
+        seeds = [str(2**128 + secrets.randbelow(36**9)) for _ in range(count)]
     evaluation = EvaluationConfig(performance=args.performance)
     from .budgets import Budget
     budget = Budget.configured(load_config(home), args.compile_threads)
-    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton'} else 'cpu', budget.compile_threads, static_only=args.static_only)
-               for backend in dict.fromkeys(args.backend or ['cpu-eager'])]
+    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','npu-eager','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only)
+               for backend in dict.fromkeys(args.backend or ['cpu'])]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
     from .hosting import launch

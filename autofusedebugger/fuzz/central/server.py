@@ -39,14 +39,14 @@ def create_server(database,port=8090):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):
             pass
-        def send(self,status,value,mime='application/json; charset=utf-8'):
+        def send(self,status,value,mime='application/json; charset=utf-8',policy=None):
             body=value if isinstance(value,bytes) else json.dumps(value,ensure_ascii=True,allow_nan=False).encode()
-            if len(body)>2*1024*1024:
+            if len(body)>(16 if mime.startswith('text/html') else 2)*1024*1024:
                 status,body=413,b'{"error":"response too large"}'
             self.send_response(status)
             for key,value in {'Content-Type':mime,'Content-Length':str(len(body)),'Cache-Control':'no-store',
                 'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
-                'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'"}.items():
+                'Content-Security-Policy':policy or "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'"}.items():
                 self.send_header(key,value)
             self.end_headers();self.wfile.write(body)
         def do_GET(self):
@@ -67,16 +67,23 @@ def create_server(database,port=8090):
                     return self.send(200, {'user_id': user, 'display_name': name})
                 if route=='/healthz':
                     return self.send(200,{'status':'ok','protocol':1})
-                if route in {'/','/app.js','/style.css'}:
-                    name={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}[route]
+                if route in {'/','/report','/app.js','/charts.js','/style.css'}:
+                    name={'/':'index.html','/report':'index.html','/app.js':'app.js','/charts.js':'charts.js','/style.css':'style.css'}[route]
                     data=resources.files('autofusedebugger.fuzz.view').joinpath('static').joinpath(name).read_bytes()
                     if route=='/':
                         data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'页面每30秒刷新；上传周期由测试端配置'.encode())
-                    return self.send(200,data,{'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8'}[route])
+                    return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8'}[route])
                 raw=parse_qs(url.query,keep_blank_values=True,max_num_fields=8)
                 if any(len(v)!=1 for v in raw.values()):
                     raise ValueError('duplicate field')
                 params={k:v[0] for k,v in raw.items()}
+                if route=='/api/report' and not set(params)-{'seed','status'}:
+                    from ..reporting.report import report_data
+                    return self.send(200, {'cases': report_data(database, **params)})
+                if route=='/report' and not set(params)-{'seed','status'}:
+                    from ..reporting.report import render, content_policy
+                    page = render(database, **params)
+                    return self.send(200, page, 'text/html; charset=utf-8', content_policy(page))
                 if route=='/api/compare' and set(params)=={'left','right'}:
                     from ..storage.comparison import compare
                     return self.send(200,compare(database,params['left'],params['right']))

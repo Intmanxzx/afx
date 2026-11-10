@@ -438,3 +438,23 @@ setup新增--sync-endpoint/--sync-interval，使用管理员key-file完成同步
 - 正式端到端：一次setup+管理员身份校验→后台run→CPU/NPU独立任务→SQLite→30秒outbox→HTTPS中心→浏览器筛选/重放/对比，均实测。普通运行和验收都复用统一execute，无第二套执行引擎。
 - 安装版runtime-venv在源码目录外npu:1 replay通过；初始system-site-packages未继承嵌套venv中的Torch，改仅在隔离venv添加只读shared-torch.pth后通过，无共享依赖修改。
 - 当前交付说明：docs/af_fuzz_quickstart.md。公网https://esay.app；本地无安装/测试产物，阶段commit已创建、未push。
+
+## 23. 短seed、后端名称与原HTML展示（2026-11-09）
+
+- seed增加无损短文本编码：A/B为固定协议v1/v2，后续规范大写base36；例如v2 entropy42为B16。底层数值和所有既有golden/workload不改，历史数值输入可用。默认新随机熵小于36^9，显示最多10字符；任意历史128位熵不截断，可能长于10字符。
+- 新公开后端名cpu、npu-eager、triton-npu、af-legacy、af-mlir。cpu为eagerCPU；npu-eager不调用torch.compile；af-legacy显式--mlir_codegen_config=none；af-mlir在缺乏运行时能力证明时fail closed，避免编译时关闭MLIR后静默legacy。旧ascendc结果未记录模式，只展示为历史未区分，不伪造改名。
+- Web时间固定UTC+8，YYYY-MM-DD HH:mm:ss；浏览器本地时区不影响。结果详情增加逐shape表，原JSON保留折叠查看。
+- 旧summary_html及性能图表实现移动为独立fuzz/reporting共享代码，旧入口仅薄转发，不维护两份renderer。/report接入旧总体/分类/dtype/shape图表、可排序记录表，并增加后端分组/筛选、短seed和详情链接。现有统计页面保留入口。报告上限5000条，超限要求过滤；分页API继续可用，不能悄悄截断汇总。
+- 报告元数据按冻结seed计划重建；未存储kernel/profiler指标显示未采集，不推造性能。HTML使用精确script/style内容hash CSP，动态style属性仅样式允许，错误/后端文本进行HTML转义。
+
+## 24. 网站整合修正（2026-11-09）
+
+按用户纠正：不是把旧HTML作为外链页面，也不是仅更换标题。现在单一shell（侧栏总览/实验记录/后端）、单一style.css、同一字体配色卡片；从原renderer抽取图表算法为charts.js，报告数据通过/api/report提供，原/report URL也进入同一网站。没有iframe、target blank或独立报表皮肤。总览六个维度图表，实验记录分页筛选、逐shape详情与同seed比较，后端页说明五个执行路径。
+
+seed显示规范补零到10字符，例如B000000016；默认生成熵保持36^9以内。短输入B16仍解析同一个用例。历史完整128bit熵不可无损塞进10字符，内部保留其长形式，不截断破坏确定性。现有1000验收数据均显示固定10位。
+
+历史cpu-eager显示cpu，历史ascendc显示“AF · 模式未记录”，不能把缺失模式强行归到af-legacy或af-mlir。新任务仍是五个公开名字。所有时间北京时间。
+
+round28-focused=42 passed；round29浏览器在本地远端服务和公网都通过navigation/charts/fixed10seed/backend_names/filter/replay/detail/mobile，无pageerror。round29全量483通过/6失败，其中新增1项仅旧首页标题断言；改为检查主导航后sync+seed报表16通过。此前round26最终全量484通过/5原有失败。未隐藏既有失败。
+
+公网wheel SHA256 453cc58d599d18c962643c11e15b6103dc1934f275dc392c367b99873f6c5c96，venv-round29；切换前private/before-round29.sqlite备份。测试/安装均在远端；本地截图临时文件已清理。
