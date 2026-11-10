@@ -21,6 +21,9 @@ def register(sub, maintenance):
                                 help='wait and supervise in this terminal instead of detaching')
             parser.add_argument('--backend', action='append', choices=('cpu', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'))
             parser.add_argument('--device', action='append', help='logical npu:index; repeat for multiple cards; default: all visible NPUs')
+            parser.add_argument('--device-memory-bytes',type=int,help='per physical NPU admission/peak memory budget')
+            parser.add_argument('--worker-max-tasks',type=int,default=16,help='recycle a stage runtime after N stages; 1 disables reuse')
+            parser.add_argument('--scheduling', choices=('combined','staged'), default='staged', help='stage DAG or rollback to legacy whole-worker execution')
             parser.add_argument('--workers', type=int, help='maximum concurrent workers (CPU and NPU combined)')
             parser.add_argument('--compile-threads', type=int, help=__import__('argparse').SUPPRESS)
             parser.add_argument('--static-only', action='store_true')
@@ -81,15 +84,17 @@ def dispatch(args):
     budget = Budget.configured(load_config(home) or adaptive_defaults(home), args.compile_threads)
     from dataclasses import replace
     if args.workers is not None: budget=replace(budget,cpu_workers=args.workers)
+    budget=replace(budget,worker_max_tasks=getattr(args,'worker_max_tasks',16))
+    if getattr(args,'device_memory_bytes',None) is not None:budget=replace(budget,device_budget_bytes=args.device_memory_bytes)
     from .devices import select_devices
     devices=select_devices(args.device)
     import uuid
     batch_id = str(uuid.uuid4())
-    configs = [ExecutionConfig(backend, devices[0] if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id, save_results=args.save)
+    configs = [ExecutionConfig(backend, devices[0] if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, scheduling=getattr(args,'scheduling','staged'), static_only=args.static_only, batch_id=batch_id, save_results=args.save)
                for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
     from .hosting import launch
     return launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version==3,device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
-                  timeout=args.timeout, foreground=args.foreground, budget=budget,
+                  timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
                   campaign=(configs,evaluation,count,devices) if not seeds else None)

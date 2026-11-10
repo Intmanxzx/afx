@@ -118,7 +118,7 @@ def create_server(database,port=8090):
             except (OSError,sqlite3.Error):
                 self.send(503,{'error':'database unavailable'})
         def do_POST(self):
-            if self.path!='/api/upload':return self.send(404,{'error':'not found'})
+            if self.path not in {'/api/upload','/api/facts'}:return self.send(404,{'error':'not found'})
             try:
                 if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type','').split(';')[0]!='application/json':
                     return self.send(400,{'error':'JSON Content-Length required'})
@@ -134,7 +134,11 @@ def create_server(database,port=8090):
                 with closing(_connect(database)) as conn:authenticate(conn,auth[7:])
                 body=self.rfile.read(length)
                 if len(body)!=length:raise ValueError('incomplete body')
-                result=ingest(database,auth[7:],json.loads(body))
+                if self.path=='/api/facts':
+                    from ..sync.facts import ingest as ingest_facts
+                    result=ingest_facts(database,auth[7:],json.loads(body))
+                else:
+                    result=ingest(database,auth[7:],json.loads(body))
                 self.send(200,result)
             except PermissionError:
                 self.send(401,{'error':'invalid credential or ownership'})

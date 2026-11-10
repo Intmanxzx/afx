@@ -43,6 +43,14 @@ def _purge(path, *, expected_count, incomplete, identities=None):
         for identity, _, _ in rows:
             for table,column in [('report_search','attempt_id'),('stage_metrics','attempt_id'),('attempt_facts','attempt_id'),('shapes','attempt_id'),('owners','attempt_id'),('attempts','id')]:
                 conn.execute(f'DELETE FROM {table} WHERE {column}=?',(identity,))
+        for table in ('lifecycle_v1','stage_attempts_v1'):
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone():
+                conn.execute('DELETE FROM '+table+' WHERE attempt_id NOT IN (SELECT id FROM attempts)')
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='stage_facts_v1'").fetchone():
+            conn.execute('DELETE FROM stage_facts_v1 WHERE case_id NOT IN (SELECT case_id FROM stage_attempts_v1) OR (attempt_id IS NOT NULL AND attempt_id NOT IN (SELECT id FROM attempts))')
+            # Aggregates including removed attempts cannot remain public.
+            conn.execute('DELETE FROM stage_window_aggregates_v1')
+            conn.execute('DELETE FROM stage_windows_v1 WHERE window_id NOT IN (SELECT window_id FROM stage_attempts_v1)')
         conn.execute('DELETE FROM case_dimensions WHERE workload_id NOT IN (SELECT workload_id FROM attempts)')
         conn.execute('DELETE FROM case_facts WHERE workload_id NOT IN (SELECT workload_id FROM attempts)')
         conn.execute('DELETE FROM report_devices WHERE source_id NOT IN (SELECT source_id FROM attempt_facts)')

@@ -77,7 +77,7 @@ def _command(ledger, database, timeout, fd, connection, run_id):
             str(ledger.path), str(database), str(timeout), str(fd), str(connection), run_id]
 
 
-def launch(ledger, database, specifications, *, timeout=120, foreground=False, startup_timeout=15, budget=None, campaign=None):
+def launch(ledger, database, specifications, *, timeout=120, foreground=False, startup_timeout=15, budget=None, campaign=None, devices=None):
     """Bind and enqueue under ownership before handing lock to a child supervisor."""
     if not math.isfinite(timeout) or timeout <= 0 or not math.isfinite(startup_timeout) or startup_timeout <= 0:
         raise ValueError('timeouts must be finite and positive')
@@ -117,6 +117,13 @@ def launch(ledger, database, specifications, *, timeout=120, foreground=False, s
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE name='campaign'").fetchone():
                     conn.execute('UPDATE campaign SET stopped=1')
         ids = ledger.enqueue_many(prepared)
+        if devices:
+            from .placement import initialize as init_placement
+            with ledger._connection() as conn:
+                init_placement(conn)
+                for identity,spec in zip(ids,prepared):
+                    if spec[1].device!='cpu':
+                        conn.execute('INSERT OR REPLACE INTO task_devices VALUES (?,?)',(identity,json.dumps(devices)))
         if foreground:
             return dict(drain(ledger, database, timeout=timeout, _owned_fd=fd),
                         enqueued=ids, queue=str(ledger.path), mode='bounded_foreground',

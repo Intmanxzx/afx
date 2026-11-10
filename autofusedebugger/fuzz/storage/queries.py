@@ -92,6 +92,8 @@ class ResultQueries:
                 raise LookupError('attempt not found')
             result = dict(row)
             from .lifecycle import read, elapsed
+            from .stage_facts import timeline
+            result['stage_timeline'] = timeline(conn,identity)
             result['lifecycle'] = read(conn, identity)
             result['end_to_end_ns'] = elapsed(result['lifecycle'], 'admitted', 'persisted')
             result['shape_results'] = [dict(r) for r in conn.execute(

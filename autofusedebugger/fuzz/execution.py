@@ -10,10 +10,10 @@ from .generation import reference, workload_id, oracle_id
 from .backends.base import UnsupportedBackend
 
 
-def execute(bundle, adapter, evaluation):
+def execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape_starts=None):
     started=time.perf_counter_ns()
     try:
-        result = _execute(bundle, adapter, evaluation)
+        result = _execute(bundle, adapter, evaluation, deferred=deferred, outputs=outputs, shape_starts=shape_starts)
         import json
         stages = result.pop('_timings', {})
         stages['execution_total'] = time.perf_counter_ns()-started
@@ -28,7 +28,7 @@ def execute(bundle, adapter, evaluation):
             adapter.close()
 
 
-def _execute(bundle, adapter, evaluation):
+def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape_starts=None):
     result = {"seed": str(bundle.spec.seed), "workload_id": workload_id(bundle),
               "oracle_id": oracle_id(bundle), "backend": adapter.name, "shape_results": [],
               "_timings": {}, "_diagnostics": {"version":1,"shapes":{}}, "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}
@@ -71,6 +71,10 @@ def _execute(bundle, adapter, evaluation):
         row = {"shape_index": index, "correctness": "not_checked", "performance": "not_requested", "_timings": {}}
         result["shape_results"].append(row)
         processing_started = time.perf_counter_ns()
+        if shape_starts is not None:
+            shape_starts[str(index)] = time.monotonic_ns()
+        if outputs is not None:
+            outputs.append(())
         stage = "input_binding"
         try:
             started=time.perf_counter_ns()
@@ -82,7 +86,12 @@ def _execute(bundle, adapter, evaluation):
             adapter.synchronize()
             row["first_call_combined_ns"] = time.perf_counter_ns() - started
             row['_timings']['first_call_combined']=row['first_call_combined_ns']
-            if evaluation.correctness:
+            if outputs is not None:
+                transfer_started = time.perf_counter_ns()
+                outputs[index] = tuple(t.detach().cpu().clone() for t in output)
+                adapter.synchronize()
+                row['_timings']['output_transfer'] = time.perf_counter_ns() - transfer_started
+            if evaluation.correctness and not deferred:
                 stage = "correctness"
                 started=time.perf_counter_ns()
                 expected=(adapter.cpu_reference(bundle,index) if hasattr(adapter,'cpu_reference')

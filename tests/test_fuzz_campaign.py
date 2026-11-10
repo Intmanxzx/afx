@@ -102,7 +102,7 @@ def test_default_replay_uses_both_mandatory_backends(monkeypatch):
     from autofusedebugger.fuzz import cli
     seen=[]
     monkeypatch.setattr(cli,'execute_args',lambda args: seen.append((args.backend,args.device)) or 0)
-    assert cli.replay(['C000000016'])==0
+    assert cli.replay(['C000000016','--scheduling','combined'])==0
     assert seen==[('cpu','cpu'),('af-mlir','npu:0')]
 
 

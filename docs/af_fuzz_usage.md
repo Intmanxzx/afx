@@ -164,7 +164,7 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。当前安装路径仍需显式提供该隔离环境（例如在激活的环境中设置PYTHONPATH）；`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。自动化依赖准备尚待完成。
 
 
-### 合并执行观测基线（2026-11-10）
+### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）
 
 当前仍是 case/backend 合并 worker，不是完整阶段级调度；不开放未验证的 split 或持久运行时选项。D seed 的三个 Shape 在同一实例、同卡按序执行。收尾线程有界，超时/崩溃不会在调度主循环重新生成图。
 
@@ -175,3 +175,31 @@ run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设
 本切片部署记录：oracle1 使用 `/home/ubuntu/af-fuzz/venv-stage-baseline-1110`，新增 override 为 `/etc/systemd/system/af-fuzz.service.d/zzz-stage-baseline-1110.conf`（排序在既有 override 之后）。私有备份与切换前 service 配置位于 `/home/ubuntu/af-fuzz/backups/stage-baseline-1110/`，不要公开。回滚时先暂停 v2 客户端上传，将新增 override 移出 `.conf` 后缀范围，再 daemon-reload/restart；不覆盖生产库。已核对线上 app.js 与本地产物 SHA256 一致，服务 active，用户/来源/ACK receipts/结果数量与备份相同、integrity_check=ok。
 
 mlir 入口仍是 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/bin/autofusedbg-npu`，现在引用 `/mnt/workspace/af-fuzz/stage-baseline-1110/installed`。原入口备份为同目录 `autofusedbg-npu.before-stage-baseline-1110`，复制回原入口即可回滚客户端；配置及凭据未改动。隔离 home 下通过新入口执行 D16 eager-npu，3 Shape 均成功、记录 telemetry v2；未上传测试记录。完整测试日志、构建安装日志、基准 JSON 均在 `/mnt/workspace/af-fuzz/stage-baseline-1110/`。
+
+
+### 默认阶段调度与回滚（2026-11-10）
+
+`run` / `replay` 默认 `--scheduling staged`，后台仍使用原任务库及原 stop/status/recovery 命令。与已有 combined pending 队列混用时拒绝启动，先完成或显式停止旧队列，不改写历史执行契约。
+
+```sh
+autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
+autofusedbg fuzz run C16 D16 --workers 4 --worker-max-tasks 16 --save
+autofusedbg fuzz run C16 D16 --workers 4 --worker-max-tasks 1 --save # 禁用运行时复用作对照
+autofusedbg fuzz replay D16 --backend eager-npu --save
+autofusedbg fuzz run --scheduling combined --workers 4 --save     # 旧执行路径回滚
+autofusedbg fuzz replay C16 --backend cpu --scheduling combined
+```
+
+`--device-memory-bytes` 是每物理 NPU 的预算上限；低于阶段最低预约会明确失败，不无限等卡。`--workers` 约束全池进程数，不是每 backend 一个池。默认内存/缓存容量来自当前有效主机资源；可以继续使用 setup 的 memory/cache 配置。持久编译 worker 仍受能力门禁，CPU/eager 已启用，AF/编译型后端保守按 session 回收。
+
+窗口工具效率与 Kernel 性能分开；成功 Shape/min 与“已完成 Shape/min（含失败）”同时显示。查询结果按 backend、环境版本、静态/动态、冷暖、状态分组；输入框可以筛这些维度，筛选不会缩短测量窗口。长稳态样本必须单独验证，不能套用小样本加速比。
+
+生命周期和阶段事实现已独立同步到中心，失败重试不改原 result hash。先升级中心再升级客户端；老上传进程不会自动换 Python 模块，需按现有服务管理方式重启上传器后才能发送新事实。测试使用隔离 home，不会自动向生产上传测试记录。公开 snapshot 包含观测事实、不含身份/token/outbox/ACK。最近 256 个已完成窗口保留完整时间线，长期保留聚合；裁剪前等待窗口 ACK。
+
+当前发布使用独立环境 `/home/ubuntu/af-fuzz/venv-stages-1110`；私有备份 `/home/ubuntu/af-fuzz/backups/stages-1110/`。新增 systemd override `zzzz-stages-1110.conf` 可移出 `.conf` 后缀后 daemon-reload/restart 回滚至上一环境；不回拷旧生产库，避免丢失新记录。回滚前暂停新版本事实上传。客户端隔离安装在 `/mnt/workspace/af-fuzz/stages-1110/installed`，旧入口备份 `autofusedbg-npu.before-stages-1110`。
+
+最终审计发布改用 oracle1 `venv-stages-audit-1110`，override 为 `zzzzz-stages-audit-1110.conf`；备份在 `backups/stages-audit-1110/`。回滚时移出此 override 并重启服务即可回到上一 `venv-stages-1110`，不要恢复旧数据库覆盖新结果。mlir 入口更新为 `stages-audit-1110/installed`，回滚入口备份为 `autofusedbg-npu.before-stages-audit-1110`。
+
+CPU 参考现在每个 Shape 只运行一次，自身显示“未校验”，这表示它是精度基准，不是用同一个输出验证自己。目标 backend 才显示与 CPU 比较后的通过/失败。工具效率不把 CPU 参考重复计入目标吞吐。窗口取消和写库失败单独列出；没有 Shape 的错误仍单独统计。
+
+round64 的独立同步 daemon 也已重启到新安装，原结果 ACK 保留；其私有数据库备份在 mlir `stages-audit-1110/private-sync-backup/`。回滚客户端时同步回滚 uploader 的 Python/PYTHONPATH（旧启动参数保存在该私有目录），不要把旧数据库覆盖回去。生产历史记录没有新阶段事实时，页面继续显示“未采集”，不会用 0 或接收时间补造指标。

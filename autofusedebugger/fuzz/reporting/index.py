@@ -57,7 +57,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     config={key:value for key,value in ex.items() if key not in {'backend','device','telemetry','diagnostics','batch_id'}}
     batch=ex.get('batch_id') or 'historical-unrecorded'
     group=digest({'workload':row['workload_id'],'oracle':row['oracle_id'],'source':source_id,
-                  'versions':versions,'config':config,'evaluation':ev,'batch':batch,'environment':env})
+                  'versions':versions,'config':config,'evaluation':ev,'batch':batch,'environment':{k:v for k,v in env.items() if k not in {'device_uuid','device_model'}}})
     telemetry=json.loads(ex['telemetry']) if ex.get('telemetry') else {}
     stages=telemetry.get('stages',{})
     total=stages.get('execution_total')

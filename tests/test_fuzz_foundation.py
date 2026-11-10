@@ -125,7 +125,7 @@ def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
     from autofusedebugger.fuzz import cli as fuzz_cli
     seen = []
     monkeypatch.setattr(fuzz_cli, "execute_args", lambda args: seen.append(args.seed) or 0)
-    assert cli.main(["fuzz", "replay", "680564733841876926926749214863536422954"]) == 0
+    assert cli.main(["fuzz", "replay", "680564733841876926926749214863536422954", "--scheduling", "combined"]) == 0
     assert seen == ["680564733841876926926749214863536422954", "680564733841876926926749214863536422954"]
     with pytest.raises(SystemExit):
         fuzz_cli.main(["run", "--seed-token", "v1:preview-dynamic-v1:42"])

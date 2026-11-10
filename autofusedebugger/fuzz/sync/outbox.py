@@ -73,4 +73,11 @@ def reset_epoch(path):
         initialize(conn)
         source = str(uuid.uuid4())
         conn.execute('UPDATE sync_identity SET source_id=?,ack=0 WHERE id=1', (source,))
+        from .facts import rebuild_outbox
+        from ..storage.stage_facts import initialize as init_facts
+        init_facts(conn)
+        conn.execute('DELETE FROM fact_published_v1')
+        conn.execute('DELETE FROM fact_outbox_v1')
+        conn.execute('UPDATE fact_ack_v1 SET ack=0')
+        rebuild_outbox(conn)
         return {'source_id': source, 'ack': 0, 'recovery': 'full_idempotent_resync'}

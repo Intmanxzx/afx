@@ -177,6 +177,17 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
     """Drain pending tasks; stale claims are recovered, never auto-retried."""
     if not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('timeout must be finite and positive')
+    staged_tasks = [json.loads(t['execution']).get('scheduling') for t in _tasks(ledger) if t['state']=='pending']
+    if not staged_tasks:
+        with ledger._connection() as conn:
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='campaign'").fetchone():
+                row=conn.execute('SELECT payload FROM campaign WHERE id=1').fetchone()
+                if row:staged_tasks=[c.get('scheduling') for c in json.loads(row[0])['configs']]
+    if 'staged' in staged_tasks:
+        if any(x != 'staged' for x in staged_tasks):
+            raise ValueError('cannot mix staged and legacy queued tasks; drain or stop existing queue first')
+        from .staged import drain as drain_staged
+        return drain_staged(ledger,database,timeout=timeout,_owned_fd=_owned_fd,_ready=_ready)
     database = Path(database).expanduser().resolve()
     if database == ledger.path:
         raise ValueError('task and result databases must differ')

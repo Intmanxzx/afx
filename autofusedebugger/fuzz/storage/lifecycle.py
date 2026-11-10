@@ -1,4 +1,4 @@
-"""Local lifecycle v1, outside immutable result hashes and replication protocol 1.
+"""Lifecycle v1, outside immutable result hashes; independent fact replication.
 
 At most seven facts per attempt. Missing post-commit facts stay missing (a crash
 cannot be repaired by inventing a persisted timestamp). No remote clock math.
@@ -46,8 +46,13 @@ def append(path, identity, event, observed=None):
         from .repository import _connect
         with closing(_connect(path, writable=True)) as conn, conn:
             initialize(conn)
-            conn.execute('INSERT OR IGNORE INTO lifecycle_v1 VALUES (?,?,?,?,?)',
+            cursor = conn.execute('INSERT OR IGNORE INTO lifecycle_v1 VALUES (?,?,?,?,?)',
                          (identity, event, observed['domain'], observed['monotonic_ns'], observed['wall_time']))
+            if cursor.rowcount and conn.execute('SELECT 1 FROM attempts WHERE id=?',(identity,)).fetchone():
+                from .stage_facts import initialize as init_facts, publish
+                init_facts(conn)
+                for name,domain,mono,wall in conn.execute('SELECT event,domain,monotonic_ns,wall_time FROM lifecycle_v1 WHERE attempt_id=?',(identity,)):
+                    publish(conn,'lifecycle',identity+':'+name,{'domain':domain,'monotonic_ns':mono,'wall_time':wall})
     except sqlite3.Error as exc:
         warnings.warn('lifecycle observation not saved: ' + type(exc).__name__, RuntimeWarning)
 

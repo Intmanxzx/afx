@@ -150,7 +150,7 @@ class ExecutionConfig:
     def __post_init__(self):
         if type(self.save_results) is not bool:
             raise ValueError("save_results must be boolean")
-        if self.compile_threads < 1 or self.scheduling != "combined":
+        if self.compile_threads < 1 or self.scheduling not in {"combined", "staged"}:
             raise ValueError("positive compile budget required; split execution is not validated")
 
 

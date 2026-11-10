@@ -4,13 +4,17 @@ from .base import UnsupportedBackend
 
 class TorchAdapter:
     """Lazy execution dependency for NNSmith-generated immutable graphs."""
+    from .base import Capabilities
+    capabilities = Capabilities()
+
     def __init__(self, config):
         self.config = config
         self.name = config.backend
+        self.capabilities = self.Capabilities(persistent_runtime=self.name in {'cpu','cpu-eager','eager-npu','npu-eager'})
 
     def check(self, bundle, evaluation):
         from ..generation import plan
-        if bundle.spec != plan(bundle.spec.seed):
+        if not getattr(self, 'validated_shared_case', False) and bundle.spec != plan(bundle.spec.seed):
             raise UnsupportedBackend("bundle does not match NNSmith seed regeneration")
         from . import BACKEND_NAMES, HISTORICAL_NAMES, NPU_BACKENDS
         if self.name not in BACKEND_NAMES + HISTORICAL_NAMES:
@@ -141,19 +145,6 @@ class TorchAdapter:
     def outputs_equal(self, left, right):
         return isinstance(left,tuple) and isinstance(right,tuple) and len(left)==len(right) and all(
             a.shape==b.shape and a.dtype==b.dtype and self.torch.equal(a,b) for a,b in zip(left,right))
-
-    def secondary_output(self, bundle, index):
-        # Independent eager invocation only after a CPU disagreement. Reuse the
-        # already held device lease rather than acquiring it a second time.
-        original=self.name
-        try:
-            self.name='eager-npu'
-            prepared=self.prepare(bundle)
-            output=self.invoke(prepared,self.inputs(bundle,index))
-            self.synchronize()
-            return output
-        finally:
-            self.name=original
 
     def diagnose_accuracy(self, output, expected):
         import struct

@@ -42,7 +42,9 @@ def configure(home, endpoint, key_file, interval=30):
 def _once(home, database, *, opener=None):
     home=Path(home); config=json.loads((home/'sync.json').read_text())
     batch=pending(database)
-    if not batch['items']:return {'pending':0,'ack':batch['after']}
+    if not batch['items']:
+        from .facts import upload
+        return dict(pending=0,ack=batch['after'],**upload(home,database,opener))
     key=Path(config['key_file']).read_text().strip()
     body=json.dumps(batch,separators=(',',':'),allow_nan=False).encode()
     if len(body)>2*1024*1024:raise ValueError('sync batch exceeds size bound')
@@ -80,7 +82,7 @@ def run(home,database, _fd=None):
                 # Bounded drain each interval; retry independent of tests.
                 for _ in range(20):
                     result=once(home,database)
-                    if not result.get('uploaded'):break
+                    if not (result.get('uploaded') or result.get('fact_uploaded')):break
                 state={'state':'ok','time':time.time(),**result}
             except Exception as exc:
                 state={'state':'retrying','time':time.time(),'error':type(exc).__name__}

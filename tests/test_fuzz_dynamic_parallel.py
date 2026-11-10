@@ -60,7 +60,11 @@ def test_parallel_cpu_and_distinct_devices_not_same_device(tmp_path,monkeypatch)
     write_policy(ledger,Budget(cpu_workers=3))
     monkeypatch.setattr(Budget,'admit',lambda *a:None)
     def command(l,d,t):
-        code="import time,json,pathlib;start=time.monotonic();time.sleep(.5);pathlib.Path("+repr(str(tmp_path/t['id']))+").write_text(json.dumps([start,time.monotonic()]))"
+        # Synchronize the first wave rather than assuming process startup takes
+        # less than .5 s on a shared NPU host running other regression work.
+        peers=[x['id'] for x in l.page()['items']]
+        gate="" if t['id']==peers[2] else ("p=pathlib.Path("+repr(str(tmp_path/(t['id']+'.ready')))+");p.touch();deadline=time.monotonic()+10\nwhile len(list(p.parent.glob('*.ready')))<3 and time.monotonic()<deadline: time.sleep(.01)\n")
+        code="import time,json,pathlib;start=time.monotonic();"+gate+"time.sleep(.5);pathlib.Path("+repr(str(tmp_path/t['id']))+").write_text(json.dumps([start,time.monotonic()]))"
         return [sys.executable,'-c',code]
     monkeypatch.setattr(supervisor,'_worker_command',command)
     result=supervisor.drain(ledger,tmp_path/'results')

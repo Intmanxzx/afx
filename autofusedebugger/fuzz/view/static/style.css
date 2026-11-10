@@ -49,3 +49,5 @@ th,thead td{text-align:left}
 
 .shape-tag{display:inline-block;margin-left:8px;font-size:11px;font-weight:400;color:var(--muted);vertical-align:middle}
 .case-table .case-seed{display:inline}
+
+.stage-lanes{margin-top:16px;min-width:650px}.stage-lane{display:flex;align-items:center;gap:12px;margin:9px 0;font-size:12px}.stage-lane>span{width:220px;flex-shrink:0}.stage-track{position:relative;height:18px;flex:1;background:#f4f7f5;border-radius:3px}.stage-track>span{position:absolute;height:100%;min-width:1px}.stage-dependency{background:#dce4df}.stage-resource{background:#e7bd62}.stage-running{background:#238d72}.stage-failed{background:#cf6a61}

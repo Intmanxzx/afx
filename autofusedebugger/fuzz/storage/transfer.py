@@ -91,6 +91,8 @@ def _copy(source, target):
             provenance = source.execute('SELECT source_id,device_name,user_id FROM attempt_facts WHERE attempt_id=?',(row['id'],)).fetchone()
         index_attempt(target, row['id'], *(tuple(provenance) if provenance else ()))
         added += 1
+    from .stage_facts import copy_public
+    copy_public(source,target)
     return {'added': added, 'skipped': skipped}
 
 

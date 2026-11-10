@@ -20,6 +20,9 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None):
             'success_shapes_per_min': None, 'completed_shapes_per_min': None,
             'cpu_pool_utilization': None, 'npu_slot_utilization': None,
             'note': '未采集完整调度窗口及资源租约；不能从阶段和推导吞吐或使用率。'}
+        from .efficiency import statistics as efficiency
+        selected_ids={r[0] for r in conn.execute(cte+'SELECT a.id'+base+where,values)}
+        result['tool_efficiency']['windows']=efficiency(conn,selected_ids if any((seed,status,user_id,q)) else None)
         result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
         result['errors']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.error_stage,count(*) AS count"+base+where+' GROUP BY a.backend,a.error_stage',values) if r['error_stage']]
         result['case_groups']=conn.execute(cte+'SELECT count(DISTINCT f.group_id)'+base+where,values).fetchone()[0]

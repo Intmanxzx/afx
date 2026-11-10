@@ -129,6 +129,8 @@ class TaskLedger:
                                (identity,) if identity is not None else ()).fetchone()
             if row is None:
                 return None
+            conn.execute('CREATE TABLE IF NOT EXISTS task_tries_v1(task_id TEXT PRIMARY KEY, count INTEGER NOT NULL)')
+            conn.execute('INSERT INTO task_tries_v1 VALUES (?,1) ON CONFLICT(task_id) DO UPDATE SET count=count+1',(row['id'],))
             conn.execute("UPDATE tasks SET state='running',reason='',claim=?,attempt_id=?,revision=revision+1 WHERE id=?",
                          (str(uuid.uuid4()), str(uuid.uuid4()), row['id']))
             return dict(conn.execute('SELECT * FROM tasks WHERE id=?', (row['id'],)).fetchone())

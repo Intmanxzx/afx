@@ -52,7 +52,7 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(hosting,'launch',launch)
     assert main(['run','--count','1','--save','--fg'])==0
     capsys.readouterr()
-    assert main(['replay','C16','--backend','cpu','--save'])==0
+    assert main(['replay','C16','--backend','cpu','--save','--scheduling','combined'])==0
     result=json.loads(capsys.readouterr().out)
     assert result['status']=='ok'
     assert json.loads(json.loads(result['execution']['case_spec'])['graph_json'])['generator']=='nnsmith.graph_gen.model_gen'

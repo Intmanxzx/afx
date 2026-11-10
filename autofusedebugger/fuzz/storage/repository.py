@@ -158,6 +158,8 @@ class ResultRepository:
                         rows=source.execute('SELECT * FROM '+table)
                         for values in rows:
                             target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in values)+')',tuple(values))
+                from .stage_facts import copy_public
+                copy_public(source,target)
                 target.commit()
                 if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or target.execute('PRAGMA foreign_key_check').fetchone():
                     raise ValueError('snapshot integrity validation failed')

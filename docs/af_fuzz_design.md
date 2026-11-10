@@ -1,6 +1,6 @@
 # Fuzz 设计
 
-git本文件描述当前 `autofusedebugger/fuzz` 及已确认的演进设计；第 9 节为分期方案，当前仅落地 9.10 的合并执行观测基线，不代表已具备完整阶段级资源池。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](af_fuzz_usage.md)。
+本文件描述当前 `autofusedebugger/fuzz` 及已确认的演进设计；第 9 节为分期方案，9.10 保留第一切片历史，9.11 记录当前阶段调度、资源池及观测实现与验证边界。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](af_fuzz_usage.md)。
 
 ## 1. 模块与依赖
 
@@ -56,7 +56,7 @@ C/D + 9位 base36 为新批次的 10 字符 seed；C 保持单静态 Shape，D �
 - 仅独立可测的compile/kernel_mean进入性能分析。CPU不测kernel；没有可靠采集时为空，不能用wall-time或首次调用冒充。
 - 严格设备测量必须持同卡独占租约；使用NPU的autotune不能算纯CPU编译。
 
-调度粒度为case/backend，任务持久化、worker隔离、超时终止进程组、重试保留attempt。当前监督器支持有界并发、CPU 与不同 NPU 卡并行以及同卡任务互斥；仍以完整 case/backend 为粒度，尚未实现第 9 节的阶段级调度。资源默认值是保守自适应，不宣称最优并发。纯CPU编译与NPU执行拆分、跨进程产物交接尚未验证，不开放伪split路径。
+默认 scheduling=staged：Case/Backend Session/Stage Task 公共 DAG；队列仍按 case/backend 保留 claim/attempt 兼容恢复，执行拆为生成、CPU参考、backend合并调用、CPU比较、记录阶段。combined 保留为回滚路径。资源默认值是保守自适应，不宣称最优并发。纯CPU编译与NPU执行拆分、跨进程产物交接尚未验证，不开放伪split路径。
 
 ## 4. SQLite与统计单位
 
@@ -101,7 +101,7 @@ POSIX后台启动已实现；容器/主机重启后需由systemd或entrypoint拉
 
 发布版本以pyproject及包版本一致为准；Tag必须精确等于`v<version>`，构建同一个wheel用于GitCode Release和PyPI；网站资源必须入wheel。具体流水线、凭据和演练命令见使用说明。PyPI不允许重用同版本文件。
 
-当前验证见本轮远端日志。历史模板结果不能作为NNSmith能力证据。未完成：第 9 节的阶段级调度与资源池、更广算子和dtype、跨平台全域seed确定性、准确编译/kernel指标、自动重建已补丁依赖与真实发布联调。旧NNSmith代码和patches保留用于依赖准备及迁移，公开执行只有当前统一流程。
+当前验证见本轮远端日志。历史模板结果不能作为NNSmith能力证据。已实现的阶段调度与资源池见 9.11；未验证边界为编译型后端跨 Case 持久复用、独立编译产物交接及数小时长期稳定性。其他未完成：更广算子和dtype、跨平台全域seed确定性、准确编译/kernel指标、自动重建已补丁依赖与真实发布联调。旧NNSmith代码和patches保留用于依赖准备及迁移，公开执行只有当前统一流程。
 
 CLI：`--fg`、`--perf`；run/replay默认不保存结果，`--save`才写结果及outbox。setup成功后记住数据目录。C 协议保留单 Shape 静态语义；D 协议使用同一 NNSmith 图的 3 个合法不同 Shape。随机 campaign 按 entropy 奇偶选择 C/D；静态模式不展示 S0，动态样本标签与 seed 分离。
 
@@ -293,3 +293,56 @@ Case/Backend Session/Stage Task 公共执行契约、依赖 DAG、一次生成�
 真实双卡 eager-npu 成功路径，固定 C16/D16 各重复两次、8 Shape，compile_threads=1，每任务仍为冷 Python worker：旧单 worker 28.22 s，旧四 worker 13.64 s，本切片四 worker 14.46 s。三组均 8/8 Shape 成功。卡间重叠、同卡不重叠；这是一次小样本，**未证明本切片相比已有四 worker 加速**。eager-npu 不走原 af-mlir 自动复核，因此这组工作量不受取消复核影响。未测持久运行时/稳态，不给出其收益；af-mlir 成功编译路径尚无证据。
 
 最终源代码回归再次得到 284 passed、4 skipped；随后补充独立生命周期写失败测试，阶段基线测试共 7 passed。本地轻量验证 18 passed、3 skipped（无 Torch；macOS 上 Linux 管理进程测试不运行），另新增写失败与 DAG 合集 9 passed、2 skipped。macOS 的 flock/SQLite 组合不作为受支持的客户端管理运行环境；实际管理执行在 Linux 验证。新入口 D16 eager-npu 3/3 Shape 通过；AF-MLIR C16 仍为后端能力失败，未把它计入成功编译提速证据。
+
+
+### 9.11 阶段 DAG、资源池及独立事实同步（2026-11-10）
+
+本节覆盖 9.10 所列核心待实施代码；9.10 是历史切片状态，不再代表当前默认行为。
+
+**公共执行链路**
+
+- `stages.py` 定义 Case、BackendSession、StageTask、Requirements。`staged.py` 是所有 backend 共用的依赖协调器，run/replay 都接入它；`execution.py` 仍是唯一 backend Shape 调用循环，未复制一套 AF 专用引擎。
+- Case 只生成一次图和规范输入字节，写入有界本地产物并校验 SHA256。CPU 参考和各 backend 合并阶段从相同输入字节加载；不再次运行生成器。一个 Case 只运行一次 CPU 参考阶段，参考结果供所有目标 backend 使用；CPU 自身正确性沿用独立 eager 参考调用，不拿同一输出自比。
+- 图生成结束即可同时派发 CPU 参考和 backend 工作。目标分支不等待参考；CPU compare 等待两边。prepare 仍不等于编译完成，first_call_combined 没有虚构编译/执行拆分。D S0/S1/S2 在同一 prepared callable、同一设备和进程中顺序执行。
+- 输出 `.cpu().clone()`、设备同步、数据化 NPZ 发布完成后结束 NPU 阶段；比较及保存移入 CPU worker。所有产物仅在私有窗口目录，禁止 pickle/object-array，校验长度/版本/内容哈希，每份输出上限 64 MiB；Case、总缓存、worker 数有界。取消/异常退出删除私有产物。
+
+**资源和进程**
+
+- CPU token、内存、缓存、兼容物理 UUID 与设备预算在 coordinator 中一次准入；申请失败不占其他资源。空闲兼容物理卡取任务，不按生成顺序预绑定。显式 replay 指定设备仍固定；run 的设备列表是候选池。
+- CPU capacity = workers × compile_threads；Torch/BLAS/Inductor 线程受控。主机 RSS 采样包括闲置 worker，缓存采样允许并发回收目录；超限终止活动进程组。NPU 从运行时探测实际 UUID/空闲显存，支持每卡 device-memory-bytes 预算，运行时峰值超限失败。**这些是预约/采样约束，不是 cgroup 硬隔离，采样间可短暂超量；外部未遵守 UUID 锁的程序仍可争抢硬件。**
+- worker 使用继承私有 socket 的独立进程组，协议只传 JSON 和本地数据引用。按 backend/device 隔离复用；每个 session 清理图、输出、Dynamo 状态及设备缓存。默认最多 16 阶段，RSS 增长、设备驻留增长、异常/超时触发回收；max-tasks=1 禁用复用。
+- 已验证 CPU/eager-npu 的运行时复用。编译型 backend 的跨 Case 持久复用默认关闭，每个 session 结束回收进程：当前 AF-MLIR 样本无法成功编译，不能凭 eager 成功宣称 AF 编译状态污染隔离已验证。能力契约明确 independent_compile/transferable_compilation=False；没有可验证独立产物的 backend 不开放编译拆分。
+- 调度循环不等待子进程 IO/退出/日志；有限 IO executor 执行这些步骤，事实落库也使用有界收尾通道。记录失败保持任务 interrupted、显式恢复；提交后 ACK 丢失按已有 immutable attempt 对账，不盲目重跑。
+
+**事实、同步和统计**
+
+- 结果/哈希不变；lifecycle_v1、stage_facts_v1、stage_windows_v1 是独立追加事实。stage 记录依赖、ready/dispatched/started/finished、worker/冷暖、资源租约取得/释放、RSS；记录阶段保存 retry_index。admitted 是进入有限 Case 窗口的时间，不冒充任意早期队列时间。
+- `api/facts` 使用独立版本/revision/ACK；先上传并 ACK 结果，再上传事实。中心检查用户、source、attempt、Case/window 所有权及内容冲突。重复包幂等，丢 ACK 可重传，旧 result protocol 1 不变。生命周期已进入公开 snapshot/restore/import，但不包含 fact outbox/ACK/凭据。
+- 有限窗口首 Case admitted 到最后结果 persisted；连续 campaign 每约 100 attempt 排空形成可比有限窗口。按 backend、硬件/软件环境、static/dynamic、cold/warm、状态聚合，保留共同墙钟分母，不把 CPU 对照重复计入目标吞吐。记录成功/已完成 Shape/min、摊销秒/Shape、唯一 Shape、显式重试数、处理/端到端 P50/P95、样本数、token 使用率、各物理执行槽使用率。
+- 生成失败、无 Shape 的 worker 错误不计 Shape；取消与记录失败计窗口独立数量。同一 attempt 全部 Shape 同事务提交，端到端结束点相同；处理开始点各自实测。缺失事件及跨时钟域不补造。profiler Kernel 保持独立，未采集仍为空。
+- 原始阶段/生命周期保留最近 256 个已完成窗口（窗口 ACK 前不裁剪），保留长期窗口聚合；离线 outbox 不静默丢弃，磁盘保留水位阻止继续接纳。当前查询分页展示最近 100 个窗口，已归档窗口的细粒度筛选/时间线不伪造。
+- 页面提供效率维度筛选、处理/端到端列、CPU/NPU/比较/记录分泳道时间线、依赖/资源等待与失败点；生命周期显示上传 ACK。保留 DAG/ASCIR/日志/环境。资源池使用率不是实测 CPU/AICore/显存使用率，后者未接采样仍显示未采集。
+
+**真实验证与性能结论**
+
+固定 C16/D16 各两次、每 Case CPU+eager-npu，同样 compile_threads=1：combined 单 worker 42.73 s、combined 四 worker 15.52 s、staged 四 worker 禁用复用 26.75 s、staged 四 worker 复用 24.12 s；目标 8 Shape 全通过。这是首次批次的冷启动/填充排空对照，**阶段化在该小图样本更慢，不宣称提速**。少做自动复核不影响该 eager-npu 对照。复用相对不复用有改善，不等于 Kernel 改善。
+
+另跑 12 Case/24 attempt 的有限复用样本，36.55 s、全部成功，72 阶段中 47 次热调用（目标合并阶段 5 次热调用），采集到单 worker RSS 峰值约 1.92 GiB。运行结束两卡无测试进程；HBM 与基线接近。这不是数小时长期稳定性证明。AF-MLIR 同四 Case 的失败路径 28.21 s，CPU 全通过、AF 4 attempt 失败，8 Shape 已完成但成功吞吐为 0；不能当成功编译性能证据。
+
+首轮完整回归 297 passed / 4 skipped（远端 Node 旧），新增故障用例另行纳入最终回归。覆盖依赖 join、原子多资源、不足显存拒绝、空闲卡领取、同卡互斥、取消/超时/崩溃、写库失败、独立事实所有权/哈希不变、HTTP 断网与丢 ACK 恢复、安全产物、快照、并发缓存回收。真实双卡冒烟与隔离中心结果+事实同步通过；不把模拟故障当作实际设备故障证明。
+
+
+最终回归：完整 Fuzz 300 passed / 4 skipped；新事实 epoch 重建/HTTP 丢 ACK 等最后变动另跑专项。macOS 本地轻量测试通过，Linux-only/NPU 测试以远端为准；不在 macOS 运行管理进程的 flock/SQLite 路径。
+
+### 9.12 最终审计与发布补充（2026-11-10）
+
+- CPU 参考阶段不再调用第二次 eager oracle；每个 Shape 执行一次并共享输出。CPU 参考自身标为 `not_checked`，不声称独立正确性验证；目标 backend 正常与参考比较。新增 1/3 Shape 调用次数测试，历史记录不重写。
+- 有限 Case 窗口接纳按兼容设备积压优先级选择；跨窗口取消/写库失败计数不累计重复。生命周期只发布观测到的事件，不以 admitted 伪造未启动阶段的时间。
+- 修复取消先于 I/O worker 启动的竞态；补充 NPZ 解压前总大小检查。资源约束仍是预约和采样，而非硬隔离。
+- 修正 CPU 参考重复执行后重跑固定 C16/D16 各两次：combined 单 worker **41.23 s**、combined 四 worker **14.86 s**、staged 四 worker max-tasks=1 **28.22 s**、staged 四 worker max-tasks=16 **24.94 s**。目标 eager-npu 的 8 Shape 全通过。阶段化依然慢于已有四 worker 路径；复用减少部分启动开销，但不证明成功编译或 Kernel 性能提高。该组基准保留在远端 `stages-1110/audit-*`，最终取消/解包保护另经全量回归。
+- AF-MLIR 失败路径 **35.29 s**，4 个 backend attempt 失败；不能当作成功编译性能。仍需后端成功样本才能验证编译型跨 Case 复用，当前保持每 session 回收。数小时压力测试、独立编译交接与 profiler 实测未完成，不冒充已实现能力。
+- 最终发布环境为 oracle1 `/home/ubuntu/af-fuzz/venv-stages-audit-1110`，私有备份 `/home/ubuntu/af-fuzz/backups/stages-audit-1110/`。客户端为 mlir `/mnt/workspace/af-fuzz/stages-audit-1110/installed`；测试使用隔离数据库，不上传测试记录到生产。
+
+最终源码回归：mlir **305 passed / 4 skipped**（旧 Node）；日志 `/mnt/workspace/af-fuzz/stages-audit-1110/complete-tests.log`。本地页面/DAG **29 passed**；本地 CLI 源码门禁用例因未安装固定 NNSmith 失败，该用例以完整远端结果为准，不宣称 macOS 全量通过。隔离中心验证 **89 条事实** 的结果先 ACK、事实独立 ACK、幂等重传与时间线。独立安装入口在 `/tmp` 下重放 D16 eager-npu：3 Shape 通过，避免源码工作目录遮蔽安装产物。
+
+oracle1 已切换到新环境，服务 active；公开 app.js SHA256 `fd8108a52b347efd79a2a68bc8139a6793a5e4927fa2ac4579e480cb20f45975` 与本地一致。生产 users=1、sources=5、receipts=2409、owners=200、attempts=200 保持，integrity_check=ok。公开页保留历史数据的“未采集”，没有上传测试结果伪造线上吞吐。round64 独立上传器已从旧 round64 源码切换至新安装，私有库备份在 mlir `stages-audit-1110/private-sync-backup/`，启动后 state=ok、pending=0、原结果 ACK=200 保持；没有改动 token 或身份配置。

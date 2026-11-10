@@ -21,3 +21,16 @@ class Backend(Protocol):
 # measure_kernel(prepared, inputs, evaluation) -> int: device profiler mean ns;
 # adapter must hold an exclusive device lease and synchronize profiler collection.
 # TorchAdapter deliberately implements neither until backend evidence is available.
+
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Capabilities:
+    independent_compile: bool = False
+    transferable_compilation: bool = False
+    persistent_runtime: bool = True
+    ordered_shapes: bool = True
+    host_output_transfer: bool = True
+    profiler: bool = False

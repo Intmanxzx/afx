@@ -20,11 +20,13 @@ class Budget:
     cpu_workers: int = 1
     memory_budget_bytes: int = None
     cache_budget_bytes: int = None
+    worker_max_tasks: int = 16
+    device_budget_bytes: int = None
     disk_reserve_bytes: int = 64 * 1024 * 1024
 
     def __post_init__(self):
         for key, value in asdict(self).items():
-            if value is None and key in {'memory_budget_bytes', 'cache_budget_bytes'}:
+            if value is None and key in {'memory_budget_bytes', 'cache_budget_bytes','device_budget_bytes'}:
                 continue
             if type(value) is not int or value < 1:
                 raise ValueError(f'{key} must be a positive integer')
@@ -40,7 +42,7 @@ class Budget:
                 raise ValueError('CLI compile threads exceed setup budget')
             cap = compile_threads
         return cls(compile_threads=cap, **{key: config[key] for key in
-            ('cpu_workers','memory_budget_bytes','cache_budget_bytes') if key in config})
+            ('cpu_workers','memory_budget_bytes','cache_budget_bytes','device_budget_bytes','worker_max_tasks') if key in config})
 
     def admit(self, path, task=None):
         inventory = resource_inventory(path)
@@ -81,7 +83,9 @@ def group_rss(group, proc=Path('/proc')):
 def scratch_size(root):
     total = count = 0
     def failed(error):
-        raise error
+        # A retiring stage worker may remove its private cache during sampling.
+        if not isinstance(error, FileNotFoundError):
+            raise error
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
         for name in dirs + files:
             count += 1
