@@ -3,26 +3,28 @@
 `autofusedebugger` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具。
 当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
 
-## 新版 fuzz（开发中）
-
-完整重放只需要一个数字 seed：
+## Fuzz 测试平台
 
 ```sh
-autofusedbg fuzz replay 42
+autofusedbg fuzz setup --token "$FUZZ_TOKEN"
+autofusedbg fuzz run --count 100
+autofusedbg fuzz replay B000000016
+autofusedbg fuzz view ./results.sqlite
 ```
 
-可选执行参数：`--backend ascendc`、`--static-only`、`--performance`；它们不改变 seed 对应的图、权重、输入与完整用例指纹。`autofusedbg fuzz seed 42 --show-spec` 可在无 Torch/NNSmith 环境查看规格。
+[使用说明](docs/af_fuzz_usage.md)：客户端、云端、本地查看、发布。
 
-新版不支持旧 af-fuzz、长 token、profile 或 --seed-token。旧版发行包不包含此新入口。协议与当前限制见 [数字 seed 说明](docs/af_fuzz_seed_v1.md)。
+[设计文档](docs/af_fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
+
+公网结果入口：https://autofuse.online 。客户端默认每30秒自动上报，CPU作为精度对照，按shape统计用例。
 
 ## 安装
 
-请先准备好 PyTorch、torch_npu 和 CANN 环境，再选择以下一种方式安装。
+执行模型前准备匹配的 PyTorch、torch_npu 和 CANN；云端和本地查看不需要这些运行环境。
 
 ### 方式一：wheel 包安装
 
-进入 [v0.1.2 发行版](https://gitcode.com/xingzhixiong/Autofuse-Debugger/releases/v0.1.2)，下载
-`autofusedebugger-0.1.2-py3-none-any.whl`，然后在 wheel 所在目录执行：
+从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 使用说明](docs/af_fuzz_usage.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
 
 ```bash
 python3 -m pip install ./autofusedebugger-0.1.2-py3-none-any.whl
@@ -31,7 +33,7 @@ python3 -m pip install ./autofusedebugger-0.1.2-py3-none-any.whl
 ### 方式二：源码安装
 
 ```bash
-git clone https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
+git clone https://gitcode.com/niuyuhu/Autofuse-Debugger.git
 cd ${HOME}/Autofuse-Debugger    # ${HOME}表示用户拉取工具代码的目录
 python3 -m pip install -e .
 ```
@@ -201,31 +203,3 @@ OUT_DIR/
 | [docs/manifest_schema.md](docs/manifest_schema.md) | manifest 文件的字段、数据格式和状态码说明 |
 | [docs/feature_gallery.md](docs/feature_gallery.md) | 精度对比、图展示和生命周期分析等功能示例 |
 | [docs/agent_normalization.md](docs/agent_normalization.md) | Agent 归一化协议、配置方式和失败诊断流程 |
-
-### Fuzz 离线结果查看
-
-```sh
-autofusedbg fuzz maintenance snapshot ./results.sqlite ./snapshot.sqlite
-# 将快照复制到个人电脑，安装同版本包后：
-autofusedbg fuzz view ./snapshot.sqlite
-```
-
-查看模式仅使用 Python 标准库和 wheel 内置前端，不需要 Torch、NNSmith、CANN、NPU 或 Node。页面支持 seed/状态筛选、分页、逐 shape 详情和复制 `autofusedbg fuzz replay <seed>`。它是仅本机可访问的只读临时服务，Ctrl+C 退出；不是公网结果入口的替代品。请只打开可信快照。可选 `--no-browser`、`--port`；无需 SSH 查看助手。
-
-### Fuzz 后台测试
-
-```sh
-autofusedbg fuzz setup --user niuyuhu --token "$FUZZ_TOKEN"
-autofusedbg fuzz run --count 100
-autofusedbg fuzz status
-# 需要在当前终端等待时：
-autofusedbg fuzz run --foreground
-autofusedbg fuzz stop
-```
-
-默认持续运行，直到stop；--count限制case数。每条case必跑CPU和AF-MLIR，精度有分歧时自动eager-npu复核。结果默认每30秒同步至https://autofuse.online。当前POSIX串行worker，NPU使用设备租约；不宣称编译与执行已拆分并行。完整入口和能力边界见[快速开始](docs/af_fuzz_quickstart.md)及[命令说明](docs/af_fuzz_cli.md)。
-
-前阶段 task schema1 操作库需停用后显式升级（结果库仍schema1）：
-```sh
-autofusedbg fuzz maintenance upgrade-queue ./fuzz-data/tasks/tasks.sqlite ./tasks-v1.backup.sqlite
-```

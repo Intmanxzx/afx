@@ -4,7 +4,6 @@ from autofusedebugger.fuzz.contracts import Seed, ExecutionConfig, EvaluationCon
 from autofusedebugger.fuzz.generation import materialize, workload_id
 from autofusedebugger.fuzz.storage import ResultRepository
 from autofusedebugger.fuzz.storage.queries import ResultQueries
-from autofusedebugger.fuzz.reporting.report import render, content_policy
 
 
 def test_short_seed_is_lossless_and_protocol_hashes_unchanged():
@@ -27,13 +26,10 @@ def test_report_short_query_detail_and_no_heavy_import(tmp_path):
     query=ResultQueries(repo.path)
     assert query.page(seed='B16')['items'][0]['seed_short']=='B000000016'
     assert query.detail(identity)['replay_command']=='autofusedbg fuzz replay B000000016'
-    page=render(repo.path,seed='B16')
-    assert '汇总统计'.encode() in page and '用例列表'.encode() in page
-    assert b'Transpose' in page and b'autofusedbg fuzz replay ${c.seed}' in page
-    assert "'sha256-" in content_policy(page) and "script-src 'unsafe-inline'" not in content_policy(page)
 
 
 def test_mlir_fails_closed_without_runtime_evidence():
+    pytest.importorskip("torch")
     from autofusedebugger.fuzz.backends import create_backend
     from autofusedebugger.fuzz.execution import execute
     result=execute(materialize('B16'),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())

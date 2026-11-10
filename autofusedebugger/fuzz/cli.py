@@ -34,8 +34,9 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "replay":
         return replay(argv[1:])
-    parser = argparse.ArgumentParser(prog="autofusedbg fuzz")
-    sub = parser.add_subparsers(dest="command", required=True)
+    from .help import ScenarioParser
+    parser = ScenarioParser(prog="autofusedbg fuzz")
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=argparse.ArgumentParser)
     sub.add_parser("replay", help="replay a self-contained short seed")
     maintenance = sub.add_parser('maintenance', help='diagnostics, sync and data maintenance').add_subparsers(dest='maintenance_command', required=True)
     administration = sub.add_parser('admin', help='offline identities and server operations').add_subparsers(dest='admin_command', required=True)

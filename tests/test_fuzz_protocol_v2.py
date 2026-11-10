@@ -7,6 +7,7 @@ from autofusedebugger.fuzz.backends.torch import TorchAdapter
 
 @pytest.mark.parametrize('entropy',range(12))
 def test_explicit_transpose_protocol_cpu(entropy):
+    pytest.importorskip("torch")
     bundle=materialize(str(2**128+entropy))
     assert set(categories(bundle.spec)) <= {'Elementwise','Reduce','Transpose'}
     assert 'Transpose' in categories(bundle.spec)

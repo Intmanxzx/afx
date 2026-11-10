@@ -98,7 +98,6 @@ function renderRecords(items){
  if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short+' / S'+(item.shape_index<0?'—':item.shape_index);td.append(strong);populated=true;}
  else if(c.key==='ops'){const ops=graphText(item.metadata);if(ops){const text=document.createElement('span');text.className='case-ops';text.textContent=ops;text.title=ops;td.append(text);populated=true;}}
  else if(c.key==='inputs'){td.textContent=tensorText(item.sample?.input_shapes,item.metadata.weights,item.sample?.input_dtypes||item.metadata.input_dtypes);populated=!!td.textContent;}
- else if(c.key==='dtypes'){td.textContent=dtypeText(item.sample?.input_dtypes||item.metadata.input_dtypes,item.metadata.weights);populated=!!td.textContent;}
  else if(c.key==='mode'){td.textContent=item.shape_mode==='static'?'静态':'动态';populated=true;}
  else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}

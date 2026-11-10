@@ -80,15 +80,6 @@ def create_server(database, *, port=0):
                         if key in params: params[key]=int(params[key])
                     self.respond(200, queries.case_page(**params))
                     return
-                if route == 'api/report' and not set(params)-{'seed','status'}:
-                    from ..reporting.report import report_data
-                    self.respond(200, {'cases': report_data(database, **params)})
-                    return
-                if route == 'report' and not set(params)-{'seed','status'}:
-                    from ..reporting.report import render, content_policy
-                    page = render(database, **params)
-                    self.respond(200, page, 'text/html; charset=utf-8', content_policy(page))
-                    return
                 if route in {'api/results','api/summary'}:
                     allowed = {'seed','status','user_id','q'} | ({'limit','after'} if route == 'api/results' else set())
                     if set(params) - allowed:

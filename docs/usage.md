@@ -14,9 +14,7 @@
 
 `inductor_npu_ext` 如果已经随 `torch_npu` 打包，无需再次安装。
 
-在 A3 类 NPU pod 上运行 `af-fuzz` 前，需要先排除几个环境层面的坑（libpython
-ABI 不匹配、CANN 环境变量未加载等），详见
-[af_fuzz_npu_env.md](af_fuzz_npu_env.md)。
+Fuzz 的客户端、云端和离线查看命令见 [Fuzz 使用说明](af_fuzz_usage.md)。
 
 安装工具：
 

@@ -88,13 +88,6 @@ def create_server(database,port=8090):
                         if key in params: params[key]=int(params[key])
                     self.send(200, queries.case_page(**params))
                     return
-                if route=='/api/report' and not set(params)-{'seed','status'}:
-                    from ..reporting.report import report_data
-                    return self.send(200, {'cases': report_data(database, **params)})
-                if route=='/report' and not set(params)-{'seed','status'}:
-                    from ..reporting.report import render, content_policy
-                    page = render(database, **params)
-                    return self.send(200, page, 'text/html; charset=utf-8', content_policy(page))
                 if route=='/api/compare' and set(params)=={'left','right'}:
                     from ..storage.comparison import compare
                     return self.send(200,compare(database,params['left'],params['right']))

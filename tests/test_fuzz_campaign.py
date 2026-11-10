@@ -78,6 +78,7 @@ def test_campaign_capacity_is_enforced(tmp_path):
 
 
 def test_torch_cpu_reference_and_error_metrics():
+    pytest.importorskip("torch")
     from autofusedebugger.fuzz.backends.torch import TorchAdapter
     from autofusedebugger.fuzz.generation import materialize
     adapter=TorchAdapter(ExecutionConfig('cpu','cpu'))

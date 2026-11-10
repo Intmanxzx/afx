@@ -5,14 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "autofusedebugger"
 version = "0.1.2"
-description = "CPU vs native Inductor NPU Autofuse per-kernel accuracy debugger"
+description = "Autofuse debugging and reproducible CPU/NPU fuzz testing"
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = ["numpy"]
-
-[project.optional-dependencies]
-# NNSmith itself is not on PyPI under this name; install the local clone with
-# `pip install -e /path/to/nnsmith` separately, this only pulls its own deps.
-nnsmith = ["multipledispatch"]
 
 [project.scripts]
 autofusedebugger = "autofusedebugger.cli:main"
@@ -23,6 +19,5 @@ where = ["."]
 include = ["autofusedebugger*"]
 
 [tool.setuptools.package-data]
-# Legacy compatibility patches are only applied to an explicitly selected isolated
-# dependency copy. Import and execution never modify shared NNSmith sources.
-autofusedebugger = ["nnsmith_integration/patches/*.patch", "fuzz/view/static/*"]
+# Offline and cloud viewers share these prebuilt assets.
+autofusedebugger = ["fuzz/view/static/*"]

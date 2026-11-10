@@ -36,6 +36,7 @@ def setup(tmp_path):
 
 
 def test_real_cpu_worker_uses_same_bundle_and_persists(tmp_path):
+    pytest.importorskip("torch")
     ledger, identity, database = setup(tmp_path)
     summary = supervisor.drain(ledger, database)
     assert summary['completed'] == 1 and summary['interrupted'] == 0

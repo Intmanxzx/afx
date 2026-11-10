@@ -120,16 +120,6 @@ def test_tensor_diagnostics_include_values_layout_and_alias():
     assert tensor_signature([("x", changed)])[0]["sha256"] != sig[0]["sha256"]
 
 
-def test_dependency_check_never_applies_patches_implicitly(monkeypatch, tmp_path):
-    from autofusedebugger.nnsmith_integration import _nnsmith_patch as patch
-    entry = patch._AscendcPatch("missing.patch", lambda: False)
-    monkeypatch.setattr(patch, "_ASCENDC_PATCHES", (entry,))
-    monkeypatch.setattr(patch, "_find_nnsmith_package_parent", lambda: tmp_path)
-    monkeypatch.setattr(patch, "_apply_one_patch", lambda *args: pytest.fail("shared dependency mutation"))
-    with pytest.raises(patch.NNSmithPatchError, match="never modified"):
-        patch.ensure_ascendc_patch_applied()
-
-
 def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
     import autofusedebugger.cli as cli
     from autofusedebugger.fuzz import cli as fuzz_cli

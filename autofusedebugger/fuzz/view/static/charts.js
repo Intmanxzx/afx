@@ -1,7 +1,5 @@
 'use strict';
-let CASES=[];
 const escapeChart = value => String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const OP_CATEGORIES={Elementwise:['add','relu','neg','mul'],Reduce:['sum'],Transpose:['transpose']};
 const _rootStyle = getComputedStyle(document.documentElement);
 const STATUS_COLORS = {
   unknown: '#9aa6a0',
@@ -80,65 +78,6 @@ function attachTooltip(el, content) {
   el.addEventListener('blur', hideTooltip);
 }
 
-// 单个 case 的最大单维度值 / 最大元素数：汇总它所有 input/output tensor 的 shape。
-function caseMaxDim(c) {
-  let maxDim = 0, maxElem = 0;
-  for (const shapes of [c.input_shapes, c.output_shapes]) {
-    for (const dims of Object.values(shapes || {})) {
-      if (!dims.length) continue;
-      maxDim = Math.max(maxDim, ...dims);
-      maxElem = Math.max(maxElem, dims.reduce((a, b) => a * b, 1));
-    }
-  }
-  return { maxDim, maxElem };
-}
-
-const DIM_BUCKETS = [
-  { label: '\u22648', test: v => v <= 8 },
-  { label: '\u226464', test: v => v <= 64 },
-  { label: '\u2264512', test: v => v <= 512 },
-  { label: '\u22644096', test: v => v <= 4096 },
-  { label: '\u226416384', test: v => v <= 16384 },
-  { label: '\u226465536', test: v => v <= 65536 },
-  { label: '\u2264131072', test: v => v <= 131072 },
-  { label: '>131072', test: () => true },
-];
-const ELEM_BUCKETS = [
-  { label: '\u22641K', test: v => v <= 1e3 },
-  { label: '\u226416K', test: v => v <= 16e3 },
-  { label: '\u226464K', test: v => v <= 64e3 },
-  { label: '\u2264256K', test: v => v <= 256e3 },
-  { label: '\u22641M', test: v => v <= 1e6 },
-  { label: '\u226416M', test: v => v <= 16e6 },
-  { label: '\u226464M', test: v => v <= 64e6 },
-  { label: '>64M', test: () => true },
-];
-
-function bucketOf(buckets, value) {
-  for (const b of buckets) {
-    if (b.test(value)) return b.label;
-  }
-  return buckets[buckets.length - 1].label;
-}
-
-// 按 key 分组统计 pass/fail/gen_error 计数，group(c) 可以返回单个字符串或字符串数组
-// （比如一个 case 同时含 reduce+elewise 两类 op，会同时计入两个分类桶）。
-function groupCounts(cases, groupFn, order, statusKeys = STATUS_KEYS) {
-  const counts = new Map();
-  for (const c of cases) {
-    let keys = groupFn(c);
-    if (!Array.isArray(keys)) keys = [keys];
-    for (const k of new Set(keys)) {
-      if (!counts.has(k)) counts.set(k, Object.fromEntries(statusKeys.map(s => [s, 0])));
-      counts.get(k)[c.status] = (counts.get(k)[c.status] || 0) + 1;
-    }
-  }
-  const keys = order ? order.filter(k => counts.has(k)) : [...counts.keys()];
-  return keys.map(k => ({ key: k, ...counts.get(k) }));
-}
-
-// ---- 环形图：中心放 pass rate 大数字 + 总数，各段占比靠图例（不标在线上）。
-// 段间留 2px 白缝（用 stroke 里的 --viz-surface-gap 画），环宽 24。 ----
 function drawDonut(svgId, legendId, segments) {
   const svg = document.querySelector('#' + svgId);
   const W = 380, H = 200, cx = 190, cy = 98, r = 72, ringW = 24;
@@ -273,41 +212,6 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
     });
   });
 }
-
-function renderStats() {
-  drawStackedBars('chartBackend','legendBackend',groupCounts(CASES,c=>c.backend));
-  // 1. 总体 pass/fail/gen_error 环形图（中心 pass rate）
-  const overall = STATUS_KEYS.map(s => ({
-    label: s, value: CASES.filter(c => c.status === s).length, color: STATUS_COLORS[s],
-  }));
-  drawDonut('chartOverall', 'legendOverall', overall);
-
-  // 2. 按算子分类：一个 case 可能同时属于多个分类（比如同时含 reduce+elewise 的图）
-  const categoryNames = Object.keys(OP_CATEGORIES);
-  const categoryRows = groupCounts(CASES, c => {
-    const ops = c.op_types || [];
-    const hit = categoryNames.filter(name => ops.some(op => OP_CATEGORIES[name].includes(op)));
-    return hit.length ? hit : ['(未分类)'];
-  }, [...categoryNames, '(未分类)']);
-  drawStackedBars('chartCategory', 'legendCategory', categoryRows);
-
-  // 3/4. 按 shape 档位：单 tensor 最大维度值 / 最大元素数
-  const dimRows = groupCounts(CASES, c => bucketOf(DIM_BUCKETS, caseMaxDim(c).maxDim), DIM_BUCKETS.map(b => b.label));
-  drawStackedBars('chartShapeDim', 'legendShapeDim', dimRows);
-  const elemRows = groupCounts(CASES, c => bucketOf(ELEM_BUCKETS, caseMaxDim(c).maxElem), ELEM_BUCKETS.map(b => b.label));
-  drawStackedBars('chartShapeElem', 'legendShapeElem', elemRows);
-
-  // 5. 按 dtype：汇总一个 case 所有 input/output tensor 出现过的 dtype（去重），
-  // 和分类一样允许一个 case 同时计入多种 dtype。
-  const dtypeRows = groupCounts(CASES, c => {
-    const dtypes = new Set([...Object.values(c.input_dtypes || {}), ...Object.values(c.output_dtypes || {})]);
-    return dtypes.size ? [...dtypes] : ['(无)'];
-  });
-  dtypeRows.sort((a, b) => (b.pass + b.fail + b.gen_error) - (a.pass + a.fail + a.gen_error));
-  drawStackedBars('chartDtype', 'legendDtype', dtypeRows);
-}
-
-window.updateCharts = cases => { CASES=cases; renderStats(); };
 
 const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['gen_error'])]));let latestStatistics=null;
 window.updateStatistics = result => {

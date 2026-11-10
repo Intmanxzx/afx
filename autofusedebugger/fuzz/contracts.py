@@ -1,6 +1,6 @@
-"""Preview contracts. Only explicitly versioned minimal profiles are registered.
+"""Immutable case and execution contracts for versioned seed protocols.
 
-Numeric seeds select the new immutable protocol; no legacy interpretation.
+Seed identities select frozen generation semantics without external state.
 All collections are tuples and tensor payloads are bytes, not mutable tensors.
 """
 from dataclasses import dataclass

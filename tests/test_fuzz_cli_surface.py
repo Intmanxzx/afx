@@ -10,7 +10,8 @@ def test_top_level_is_small(capsys):
     with pytest.raises(SystemExit) as exc:main(['--help'])
     assert exc.value.code==0
     text=capsys.readouterr().out
-    assert '{replay,maintenance,admin,setup,view,run,status,stop}' in text
+    assert all(title in text for title in ['客户端','云端','本地查看','维护'])
+    assert all(command in text for command in ['setup --token','run [SEED','replay SEED','admin user','view RESULTS'])
     assert 'admin-user' not in text and 'check-db' not in text
 
 
@@ -75,3 +76,16 @@ def test_admin_rotates_token_without_file(tmp_path,capsys):
     with reading(db) as conn:
         assert authenticate(conn,new['token'])==old['user_id']
         with pytest.raises(PermissionError):authenticate(conn,old['token'])
+
+
+@pytest.mark.parametrize('args', [
+    ['setup'], ['run'], ['replay'], ['status'], ['stop'], ['view'],
+    ['admin', 'user'], ['admin', 'rotate-token'], ['admin', 'serve'], ['admin', 'backup'],
+    ['maintenance'], ['maintenance', 'snapshot'], ['maintenance', 'restore'],
+    ['maintenance', 'sync'],
+])
+def test_documented_command_help_is_reachable(args, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main([*args, '-h'])
+    assert exc.value.code == 0
+    assert 'usage:' in capsys.readouterr().out

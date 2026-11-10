@@ -115,20 +115,3 @@ def test_platform_path_selection_without_host_execution(monkeypatch, platform, e
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     assert str(config.data_home()) == expected
-
-
-def test_probe_records_rejected_history_but_still_generates_target(tmp_path):
-    import subprocess
-    import sys
-    pytest.importorskip("nnsmith")
-    target = tmp_path / "target.json"
-    script = Path(__file__).resolve().parents[1] / "tools/fuzz_seed_probe.py"
-    result = subprocess.run([sys.executable, str(script), "--dynamic", "--seed", "42",
-                             "--previous-seed", "43", "--output", str(target)],
-                            capture_output=True, text=True, timeout=60)
-    assert result.returncode == 0, result.stderr
-    metadata = json.loads(target.with_suffix(".meta.json").read_text())
-    assert metadata["history"]["status"] == "error"
-    assert metadata["history"]["type"] == "DynamicShapeError"
-    assert metadata["status"] == "generated"
-    assert any(stage["stage"] == "dynamic_axes" for stage in json.loads(target.read_text()))
