@@ -20,6 +20,7 @@ const VIZ = {
 };
 const FONT = 'system-ui, -apple-system, sans-serif';
 const STATUS_KEYS = ['pass', 'fail', 'gen_error', 'unknown'];
+const STATUS_LABELS = {pass:'Pass',fail:'精度Failed',gen_error:'功能Failed',unknown:'Unknown'};
 
 // ---- 悬停浮层（替代原生 <title>）：跟随鼠标，内容用 textContent 写入，
 // 系列名/分类名来自用户数据，不能走 innerHTML 拼接。 ----
@@ -142,11 +143,10 @@ function drawDonut(svgId, legendId, segments) {
   const svg = document.querySelector('#' + svgId);
   const W = 380, H = 200, cx = 190, cy = 98, r = 72, ringW = 24;
   const total = segments.reduce((s, seg) => s + seg.value, 0);
-  // 图例始终渲染（含 0 值段，占比标 0.0%），环形段只画 >0 的。
+  // Legends carry labels only; numbers belong in tooltips.
   const legend = document.querySelector('#' + legendId);
   const legendEls = segments.map(seg => {
-    const pct = total ? (seg.value / total * 100).toFixed(1) : '0.0';
-    return `<span><i style="background:${seg.color}"></i>${seg.label} ${seg.value} · ${pct}%</span>`;
+    return `<span><i style="background:${seg.color}"></i>${STATUS_LABELS[seg.label] || escapeChart(seg.label)}</span>`;
   });
   legend.innerHTML = legendEls.join('');
   if (total === 0) {
@@ -178,7 +178,7 @@ function drawDonut(svgId, legendId, segments) {
   // 每段挂 tooltip（value 从闭包里的 segments 取，聚焦/悬停同款内容）。
   svg.querySelectorAll('.seg').forEach(el => {
     const seg = segments.find(s => s.label === el.dataset.key);
-    attachTooltip(el, () => [seg.label, [['count', seg.value], ['share', (total ? seg.value / total * 100 : 0).toFixed(1) + '%']]]);
+    attachTooltip(el, () => [STATUS_LABELS[seg.label] || seg.label, [['数量', seg.value], ['占比', (total ? seg.value / total * 100 : 0).toFixed(1) + '%']]]);
   });
 }
 
@@ -192,7 +192,7 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
   const plotW = W - leftPad - rightPad;
   const legend = document.querySelector('#' + legendId);
   legend.innerHTML = statusKeys.map(s =>
-    `<span><i style="background:${STATUS_COLORS[s]}"></i>${s}</span>`
+    `<span><i style="background:${STATUS_COLORS[s]}"></i>${STATUS_LABELS[s]}</span>`
   ).join('');
   if (rows.length === 0) {
     svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="${VIZ.textMuted}" font-family="${FONT}" font-size="13">无数据</text>`;
@@ -267,8 +267,8 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
     const [catKey, statusKey] = el.dataset.key.split('|');
     attachTooltip(el, () => {
       const row = rows.find(r => r.key === catKey);
-      const entries = statusKeys.filter(s => row[s] > 0).map(s => [s, row[s]]);
-      entries.push(['total', statusKeys.reduce((n, s) => n + (row[s] || 0), 0)]);
+      const entries = statusKeys.filter(s => row[s] > 0).map(s => [STATUS_LABELS[s], row[s]]);
+      entries.push(['总计', statusKeys.reduce((n, s) => n + (row[s] || 0), 0)]);
       return [catKey, entries];
     });
   });
@@ -318,6 +318,6 @@ window.updateStatistics = result => {
  for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,convert(result[key],id));
  for(const [key,id] of [['overall','Overall'],['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']]){
   const legend=document.getElementById('legend'+id);legend.replaceChildren();const hidden=legendHidden.get(id)||new Set();const raw=convert(result[key],'__raw');const counts=Object.fromEntries(STATUS_KEYS.map(s=>[s,raw.reduce((n,r)=>n+r[s],0)]));const total=STATUS_KEYS.filter(s=>!hidden.has(s)).reduce((n,s)=>n+counts[s],0);
-  for(const status of STATUS_KEYS){const button=document.createElement('button');button.type='button';button.dataset.status=status;button.setAttribute('aria-pressed',String(!hidden.has(status)));button.textContent=({pass:'Pass',fail:'精度Failed',gen_error:'功能Failed',unknown:'Unknown'}[status])+' '+counts[status]+(hidden.has(status)?'': ' · '+(total?counts[status]/total*100:0).toFixed(1)+'%');button.addEventListener('click',()=>{if(hidden.has(status))hidden.delete(status);else hidden.add(status);legendHidden.set(id,hidden);updateStatistics(latestStatistics);});legend.append(button);}
+  for(const status of STATUS_KEYS){if(status==='unknown'&&!counts[status])continue;const button=document.createElement('button');button.type='button';button.dataset.status=status;button.setAttribute('aria-pressed',String(!hidden.has(status)));const swatch=document.createElement('i');swatch.style.background=STATUS_COLORS[status];button.append(swatch,document.createTextNode(STATUS_LABELS[status]));button.addEventListener('click',()=>{if(hidden.has(status))hidden.delete(status);else hidden.add(status);legendHidden.set(id,hidden);updateStatistics(latestStatistics);});legend.append(button);}
  }
 };

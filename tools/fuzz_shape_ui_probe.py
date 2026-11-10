@@ -30,6 +30,17 @@ with create_server(repo.path) as server:
    assert page.evaluate('localStorage.getItem("af-fuzz.log-length")')=='60'
    assert len(page.locator('[data-column="af-mlir:logs"] .error-preview').first.inner_text())<=63
    log_input.fill('999');log_input.press('Enter');expect(log_input).to_have_value('500')
+   page.locator('nav [data-page=overview]').click()
+   assert page.locator('#legendOverall button').all_inner_texts()==['Pass','精度Failed','功能Failed']
+   page.locator('#chartOverall .seg[data-key=gen_error]').dispatch_event('pointerenter')
+   expect(page.locator('#vizTooltip')).to_contain_text('功能Failed')
+   assert 'gen_error' not in page.locator('#vizTooltip').inner_text()
+   toggle=page.locator('#legendOverall [data-status=gen_error]');toggle.click()
+   expect(toggle).to_have_attribute('aria-pressed','false');toggle.click()
+   page.evaluate("updateStatistics({...latestStatistics,overall:[{label:'全部',status:'unknown',count:1}]})")
+   expect(page.locator('#legendOverall [data-status=unknown]')).to_have_text('Unknown')
+   page.reload(wait_until='networkidle')
+   page.locator('nav [data-page=records]').click()
    headers=page.locator('#case-columns').inner_text()
    for title in ['输入 Shape / Dtype','静态 / 动态','triton-npu 功能','triton-npu 日志']:assert title in headers
    assert 'x1[2,3,fp32], x2[2,1,fp32]' in page.locator('#rows [data-column=inputs]').first.inner_text()
