@@ -89,13 +89,17 @@ function unknown(){const span=document.createElement('span');span.className='unk
 function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
 function renderRecords(items){
  const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
- const definitions=[{key:'seed',label:'Seed / 用例',width:220,defaultVisible:true},{key:'user_name',label:'用户',width:140,defaultVisible:true}];
+ const definitions=[{key:'seed',label:'Seed',width:150,defaultVisible:true},{key:'ops',label:'图结构 / OP',width:260,defaultVisible:true},{key:'user_name',label:'用户',width:120,defaultVisible:true}];
+ // Existing column preferences keep their order; place the newly split column
+ // beside Seed on the first visit, rather than at the far end of the table.
+ if(columnPreferences.order.length&&!columnPreferences.order.includes('ops'))columnPreferences.order.splice(Math.max(0,columnPreferences.order.indexOf('seed')+1),0,'ops');
  for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:true});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:true},{key:b+':logs',label:b+' 日志',width:130,defaultVisible:true});}
  definitions.push({key:'time',label:'时间',width:180,defaultVisible:true},...extraColumns.map(([key,label])=>({key,label,width:210,defaultVisible:false})));
  const fragment=document.createDocumentFragment();
  for(const item of items){const tr=document.createElement('tr');
  for(const c of definitions){const td=cell(tr,'');td.dataset.column=c.key;let populated=false;
- if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short;const meta=document.createElement('small');meta.textContent=(item.metadata.op_types||[]).join(' · ');td.append(strong,meta);populated=true;}
+ if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short;td.append(strong);populated=true;}
+ else if(c.key==='ops'){const ops=(item.metadata.op_types||[]).join(' · ');if(ops){const text=document.createElement('span');text.className='case-ops';text.textContent=ops;text.title=ops;td.append(text);populated=true;}}
  else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];

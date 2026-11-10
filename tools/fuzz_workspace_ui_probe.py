@@ -25,6 +25,10 @@ with create_server(repo.path) as server:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':1440,'height':1000});errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(server.viewer_url+'#records',wait_until='networkidle')
             expect(page.locator('#rows tr')).to_have_count(12)
+            expect(page.locator('#case-columns [data-column=ops]')).to_have_text('图结构 / OP')
+            assert page.locator('#rows [data-column=seed] small').count()==0
+            assert page.locator('#rows [data-column=ops]').first.inner_text()
+            assert page.locator('#rows tr').first.bounding_box()['height']<=44
             expect(page.locator('#total')).to_have_text('12')
             expect(page.locator('#ok')).to_have_text('10')
             expect(page.locator('#errors')).to_have_text('1')
@@ -52,6 +56,11 @@ with create_server(repo.path) as server:
             page.reload(wait_until='networkidle');expect(page.locator('#case-columns th')).to_have_count(0)
             page.locator('#column-picker>summary').click();page.locator('#all-columns').click();expect(page.locator('#case-columns [data-column=cann]')).to_be_visible()
             page.locator('#reset-columns').click();page.locator('h1').click();assert not page.locator('#column-picker').evaluate('e=>e.open')
+            page.locator('#column-picker>summary').click()
+            page.locator('#column-options input[data-column=ops]').uncheck()
+            page.reload(wait_until='networkidle');expect(page.locator('#case-columns [data-column=ops]')).to_have_count(0)
+            page.locator('#column-picker>summary').click();page.locator('#reset-columns').click();page.locator('h1').click()
+            expect(page.locator('#case-columns [data-column=ops]')).to_be_visible()
             page.screenshot(path=str(root/'records.png'),full_page=True)
             # Details use the same UI for native functional failures and precision metrics.
             import sqlite3

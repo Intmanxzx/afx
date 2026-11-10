@@ -568,3 +568,10 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - round45远端全fuzz测试：265 passed，1个可选pygraphviz warning；12case/24attempt本地服务浏览器回归通过。
 - 已备份并部署oracle1 venv-round45，wheel SHA256 `60257a48b0fe0fe1e1608c9304542d8dce1753f0dae9a1bc5deebc0e74dbb301`，未清理/改写200条明细。
 - 公网真实点击验收round45-public.log：总数100、通过9、功能失败91、精度失败0；100行，91个“查看日志”按钮；功能Failed对应精度Unkown；点击日志后顶部显示AF_MLIR_STRICT，刷新详情仍保留；图表100用例、不计CPU，JS errors=[]。截图仅远端round45-records.png/round45-log.png。
+
+## 34. 紧凑记录与独立 OP 列（round46）
+
+- Seed仅保留10字符标识，原下方算子列表拆为独立默认“图结构 / OP”列，支持列显隐/排序/浏览器偏好；旧列顺序自动在Seed后插入新列，不重置其他偏好。
+- 单元格上下padding收紧至10px，垂直居中；OP单行省略、悬停完整文本，日期和Seed不折行。不是把OP列表伪造为图拓扑。
+- 所有验证在mlir：38项API/查询测试通过，12case浏览器回归通过；公网实际行高41px，旧偏好迁移、日志入口和移动端页面宽度验证通过，JS errors=[]。
+- 网站部署venv-round46（先完整备份），wheel SHA256 a1a07750ec9d44045aa9eb36fb2c640d9160d572b457b279ae80a27b32cf8659；无数据变更。截图仅远端round46-public.png。
