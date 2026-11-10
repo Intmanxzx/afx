@@ -500,3 +500,9 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 远端小批12case/24attempt浏览器验证：CPU/NPU列口径、秒格式、border=0、搜索、分页、列全不选持久化、弹层不移位、图例90.9%重算、刷新DOM身份/MutationObserver无变化、390px布局全部通过。fuzz回归244通过。第一次SSH在测试结束后断开，读取日志确认完成，未将断线当测试通过。
 - 公网round34，备份private/before-round34.sqlite，wheel SHA256 315122c64b616254ba32e5019a7f6237d58619a86c9dd198c6ef3d655470932c。未跑大批NPU测试、未新增线上记录。
 - 最终重点回归37通过；公网浏览器验证列/颜色/秒值/搜索/浮层/图例/手机布局通过，无pageerror。一次公网probe失败为SSH shell剥离JS字符串引号（Private field #rows语法错误），改为远端脚本文件重跑通过，非网站故障。截图只存远端round34-public-records.png。
+
+## 29. CLI评审前的小修正（2026-11-09）
+
+- setup姓名参数统一为--user，移除--user-name/--display-name选项；--user-id仍是现有内部身份参数，列入本次CLI评审，不擅自扩大改名范围。
+- replay --performance帮助文案去掉已废止的CPU wall-time承诺，明确仅请求后端支持的精确指标。
+- npussh mlir round35：foundation 18通过，实际--help核对23个顶级子命令及setup参数。本轮源码修改/提交，未重新打包部署CLI，不需要为参数改名重启公网网站。

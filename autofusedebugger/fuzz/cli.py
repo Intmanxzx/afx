@@ -43,7 +43,7 @@ def main(argv=None):
         if command == "setup":
             p.add_argument("--sync-endpoint")
             p.add_argument("--sync-interval", type=float, default=30)
-            p.add_argument("--user-name", "--display-name", dest="display_name", help="administrator-issued personal display name, e.g. niuyuhu")
+            p.add_argument("--user", dest="display_name", help="administrator-issued personal display name, e.g. niuyuhu")
             p.add_argument("--user-id")
             p.add_argument("--key-file")
             p.add_argument("--cpu-workers", type=int)
@@ -221,7 +221,7 @@ def replay_parser():
     parser.add_argument("--database", help="result SQLite path; defaults to data home/results/results.sqlite")
     parser.add_argument("--no-save", action="store_true", help="explicit ephemeral execution")
     parser.add_argument("--compile-threads", type=int, default=1)
-    parser.add_argument("--performance", action="store_true", help="optional CPU wall-time measurement; NPU measurement needs D4 leases")
+    parser.add_argument("--performance", action="store_true", help="request precise metrics where supported; unavailable metrics remain empty")
     parser.add_argument("--warmup-steps", type=int, default=3)
     parser.add_argument("--measured-steps", type=int, default=10)
     return parser

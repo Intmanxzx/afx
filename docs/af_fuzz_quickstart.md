@@ -61,6 +61,6 @@ oracle1：af-fuzz.service + Caddy；应用loopback8090，公网80/443由Caddy终
 
 ### 记录页偏好与测量口径
 
-- 初始化可用 `--user-name niuyuhu` 指定管理员发放的展示名；公网身份以token对应的管理员记录为准，不可用展示名冒充他人。
+- 初始化可用 `--user niuyuhu` 指定管理员发放的展示名；公网身份以token对应的管理员记录为准，不可用展示名冒充他人。
 - 单框搜索匹配姓名、seed、版本、算子、状态等列；分页大小与列顺序/显隐保存在当前浏览器。
 - CPU只显示总耗时（秒，1位小数）。NPU性能仅展示可靠kernel profiler数据；无采集值时默认隐藏。编译耗时未能独立测量时为空，不用prepare/first-call时间替代。
