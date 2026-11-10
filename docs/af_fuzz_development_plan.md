@@ -458,3 +458,16 @@ seed显示规范补零到10字符，例如B000000016；默认生成熵保持36^9
 round28-focused=42 passed；round29浏览器在本地远端服务和公网都通过navigation/charts/fixed10seed/backend_names/filter/replay/detail/mobile，无pageerror。round29全量483通过/6失败，其中新增1项仅旧首页标题断言；改为检查主导航后sync+seed报表16通过。此前round26最终全量484通过/5原有失败。未隐藏既有失败。
 
 公网wheel SHA256 453cc58d599d18c962643c11e15b6103dc1934f275dc392c367b99873f6c5c96，venv-round29；切换前private/before-round29.sqlite备份。测试/安装均在远端；本地截图临时文件已清理。
+
+## 25. 用例并排、来源/版本/阶段指标与网站布局（2026-11-09）
+
+- reporting additive schema v1：case_facts / attempt_facts / case_dimensions / stage_metrics / report_devices。新保存、中心上传在同一事务建立索引；snapshot保留、restore重建、显式index-results幂等。核心结果hash不改。汇总走SQLite事实表，不再向首页传输5000条明细计算图表。
+- 一个可比用例分组一行，后端横向，重试保留；来源/环境/批次/配置不同不误合并。历史未记录批次不能恢复真实批次，保留historical-unrecorded。列表明确标注静态/动态、正确性/性能区别。
+- 新采集CANN、Torch、Torch NPU、实际选中Autofuse binary SHA256；仅匹配binary manifest才使用commit，不拿共享源码HEAD冒充。历史缺失不回填。阶段：generation/capability/prepare/input_binding/first_call_combined/correctness/warmup/measurement/execution_total；prepare不是编译完成，first call包含编译与执行。总时间不包含持久化/上传。
+- round30远端fuzz 239通过；全量493通过/6失败（原5项+非fuzz spawn任务分配精确1:9断言失败，独立复跑仍失败，round29基线单跑通过，未声称已解决）。存储/同步重点55通过。真实CPU性能与NPU eager执行成功并上传3条。100k合成查询证据保留，但用户之后要求仅几十到百条验证，后续不再扩大数据。
+- round31修复nowrap导致版本穿透相邻列：固定布局、状态/耗时分层、只显示当前页有结果后端、长ID不占默认视图。round32顶部导航，全宽工作区，删除指定同步/时区文案；版本拆成独立可选列，默认隐藏；所有列可显隐/上移下移，localStorage版本化持久化，至少保留一列。
+- round32仅12个合成case/24个attempt验证，桌面1440/手机390，展开长binary与ID也无cell溢出；列选择/顺序刷新持久化。focused=49 passed。截图和日志都保留在mlir /mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/round32-*；本地不安装、不生成测试库/截图。
+- 用户明确授权清理旧数据：先备份oracle1 private/before-round32-cleanup.sqlite，再删除核对过的2004条缺CANN及Autofuse标识记录，保留3条完整新数据。保留users/sources/receipts/ACK；deleted_attempts保留ID/hash/owner墓碑，旧库恢复为新source再上传也不会复活同attempt。测试覆盖count guard、同source重传、新source重传、完整结果保留。旧源库仍作为历史存档存在，不重置自动同步进度。
+- 公网round32 venv，wheel SHA256 ce0de3d59489fbc90d6f57f4ab36ce9ff0ef7ab70899976b4fca6e0845f04741，服务/Caddy active。
+- 未完成边界：Kernel profiler数量/时间仍未采集；不能用wall-time替代。严格NPU性能仍需要能力接入；旧HTML所有交互筛选/排序尚未逐项验收，不能把新增性能表称为全部迁移完毕。Autofuse binary未附可信commit manifest时只显示binary指纹。旧库离线查看需先备份再index-results。
+- round32公网Playwright：顶部导航、总计3条/2个分组、删除指定文案、默认隐藏CANN、勾选/移序/刷新保留、390px无页面横向溢出全部通过，无pageerror。直接urllib默认UA请求公网被403拒绝，浏览器正常；未绕过服务安全策略。

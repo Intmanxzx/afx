@@ -1,5 +1,6 @@
 'use strict';
 let CASES=[];
+const escapeChart = value => String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const OP_CATEGORIES={Elementwise:['add','relu','neg','mul'],Reduce:['sum'],Transpose:['transpose']};
 const _rootStyle = getComputedStyle(document.documentElement);
 const STATUS_COLORS = {
@@ -245,7 +246,7 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
       } else {
         shape = `M ${x} ${segY} h ${barW} v ${segH} h ${-barW} Z`;
       }
-      parts.push(`<path class="seg" d="${shape}" fill="${s.color}" data-key="${r.key}|${s.label}"></path>`);
+      parts.push(`<path class="seg" d="${shape}" fill="${s.color}" data-key="${escapeChart(r.key)}|${s.label}"></path>`);
       // 段内数值：仅段高放得下一行 12px 字才显示（白字，深浅底都可读）。
       if (segH >= 16 && barW >= 18) {
         parts.push(`<text x="${x + barW / 2}" y="${segY + segH / 2 + 4}" text-anchor="middle" fill="#fff" font-family="${FONT}" font-size="11.5" font-weight="600" pointer-events="none">${s.v}</text>`);
@@ -257,7 +258,7 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
     parts.push(`<text x="${x + barW / 2}" y="${topY - 6}" text-anchor="middle" fill="${VIZ.textPrimary}" font-family="${FONT}" font-size="12.5" font-weight="600" pointer-events="none">${total}</text>`);
     // x 轴分类标签（超 9 字符截断）。
     const label = r.key.length > 9 ? r.key.slice(0, 8) + '\u2026' : r.key;
-    parts.push(`<text x="${x + barW / 2}" y="${topPad + chartH + 20}" text-anchor="middle" fill="${VIZ.textSecondary}" font-family="${FONT}" font-size="12" pointer-events="none">${label}</text>`);
+    parts.push(`<text x="${x + barW / 2}" y="${topPad + chartH + 20}" text-anchor="middle" fill="${VIZ.textSecondary}" font-family="${FONT}" font-size="12" pointer-events="none">${escapeChart(label)}</text>`);
   });
   svg.innerHTML = gridLines + parts.join('');
   // 每段挂 tooltip：分类名做标题，pass/fail/gen_error 计数 + 总数。
@@ -306,3 +307,10 @@ function renderStats() {
 }
 
 window.updateCharts = cases => { CASES=cases; renderStats(); };
+
+window.updateStatistics = result => {
+  const convert=rows=>{const groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_error:0});groups.get(r.label)[r.status==='ok'?'pass':r.status==='fail'?'fail':'gen_error']+=r.count;}return [...groups.values()];};
+  const overall=convert(result.overall)[0]||{};
+  drawDonut('chartOverall','legendOverall',STATUS_KEYS.map(s=>({label:s,value:overall[s]||0,color:STATUS_COLORS[s]})));
+  for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,convert(result[key]));
+};

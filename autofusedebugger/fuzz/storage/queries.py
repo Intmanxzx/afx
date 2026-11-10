@@ -81,6 +81,12 @@ class ResultQueries:
                 'SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index LIMIT 1025', (identity,))]
             if len(result['shape_results']) > 1024:
                 raise ValueError('excessive shape results')
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_facts'").fetchone():
+                fact = conn.execute('SELECT device_name,user_id,source_id,total_ns,duration_scope FROM attempt_facts WHERE attempt_id=?',(identity,)).fetchone()
+                result['provenance'] = dict(fact) if fact else {}
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='case_facts'").fetchone():
+                fact = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(row['workload_id'],)).fetchone()
+                result['metadata'] = json.loads(fact[0]) if fact else {}
             result['contexts'] = {}
             for kind in ('execution','evaluation','environment'):
                 payload = conn.execute('SELECT payload FROM contexts WHERE id=?', (row[kind+'_id'],)).fetchone()
@@ -95,3 +101,43 @@ class ResultQueries:
         result['backend_display'] = display_backend(result['backend'])
         result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
         return result
+
+    def case_page(self, *, limit=50, after=0, seed=None, status=None):
+        """Group comparable runs, retaining every attempt in backend history.
+
+        Status selects groups, not their members: a failure filter must still show
+        the passing peer backend and later retries. Cursor is a group high-water rowid.
+        """
+        if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
+            raise ValueError('invalid pagination')
+        clauses, values = filters(seed, status)
+        where = ' WHERE ' + ' AND '.join('a.'+c for c in clauses) if clauses else ''
+        with reading(self.path) as conn:
+            conn.execute('BEGIN')
+            groups = conn.execute('SELECT f.group_id, max(a.rowid) AS cursor FROM attempts a '
+                'JOIN attempt_facts f ON f.attempt_id=a.id WHERE f.group_id IN '
+                '(SELECT f.group_id FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id'+where+') '
+                'GROUP BY f.group_id HAVING max(a.rowid)<? ORDER BY cursor DESC LIMIT ?',
+                (*values, after or 2**63-1, limit+1)).fetchall()
+            items = []
+            from ..contracts import Seed
+            from ..backend_names import display_backend
+            for group in groups[:limit]:
+                rows = conn.execute('SELECT a.*,f.*,a.rowid AS cursor FROM attempt_facts f '
+                    'JOIN attempts a ON a.id=f.attempt_id WHERE group_id=? ORDER BY a.rowid DESC LIMIT 1001', (group['group_id'],)).fetchall()
+                if len(rows)>1000: raise ValueError('case history exceeds query limit')
+                first = rows[0]
+                meta = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(first['workload_id'],)).fetchone()
+                item = {key:first[key] for key in ('seed','workload_id','source_id','device_name','user_id','batch_id','created_at')}
+                item.update(case_id=group['group_id'], seed_short=Seed.parse(item['seed']).short,
+                            execution=json.loads(first['execution']), evaluation=json.loads(first['evaluation']),
+                            versions=json.loads(first['versions']), metadata=json.loads(meta[0]) if meta else {}, backends={})
+                for row in rows:
+                    backend = display_backend(row['backend'])
+                    member = {key:row[key] for key in ('id','status','created_at','total_ns','duration_scope','error_stage','error_summary')}
+                    member['device'] = json.loads(row['execution']).get('device')
+                    member['stages'] = [dict(r) for r in conn.execute('SELECT shape_index,stage,duration_ns FROM stage_metrics WHERE attempt_id=? ORDER BY shape_index,stage',(row['id'],))]
+                    member['shapes'] = [dict(r) for r in conn.execute('SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index',(row['id'],))]
+                    item['backends'].setdefault(backend, []).append(member)
+                items.append(item)
+        return {'items':items,'next_cursor':groups[limit-1]['cursor'] if len(groups)>limit else None}

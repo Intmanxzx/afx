@@ -15,6 +15,7 @@ def initialize(path):
         conn.execute('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, key_hash TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1)')
         conn.execute('CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ack INTEGER NOT NULL DEFAULT 0)')
         conn.execute('CREATE TABLE IF NOT EXISTS receipts (source_id TEXT NOT NULL, revision INTEGER NOT NULL, payload_hash TEXT NOT NULL, PRIMARY KEY(source_id,revision))')
+        conn.execute('CREATE TABLE IF NOT EXISTS deleted_attempts (id TEXT PRIMARY KEY, result_hash TEXT NOT NULL, user_id TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS owners (attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), user_id TEXT NOT NULL REFERENCES users(id))')
 
 
@@ -84,6 +85,13 @@ def ingest(path, key, payload):
                 continue
             if revision<=ack:
                 raise ValueError('old revision without receipt')
+            deleted=conn.execute('SELECT result_hash,user_id FROM deleted_attempts WHERE id=?',(identity,)).fetchone()
+            if deleted:
+                if deleted!=(digest(record),user):
+                    raise ValueError('deleted attempt ownership/content conflict')
+                conn.execute('INSERT INTO receipts VALUES (?,?,?)',(source,revision,receipt))
+                ack=revision
+                continue
             existing=conn.execute('SELECT result_hash,created_at FROM attempts WHERE id=?',(identity,)).fetchone()
             if existing:
                 owned=conn.execute('SELECT user_id FROM owners WHERE attempt_id=?',(identity,)).fetchone()
@@ -100,6 +108,9 @@ def ingest(path, key, payload):
                     row=dict(shape,attempt_id=identity)
                     conn.execute('INSERT INTO shapes VALUES ('+','.join('?' for _ in TABLE_COLUMNS['shapes'])+')',tuple(row[k] for k in TABLE_COLUMNS['shapes']))
                 conn.execute('INSERT INTO owners VALUES (?,?)',(identity,user))
+            from ..reporting.index import index_attempt
+            display=conn.execute('SELECT display_name FROM users WHERE id=?',(user,)).fetchone()[0]
+            index_attempt(conn,identity,source,display,user)
             conn.execute('INSERT INTO receipts VALUES (?,?,?)',(source,revision,receipt))
             ack=revision
         conn.execute('UPDATE sources SET ack=? WHERE id=?',(ack,source))

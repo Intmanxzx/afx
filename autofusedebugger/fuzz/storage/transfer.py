@@ -85,6 +85,11 @@ def _copy(source, target):
             columns = TABLE_COLUMNS[table]
             target.executemany(f"INSERT INTO {table} VALUES ({','.join('?' for _ in columns)})",
                                (tuple(record[key] for key in columns) for record in records))
+        from ..reporting.index import index_attempt
+        provenance = None
+        if source.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_facts'").fetchone():
+            provenance = source.execute('SELECT source_id,device_name,user_id FROM attempt_facts WHERE attempt_id=?',(row['id'],)).fetchone()
+        index_attempt(target, row['id'], *(tuple(provenance) if provenance else ()))
         added += 1
     return {'added': added, 'skipped': skipped}
 

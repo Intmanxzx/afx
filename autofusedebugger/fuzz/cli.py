@@ -82,6 +82,8 @@ def main(argv=None):
     central = sub.add_parser("serve", help="central service behind a TLS proxy")
     central.add_argument("database")
     central.add_argument("--port", type=int, default=8090)
+    indexing = sub.add_parser('index-results', help='build additive SQLite reporting index after backup')
+    indexing.add_argument('database')
     backup = sub.add_parser("server-backup", help="private complete central backup including identities and ACKs")
     backup.add_argument("database")
     backup.add_argument("destination")
@@ -104,7 +106,10 @@ def main(argv=None):
     register(sub)
     args = parser.parse_args(argv)
     try:
-        if args.command == "serve":
+        if args.command == 'index-results':
+            from .reporting.index import rebuild
+            result = rebuild(args.database)
+        elif args.command == "serve":
             from .central.server import serve
             return serve(args.database, args.port)
         elif args.command == "server-backup":
@@ -153,7 +158,10 @@ def main(argv=None):
                 result["sync_daemon"] = start(home, home / "results/results.sqlite")
         elif args.command == "seed":
             from .generation import materialize, content_manifest, workload_id
+            import time
+            generation_start=time.perf_counter_ns()
             bundle = materialize(args.token)
+            generation_ns=time.perf_counter_ns()-generation_start
             result = {"seed": bundle.spec.seed.short, "seed_numeric": str(bundle.spec.seed), "workload_id": workload_id(bundle),
                       "preview": True, "shape_count": len(bundle.spec.shape_samples)}
             if args.show_spec:
@@ -227,17 +235,19 @@ def execute_args(args):
         from .backends import create_backend
         config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "npu-eager", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), args.compile_threads, static_only=args.static_only)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
+        import time
+        generation_start = time.perf_counter_ns()
         bundle = materialize(args.seed)
+        generation_ns = time.perf_counter_ns() - generation_start
         result = execute(bundle, create_backend(config), evaluation)
+        telemetry=json.loads(result['execution']['telemetry'])
+        telemetry['stages']['generation']=generation_ns
+        result['execution']['telemetry']=json.dumps(telemetry)
         if not args.no_save:
             from .storage import ResultRepository
             database = args.database or data_home() / "results/results.sqlite"
-            environment = {"python": platform.python_version(), "platform": sys.platform, "machine": platform.machine()}
-            for name, field in (("torch", "torch"), ("torch-npu", "torch_npu"), ("triton-ascend", "triton"), ("autofusedebugger", "package_version")):
-                try:
-                    environment[field] = importlib.metadata.version(name)
-                except importlib.metadata.PackageNotFoundError:
-                    pass
+            from .environment import collect
+            environment=collect()
             repo = ResultRepository(database)
             result["attempt_id"] = repo.save(result, environment=environment)
             result["database"] = str(repo.path)

@@ -144,6 +144,7 @@ class ExecutionConfig:
     compile_threads: int = 4
     scheduling: str = "combined"
     static_only: bool = False
+    batch_id: str = ""
 
     def __post_init__(self):
         if self.compile_threads < 1 or self.scheduling != "combined":

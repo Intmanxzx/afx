@@ -14,7 +14,7 @@ def compare(database, left_id, right_id):
     # backend is the compared dimension; device/static/compile budgets must match.
     execution=[]
     for value in (left,right):
-        execution.append({k:v for k,v in value['contexts']['execution'].items() if k!='backend'})
+        execution.append({k:v for k,v in value['contexts']['execution'].items() if k not in {'backend','telemetry','batch_id'}})
     if execution[0]!=execution[1]:reasons.append('different_execution_configuration')
     a={row['shape_index']:row for row in left['shape_results']}
     b={row['shape_index']:row for row in right['shape_results']}

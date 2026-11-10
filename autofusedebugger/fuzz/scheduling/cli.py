@@ -66,7 +66,9 @@ def dispatch(args):
     evaluation = EvaluationConfig(performance=args.performance)
     from .budgets import Budget
     budget = Budget.configured(load_config(home), args.compile_threads)
-    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','npu-eager','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only)
+    import uuid
+    batch_id = str(uuid.uuid4())
+    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','npu-eager','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id)
                for backend in dict.fromkeys(args.backend or ['cpu'])]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})

@@ -69,6 +69,17 @@ def create_server(database, *, port=0):
                 if any(len(v) != 1 for v in raw.values()):
                     raise ValueError('duplicate query field')
                 params = {k: v[0] for k,v in raw.items()}
+                if route == 'api/statistics' and not set(params)-{'seed','status'}:
+                    from ..reporting.statistics import statistics
+                    self.respond(200, statistics(database, **params))
+                    return
+                if route == 'api/cases':
+                    if set(params)-{'seed','status','limit','after'}:
+                        raise ValueError('unknown field')
+                    for key in ('limit','after'):
+                        if key in params: params[key]=int(params[key])
+                    self.respond(200, queries.case_page(**params))
+                    return
                 if route == 'api/report' and not set(params)-{'seed','status'}:
                     from ..reporting.report import report_data
                     self.respond(200, {'cases': report_data(database, **params)})

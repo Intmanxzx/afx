@@ -48,10 +48,14 @@ def normalize(result, environment):
     if result['status'] not in {'ok', 'fail', 'error', 'unsupported'}:
         raise ValueError('invalid attempt status')
     contexts = {
-        'execution': _context(result.get('execution', {}), ('backend','device','compile_threads','scheduling','static_only')),
+        'execution': _context(result.get('execution', {}), ('backend','device','compile_threads','scheduling','static_only','batch_id')),
         'evaluation': _context(result.get('evaluation', {}), ('correctness','performance','warmup_steps','measured_steps')),
-        'environment': _context(environment, ('python','platform','machine','torch','torch_npu','triton','package_version')),
+        'environment': _context(environment, ('python','platform','machine','torch','torch_npu','triton','package_version','cann','autofuse_commit','autofuse_binary','device_name','user_id','installation_id','device_uuid','device_model')),
     }
+    telemetry = result.get('execution', {}).get('telemetry')
+    if telemetry is not None:
+        from ..telemetry import validate
+        contexts['execution']['telemetry'] = validate(telemetry)
     row = {key: text(result[key], limit) for key, limit in
            (('seed',128),('workload_id',64),('oracle_id',128),('backend',64),('status',32))}
     row.update(prepare_ns=integer(result.get('prepare_ns')),

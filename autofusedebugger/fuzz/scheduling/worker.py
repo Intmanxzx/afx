@@ -21,16 +21,17 @@ def run(queue, database, identity, claim):
     evaluation = EvaluationConfig(**json.loads(task['evaluation']))
     from .supervisor import _validate_task
     _validate_task(task)
+    import time
+    generation_start=time.perf_counter_ns()
     bundle = materialize(task['seed'])
+    generation_ns=time.perf_counter_ns()-generation_start
     result = execute(bundle, create_backend(config), evaluation)
-    from importlib.metadata import version, PackageNotFoundError
-    environment = {'python': platform.python_version(), 'platform': sys.platform,
-                   'machine': platform.machine()}
-    for package, key in [('torch', 'torch'), ('torch-npu', 'torch_npu'), ('triton-ascend', 'triton'), ('autofusedebugger', 'package_version')]:
-        try:
-            environment[key] = version(package)
-        except PackageNotFoundError:
-            pass
+    telemetry=json.loads(result['execution']['telemetry'])
+    telemetry['stages']['generation']=generation_ns
+    result['execution']['telemetry']=json.dumps(telemetry)
+    from ..environment import collect
+    from pathlib import Path
+    environment=collect(Path(queue).parent.parent)
     ResultRepository(database).save(result, environment=environment, attempt_id=task['attempt_id'])
     return 0  # A failed correctness result is still a durably completed attempt.
 

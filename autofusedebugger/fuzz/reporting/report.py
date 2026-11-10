@@ -25,8 +25,9 @@ def case_metadata(seed):
             'input_dtypes': {t.name: t.dtype for t in spec.inputs},
             'output_shapes': {t.name: list(t.shape) for t in spec.output_samples[0]},
             'output_dtypes': {t.name: t.dtype for t in spec.output_samples[0]},
-            'shape_variants': [{'input_shapes': {t.name: list(t.shape) for t in sample}}
-                               for sample in spec.shape_samples],
+            'shape_variants': [{'input_shapes': {t.name: list(t.shape) for t in sample},
+                                'output_shapes': {t.name: list(t.shape) for t in outputs}}
+                               for sample, outputs in zip(spec.shape_samples, spec.output_samples)],
             'weight_broadcast_axes': graph['nodes'][0]['weight_broadcast_axes']}
 
 
@@ -46,7 +47,9 @@ def report_data(database, *, seed=None, status=None):
             execution = json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?', (row['execution_id'],)).fetchone()[0])
             stages = sorted({s['error_stage'] for s in shapes if s['error_stage']})
             errors = [s['error_summary'] for s in shapes if s['error_summary']]
-            metadata = case_metadata(row['seed'])
+            indexed = conn.execute("SELECT 1 FROM sqlite_master WHERE name='case_facts'").fetchone()
+            fact = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(row['workload_id'],)).fetchone() if indexed else None
+            metadata = json.loads(fact[0]) if fact else case_metadata(row['seed'])
             selected = [metadata['shape_variants'][s['shape_index']] for s in shapes if s['shape_index'] < len(metadata['shape_variants'])]
             cases.append(dict(metadata, index=index+1, seed=Seed.parse(row['seed']).short,
                 backend=html.escape(display_backend(row['backend'])),

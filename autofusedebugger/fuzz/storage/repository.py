@@ -29,6 +29,8 @@ def _initialize(conn):
     conn.executescript(DDL)
     conn.execute(f'PRAGMA application_id={APPLICATION_ID}')
     conn.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
+    from ..reporting.index import initialize
+    initialize(conn)
     conn.commit()
 
 
@@ -102,6 +104,8 @@ class ResultRepository:
             for shape in record['shapes']:
                 row = dict(shape, attempt_id=attempt_id)
                 conn.execute(f"INSERT INTO shapes VALUES ({','.join('?' for _ in columns)})", tuple(row[c] for c in columns))
+            from ..reporting.index import index_attempt
+            index_attempt(conn, attempt_id)
             from ..sync.outbox import enqueue
             enqueue(conn, attempt_id)
         return attempt_id
@@ -143,6 +147,13 @@ class ResultRepository:
                         if not rows:
                             break
                         target.executemany(f"INSERT INTO {table} VALUES ({','.join('?' for _ in columns)})", rows)
+                if source.execute("SELECT 1 FROM sqlite_master WHERE name='report_schema'").fetchone():
+                    from ..reporting.index import initialize
+                    initialize(target)
+                    for table in ('case_facts','attempt_facts','stage_metrics','case_dimensions','report_devices'):
+                        rows=source.execute('SELECT * FROM '+table)
+                        for values in rows:
+                            target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in values)+')',tuple(values))
                 target.commit()
                 if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or target.execute('PRAGMA foreign_key_check').fetchone():
                     raise ValueError('snapshot integrity validation failed')
