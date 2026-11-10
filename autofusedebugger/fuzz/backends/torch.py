@@ -3,7 +3,7 @@ from .base import UnsupportedBackend
 
 
 class TorchAdapter:
-    """Lazy execution dependency. No NNSmith patch needed for protocol v1."""
+    """Lazy execution dependency for NNSmith-generated immutable graphs."""
     def __init__(self, config):
         self.config = config
         self.name = config.backend
@@ -11,7 +11,7 @@ class TorchAdapter:
     def check(self, bundle, evaluation):
         from ..generation import plan
         if bundle.spec != plan(bundle.spec.seed):
-            raise UnsupportedBackend("adapter accepts only the frozen minimal profile, not arbitrary graphs")
+            raise UnsupportedBackend("bundle does not match NNSmith seed regeneration")
         from . import BACKEND_NAMES, HISTORICAL_NAMES, NPU_BACKENDS
         if self.name not in BACKEND_NAMES + HISTORICAL_NAMES:
             raise UnsupportedBackend("unknown backend")
@@ -78,17 +78,16 @@ class TorchAdapter:
         import json
         torch = self.torch
         graph = json.loads(bundle.spec.graph_json)
-        weight = self._tensor(bundle, bundle.spec.weights[0])
-        op = graph["nodes"][1]["op"]
-        axis = graph["reduce_axis"]
-        def forward(x):
-            value = x + weight
-            value = torch.relu(value) if op == "relu" else -value if op == "neg" else value * weight
-            if graph.get('transpose'):
-                value = value.transpose(0, 1)
-            if axis is not None:
-                value = value.sum(dim=axis)
-            return (value,)
+        if graph.get('dialect') != 'nnsmith-ert/3':
+            raise UnsupportedBackend('only NNSmith graphs are supported')
+        from ..generation.nnsmith_v3 import execute_graph
+        forward = execute_graph(torch, graph,
+            {t.name: self._tensor(bundle, t) for t in bundle.spec.weights},
+            [t.name for t in bundle.spec.inputs])
+        return self._compile(forward, bundle)
+
+    def _compile(self, forward, bundle):
+        torch = self.torch
         if self.name in {"cpu", "cpu-eager", "npu-eager", "eager-npu"}:
             return forward
         target = {'af-legacy': 'ascendc', 'af-mlir': 'ascendc', 'triton-npu': 'triton'}.get(self.name, self.name)

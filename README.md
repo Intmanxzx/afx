@@ -8,7 +8,7 @@
 ```sh
 autofusedbg fuzz setup --token "$FUZZ_TOKEN"
 autofusedbg fuzz run --count 100 --save
-autofusedbg fuzz replay B000000016
+autofusedbg fuzz replay C000000016
 autofusedbg fuzz view ./results.sqlite
 ```
 

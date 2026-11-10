@@ -29,7 +29,7 @@ class Seed:
     def __post_init__(self):
         if type(self.value) is not int or self.value < 0:
             raise ValueError("seed must be a nonnegative integer")
-        if self.version not in {1, 2}:
+        if self.version != 3:
             raise ValueError(f"unsupported generation version {self.version}; no fallback")
 
     @property
@@ -51,7 +51,7 @@ class Seed:
         while number:
             number, digit = divmod(number, 36)
             digits = alphabet[digit] + digits
-        return ('A' if self.version == 1 else 'B') + (digits or '0').zfill(9)
+        return 'C' + (digits or '0').zfill(9)
 
     @classmethod
     def parse(cls, value):
@@ -59,11 +59,11 @@ class Seed:
             return value
         if type(value) is int:
             return cls(value)
-        if isinstance(value, str) and re.fullmatch(r'[AB][0-9A-Z]{1,25}', value):
+        if isinstance(value, str) and re.fullmatch(r'C[0-9A-Z]{1,25}', value):
             entropy = int(value[1:], 36)
             if entropy >= 2**128:
                 raise ValueError('seed entropy overflow')
-            return cls((ord(value[0])-ord('A')) * 2**128 + entropy)
+            return cls(2 * 2**128 + entropy)
         if not isinstance(value, str) or not re.fullmatch(r"0|[1-9][0-9]*", value):
             raise ValueError("seed must be canonical decimal digits; no profiles or extra parameters")
         return cls(int(value))

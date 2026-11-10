@@ -31,15 +31,15 @@ autofusedbg fuzz stop                # 停止当前批次
 autofusedbg fuzz run --count 100 --save                  # 有限批次
 autofusedbg fuzz run --count 10 --fg      # 前台观察
 autofusedbg fuzz run --backend triton-npu         # 在 CPU、AF-MLIR 外增加后端
-autofusedbg fuzz replay B000000016               # 只靠 seed 重建并运行
-autofusedbg fuzz replay B000000016 --backend af-mlir  # 单后端诊断
-autofusedbg fuzz replay B000000016 --static-only  # 仅基础 shape，静态编译
-autofusedbg fuzz replay B000000016 --save      # 保存结果并加入自动上传队列
+autofusedbg fuzz replay C000000016               # 只靠 seed 重建并运行
+autofusedbg fuzz replay C000000016 --backend af-mlir  # 单后端诊断
+autofusedbg fuzz replay C000000016 --static-only  # 仅基础 shape，静态编译
+autofusedbg fuzz replay C000000016 --save      # 保存结果并加入自动上传队列
 ```
 
 - 默认 CPU 为对照、AF-MLIR 为被测后端；AF-MLIR 对 CPU 精度不一致时用 eager-npu 复核，记录判定依据。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
-- 默认运行动态 shape 样本；同图不同 shape 在网站中分别计数，CPU 对照不重复计数。
+- 当前NNSmith C协议运行单个静态shape；CPU仅作为对照，不重复计数。动态shape接入尚未完成。
 - `--perf` 请求性能采集；目前无法可靠拆分的编译/kernel 指标留空，不能把首次调用或总耗时当 kernel 性能。
 - 使用--save时，功能失败保存短错误、阶段和已采集上下文；精度失败保存误差统计。长日志、tensor、编译产物不默认上传。
 - 停止测试不会删除数据或凭据，也不会停止独立上传进程。
@@ -153,4 +153,9 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 - 后台任务的 seed、状态等调度元数据仍持久化，用于 status/stop/恢复；它们不等于结果归档。
 - `run` 不传 `--count` 且未指定 seed 列表时无限生成，直到 `fuzz stop`；指定 seed 列表则只执行该列表。
 - 前台使用 `--fg`，请求性能采集使用 `--perf`。
-- NNSmith 集成和全部 patches 已恢复，wheel 包含补丁；不在导入时打补丁，也不修改共享 NNSmith。当前 A/B 协议仍使用有限生成器，不能代表 NNSmith 泛化能力。广泛随机图接入统一执行流程尚未完成，不应将该版本当作完成此能力的正式发布版。
+- NNSmith 集成和全部 patches 已恢复，wheel 包含补丁；不在导入时打补丁，也不修改共享 NNSmith。run/replay已统一接入NNSmith；手写A/B模板已删除，旧seed拒绝执行。当前覆盖Elementwise/Reduce/Transpose的静态fp32随机图，不代表全部算子及动态shape已经完成。
+
+
+### NNSmith执行环境
+
+run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。当前安装路径仍需显式提供该隔离环境（例如在激活的环境中设置PYTHONPATH）；`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。自动化依赖准备尚待完成。

@@ -27,7 +27,7 @@ def doctor(home):
             "python": platform.python_version(), "platform": platform.platform(),
             "sqlite": sqlite3.sqlite_version, "home": str(data_home(home)),
             "packages": versions, "device_probe": "not_run", "split_execution": "unverified",
-            "v1_generation": "frozen numeric v1/v2; aarch64 and x86_64 goldens verified", "sync": "independent_outbox_daemon"}
+            "generation": "NNSmith C protocol; pinned source/Z3; cross-platform determinism pending", "sync": "independent_outbox_daemon"}
 
 
 def main(argv=None):
@@ -235,7 +235,7 @@ def execute_args(args):
         from .backends import create_backend
         from .resources import adaptive_defaults
         threads = args.compile_threads or adaptive_defaults(data_home())["compile_threads"]
-        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only, save_results=args.save)
+        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=True, save_results=args.save)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         import time
         generation_start = time.perf_counter_ns()

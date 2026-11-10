@@ -30,7 +30,7 @@ def refill(ledger):
         row=conn.execute('SELECT payload,remaining,stopped FROM campaign WHERE id=1').fetchone()
         if not row or row[2] or row[1]==0:return False
         if conn.execute("SELECT 1 FROM tasks WHERE state IN ('pending','running','stop_requested')").fetchone():return False
-        config=json.loads(row[0]);seed=str(2**128+secrets.randbelow(36**9))
+        config=json.loads(row[0]);seed=str(2*2**128+secrets.randbelow(36**9))
         active = conn.execute("SELECT count(*) FROM tasks WHERE state NOT IN ('completed','cancelled')").fetchone()[0]
         capacity = conn.execute('SELECT max_active FROM queue_config').fetchone()[0]
         if active + len(config['configs']) > capacity:

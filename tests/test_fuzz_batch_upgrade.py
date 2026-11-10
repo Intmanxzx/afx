@@ -13,21 +13,21 @@ EX, EV = ExecutionConfig('cpu-eager','cpu',1), EvaluationConfig()
 
 def test_batch_capacity_and_late_conflict_are_atomic(tmp_path):
     queue = TaskLedger(tmp_path/'queue', max_active=2)
-    identity = queue.enqueue('42', EX, EV)
+    identity = queue.enqueue('680564733841876926926749214863536422954', EX, EV)
     with pytest.raises(ValueError, match='entire batch'):
-        queue.enqueue_many([('43', EX, EV, None), ('44', EX, EV, None)])
+        queue.enqueue_many([('680564733841876926926749214863536422955', EX, EV, None), ('680564733841876926926749214863536422956', EX, EV, None)])
     assert len(queue.page()['items']) == 1
     with pytest.raises(ValueError, match='conflicts'):
-        queue.enqueue_many([('43', EX, EV, None), ('44', EX, EV, identity)])
+        queue.enqueue_many([('680564733841876926926749214863536422955', EX, EV, None), ('680564733841876926926749214863536422956', EX, EV, identity)])
     assert len(queue.page()['items']) == 1
-    ids = queue.enqueue_many([('42', EX, EV, identity), ('43', EX, EV, None)])
+    ids = queue.enqueue_many([('680564733841876926926749214863536422954', EX, EV, identity), ('680564733841876926926749214863536422955', EX, EV, None)])
     assert ids[0] == identity and len(queue.page()['items']) == 2
 
 
 def test_late_invalid_spec_never_partially_enqueues(tmp_path):
     queue = TaskLedger(tmp_path/'queue')
     with pytest.raises(ValueError):
-        queue.enqueue_many([('42', EX, EV, None), ('bad', EX, EV, None)])
+        queue.enqueue_many([('680564733841876926926749214863536422954', EX, EV, None), ('bad', EX, EV, None)])
     assert queue.page()['items'] == []
 
 
@@ -36,7 +36,7 @@ def test_concurrent_batch_capacity(tmp_path):
     TaskLedger(path, max_active=3).page()
     def enqueue(_):
         try:
-            return TaskLedger(path).enqueue_many([('42', EX, EV, None), ('43', EX, EV, None)])
+            return TaskLedger(path).enqueue_many([('680564733841876926926749214863536422954', EX, EV, None), ('680564733841876926926749214863536422955', EX, EV, None)])
         except ValueError:
             return []
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -51,7 +51,7 @@ def old_queue(path):
         conn.execute(f'PRAGMA application_id={APPLICATION_ID}')
         conn.execute('PRAGMA user_version=1')
         conn.execute("INSERT INTO tasks(id,seed,execution,evaluation,state) VALUES (?,?,?,?,?)",
-                     (str(uuid.uuid4()), '42', '{}', '{}', 'pending'))
+                     (str(uuid.uuid4()), '680564733841876926926749214863536422954', '{}', '{}', 'pending'))
 
 
 def test_offline_upgrade_keeps_exact_v1_backup(tmp_path):
@@ -61,7 +61,7 @@ def test_offline_upgrade_keeps_exact_v1_backup(tmp_path):
         TaskLedger(path).page()
     assert upgrade_queue(path, backup)['schema_version'] == 2
     task = TaskLedger(path).page()['items'][0]
-    assert task['seed'] == '42' and task['reason'] == ''
+    assert task['seed'] == '680564733841876926926749214863536422954' and task['reason'] == ''
     with sqlite3.connect(backup) as conn:
         assert conn.execute('PRAGMA user_version').fetchone()[0] == 1
         assert len(conn.execute('PRAGMA table_info(tasks)').fetchall()) == 8
@@ -91,7 +91,7 @@ def test_upgrade_live_queue_rejected(tmp_path):
 
 def test_reason_is_bounded_and_survives_reopen(tmp_path):
     path = tmp_path/'queue'
-    queue = TaskLedger(path); identity = queue.enqueue('42', EX, EV)
+    queue = TaskLedger(path); identity = queue.enqueue('680564733841876926926749214863536422954', EX, EV)
     claim = queue.claim()
     with pytest.raises(ValueError, match='short text'):
         queue.interrupt(identity, claim['claim'], 'x'*501)

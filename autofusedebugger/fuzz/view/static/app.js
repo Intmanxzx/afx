@@ -31,7 +31,7 @@ async function details(identity, shapeIndex=null) {
   const request = ++detailGeneration;
   $('detail').hidden = false; $('detail-message').textContent = '加载中…';
   $('detail-content').textContent = ''; $('command').value = ''; $('copy').disabled = true;
-  $('failure-details')?.replaceChildren();
+  for(const id of ['case-meta','ascir-detail','failure-details','timing-detail','provenance'])$(id).replaceChildren();
   try {
     const result = await api('api/attempts/' + encodeURIComponent(identity)+(shapeIndex===null?'':'?shape='+shapeIndex));
     if(request !== detailGeneration) return;
@@ -42,11 +42,6 @@ async function details(identity, shapeIndex=null) {
     result.created_at = beijing(result.created_at);
     $('detail-content').textContent = '';
     $('detail-content').parentElement.hidden=true;
-    const table = document.createElement('table');
-    for(const shape of result.shape_results) {
-      for(const [label,value] of [['当前 Shape',shape.shape_index],['功能',shape.correctness==='error'?'功能Failed':['pass','fail'].includes(shape.correctness)?'Pass':'Unkown'],['精度',({pass:'Pass',fail:'精度Failed'}[shape.correctness]||'Unkown')],...(shape.performance==='error'?[['性能','性能Failed']]:[]),['首次调用（含惰性编译）',duration(shape.first_call_combined_ns??JSON.parse(result.contexts.execution.telemetry||'{}').shapes?.[shape.shape_index]?.first_call_combined)],['失败阶段',stageName(shape.error_stage)]]){const row=document.createElement('tr');cell(row,label);const td=cell(row,String(value));if(['功能','精度','性能'].includes(label))td.className=value==='Pass'?'pass':String(value).endsWith('Failed')?(label==='精度'?'accuracy-failed':'failed'):'unknown';table.append(row);}
-    }
-    $('shape-detail').replaceChildren(table);
     $('detail-message').textContent = ''; $('copy').disabled = false;
     document.querySelectorAll('.page').forEach(el=>el.hidden=true);
     $('page-title').textContent='用例详情 · '+result.seed_short+' / S'+(shapeIndex??'—');
@@ -90,7 +85,7 @@ function renderRecords(items){
  // Existing column preferences keep their order; place the newly split column
  // beside Seed on the first visit, rather than at the far end of the table.
  if(columnPreferences.order.length&&!columnPreferences.order.includes('ops'))columnPreferences.order.splice(Math.max(0,columnPreferences.order.indexOf('seed')+1),0,'ops');
- for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:false});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:false},{key:b+':logs',label:b+' 日志',width:300,defaultVisible:true});}
+ for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:false});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:b==='af-mlir'},{key:b+':logs',label:b+' 运行日志摘要',width:300,defaultVisible:true});}
  definitions.push({key:'time',label:'时间',width:180,defaultVisible:true},...extraColumns.map(([key,label])=>({key,label,width:210,defaultVisible:false})));
  const fragment=document.createDocumentFragment();
  for(const item of items){const tr=document.createElement('tr');
@@ -102,13 +97,13 @@ function renderRecords(items){
  else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
- if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}
+ if(latest){let text=null,state='';const log=b==='af-mlir'?(latest.run_log||''):latest.core_error;if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}
  if(kind==='function'){state=['error','unsupported'].includes(latest.status)?'failed':['ok','fail'].includes(latest.status)?'pass':'';text=state==='pass'?'Pass':state==='failed'?'功能Failed':null;}
- if(kind==='logs'&&['error','unsupported','fail'].includes(latest.status))text=shortLog(latest.core_error||(latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
+ if(kind==='logs'&&(log||['error','unsupported','fail'].includes(latest.status)))text=shortLog(log||(b==='af-mlir'?'未保存运行日志 · 查看详情':latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
  if(kind==='kernel'&&latest.measurement_status==='error'){text='性能Failed';state='failed';}
  if(kind==='kernel'&&latest.measurement_status!=='error'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
  if(kind==='total')text=seconds(latest.total_ns);
- if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape：输入绑定 + 首次调用（含惰性编译）+ 精度校验；不等于 Kernel 耗时';if(kind==='logs'){button.title=latest.core_error||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
+ if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape：输入绑定 + 首次调用（含惰性编译）+ 精度校验；不等于 Kernel 耗时';if(kind==='logs'){button.title=log||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
  if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unkown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
  caseMetadata.set(latest.id,item.metadata);}}
  else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
@@ -131,7 +126,7 @@ $('reset-filters').addEventListener('click',()=>{form.reset();form.requestSubmit
 $('page-size').addEventListener('change',()=>{pageSize=Number($('page-size').value);try{localStorage.setItem('af-fuzz.page-size',String(pageSize));}catch{}page=0;cursors=[0];load();});
 $('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;load();}});$('previous').addEventListener('click',()=>{if(page>0){page--;load();}});
 $('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('command').value);$('detail-message').textContent='已复制';}catch{$('command').select();}});
-const logControl=document.createElement('label');logControl.className='log-length';logControl.textContent='错误摘要长度 ';const logInput=document.createElement('input');logInput.type='number';logInput.min='40';logInput.max='500';logInput.value=String(logLength);function applyLogLength(){
+const logControl=document.createElement('label');logControl.className='log-length';logControl.textContent='日志摘要长度 ';const logInput=document.createElement('input');logInput.type='number';logInput.min='40';logInput.max='500';logInput.value=String(logLength);function applyLogLength(){
  const next=Math.max(40,Math.min(500,Math.trunc(Number(logInput.value))||100));
  logInput.value=String(next);logLength=next;
  try{localStorage.setItem('af-fuzz.log-length',String(logLength));}catch{}
@@ -209,9 +204,11 @@ function tensorText(shapes={},weights=[],types={}){
 }
 function shortLog(text){return text.length>logLength?text.slice(0,logLength)+'...':text;}
 function renderCaseInfo(result){
- const meta=result.metadata||{},sample=result.sample||meta.shape_variants?.[0]||{},box=$('case-meta');box.replaceChildren();
- const table=document.createElement('table');
- for(const [label,value] of [['用例',result.seed_short+' / S'+(result.shape_index??'—')],['后端',result.backend_display||result.backend],['运行方式',result.contexts.execution.static_only?'静态':'动态'],['图结构',graphText(meta)],['输入 Shape / Dtype',tensorText(sample.input_shapes,meta.weights,sample.input_dtypes||meta.input_dtypes)],['输出 Shape / Dtype',tensorText(sample.output_shapes,[],sample.output_dtypes||meta.output_dtypes)],['重放范围','seed重放完整图及其shape样本；本页只展示选中的shape']]){const row=document.createElement('tr');cell(row,label);cell(row,value);table.append(row);}box.append(table);
+ const box=$('case-meta');box.replaceChildren();
+ const heading=document.createElement('h3');heading.textContent='用例节点 DAG';box.append(heading);
+ const note=document.createElement('p');note.className='muted';
+ note.textContent=result.seed_short+' / S'+(result.shape_index??'—')+' · '+(result.backend_display||result.backend)+' · '+(result.contexts.execution.static_only?'静态':'动态')+'；箭头表示张量依赖，节点标注输出 Shape / Dtype（中间张量推导值以 * 标记）。';box.append(note);
+ renderCaseDag(box,result);
 }
 function renderProvenance(result){
  const box=$('provenance');box.replaceChildren();const heading=document.createElement('h3');heading.textContent='运行环境';box.append(heading);
@@ -220,11 +217,11 @@ function renderProvenance(result){
  for(const [key,label] of Object.entries(labels)){if(env[key]){const row=document.createElement('tr');cell(row,label);cell(row,String(env[key]));table.append(row);}}box.append(table);
  const telemetry=result.contexts.execution.telemetry?JSON.parse(result.contexts.execution.telemetry):{stages:{},shapes:{}};
  const host=$('timing-detail');host.replaceChildren();
- const headingTime=document.createElement('h3');headingTime.textContent='当前 Shape 耗时';host.append(headingTime);
- function timingTable(metrics){const table=document.createElement('table');const head=document.createElement('tr');cell(head,'阶段','th');cell(head,'耗时','th');table.append(head);for(const [key,value] of Object.entries(metrics)){const row=document.createElement('tr');cell(row,stageName(key));cell(row,duration(value));table.append(row);}return table;}
- for(const metrics of Object.values(telemetry.shapes||{}))host.append(timingTable(metrics));
- if(!Object.keys(telemetry.shapes||{}).length){const empty=document.createElement('p');empty.textContent='未采集当前 Shape 阶段耗时';host.append(empty);}
- if(Object.keys(telemetry.stages||{}).length){const panel=document.createElement('details'),summary=document.createElement('summary');summary.textContent='本次运行计时（全部 Shape）';panel.append(summary);const note=document.createElement('p');note.className='muted';note.textContent='执行总计包含能力检查、准备和全部 Shape；生成耗时单独记录。下列指标不能逐项相加。';panel.append(note,timingTable(telemetry.stages));host.append(panel);}
+ const headingTime=document.createElement('h3');headingTime.textContent='用例执行耗时';host.append(headingTime);
+ const note=document.createElement('p');note.className='muted';note.textContent='本次运行全部 Shape 的计时。执行总计包含能力检查、准备和全部 Shape；生成耗时单独记录。下列指标不能逐项相加。';host.append(note);
+ const tableTime=document.createElement('table'),head=document.createElement('tr');cell(head,'阶段','th');cell(head,'耗时','th');tableTime.append(head);
+ for(const [key,value] of Object.entries(telemetry.stages||{})){const row=document.createElement('tr');cell(row,stageName(key));cell(row,duration(value));tableTime.append(row);}
+ if(tableTime.children.length>1)host.append(tableTime);else{const empty=document.createElement('p');empty.textContent='未采集本次运行计时';host.append(empty);}
 
 }
 
@@ -236,16 +233,109 @@ function renderStatisticsTables(result){
 
 function stageName(stage){return ({generation:'生成用例',capability:'后端能力检查',prepare:'准备执行器（不代表编译完成）',input_binding:'输入绑定',first_call_combined:'首次调用（惰性编译 / 执行 / 同步）',correctness:'精度校验',execution_total:'执行总计',compile:'独立编译',kernel_mean:'Kernel 平均耗时',performance:'性能测量'}[stage]||stage||'Unkown');}
 function renderFailureDetails(result){
- let box=$('failure-details');if(!box){box=document.createElement('section');box.id='failure-details';$('detail-message').after(box);}box.replaceChildren();
- const data=JSON.parse(result.contexts.execution.diagnostics||'{}'),view=result.diagnostic_view||{};
- function text(tag,value){const el=document.createElement(tag);el.textContent=value;box.append(el);return el;}
- function folded(label,content){if(!content)return;const panel=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent=label;pre.textContent=content;panel.append(summary,pre);box.append(panel);}
- if(view.summary&&['error','unsupported','fail'].includes(result.status)){text('h3',view.shape_log?'当前 Shape 错误':'运行错误（未归属 Shape）');text('pre',view.summary).className='core-error';if(view.explanation)text('p',view.explanation);text('p','失败阶段：'+stageName(result.error_stage));}
- folded('当前 Shape 已保存日志',view.shape_log);
- if(view.shared_lines?.length){const panel=document.createElement('details'),summary=document.createElement('summary');summary.textContent='运行级补充日志（未按 Shape 归属）';panel.append(summary);if(view.shared_explanation){const note=document.createElement('p');note.textContent=view.shared_explanation;panel.append(note);}const pre=document.createElement('pre');pre.textContent=view.shared_lines.join('\n');panel.append(pre);if(view.shared_log){const raw=document.createElement('details'),label=document.createElement('summary'),log=document.createElement('pre');label.textContent='展开已保存的运行日志';log.textContent=view.shared_log;raw.append(label,log);panel.append(raw);}box.append(panel);}
- for(const [index,metrics] of Object.entries(data.shapes||{})){
-  const table=document.createElement('table');
-  for(const [key,label] of [['basis','判定标准'],['cpu_pass','CPU一致'],['secondary_used','已运行 eager-npu'],['secondary_pass','eager-npu一致'],['max_abs','最大绝对误差'],['mean_abs','平均绝对误差'],['max_rel','最大相对误差'],['mismatches','不一致元素'],['elements','总元素'],['nonfinite','非有限元素']]){if(metrics[key]===undefined)continue;const row=document.createElement('tr');cell(row,label);cell(row,String(metrics[key]));table.append(row);}
-  if(table.children.length){text('h3','精度误差 · S'+index);box.append(table);}
- }
+ const view=result.diagnostic_view||{};
+ function section(id,title,content){const box=$(id);box.replaceChildren();const heading=document.createElement('h3'),pre=document.createElement('pre');heading.textContent=title;pre.textContent=content;box.append(heading,pre);return box;}
+ section('ascir-detail','ASCIR 表达的图结构',view.shape_log||'未保存当前 Shape 的 ASCIR / 图结构文本');
+ // Full saved run log already contains its extracted shared lines; do not repeat them.
+ const log=view.run_log||view.shared_log||view.shared_lines?.join('\n')||view.summary||'未保存报错日志';
+ const box=section('failure-details','报错日志摘要',log);
+ if(view.shared_explanation){const note=document.createElement('p');note.className='muted';note.textContent=view.shared_explanation;box.append(note);}
 }
+
+// Pure metadata layout: no graph execution or model/runtime dependencies.
+function caseDag(result){
+ const meta=result.metadata||{},graph=meta.graph||{},sample=result.sample||meta.shape_variants?.[0]||{};
+ if(!graph.nodes?.length)return {nodes:[],edges:[]};
+ const nodes=[],byName=new Map(),edges=[];
+ function add(name,label,tensor={},kind='op',inputs=[],attrs={}){
+  const node={name,label,...tensor,kind,inputs,attrs,level:0};nodes.push(node);byName.set(name,node);return node;
+ }
+ const shapes=sample.input_shapes||meta.input_shapes||{},types=sample.input_dtypes||meta.input_dtypes||{};
+ for(const [name,shape] of Object.entries(shapes))add(name,'Input',{shape,dtype:types[name]},'input');
+ for(const weight of meta.weights||[])add(weight.name,'Weight',weight,'weight');
+ for(const node of graph.nodes)add(node.output,node.op,{},'op',node.inputs||[],node.attrs||{});
+ for(const node of [...nodes])for(const name of node.inputs)if(!byName.has(name))add(name,'未记录输入',{},'input');
+ const pending=new Set(nodes),resolved=new Set();
+ while(pending.size){
+  let progress=false;
+  for(const node of pending){
+   if(node.inputs.some(name=>!resolved.has(name)))continue;
+   const inputs=node.inputs.map(name=>byName.get(name));
+   node.level=inputs.length?Math.max(...inputs.map(n=>n.level))+1:0;
+   if(node.kind==='op'){
+    const first=inputs[0],shape=first?.shape;
+    node.dtype=inputs.length&&inputs.every(n=>n.dtype===first.dtype)?first.dtype:undefined;
+    if(shape){
+     if(['relu','neg'].includes(node.label))node.shape=[...shape];
+     else if(node.label==='transpose'){
+      const {dim0,dim1}=node.attrs,rank=shape.length;
+      if(Number.isInteger(dim0)&&Number.isInteger(dim1)&&dim0>=-rank&&dim0<rank&&dim1>=-rank&&dim1<rank){const a=(dim0+rank)%rank,b=(dim1+rank)%rank;node.shape=[...shape];[node.shape[a],node.shape[b]]=[node.shape[b],node.shape[a]];}
+     }else if(['sum','mean','amin','amax'].includes(node.label)&&Array.isArray(node.attrs.reduce_dim)){
+      const dims=node.attrs.reduce_dim.map(d=>d<0?d+shape.length:d);
+      if(dims.every(d=>Number.isInteger(d)&&d>=0&&d<shape.length))node.shape=shape.filter((_,i)=>!dims.includes(i));
+     }else if(['add','mul'].includes(node.label)&&inputs.every(n=>Array.isArray(n.shape))){
+      const rank=Math.max(...inputs.map(n=>n.shape.length)),output=[];let valid=true;
+      for(let i=0;i<rank;i++){const dims=inputs.map(n=>n.shape[n.shape.length-rank+i]??1),nonUnit=[...new Set(dims.filter(d=>d!==1))];if(nonUnit.length>1)valid=false;output.push(nonUnit[0]??1);}if(valid)node.shape=output;
+     }
+    }
+    node.inferred=!!node.shape;
+   }
+   // Captured outputs take precedence over inference, including scalar [].
+   const outputShape=(sample.output_shapes||meta.output_shapes||{})[node.name];
+   if(outputShape){node.shape=outputShape;node.dtype=(sample.output_dtypes||meta.output_dtypes||{})[node.name]||node.dtype;node.inferred=false;}
+   node.isOutput=(graph.outputs||[]).includes(node.name);
+   resolved.add(node.name);pending.delete(node);progress=true;
+  }
+  if(!progress)return {nodes:[],edges:[],error:'已保存节点依赖存在环，无法绘制 DAG'};
+ }
+ for(const node of nodes)for(const name of node.inputs)edges.push({from:byName.get(name),to:node});
+ return {nodes,edges};
+}
+function renderCaseDag(host,result){
+ const graph=caseDag(result);
+ if(!graph.nodes.length){const empty=document.createElement('p');empty.className='muted';empty.textContent=graph.error||'未保存节点依赖，无法绘制 DAG';host.append(empty);return;}
+ const ns='http://www.w3.org/2000/svg';
+ function svg(tag,attrs={},text){const el=document.createElementNS(ns,tag);for(const [key,value] of Object.entries(attrs))el.setAttribute(key,value);if(text!==undefined)el.textContent=text;return el;}
+ const levels=[];for(const node of graph.nodes)(levels[node.level]??=[]).push(node);
+ const width=Math.max(640,...levels.map(nodes=>nodes.length*270+32)),height=levels.length*150+32;
+ const canvas=svg('svg',{viewBox:`0 0 ${width} ${height}`,width,height,role:'img','aria-label':'用例节点 DAG，箭头表示张量依赖'});
+ const defs=svg('defs'),marker=svg('marker',{id:'dag-arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});marker.append(svg('path',{d:'M 0 0 L 10 5 L 0 10 z',fill:'#829b92'}));defs.append(marker);canvas.append(defs);
+ for(const layer of levels)layer.forEach((node,i)=>{node.x=(width-layer.length*270)/2+i*270+10;node.y=node.level*150+16;});
+ for(const {from,to} of graph.edges){const x=from.x+125,y=from.y+100,endX=to.x+125,endY=to.y;const path=svg('path',{d:`M ${x} ${y} C ${x} ${y+25}, ${endX} ${endY-25}, ${endX} ${endY}`,class:'dag-edge','marker-end':'url(#dag-arrow)'});path.append(svg('title',{},from.name+' → '+to.name));canvas.append(path);}
+ for(const node of graph.nodes){
+  const tensor=(node.shape?'['+node.shape.join(', ')+']':'Shape 未采集')+' · '+(node.dtype||'Dtype 未采集')+(node.inferred?' *':'');
+  const title=node.label+' · '+node.name+(node.isOutput?' · Output':'');
+  const tooltip=title+'\n'+tensor+(Object.keys(node.attrs).length?'\n'+JSON.stringify(node.attrs):'');
+  const group=svg('g',{transform:`translate(${node.x},${node.y})`,class:'dag-node '+node.kind,tabindex:0,'aria-label':tooltip,'data-tooltip':tooltip});group.append(svg('title',{},tooltip),svg('rect',{width:250,height:100,rx:10}));
+  function label(y,text,cls){const el=svg('text',{x:12,y,class:cls},text.length>32?text.slice(0,31)+'…':text);group.append(el);}
+  label(26,title,'dag-op');label(50,node.name+(node.isOutput?' → Output':''),'dag-name');label(76,tensor,'dag-tensor');canvas.append(group);
+ }
+ const scroll=document.createElement('div');scroll.className='dag-scroll';scroll.append(canvas);host.append(scroll);
+}
+
+// Use a real wrapping tooltip instead of browser titles (which may truncate long logs).
+const fieldTooltip=document.createElement('div');fieldTooltip.id='field-tooltip';fieldTooltip.className='field-tooltip';fieldTooltip.setAttribute('role','tooltip');fieldTooltip.hidden=true;document.body.append(fieldTooltip);
+let tooltipTarget=null;
+function hideFieldTooltip(){if(tooltipTarget)tooltipTarget.removeAttribute('aria-describedby');tooltipTarget=null;fieldTooltip.hidden=true;}
+function showFieldTooltip(event){
+ const target=event.target.closest?.('[data-tooltip], [title], td, th, input[readonly]');
+ if(!target||target.closest('#field-tooltip'))return;
+ const content=target.dataset.tooltip||target.getAttribute('title')||target.value||target.textContent;
+ if(!content?.trim())return;
+ hideFieldTooltip();tooltipTarget=target;
+ // Preserve explicit full values, not the shortened preview text.
+ if(target.hasAttribute('title')){target.dataset.tooltip=target.getAttribute('title');target.removeAttribute('title');}
+ fieldTooltip.textContent=content;fieldTooltip.hidden=false;target.setAttribute('aria-describedby','field-tooltip');
+ const bounds=target.getBoundingClientRect(),tip=fieldTooltip.getBoundingClientRect();
+ const x=event.clientX??bounds.left,y=event.clientY??bounds.bottom;
+ fieldTooltip.style.left=Math.max(8,Math.min(x,innerWidth-tip.width-8))+'px';
+ fieldTooltip.style.top=Math.max(8,Math.min(y+14,innerHeight-tip.height-8))+'px';
+}
+document.addEventListener('pointerover',showFieldTooltip);
+document.addEventListener('focusin',showFieldTooltip);
+document.addEventListener('pointerout',event=>{if(tooltipTarget&&!tooltipTarget.contains(event.relatedTarget)&&!fieldTooltip.contains(event.relatedTarget))hideFieldTooltip();});
+fieldTooltip.addEventListener('pointerleave',hideFieldTooltip);
+document.addEventListener('focusout',hideFieldTooltip);
+document.addEventListener('keydown',event=>{if(event.key==='Escape')hideFieldTooltip();});
+window.addEventListener('scroll',event=>{if(event.target!==fieldTooltip)hideFieldTooltip();},true);
+window.addEventListener('resize',hideFieldTooltip);

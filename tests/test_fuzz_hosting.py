@@ -30,7 +30,7 @@ def wait_finished(ledger, timeout=30):
 
 def test_detached_run_finishes_after_launcher_exits(tmp_path):
     pytest.importorskip("torch")
-    output = subprocess.run([sys.executable, '-m', 'autofusedebugger.fuzz', 'run', '42', '--save',
+    output = subprocess.run([sys.executable, '-m', 'autofusedebugger.fuzz', 'run', 'C16', '--save',
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
     response = json.loads(output.stdout)
@@ -42,14 +42,14 @@ def test_detached_run_finishes_after_launcher_exits(tmp_path):
     task = ledger.get(response['enqueued'][0])
     assert task['state'] == 'completed'
     result = ResultRepository(tmp_path/'results/results.sqlite').detail(task['attempt_id'])
-    assert result['status'] == 'ok' and len(result['shape_results']) == 3
+    assert result['status'] == 'ok' and len(result['shape_results']) == 1
 
 
 def test_failed_spawn_keeps_batch_pending(tmp_path, monkeypatch):
     ledger = TaskLedger(tmp_path/'queue')
     monkeypatch.setattr(hosting, '_command', lambda *a: ['/nonexistent/supervisor'])
     with pytest.raises(OSError):
-        hosting.launch(ledger, tmp_path/'results', [('42',EX,EV,None)])
+        hosting.launch(ledger, tmp_path/'results', [('C16',EX,EV,None)])
     assert ledger.page()['items'][0]['state'] == 'pending'
     assert hosting.status(ledger)['state'] == 'startup_failed'
     with own_queue(ledger):
@@ -60,7 +60,7 @@ def test_startup_timeout_does_not_claim_and_releases_lock(tmp_path, monkeypatch)
     ledger = TaskLedger(tmp_path/'queue')
     monkeypatch.setattr(hosting, '_command', lambda *a: [sys.executable,'-c','import time;time.sleep(60)'])
     with pytest.raises(TimeoutError):
-        hosting.launch(ledger, tmp_path/'results', [('42',EX,EV,None)], startup_timeout=.2)
+        hosting.launch(ledger, tmp_path/'results', [('C16',EX,EV,None)], startup_timeout=.2)
     assert ledger.page()['items'][0]['state'] == 'pending'
     with own_queue(ledger):
         pass
@@ -70,11 +70,11 @@ def test_wrong_binding_or_owned_queue_does_not_enqueue(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
     hosting.launch(ledger, tmp_path/'results', [], foreground=True)
     with pytest.raises(ValueError, match='different result database'):
-        hosting.launch(ledger, tmp_path/'wrong', [('42',EX,EV,None)])
+        hosting.launch(ledger, tmp_path/'wrong', [('C16',EX,EV,None)])
     assert ledger.page()['items'] == []
     with own_queue(ledger):
         with pytest.raises(ValueError, match='still owned'):
-            hosting.launch(ledger, tmp_path/'results', [('42',EX,EV,None)])
+            hosting.launch(ledger, tmp_path/'results', [('C16',EX,EV,None)])
     assert ledger.page()['items'] == []
 
 
@@ -88,7 +88,7 @@ def test_stale_metadata_never_claims_process_liveness(tmp_path):
 def test_child_never_claims_without_start_authorization(tmp_path):
     import socket
     ledger = TaskLedger(tmp_path/'queue')
-    identity = ledger.enqueue('42',EX,EV)
+    identity = ledger.enqueue('C16',EX,EV)
     with own_queue(ledger) as fd:
         parent, child_socket = socket.socketpair()
         child = subprocess.Popen(hosting._command(ledger, tmp_path/'results',120,fd,child_socket.fileno(),'test'),
@@ -120,7 +120,7 @@ sys.exit(hosting._child(*sys.argv[1:-1]))
     def command(q, db, timeout, fd, sock, run_id):
         return [sys.executable,'-c',code,str(q.path),str(db),str(timeout),str(fd),str(sock),run_id,str(pidfile)]
     monkeypatch.setattr(hosting, '_command', command)
-    started = hosting.launch(ledger,tmp_path/'results',[('42',EX,EV,None)])
+    started = hosting.launch(ledger,tmp_path/'results',[('C16',EX,EV,None)])
     try:
         deadline = time.monotonic()+10
         while not pidfile.exists() and time.monotonic()<deadline:
@@ -143,7 +143,7 @@ sys.exit(hosting._child(*sys.argv[1:-1]))
 def test_background_rejects_npu_before_enqueue(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
     with pytest.raises(ValueError, match='strict NPU performance'):
-        hosting.launch(ledger,tmp_path/'results',[('42',ExecutionConfig('ascendc','npu:0'),EvaluationConfig(performance=True),None)])
+        hosting.launch(ledger,tmp_path/'results',[('C16',ExecutionConfig('ascendc','npu:0'),EvaluationConfig(performance=True),None)])
     assert ledger.page()['items'] == []
 
 
@@ -159,7 +159,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0
     value = json.loads(capsys.readouterr().out)
     assert value == {'count': 4, 'backends': ['cpu', 'af-mlir']}
-    assert main(['run', '42', '--save', '--data-dir', str(tmp_path), '--count', '4']) == 2
+    assert main(['run', 'C16', '--save', '--data-dir', str(tmp_path), '--count', '4']) == 2
 
 
 def test_background_infinite_campaign_stops_without_refilling(tmp_path):

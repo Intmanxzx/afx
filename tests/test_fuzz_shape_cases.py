@@ -2,13 +2,15 @@ import json
 from autofusedebugger.fuzz.storage import ResultRepository
 from autofusedebugger.fuzz.storage.queries import ResultQueries
 from autofusedebugger.fuzz.reporting.statistics import statistics
-from autofusedebugger.fuzz.generation import materialize,workload_id
+from autofusedebugger.fuzz.generation import workload_id
+from fuzz_fixtures import bundle, three_shapes_spec
+from autofusedebugger.fuzz.case_spec import encode
 
 
 def record(backend, states):
-    return {'seed':str(2**128+42),'workload_id':workload_id(materialize(str(2**128+42))),
+    return {'seed':str(2*2**128+42),'workload_id':workload_id(bundle()),
       'oracle_id':'ref/1','backend':backend,'status':'error' if 'error' in states else 'ok',
-      'execution':{'backend':backend,'batch_id':'batch','telemetry':json.dumps({'version':1,'stages':{'execution_total':900},'shapes':{str(i):{'first_call_combined':100+i} for i in range(len(states))}}),
+      'execution':{'case_spec':encode(three_shapes_spec()),'backend':backend,'batch_id':'batch','telemetry':json.dumps({'version':1,'stages':{'execution_total':900},'shapes':{str(i):{'first_call_combined':100+i} for i in range(len(states))}}),
         'diagnostics':json.dumps({'version':1,'error':'error: native lowering failed','shapes':{'1':{'error':'shape one only'}}})},
       'shape_results':[{'shape_index':i,'correctness':state,'performance':'not_requested','error_summary':'bad' if state=='error' else ''} for i,state in enumerate(states)]}
 
@@ -30,7 +32,7 @@ def test_shape_rows_pagination_summary_and_details(tmp_path):
     assert rows[1]['backends']['af-mlir'][0]['total_ns']==101
     assert rows[0]['sample']['input_shapes']!=rows[1]['sample']['input_shapes']
     assert rows[0]['metadata']['graph']['nodes']
-    assert rows[0]['metadata']['weights']
+    assert len(rows[0]['metadata']['input_shapes']) > 1
     detail=q.detail(identity,shape_index=1)
     assert len(detail['shape_results'])==1 and detail['shape_results'][0]['shape_index']==1
     assert set(json.loads(detail['contexts']['execution']['diagnostics'])['shapes'])=={'1'}
@@ -100,7 +102,7 @@ def test_short_seed_search_and_current_shape_metadata(tmp_path):
     q=ResultQueries(repo.path);short=Seed.parse(value['seed']).short
     assert q.case_summary(q=short)['total']==3
     assert q.case_summary(q=f"WHERE seed = '{short}'")['total']==3
-    assert [r['shape_index'] for r in q.case_page(q='[2,4]')['items']]==[1]
+    assert [r['shape_index'] for r in q.case_page(q='[2,1,1,1,1]')['items']]==[1]
     assert q.case_summary(q="WHERE shape_index = -1")['total']==0
 
 
@@ -113,3 +115,28 @@ def test_detail_deduplicates_and_scopes_diagnostics():
     assert '不能' in view['shared_explanation']
     assert core_error(data,0)==view['summary']
     assert diagnostic_view({'error':'same','shapes':{'0':{'error':'same'}}},0)['shared_log']==''
+
+
+def test_run_log_preview_matches_detail_without_shape_fallback(tmp_path):
+    repo = ResultRepository(tmp_path/'db')
+    value = record('af-mlir', ['pass', 'error', 'pass'])
+    diagnostics = json.loads(value['execution']['diagnostics'])
+    diagnostics['error'] = 'saved runtime context\nerror: native lowering failed token=private-value'
+    value['execution']['diagnostics'] = json.dumps(diagnostics)
+    identity = repo.save(value)
+    queries = ResultQueries(repo.path)
+    rows = queries.case_page()['items']
+    view = queries.detail(identity, shape_index=1)['diagnostic_view']
+    assert view['shape_log'] == 'shape one only'
+    assert view['run_log'] == view['shared_log']
+    assert '[REDACTED]' in view['run_log'] and 'private-value' not in view['run_log']
+    for row in rows:
+        assert row['backends']['af-mlir'][0]['run_log'] == view['run_log']
+
+
+def test_missing_or_duplicate_run_log_remains_explicit():
+    from autofusedebugger.fuzz.failure_details import diagnostic_view
+    assert diagnostic_view({'shapes': {'0': {'error': 'shape only'}}}, 0)['run_log'] == ''
+    view = diagnostic_view({'error': 'same', 'shapes': {'0': {'error': 'same'}}}, 0)
+    assert view['run_log'] == 'same'
+    assert view['shared_log'] == ''

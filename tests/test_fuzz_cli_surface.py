@@ -43,7 +43,7 @@ def test_stop_defaults_to_all_tasks(tmp_path,monkeypatch):
     from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig
     monkeypatch.setenv('AUTOFUSEDBG_HOME',str(tmp_path))
     ledger=TaskLedger(tmp_path/'tasks/tasks.sqlite')
-    ids=[ledger.enqueue(str(i),ExecutionConfig('cpu','cpu',1),EvaluationConfig()) for i in range(3)]
+    ids=[ledger.enqueue(str(2*2**128+i),ExecutionConfig('cpu','cpu',1),EvaluationConfig()) for i in range(3)]
     assert main(['stop'])==0
     assert all(ledger.get(i)['state']=='cancelled' for i in ids)
 

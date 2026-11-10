@@ -17,11 +17,11 @@ EV = EvaluationConfig()
 
 def test_independent_case_backend_tasks_and_bound(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite', max_active=2)
-    a = ledger.enqueue('42', EX, EV)
-    b = ledger.enqueue('42', ExecutionConfig('ascendc', 'npu:0'), EV)
+    a = ledger.enqueue('680564733841876926926749214863536422954', EX, EV)
+    b = ledger.enqueue('680564733841876926926749214863536422954', ExecutionConfig('ascendc', 'npu:0'), EV)
     assert a != b
     with pytest.raises(ValueError, match='budget'):
-        ledger.enqueue('43', EX, EV)
+        ledger.enqueue('680564733841876926926749214863536422955', EX, EV)
     assert ledger.claim()['id'] == a
     assert ledger.claim()['id'] == b
     assert ledger.claim() is None
@@ -32,17 +32,17 @@ def test_independent_case_backend_tasks_and_bound(tmp_path):
 def test_enqueue_idempotence_and_conflict(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite', max_active=1)
     identity = str(uuid.uuid4())
-    assert ledger.enqueue('42', EX, EV, task_id=identity) == identity
-    assert ledger.enqueue('42', EX, EV, task_id=identity) == identity
+    assert ledger.enqueue('680564733841876926926749214863536422954', EX, EV, task_id=identity) == identity
+    assert ledger.enqueue('680564733841876926926749214863536422954', EX, EV, task_id=identity) == identity
     with pytest.raises(ValueError, match='conflicts'):
-        ledger.enqueue('43', EX, EV, task_id=identity)
+        ledger.enqueue('680564733841876926926749214863536422955', EX, EV, task_id=identity)
 
 
 def test_concurrent_initialization_budget_and_claims(tmp_path):
     path = tmp_path/'tasks.sqlite'
     def enqueue(i):
         try:
-            return TaskLedger(path, max_active=8).enqueue(str(i), EX, EV)
+            return TaskLedger(path, max_active=8).enqueue(str(2*2**128+i), EX, EV)
         except ValueError as exc:
             assert 'budget' in str(exc)
             return None
@@ -56,7 +56,7 @@ def test_concurrent_initialization_budget_and_claims(tmp_path):
 
 def test_stop_resume_and_stale_completion_fencing(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('42', EX, EV)
+    identity = ledger.enqueue('680564733841876926926749214863536422954', EX, EV)
     claim = ledger.claim()
     ledger.stop(identity)
     assert ledger.get(identity)['state'] == 'stop_requested'
@@ -66,7 +66,7 @@ def test_stop_resume_and_stale_completion_fencing(tmp_path):
     assert ledger.claim() is None  # Never automatically retry after interruption.
     ledger.resume(identity)
     second = ledger.claim()
-    assert (second['seed'], second['execution'], second['evaluation']) == ('42', claim['execution'], claim['evaluation'])
+    assert (second['seed'], second['execution'], second['evaluation']) == ('680564733841876926926749214863536422954', claim['execution'], claim['evaluation'])
     assert second['attempt_id'] != claim['attempt_id']
     with pytest.raises(ValueError, match='stale'):
         ledger.complete(identity, claim['claim'])
@@ -78,7 +78,7 @@ def test_stop_resume_and_stale_completion_fencing(tmp_path):
 
 def test_pending_cancel_and_completed_stop_are_idempotent(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('0', EX, EV)
+    identity = ledger.enqueue('680564733841876926926749214863536422912', EX, EV)
     ledger.stop(identity); ledger.stop(identity)
     assert ledger.claim() is None
     ledger.resume(identity)
@@ -91,7 +91,7 @@ def test_pending_cancel_and_completed_stop_are_idempotent(tmp_path):
 
 def test_process_crash_does_not_reclaim_until_explicit_recovery(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('42', EX, EV)
+    identity = ledger.enqueue('680564733841876926926749214863536422954', EX, EV)
     code = '''
 import os,sys
 from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
@@ -113,7 +113,7 @@ os._exit(79)
 
 def test_cross_process_claim_is_unique(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    ledger.enqueue('42', EX, EV)
+    ledger.enqueue('680564733841876926926749214863536422954', EX, EV)
     code = '''
 import json,sys
 from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
@@ -128,9 +128,9 @@ print(json.dumps(TaskLedger(sys.argv[1]).claim()))
 
 def test_resume_cancelled_task_respects_capacity(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite', max_active=1)
-    old = ledger.enqueue('1', EX, EV)
+    old = ledger.enqueue('680564733841876926926749214863536422913', EX, EV)
     ledger.stop(old)
-    ledger.enqueue('2', EX, EV)
+    ledger.enqueue('680564733841876926926749214863536422914', EX, EV)
     with pytest.raises(ValueError, match='budget'):
         ledger.resume(old)
     assert ledger.get(old)['state'] == 'cancelled'
@@ -149,8 +149,8 @@ assert 'autofusedebugger.fuzz.backends' not in sys.modules
 
 def test_capacity_is_persisted_across_clients(tmp_path):
     path = tmp_path/'tasks.sqlite'
-    TaskLedger(path, max_active=1).enqueue('42', EX, EV)
+    TaskLedger(path, max_active=1).enqueue('680564733841876926926749214863536422954', EX, EV)
     with pytest.raises(ValueError, match='budget'):
-        TaskLedger(path).enqueue('43', EX, EV)
+        TaskLedger(path).enqueue('680564733841876926926749214863536422955', EX, EV)
     with pytest.raises(ValueError, match='persisted configuration'):
-        TaskLedger(path, max_active=2).enqueue('44', EX, EV)
+        TaskLedger(path, max_active=2).enqueue('680564733841876926926749214863536422956', EX, EV)

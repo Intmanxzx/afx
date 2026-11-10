@@ -31,7 +31,7 @@ def saved_result(task):
 
 def setup(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('42', EX, EV)
+    identity = ledger.enqueue('C16', EX, EV)
     return ledger, identity, tmp_path/'results.sqlite'
 
 
@@ -43,8 +43,8 @@ def test_real_cpu_worker_uses_same_bundle_and_persists(tmp_path):
     task = ledger.get(identity)
     assert task['state'] == 'completed'
     result = ResultRepository(database).detail(task['attempt_id'])
-    assert result['status'] == 'ok' and len(result['shape_results']) == 3
-    assert result['workload_id'] == '610516f468114ce745c01ab2d1cb78129c87e4395d60e19e034aee9a714e9daa'
+    assert result['status'] == 'ok' and len(result['shape_results']) == 1
+    assert 'nnsmith.graph_gen.model_gen' in result['contexts']['execution']['case_spec']
     assert supervisor.drain(ledger, database)['completed'] == 0
     assert len(ResultRepository(database).list()['items']) == 1
 
@@ -139,7 +139,7 @@ def test_worker_spawn_failure_releases_claim(tmp_path, monkeypatch):
 
 def test_npu_and_invalid_timeout_never_claim(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('42', ExecutionConfig('ascendc','npu:0'), EvaluationConfig(performance=True))
+    identity = ledger.enqueue('C16', ExecutionConfig('ascendc','npu:0'), EvaluationConfig(performance=True))
     with pytest.raises(ValueError, match='strict NPU performance'):
         supervisor.drain(ledger, tmp_path/'result.sqlite')
     assert ledger.get(identity)['state'] == 'pending'
@@ -183,7 +183,7 @@ with own_queue(TaskLedger(sys.argv[1])) as fd:
 def test_cli_rejects_npu_and_exposes_lightweight_status(tmp_path, capsys):
     from autofusedebugger.fuzz.cli import main
     with pytest.raises(SystemExit):
-        main(['run', '42', '--backend', 'invalid'])
+        main(['run', 'C16', '--backend', 'invalid'])
     ledger, identity, _ = setup(tmp_path)
     assert main(['status', identity, '--queue', str(ledger.path)]) == 0
     assert main(['stop', identity, '--queue', str(ledger.path)]) == 0
@@ -207,7 +207,7 @@ os._exit(82)
 
 def test_task_pagination_and_validation(tmp_path):
     ledger, first, _ = setup(tmp_path)
-    second = ledger.enqueue('43', EX, EV)
+    second = ledger.enqueue('C17', EX, EV)
     page = ledger.page(limit=1)
     assert page['items'][0]['id'] == first
     assert ledger.page(limit=1, after=page['next_cursor'])['items'][0]['id'] == second
@@ -283,20 +283,20 @@ def test_unsaved_worker_completes_without_result_or_outbox(tmp_path):
     # Use a fresh queue so each task's persisted save policy is unambiguous.
     from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
     ephemeral = TaskLedger(tmp_path/'ephemeral.sqlite')
-    identity = ephemeral.enqueue('42', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EvaluationConfig())
+    identity = ephemeral.enqueue('C16', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EvaluationConfig())
     summary = supervisor.drain(ephemeral, database)
     assert summary['completed'] == 1
     assert ephemeral.get(identity)['state'] == 'completed'
     assert not database.exists()
     # A later saved task on the same queue still works.
-    saved = ephemeral.enqueue('43', ExecutionConfig('cpu', 'cpu', 1, save_results=True), EvaluationConfig())
+    saved = ephemeral.enqueue('C17', ExecutionConfig('cpu', 'cpu', 1, save_results=True), EvaluationConfig())
     assert supervisor.drain(ephemeral, database)['completed'] == 1
-    assert ResultRepository(database).detail(ephemeral.get(saved)['attempt_id'])['seed'] == '43'
+    assert ResultRepository(database).detail(ephemeral.get(saved)['attempt_id'])['seed'] == str(2*2**128+43)
 
 
 def test_unsaved_failure_does_not_archive(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
-    identity = ledger.enqueue('42', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EV)
+    identity = ledger.enqueue('C16', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EV)
     task = ledger.claim()
     database = tmp_path/'results.sqlite'
     supervisor._save_worker_failure(ledger, database, task, 'timeout', 'should not persist')

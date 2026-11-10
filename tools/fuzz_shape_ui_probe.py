@@ -1,15 +1,18 @@
-"""Remote-only shape-case UI acceptance, including optional backend columns."""
+"""Shape-case UI acceptance, including DAG details and full-value tooltips."""
 import json,sys,threading,re
 from pathlib import Path
 from playwright.sync_api import sync_playwright,expect
 from autofusedebugger.fuzz.storage import ResultRepository
 from autofusedebugger.fuzz.view.server import create_server
-from autofusedebugger.fuzz.generation import materialize,workload_id
+from autofusedebugger.fuzz.generation import workload_id
+from autofusedebugger.fuzz.case_spec import encode
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"tests"))
+from fuzz_fixtures import bundle, three_shapes_spec
 root=Path(sys.argv[1]);root.mkdir(exist_ok=True);repo=ResultRepository(root/'results.sqlite')
 if not repo.path.exists():
  for backend in ['cpu','af-mlir','triton-npu']:
-  repo.save({'seed':str(2**128+42),'workload_id':workload_id(materialize(str(2**128+42))),'oracle_id':'ref/1','backend':backend,'status':'ok' if backend=='cpu' else 'error',
-   'execution':{'backend':backend,'batch_id':'probe','diagnostics':json.dumps({'version':1,'error':'error: UnsupportedOperation: '+('long compiler detail '*15),'shapes':{'1':{'error':'selected shape failure'}}}),'telemetry':json.dumps({'version':1,'stages':{'execution_total':9000000000},'shapes':{str(i):{'first_call_combined':1100000000+i} for i in range(3)}})},
+  repo.save({'seed':str(2*2**128+42),'workload_id':workload_id(bundle()),'oracle_id':'ref/1','backend':backend,'status':'ok' if backend=='cpu' else 'error',
+   'execution':{'case_spec':encode(three_shapes_spec()),'backend':backend,'batch_id':'probe','diagnostics':json.dumps({'version':1,'error':'error: UnsupportedOperation: '+('long compiler detail '*15),'shapes':{'1':{'error':'selected shape failure'}}}),'telemetry':json.dumps({'version':1,'stages':{'execution_total':9000000000},'shapes':{str(i):{'first_call_combined':1100000000+i} for i in range(3)}})},
    'shape_results':[{'shape_index':i,'correctness':'error' if i==1 and backend!='cpu' else 'pass','performance':'not_requested'} for i in range(3)]},environment={'device_name':'tester','cann':'9.3'})
 with create_server(repo.path) as server:
  t=threading.Thread(target=server.serve_forever);t.start()
@@ -55,28 +58,43 @@ with create_server(repo.path) as server:
    expect(page.locator('#page-title')).to_have_text('功能&精度')
    expect(page.locator('nav [data-page=records]')).to_contain_text('功能&精度')
    expect(page.locator('nav [data-page=performance]')).to_have_text('性能分析')
-   assert '总耗时' not in page.locator('#case-columns').inner_text()
+   assert 'af-mlir 总耗时' in page.locator('#case-columns').inner_text()
+   expect(page.locator('#case-columns [data-column="af-mlir:total"]')).to_be_visible()
    page.locator('nav [data-page=performance]').click()
    expect(page.locator('#page-title')).to_have_text('性能分析')
    expect(page.locator('#metric-empty')).to_have_text('暂无独立编译耗时或 Kernel 性能数据')
    page.locator('nav [data-page=records]').click()
    headers=page.locator('#case-columns').inner_text()
-   for title in ['输入 Shape / Dtype','静态 / 动态','triton-npu 功能','triton-npu 日志']:assert title in headers
-   assert 'x1[2,3,fp32], x2[2,1,fp32]' in page.locator('#rows [data-column=inputs]').first.inner_text()
+   for title in ['输入 Shape / Dtype','静态 / 动态','triton-npu 功能','triton-npu 运行日志摘要']:assert title in headers
+   assert 'x1[1,1,1,1,1,fp32], x2[1,4,4,2,5,fp32]' in page.locator('#rows [data-column=inputs]').first.inner_text()
+   page.locator('#rows [data-column=ops] .case-ops').first.hover()
+   expect(page.locator('#field-tooltip')).to_have_text('relu · amin · add · relu · mul · amax · transpose · add')
+   page.locator('#rows [data-column=inputs]').first.hover()
+   expect(page.locator('#field-tooltip')).to_contain_text('x1[1,1,1,1,1,fp32]')
    assert 'add ·' in page.locator('#rows [data-column=ops]').first.inner_text()
    assert '→' not in page.locator('#rows [data-column=ops]').first.inner_text()
    assert page.locator('#rows [data-column=inputs]').nth(0).inner_text()!=page.locator('#rows [data-column=inputs]').nth(1).inner_text()
    page.locator('.log-length input').fill('40');page.locator('.log-length input').press('Tab')
-   button=page.locator('[data-column="af-mlir:logs"] .error-preview').first
+   button=page.locator('#rows tr').nth(1).locator('[data-column="af-mlir:logs"] .error-preview')
    assert len(button.inner_text())<=43
-   button.click();expect(page).to_have_url(re.compile(r'#attempt=.*&shape=1$'));expect(page.locator('#failure-details')).to_contain_text('selected shape failure',timeout=15000)
-   expect(page.locator('#shape-detail tr')).to_have_count(5)
+   button.hover();expect(page.locator('#field-tooltip')).to_contain_text('long compiler detail '*15)
+   button.click();expect(page).to_have_url(re.compile(r'#attempt=.*&shape=1$'));expect(page.locator('#ascir-detail')).to_contain_text('selected shape failure',timeout=15000)
+   expect(page.locator('#failure-details')).to_contain_text('UnsupportedOperation')
+   expect(page.locator('#shape-detail')).to_have_count(0)
    assert 'shape=1' in page.url
    expect(page.locator('#case-meta')).to_contain_text('S1')
    expect(page.locator('#provenance')).to_contain_text('CANN')
    assert not page.locator('#detail-content').is_visible()
    assert '当前用例 S0' not in page.locator('#timing-detail').inner_text()
-   page.reload(wait_until='networkidle');expect(page.locator('#shape-detail tr')).to_have_count(5)
+   page.reload(wait_until='networkidle');expect(page.locator('#shape-detail')).to_have_count(0)
+   expect(page.locator('#case-meta .dag-node')).to_have_count(10)
+   expect(page.locator('#case-meta .dag-edge')).to_have_count(11)
+   assert page.locator('#detail h3').all_inner_texts()==['用例节点 DAG','ASCIR 表达的图结构','报错日志摘要','用例执行耗时','运行环境']
+   expect(page.locator('#detail details:visible')).to_have_count(0)
+   assert page.locator('#failure-details').inner_text().count('UnsupportedOperation')==1
+   expect(page.locator('#timing-detail')).to_contain_text('9000.000 ms')
+   page.locator('.dag-node').first.hover();expect(page.locator('#field-tooltip')).to_contain_text('float32')
+   page.keyboard.press('Escape');expect(page.locator('#field-tooltip')).not_to_be_visible()
    page.screenshot(path=str(root/'detail.png'),full_page=True)
    page.locator('#close-detail').click();expect(page.locator('.log-length input')).to_have_value('40')
    for query,count in [('pass',2),('Failed',1),("WHERE backend = 'triton-npu' AND function_status = 'Failed'",1)]:

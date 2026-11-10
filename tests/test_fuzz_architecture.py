@@ -14,12 +14,12 @@ def test_fuzz_does_not_import_legacy_debugger_or_nnsmith():
             if isinstance(node, ast.ImportFrom):
                 assert node.level <= 2, path
                 module = node.module or ""
-                assert not module.startswith("nnsmith"), path
+                assert not module.startswith("nnsmith") or path.name == "nnsmith_v3.py", path
                 if module.startswith("autofusedebugger"):
                     assert module.startswith("autofusedebugger.fuzz"), path
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("nnsmith"), path
+                    assert not alias.name.startswith("nnsmith") or path.name == "nnsmith_v3.py", path
 
 
 def test_generation_and_contracts_do_not_depend_on_outer_layers():
@@ -37,12 +37,12 @@ class Block(importlib.abc.MetaPathFinder):
   if name.split('.')[0] in {'torch','numpy','torch_npu','nnsmith'}: raise AssertionError(name)
   if name.startswith('autofusedebugger.') and not name.startswith('autofusedebugger.fuzz'): raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-sys.argv=['autofusedebugger.fuzz','maintenance','seed','42']
+sys.argv=['autofusedebugger.fuzz','maintenance','doctor']
 runpy.run_module('autofusedebugger.fuzz',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert '"seed": "A000000016"' in result.stdout
+    assert 'NNSmith C protocol' in result.stdout
 
 
 def test_view_and_storage_do_not_depend_on_execution_layers():

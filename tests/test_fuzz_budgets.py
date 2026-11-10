@@ -76,7 +76,7 @@ def test_policy_roundtrip_and_no_credentials(tmp_path):
 
 @pytest.mark.parametrize('kind', ['memory','scratch'])
 def test_real_worker_budget_kill_and_scratch_cleanup(tmp_path,monkeypatch,kind):
-    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue('42',EX,EV)
+    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue('C16',EX,EV)
     limit=Budget(memory_budget_bytes=1) if kind=='memory' else Budget(cache_budget_bytes=4096)
     write_policy(ledger,limit)
     code="import os,pathlib,time;pathlib.Path(os.environ['TMPDIR'],'data').write_bytes(b'x'*100000);time.sleep(30)"
@@ -85,11 +85,11 @@ def test_real_worker_budget_kill_and_scratch_cleanup(tmp_path,monkeypatch,kind):
     assert result['interrupted']==1
     assert ledger.get(identity)['reason']==('memory_budget_exceeded' if kind=='memory' else 'scratch_budget_exceeded')
     assert not list(tmp_path.glob('.fuzz-worker-*'))
-    assert ledger.get(identity)['seed']=='42'
+    assert ledger.get(identity)['seed']==str(2*2**128+42)
 
 
 def test_cache_environment_isolated_and_removed(tmp_path,monkeypatch):
-    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue('42',EX,EV)
+    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue('C16',EX,EV)
     output=tmp_path/'observed.json'
     code="import json,os,pathlib,sys;pathlib.Path(sys.argv[1]).write_text(json.dumps({k:os.environ[k] for k in ['TMPDIR','TORCHINDUCTOR_CACHE_DIR','TRITON_CACHE_DIR','OMP_NUM_THREADS']}))"
     monkeypatch.setattr(supervisor,'_worker_command',lambda *a:[sys.executable,'-c',code,str(output)])
@@ -106,7 +106,7 @@ def test_launch_admission_failure_has_no_partial_batch(tmp_path,monkeypatch):
     ledger=TaskLedger(tmp_path/'queue')
     monkeypatch.setattr(budgets,'resource_inventory',lambda _:inventory(disk_free_bytes=1))
     with pytest.raises(ValueError,match='disk reserve'):
-        hosting.launch(ledger,tmp_path/'results',[('42',EX,EV,None)],foreground=True)
+        hosting.launch(ledger,tmp_path/'results',[('C16',EX,EV,None)],foreground=True)
     assert ledger.page()['items']==[]
 
 
@@ -115,16 +115,16 @@ def test_setup_budget_reaches_cli_and_background_policy(tmp_path,monkeypatch):
     setup(tmp_path,compile_threads=2,memory_budget_bytes=10000000,cache_budget_bytes=20000000)
     calls=[]
     monkeypatch.setattr(hosting,'launch',lambda l,d,s,**kw: calls.append((list(s),kw)) or {})
-    assert main(['run','42','--data-dir',str(tmp_path)])==0
+    assert main(['run','C16','--data-dir',str(tmp_path)])==0
     tasks,options=calls[0]
     assert tasks[0][1].compile_threads==2
     assert options['budget'].memory_budget_bytes==10000000
-    assert main(['run','42','--compile-threads','3','--data-dir',str(tmp_path)])==2
+    assert main(['run','C16','--compile-threads','3','--data-dir',str(tmp_path)])==2
     assert len(calls)==1
 
 
 def test_monitor_failure_cleans_worker_and_preserves_reason(tmp_path,monkeypatch):
-    ledger=TaskLedger(tmp_path/'queue'); identity=ledger.enqueue('42',EX,EV)
+    ledger=TaskLedger(tmp_path/'queue'); identity=ledger.enqueue('C16',EX,EV)
     monkeypatch.setattr(supervisor,'_worker_command',lambda *a:[sys.executable,'-c','import time;time.sleep(30)'])
     def failed(*args):
         raise OSError('injected unavailable sampler')
@@ -137,7 +137,7 @@ def test_monitor_failure_cleans_worker_and_preserves_reason(tmp_path,monkeypatch
 
 
 def test_disk_reserve_exhaustion_terminates_worker(tmp_path,monkeypatch):
-    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue('42',EX,EV)
+    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue('C16',EX,EV)
     monkeypatch.setattr(supervisor,'_worker_command',lambda *a:[sys.executable,'-c','import time;time.sleep(30)'])
     # Keep admission realistic, inject only the sampled disk observation.
     monkeypatch.setattr(budgets,'violation',lambda *a:'disk_reserve_exhausted')

@@ -16,9 +16,9 @@ cli / scheduling -> generation -> contracts + tensors
 | 模块 | 职责及扩展点 |
 |---|---|
 | contracts、tensors | frozen CaseSpec/CaseBundle，规范字节、TensorSpec、执行与评估配置 |
-| generation/v1、v2 | 固定生成协议；registry按seed版本分发，改规则必须新增版本 |
+| generation/nnsmith_v3 | 唯一生成入口，固定NNSmith源码/Z3及算子域，无模板回退 |
 | backends | 延迟加载Torch，适配check/prepare/inputs/invoke/synchronize/compare；新增后端不能改变case |
-| execution | 静态/动态共用shape循环；正确性和可选性能阶段；失败阶段、误差、计时 |
+| execution | 执行保留共用shape循环，当前NNSmith协议仅静态；正确性和可选性能阶段；失败阶段、误差、计时 |
 | scheduling | 持久任务、批次、worker监督、租约、超时/恢复、预算 |
 | storage | 白名单规范化、事务保存、schema版本、快照、导入和查询 |
 | sync、central | 本地outbox与ACK、token身份、幂等接收、私有备份 |
@@ -27,18 +27,17 @@ cli / scheduling -> generation -> contracts + tensors
 
 架构测试禁止生成/契约反向依赖执行与存储，禁止fuzz引用旧debugger，NNSmith由生成适配层延迟加载。扩展必须补协议golden、adapter能力、存储白名单/迁移及查询测试，不增加第二套执行引擎。
 
-## 2. Seed、图与数据
+## 2. NNSmith生成与seed
 
-仅凭一个seed可在无历史文件/数据库/缓存的设备上重建图、广播轴、全部shape、dtype/layout、权重和输入字节。缓存只用于性能，不参与确定性承诺。设备不支持时记录unsupported，不改变用例或重抽参数。
+run/replay统一使用NNSmith `graph_gen.model_gen`，通过symbolic-cinit与独立Z3 context生成随机拓扑、输入规格和算子属性，再转成不可变CaseBundle。手写v1/v2模板已删除；开发态不保留旧A/B的解析、展示或执行兼容；旧数字编码也拒绝，不重新解释为新图，旧记录需清理后重新采集。
 
-- 内部数值：`(version - 1) * 2^128 + entropy`；规范JSON以十进制字符串保存，避免JS整数精度损失。
-- 短表示：A(v1)/B(v2) + base36 entropy，补齐至少9位。新批次entropy限定在`36^9`范围，产生10字符seed；旧大数不截断，避免碰撞。未知版本拒绝执行。
-- 随机字段由固定命名空间、seed、字段名、重试号的SHA256及无偏拒绝采样得到，不使用设备能力、时间、Python hash或库全局RNG。
-- v1固定Add、ReLU/Neg/Mul、可选Sum；v2额外包含独立Transpose类别。当前生成域是有界小图，不是任意NNSmith算子全集。
-- 三组确定输入shape、同一图和权重构成不可变CaseBundle；存储为tuple[bytes]，采用规范小端浮点编码。数据值是有界dyadic数。
-- workload指纹覆盖规范spec及全部storage内容；oracle单独版本化。执行后端/设备/测量配置不进入case内容指纹。
-- `--static-only`选择基础样本并使用静态编译；默认动态编译、依次运行全部样本。两者不修改原bundle。
-- v1/v2实现及golden保留；以后任何影响图或字节的规则变化都必须新增版本，不能重定义已有seed。
+当前C协议：Elementwise（Add/Mul/Neg/ReLU）、Reduce（Sum/Mean/Min/Max）、独立Transpose，固定8个计算节点，fp32、单静态shape、维度1–8、单tensor最多4096元素。生成未达到节点预算时拒绝，不接受随机器速度变化的部分图。算子选择不按设备能力过滤，后端不支持则失败。
+
+C + 9位base36为新批次的10字符seed。图由NNSmith生成，数据字节由字段寻址SHA256和规范小端编码生成，避免Torch全局RNG影响输入。workload指纹覆盖完整规格与字节，缓存不参与确定性保证。
+
+依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `a1a524f235f8b6299c397fd12c383d4b15a80f027230ece2d7d18259f92c872e`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
+
+图、输入/输出规格作为受限轻量case_spec进入结果和同步协议，云端与离线view直接索引采集数据，不重新生成图、不依赖NNSmith。它不是重放所需的缓存。普通import不加载NNSmith；真正生成时才检查依赖。
 
 ## 3. 执行、精度与性能
 
@@ -100,20 +99,6 @@ POSIX后台启动已实现；容器/主机重启后需由systemd或entrypoint拉
 
 发布版本以pyproject及包版本一致为准；Tag必须精确等于`v<version>`，构建同一个wheel用于GitCode Release和PyPI；网站资源必须入wheel。具体流水线、凭据和演练命令见使用说明。PyPI不允许重用同版本文件。
 
-已验证：v1/v2跨aarch64/x86_64黄金指纹、Linux NPU真实执行、幂等同步/快照、公开站点和离线浏览器；近期100seed=300shape真实数据用于UI验收（27Pass/273功能Failed，不代表性能验收）。
+当前验证见本轮远端日志。历史模板结果不能作为NNSmith能力证据。未完成：动态shape协议、更广算子和dtype、跨平台全域seed确定性、准确编译/kernel指标、自动重建已补丁依赖与真实发布联调。旧NNSmith代码和patches保留用于依赖准备及迁移，公开执行只有当前统一流程。
 
-未验证/未完成：通用算子覆盖；当前CANN下Triton兼容；准确独立编译/kernel采集；纯CPU编译流水线/产物移交；Windows/macOS原生执行验收；GitCode远端真实发布与PyPI权限联调。不得用文档或mock通过冒充这些能力。
-
-本次整理验收（2026-11-10，全部在 mlir 隔离目录执行）：原版本相关测试36通过；整理后fuzz/发布脚本及非fuzz HTML/CLI回归312通过；无Torch构建环境271通过、20项执行依赖测试明确跳过；当前shape页面浏览器验收通过。该轮曾误删NNSmith集成及patches，现已恢复；生成能力是重构必需项，不属于废弃功能，保留当前shape页面探针与协议golden。发布脚本使用mock验证创建、上传、hash幂等和凭据脱敏；不代表真实GitCode/PyPI发布已验证。
-
-打包验收：固定 `SOURCE_DATE_EPOCH` 连续构建两次wheel的SHA256一致，`twine check`和隔离Git fixture的Tag/版本dry-run通过。无模型依赖的独立wheel环境已验证CLI；HTTP/静态资源检查由 `tools/fuzz_wheel_smoke.py` 自动执行，发布流水线包含此门禁。构建依赖固定直接版本，尚未提供全部传递依赖的hash锁，不能据此声称跨时间构建完全可复现。
-
-## NNSmith恢复与接入边界
-
-已恢复 `nnsmith_integration`、全部patches、种子诊断和生成回归；wheel携带patches。补丁仅允许显式应用到隔离副本，不能import时修改共享依赖。恢复文件不等于当前 `fuzz run` 已使用NNSmith：现有A/B协议仍是有限模板，广泛随机图接入当前CaseBundle/执行/统计流程尚未完成。下一协议必须冻结NNSmith/Z3及补丁版本、算子集合和生成规则，补齐任意图执行与shape元数据；不能重定义已有A/B seed，也不能把环境内重放测试宣称为跨设备永久确定性。恢复的旧执行入口仅供迁移取证，不作为第二套长期公开引擎。
-
-CLI：`--fg`、`--perf`；run/replay默认不归档结果，`--save`才写结果及outbox。每个后台任务保存其归档策略，恢复时不改变；无归档任务成功退出即完成，进程崩溃无结果可恢复时标记interrupted。任务控制元数据仍持久化。setup成功后记住数据目录，sync不再强制要求`--data-dir`。
-
-恢复验收（mlir隔离副本）：CLI/任务/存储/发布回归298通过，补充监督器与轻量导入37通过；恢复的NNSmith测试28通过、1失败。失败是直接调用原始model_gen时seed 42的候选顺序/历史污染，tensor shape不同。使用生产generate_case（包含独立Z3 context）的扩展目录seed 42，在空历史及先生成43之后两次轨迹完全一致（SHA256 `493d79d349b04012b2350f334ba5064f4ce5469ad6196a5c3c2a872e2c0d9a8c`）。这只证明该受限样本，不等于全域确定性或已接回run。日志在远端round61-tests.log、round61-nnsmith.log及round61-nnsmith-{trace,history}.json。
-
-后续验证：生产Z3 scope在3个seed上跨候选顺序/前序历史回归通过；最终CLI/重放/发布定向54通过。恢复后的wheel包含全部14个patches，twine check和无模型依赖的view/central HTTP检查通过。原始model_gen的失败保留，不改为跳过或宣称已全域修复。
+CLI：`--fg`、`--perf`；run/replay默认不保存结果，`--save`才写结果及outbox。setup成功后记住数据目录。当前C协议只有一个shape，记录标记static；不把单shape标记dynamic。

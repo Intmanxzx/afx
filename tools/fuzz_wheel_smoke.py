@@ -16,7 +16,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='fuzz-wheel-smoke-') as root:
         database = Path(root) / 'results.sqlite'
         ResultRepository(database).save({
-            'seed': '42', 'workload_id': 'a' * 64, 'oracle_id': 'ref/1',
+            'seed': str(2*2**128+42), 'workload_id': 'a' * 64, 'oracle_id': 'ref/1',
             'backend': 'cpu', 'status': 'ok', 'shape_results': [],
         })
         for factory in (view, central):

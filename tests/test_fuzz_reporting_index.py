@@ -11,7 +11,7 @@ from autofusedebugger.fuzz.telemetry import validate
 
 
 def record(backend='cpu', batch='run1'):
-    return {'seed':'42','workload_id':'a'*64,'oracle_id':'ref/1','backend':backend,'status':'ok',
+    return {'seed':'680564733841876926926749214863536422954','workload_id':'a'*64,'oracle_id':'ref/1','backend':backend,'status':'ok',
             'execution':{'backend':backend,'device':'cpu' if backend=='cpu' else 'npu:0','batch_id':batch,
                          'telemetry':json.dumps({'version':1,'stages':{'generation':10,'execution_total':100},'shapes':{'0':{'correctness':15}}})},
             'shape_results':[{'shape_index':0,'correctness':'pass','performance':'not_requested'}]}
@@ -63,7 +63,7 @@ def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
     from autofusedebugger.fuzz.reporting.statistics import statistics
     from autofusedebugger.fuzz.reporting import report
     repo=ResultRepository(tmp_path/'db');repo.save(record());repo.save(record('af-legacy'))
-    monkeypatch.setattr(report,'case_metadata',lambda *args:pytest.fail('must not regenerate during query'))
+    monkeypatch.setattr(report,'spec_metadata',lambda *args:pytest.fail('must not regenerate during query'))
     result=statistics(repo.path)
     assert result['attempts']==2 and result['case_groups']==1
     assert {r['label'] for r in result['backend']}=={'af-legacy'}

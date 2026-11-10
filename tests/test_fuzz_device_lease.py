@@ -34,12 +34,12 @@ def test_distinct_physical_devices_and_crash_release(tmp_path):
 
 def test_execution_always_closes_adapter_on_failure():
     from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.generation import materialize
+    from fuzz_fixtures import bundle as materialize
     from autofusedebugger.fuzz.contracts import EvaluationConfig
     class Adapter:
         name='fake'
         closed=False
         def check(self,*args):raise RuntimeError('prepare failure')
         def close(self):self.closed=True
-    adapter=Adapter();result=execute(materialize('42'),adapter,EvaluationConfig())
+    adapter=Adapter();result=execute(materialize('680564733841876926926749214863536422954'),adapter,EvaluationConfig())
     assert result['status']=='error' and adapter.closed

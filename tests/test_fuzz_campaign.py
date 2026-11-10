@@ -28,7 +28,7 @@ def test_infinite_refill_stopped_atomically(tmp_path):
 
 def test_secondary_reference_only_on_disagreement():
     from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.generation import materialize
+    from fuzz_fixtures import bundle as materialize
     class Adapter:
         name='af-mlir'
         def check(self,*a):pass
@@ -36,17 +36,18 @@ def test_secondary_reference_only_on_disagreement():
         def inputs(self,*a):return None
         def invoke(self,*a):return None
         def synchronize(self):pass
+        def cpu_reference(self,*a):return None
         def compare(self,*a):return False
         def diagnose_accuracy(self,*a):return {'max_abs':1.0,'mismatches':1,'elements':2}
         def secondary_output(self,*a):return None
         def outputs_equal(self,*a):return True
-    result=execute(materialize('42'),Adapter(),EvaluationConfig())
+    result=execute(materialize('680564733841876926926749214863536422954'),Adapter(),EvaluationConfig())
     assert result['status']=='ok'
     detail=json.loads(result['execution']['diagnostics'])['shapes']['0']
     assert detail['cpu_pass'] is False and detail['secondary_pass'] is True
     adapter=Adapter();adapter.compare=lambda *a:True
     adapter.secondary_output=lambda *a:pytest.fail('secondary should not execute')
-    assert execute(materialize('42'),adapter,EvaluationConfig())['status']=='ok'
+    assert execute(materialize('680564733841876926926749214863536422954'),adapter,EvaluationConfig())['status']=='ok'
 
 
 def test_bounded_redacted_failure_excerpt():
@@ -80,14 +81,15 @@ def test_campaign_capacity_is_enforced(tmp_path):
 def test_torch_cpu_reference_and_error_metrics():
     pytest.importorskip("torch")
     from autofusedebugger.fuzz.backends.torch import TorchAdapter
+    from fuzz_fixtures import bundle as materialize
     from autofusedebugger.fuzz.generation import materialize
     adapter=TorchAdapter(ExecutionConfig('cpu','cpu'))
-    bundle=materialize('B000000016')
+    bundle=materialize('C000000016')
     try:
         adapter.check(bundle, EvaluationConfig())
         expected=adapter.cpu_reference(bundle, 0)
         assert adapter.compare(expected, expected)
-        changed=(expected[0] + 1,)
+        changed=tuple(t + 1 for t in expected)
         assert not adapter.compare(changed, expected)
         metrics=adapter.diagnose_accuracy(changed, expected)
         assert metrics['max_abs']==1.0
@@ -100,13 +102,13 @@ def test_default_replay_uses_both_mandatory_backends(monkeypatch):
     from autofusedebugger.fuzz import cli
     seen=[]
     monkeypatch.setattr(cli,'execute_args',lambda args: seen.append((args.backend,args.device)) or 0)
-    assert cli.replay(['B000000016'])==0
+    assert cli.replay(['C000000016'])==0
     assert seen==[('cpu','cpu'),('af-mlir','npu:0')]
 
 
 def test_secondary_disagreement_stays_failed_and_cpu_uses_actual_reference():
     from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.generation import materialize
+    from fuzz_fixtures import bundle as materialize
     class Adapter:
         name = 'af-mlir'
         def check(self, *args): pass
@@ -123,7 +125,7 @@ def test_secondary_disagreement_stays_failed_and_cpu_uses_actual_reference():
         def outputs_equal(self, left, right):
             assert (left, right) == ('af-output', 'eager-output')
             return False
-    result = execute(materialize('42'), Adapter(), EvaluationConfig())
+    result = execute(materialize('680564733841876926926749214863536422954'), Adapter(), EvaluationConfig())
     assert result['status'] == 'fail'
     assert result['oracle_id'] == 'torch-eager-cpu/1'
     assert all(row['correctness'] == 'fail' for row in result['shape_results'])

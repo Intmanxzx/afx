@@ -16,7 +16,7 @@ from autofusedebugger.fuzz.storage.queries import ResultQueries
 from autofusedebugger.fuzz.view.server import create_server
 
 
-def record(seed='42', status='ok'):
+def record(seed='680564733841876926926749214863536422954', status='ok'):
     import hashlib
     return {'seed': seed, 'workload_id': hashlib.sha256(seed.encode()).hexdigest(), 'oracle_id': 'ref/1',
             'backend': 'test', 'status': status,
@@ -29,7 +29,7 @@ def record(seed='42', status='ok'):
 @pytest.fixture
 def database(tmp_path):
     repo = ResultRepository(tmp_path/'source.sqlite')
-    for seed, status in [('42', 'ok'), ('42', 'fail'), (str(2**128-1), 'error')]:
+    for seed, status in [('680564733841876926926749214863536422954', 'ok'), ('680564733841876926926749214863536422954', 'fail'), (str(3*2**128-1), 'error')]:
         repo.save(record(seed, status))
     return repo.snapshot(tmp_path/'snapshot.sqlite')
 
@@ -63,13 +63,13 @@ def test_paging_filters_summary_and_detail(database):
     assert len(first['items']) == 2
     last = queries.page(limit=2, after=first['next_cursor'])
     assert len(last['items']) == 1 and last['next_cursor'] is None
-    assert last['items'][0]['seed'] == str(2**128-1)
+    assert last['items'][0]['seed'] == str(3*2**128-1)
     assert queries.page(limit=3)['next_cursor'] is None
     assert queries.summary() == {'total': 3, 'by_status': {'ok': 1, 'fail': 1, 'error': 1}}
-    assert queries.summary(seed='42', status='ok')['total'] == 1
-    assert len(queries.page(seed='42')['items']) == 2
+    assert queries.summary(seed='680564733841876926926749214863536422954', status='ok')['total'] == 1
+    assert len(queries.page(seed='680564733841876926926749214863536422954')['items']) == 2
     detail = queries.detail(first['items'][0]['id'])
-    assert detail['replay_command'] == 'autofusedbg fuzz replay A000000016'
+    assert detail['replay_command'] == 'autofusedbg fuzz replay C000000016'
     assert len(detail['shape_results']) == 1
     assert set(detail['contexts']) == {'execution', 'evaluation', 'environment'}
 
@@ -84,11 +84,11 @@ def test_http_assets_api_and_read_only(database):
             assert status == 200 and headers['Content-Type'].startswith(mime) and body
             assert headers['Cache-Control'] == 'no-store'
             assert "frame-ancestors 'none'" in headers['Content-Security-Policy']
-        status, _, body = request(url, 'api/results?seed=42&limit=1')
+        status, _, body = request(url, 'api/results?seed=C000000016&limit=1')
         assert status == 200
         item = json.loads(body)['items'][0]
         status, _, body = request(url, 'api/attempts/'+item['id'])
-        assert status == 200 and json.loads(body)['replay_command'].endswith(' A000000016')
+        assert status == 200 and json.loads(body)['replay_command'].endswith(' C000000016')
         assert json.loads(request(url, 'api/summary?status=fail')[2])['total'] == 1
     assert Path(database).read_bytes() == before
     assert set(Path(database).parent.iterdir()) == files
@@ -163,7 +163,7 @@ def test_untrusted_text_is_data_and_never_a_replay_command(database):
         assert item['backend'] == payload
         detail = json.loads(request(url, 'api/attempts/'+item['id'])[2])
         assert detail['error_summary'] == payload
-        assert detail['replay_command'] == 'autofusedbg fuzz replay A000000016'
+        assert detail['replay_command'] == 'autofusedbg fuzz replay C000000016'
         assert payload.encode() not in request(url)[2]
     with sqlite3.connect(database) as conn:
         conn.execute("UPDATE attempts SET seed='42; echo unsafe'")

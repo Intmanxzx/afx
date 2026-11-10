@@ -1,6 +1,6 @@
 """Operator categories are explicit; Transpose is not View."""
 OP_CATEGORY={'add':'Elementwise','relu':'Elementwise','neg':'Elementwise','mul':'Elementwise',
-             'sum':'Reduce','transpose':'Transpose'}
+             'sum':'Reduce','mean':'Reduce','amin':'Reduce','amax':'Reduce','transpose':'Transpose'}
 SUPPORTED_CATEGORIES=('Elementwise','Reduce','Transpose')
 
 

@@ -91,11 +91,14 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     if metadata:
         conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text+' '+metadata[0]))
         return
-    from .report import case_metadata
-    from ..generation import plan
     try:
-        metadata=dict(case_metadata(row['seed']))
-        spec=plan(row['seed'])
+        if ex.get('case_spec'):
+            from ..case_spec import decode
+            from .report import spec_metadata
+            spec=decode(ex['case_spec'])
+            metadata=spec_metadata(spec)
+        else:
+            raise ValueError('record has no captured graph specification')
         shapes=[t.shape for sample in (*spec.shape_samples,*spec.output_samples) for t in sample]
         import math
         max_dim=max((max(shape,default=0) for shape in shapes),default=0)
@@ -105,7 +108,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     conn.execute('INSERT INTO case_facts VALUES (?,?,?,?,?,?,?)',(row['workload_id'],row['seed'],canonical(metadata),metadata.get('n_nodes'),max_dim,max_elements,len(metadata.get('shape_variants',[]))))
     conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text+' '+canonical(metadata)))
     dimensions={'op':sorted(set(metadata.get('op_types',[]))),'dtype':sorted(set(metadata.get('input_dtypes',{}).values())|set(metadata.get('output_dtypes',{}).values()))}
-    categories={'Elementwise':{'add','mul','neg','relu'},'Reduce':{'sum'},'Transpose':{'transpose'}}
+    categories={'Elementwise':{'add','mul','neg','relu'},'Reduce':{'sum','mean','amin','amax'},'Transpose':{'transpose'}}
     dimensions['category']=[name for name,ops in categories.items() if ops.intersection(dimensions['op'])]
     for dimension,values in dimensions.items():
         conn.executemany('INSERT INTO case_dimensions VALUES (?,?,?)',[(row['workload_id'],dimension,value) for value in values])

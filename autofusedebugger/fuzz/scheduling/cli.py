@@ -63,7 +63,12 @@ def dispatch(args):
     import math
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError('timeout must be finite and positive')
-    seeds = [str(Seed.parse(s)) for s in args.seeds]
+    parsed = [Seed.parse(s) for s in args.seeds]
+    if any(seed.version != 3 for seed in parsed):
+        raise ValueError('only NNSmith C seeds can run; retired template seeds are not regenerated')
+    from ..generation.nnsmith_v3 import source_evidence
+    source_evidence()  # Fail before creating a campaign if the dependency is absent/wrong.
+    seeds = [str(seed) for seed in parsed]
     count = getattr(args, 'count', None)
     if count is not None:
         if seeds or count < 1:
@@ -75,7 +80,7 @@ def dispatch(args):
     budget = Budget.configured(load_config(home) or adaptive_defaults(home), args.compile_threads)
     import uuid
     batch_id = str(uuid.uuid4())
-    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=args.static_only, batch_id=batch_id, save_results=args.save)
+    configs = [ExecutionConfig(backend, (args.device or 'npu:0') if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, static_only=True, batch_id=batch_id, save_results=args.save)
                for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})

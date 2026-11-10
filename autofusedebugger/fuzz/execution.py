@@ -34,6 +34,9 @@ def _execute(bundle, adapter, evaluation):
               "_timings": {}, "_diagnostics": {"version":1,"shapes":{}}, "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}
     if hasattr(adapter, "config"):
         result["execution"] = asdict(adapter.config)
+    if bundle.spec.seed.version == 3:
+        from .case_spec import encode
+        result.setdefault('execution', {})['case_spec'] = encode(bundle.spec)
     if hasattr(adapter, 'cpu_reference'):
         result['oracle_id'] = 'torch-eager-cpu/1'
     stage = "capability"

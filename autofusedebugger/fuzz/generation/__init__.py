@@ -1,16 +1,14 @@
-"""Version dispatch; generators never depend on execution, storage or hardware."""
+"""Single NNSmith generation entry for run/replay. No template fallback."""
 from ..contracts import Seed
+from .fingerprint import content_manifest, workload_id
 
 
 def _protocol(seed):
     seed = Seed.parse(seed)
-    if seed.version == 1:
-        from . import v1
-        return v1
-    if seed.version == 2:
-        from . import v2
-        return v2
-    raise ValueError(f"unsupported generation version {seed.version}")
+    if seed.version != 3:
+        raise ValueError('retired template seed: only NNSmith C seeds can be generated; no fallback')
+    from . import nnsmith_v3
+    return nnsmith_v3
 
 
 def plan(seed):
@@ -19,14 +17,6 @@ def plan(seed):
 
 def materialize(seed):
     return _protocol(seed).materialize(seed)
-
-
-def content_manifest(bundle):
-    return _protocol(bundle.spec.seed).content_manifest(bundle)
-
-
-def workload_id(bundle):
-    return _protocol(bundle.spec.seed).workload_id(bundle)
 
 
 def oracle_id(bundle):

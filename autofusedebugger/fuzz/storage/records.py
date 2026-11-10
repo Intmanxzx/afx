@@ -52,6 +52,12 @@ def normalize(result, environment):
         'evaluation': _context(result.get('evaluation', {}), ('correctness','performance','warmup_steps','measured_steps')),
         'environment': _context(environment, ('python','platform','machine','torch','torch_npu','triton','package_version','cann','autofuse_commit','autofuse_binary','device_name','user_id','installation_id','device_uuid','device_model')),
     }
+    case_spec = result.get('execution', {}).get('case_spec')
+    if case_spec is not None:
+        from ..case_spec import decode, encode
+        spec = decode(case_spec)
+        if str(spec.seed) != seed: raise ValueError('case spec seed mismatch')
+        contexts['execution']['case_spec'] = encode(spec)
     telemetry = result.get('execution', {}).get('telemetry')
     if telemetry is not None:
         from ..telemetry import validate

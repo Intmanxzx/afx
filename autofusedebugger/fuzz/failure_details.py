@@ -68,6 +68,7 @@ def diagnostic_view(diagnostics, index, fallback=''):
         summary = '运行级日志：' + shared_lines[0]
     return {'summary': summary[:1600], 'shape_lines': current,
             'shared_lines': shared_lines, 'shape_log': redact(local),
+            'run_log': redact(shared),
             'shared_log': redact(shared) if shared.strip() != local.strip() else '',
             'explanation': ('Kernel代码生成失败或中止；具体不支持的算子/原因未在已保存日志中给出。'
                             if 'Codegen generate kernel failed' in local else ''),

@@ -60,6 +60,9 @@ def _validate_task(task):
             raise ValueError('strict NPU performance requires site-wide external workload coordination')
     else:
         raise ValueError('unsupported managed backend')
+    from ..contracts import Seed
+    if 'seed' in task and Seed.parse(task['seed']).version != 3:
+        raise ValueError('retired template task; cannot resume with NNSmith')
     if type(config.compile_threads) is not int or not 1 <= config.compile_threads <= (os.cpu_count() or 1):
         raise ValueError('compile thread budget exceeds available CPU count')
 
@@ -88,7 +91,7 @@ def _has_result(database, task):
         if (row['seed'] != task['seed'] or row['workload_id'] != workload_id(bundle) or
                 row['oracle_id'] not in {oracle_id(bundle), 'torch-eager-cpu/1'} or
                 row['backend'] != json.loads(task['execution'])['backend'] or
-                {k:v for k,v in saved_execution.items() if k not in {'telemetry','diagnostics'}} != task_execution or
+                {k:v for k,v in saved_execution.items() if k not in {'telemetry','diagnostics','case_spec'}} != task_execution or
                 contexts['evaluation'] != json.loads(task['evaluation'])):
             raise ValueError('saved attempt conflicts with task; refusing acknowledgement')
         return True

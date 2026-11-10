@@ -1,14 +1,7 @@
 """Seed-derived metadata for the SQLite reporting index; no model imports."""
 import json
 import math
-from functools import lru_cache
-
-from ..generation import plan
-
-
-@lru_cache(maxsize=4096)
-def case_metadata(seed):
-    spec = plan(seed)
+def spec_metadata(spec):
     graph = json.loads(spec.graph_json)
     ops = [node['op'] for node in graph['nodes']]
     if graph['reduce_axis'] is not None:
@@ -23,4 +16,4 @@ def case_metadata(seed):
                                 'input_dtypes': {t.name: t.dtype for t in sample}, 'output_dtypes': {t.name: t.dtype for t in outputs}, 'input_shapes': {t.name: list(t.shape) for t in sample},
                                 'output_shapes': {t.name: list(t.shape) for t in outputs}}
                                for sample, outputs in zip(spec.shape_samples, spec.output_samples)],
-            'weight_broadcast_axes': graph['nodes'][0]['weight_broadcast_axes']}
+            'weight_broadcast_axes': graph['nodes'][0].get('weight_broadcast_axes', []) if graph['nodes'] else []}

@@ -76,8 +76,8 @@ def test_seed_rejects_ambiguous_or_unknown_protocol(token):
 
 
 def test_contracts_are_immutable_and_do_not_pretend_generator_exists():
-    seed = Seed.parse("42")
-    assert str(seed) == "42"
+    seed = Seed.parse("680564733841876926926749214863536422954")
+    assert str(seed) == "680564733841876926926749214863536422954"
     spec = TensorSpec("x", "float32", (2, 3), (3, 1))
     bundle = CaseBundle(CaseSpec(seed, canonical_json({"ops": ["add"]}), (spec,), ()), (bytes(24),))
     with pytest.raises(FrozenInstanceError):
@@ -125,8 +125,8 @@ def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
     from autofusedebugger.fuzz import cli as fuzz_cli
     seen = []
     monkeypatch.setattr(fuzz_cli, "execute_args", lambda args: seen.append(args.seed) or 0)
-    assert cli.main(["fuzz", "replay", "42"]) == 0
-    assert seen == ["42", "42"]
+    assert cli.main(["fuzz", "replay", "680564733841876926926749214863536422954"]) == 0
+    assert seen == ["680564733841876926926749214863536422954", "680564733841876926926749214863536422954"]
     with pytest.raises(SystemExit):
         fuzz_cli.main(["run", "--seed-token", "v1:preview-dynamic-v1:42"])
 

@@ -202,6 +202,8 @@ class ResultQueries:
                     from ..failure_details import core_error
                     diagnostics = json.loads(json.loads(row['execution']).get('diagnostics', '{}'))
                     member['core_error'] = core_error(diagnostics, index, member['error_summary'])
+                    from ..failure_details import redact
+                    member['run_log'] = redact(diagnostics.get('error', ''))
                     member['compile_ns'] = next((m['duration_ns'] for m in member['stages'] if m['stage']=='compile' and m['shape_index']==-1),None)
                     member['kernel_ns'] = [{'shape_index':m['shape_index'],'duration_ns':m['duration_ns']} for m in member['stages'] if m['stage']=='kernel_mean'] if backend!='cpu' else []
                     from ..reporting.outcomes import outcomes
