@@ -2,7 +2,7 @@
 
 ## 已部署网站
 
-https://esay.app 。页面自动刷新30秒；按数字seed筛选后URL可分享，详情可复制单seed replay命令。数据是实际测试结果；历史错误保留，不因重跑成功被覆盖。
+https://autofuse.online 。页面自动刷新30秒；按数字seed筛选后URL可分享，详情可复制单seed replay命令。数据是实际测试结果；历史错误保留，不因重跑成功被覆盖。
 
 ## 当前NPU环境
 
@@ -23,7 +23,7 @@ $AF fuzz sync status --data-dir /mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/accept
 
 ```sh
 $AF fuzz sync configure --data-dir /mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/acceptance-home \
-  --endpoint https://esay.app \
+  --endpoint https://autofuse.online \
   --key-file /mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/acceptance-home/upload.key --interval 30
 ```
 

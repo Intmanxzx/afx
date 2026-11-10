@@ -14,7 +14,7 @@ key 文件为0600。管理员通过安全渠道离线分发，不在线申请；
 ## 自动同步
 
 ```sh
-autofusedbg fuzz sync configure --data-dir ./fuzz-data --endpoint https://esay.app --key-file ./upload.key --interval 30
+autofusedbg fuzz sync configure --data-dir ./fuzz-data --endpoint https://autofuse.online --key-file ./upload.key --interval 30
 autofusedbg fuzz sync run --data-dir ./fuzz-data
 ```
 
@@ -38,7 +38,7 @@ Docker可选：把wheel放本目录，`mkdir data; chown 10001 data; docker comp
 一次完成本地setup和30秒后台上传（不需逐批操作）：
 
 ```sh
-autofusedbg fuzz setup --data-dir ./fuzz-data --key-file ./upload.key --sync-endpoint https://esay.app --sync-interval 30
+autofusedbg fuzz setup --data-dir ./fuzz-data --key-file ./upload.key --sync-endpoint https://autofuse.online --sync-interval 30
 autofusedbg fuzz sync status --data-dir ./fuzz-data
 ```
 

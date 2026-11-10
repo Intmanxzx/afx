@@ -471,3 +471,11 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 公网round32 venv，wheel SHA256 ce0de3d59489fbc90d6f57f4ab36ce9ff0ef7ab70899976b4fca6e0845f04741，服务/Caddy active。
 - 未完成边界：Kernel profiler数量/时间仍未采集；不能用wall-time替代。严格NPU性能仍需要能力接入；旧HTML所有交互筛选/排序尚未逐项验收，不能把新增性能表称为全部迁移完毕。Autofuse binary未附可信commit manifest时只显示binary指纹。旧库离线查看需先备份再index-results。
 - round32公网Playwright：顶部导航、总计3条/2个分组、删除指定文案、默认隐藏CANN、勾选/移序/刷新保留、390px无页面横向溢出全部通过，无pageerror。直接urllib默认UA请求公网被403拒绝，浏览器正常；未绕过服务安全策略。
+
+## 26. 公网域名切换（2026-11-09）
+
+- 主站改为https://autofuse.online；DNS经Cloudflare代理。原Caddy仅匹配esay.app，新增站点并成功签发Let's Encrypt证书，源站与公网GET均200。
+- esay.app/www.esay.app页面重定向到新站；旧/api/*与healthz保留直连响应，避免拒绝重定向的存量同步客户端中断。
+- mlir已知acceptance-home、round21-e2e-home的sync.json原子切换到新域名，30秒周期不变，密钥/ACK不变。没有创建新测试数据。
+- 远端Playwright：新站记录页2分组/3条结果、新summary 200、旧API不跳转200、旧页面跳新域名保留fragment均通过，无pageerror。Caddy备份/etc/caddy/Caddyfile.before-autofuse-online。
+- 浏览器列偏好按origin隔离，旧esay.app localStorage不会自动迁移到新域名。
