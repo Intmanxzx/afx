@@ -558,3 +558,13 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 非fuzz扩展回归的第5个失败在当前版本单跑也通过（0.11s）；4个基线可复现失败+1个全套时才失败，未在本次跨范围改旧调试器/NNSmith。
 
 仍未声称完成的长期能力：准确独立compile/kernel指标、CPU/NPU流水拆分、多worker吞吐、Triton当前CANN兼容、任意图MLIR能力API、父进程被强杀时完整日志恢复。自然精度失败此次100组未出现；二级判定真实NPU故障注入和网页误差fixture均通过，不能把注入记录充当真实精度失败数据。
+
+## 33. 网站用例口径与日志可发现性修复（2026-11-10，round44/45）
+
+- 更正上轮验收遗漏：200是后端attempt数，不是测试case数。HTTP summary及质量/覆盖图统一使用与记录列表相同的case分组；CPU仅对照不重复计数，AF-MLIR决定当前case结论，重试取该后端最新结果，历史仍可查看。不同批次/来源不盲目按seed合并；CPU-only未完成为unknown，不当Pass。
+- 原日志仅藏在点击状态/耗时后的详情下方，可发现性不足。新增默认可见的失败“日志”列，明确“查看日志/查看误差”，点击进入可分享/刷新保留的attempt详情；核心日志提前到详情顶部，缺diagnostics时回退已有错误摘要。
+- 新增功能列：功能错误为功能Failed，精度显示Unkown；只有真实不一致才精度Failed。本批正确口径100case，9通过、91功能失败、0精度失败。后端对照与底层200明细不删除或改写。
+- 新增100case/200attempt聚合、重试、CPU-only、筛选保留MLIR结论测试；浏览器使用真实点击“查看日志”（不再只用JS直接调用details）验证入口及顶部日志。
+- round45远端全fuzz测试：265 passed，1个可选pygraphviz warning；12case/24attempt本地服务浏览器回归通过。
+- 已备份并部署oracle1 venv-round45，wheel SHA256 `60257a48b0fe0fe1e1608c9304542d8dce1753f0dae9a1bc5deebc0e74dbb301`，未清理/改写200条明细。
+- 公网真实点击验收round45-public.log：总数100、通过9、功能失败91、精度失败0；100行，91个“查看日志”按钮；功能Failed对应精度Unkown；点击日志后顶部显示AF_MLIR_STRICT，刷新详情仍保留；图表100用例、不计CPU，JS errors=[]。截图仅远端round45-records.png/round45-log.png。

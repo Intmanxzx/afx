@@ -25,6 +25,13 @@ with create_server(repo.path) as server:
             browser=p.chromium.launch();page=browser.new_page(viewport={'width':1440,'height':1000});errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(server.viewer_url+'#records',wait_until='networkidle')
             expect(page.locator('#rows tr')).to_have_count(12)
+            expect(page.locator('#total')).to_have_text('12')
+            expect(page.locator('#ok')).to_have_text('10')
+            expect(page.locator('#errors')).to_have_text('1')
+            page.get_by_role('button',name='查看日志',exact=True).last.click()
+            expect(page.locator('#failure-details')).to_contain_text('unsupported Transpose')
+            assert page.locator('#failure-details').bounding_box()['y'] < page.locator('#timing-detail').bounding_box()['y']
+            page.locator('#close-detail').click()
             headers=page.locator('#case-columns').inner_text()
             assert 'cpu 精度' not in headers and 'cpu 性能' not in headers and '设备' not in headers and '性能' not in headers
             assert 'eager-npu 精度' in headers and 'cpu 总耗时' in headers
@@ -35,7 +42,7 @@ with create_server(repo.path) as server:
             page.locator('#next').click();expect(page.locator('#rows tr')).to_have_count(2)
             page.locator('#previous').click();expect(page.locator('#rows tr')).to_have_count(10)
             page.locator('[name=q]').fill('NIU');page.locator('button[type=submit]').click();expect(page.locator('#rows tr')).to_have_count(6)
-            expect(page.locator('#total')).to_have_text('12')
+            expect(page.locator('#total')).to_have_text('6')
             page.locator('#reset-filters').click();expect(page.locator('#rows tr')).to_have_count(10)
             page.evaluate('window.rowBefore=document.querySelector("#rows tr");window.mutations=0;new MutationObserver(()=>window.mutations++).observe(document.querySelector("#rows"),{subtree:true,childList:true});')
             page.evaluate('load(true)');page.wait_for_function('document.querySelector("#message").textContent===""')

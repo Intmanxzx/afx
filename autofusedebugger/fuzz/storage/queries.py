@@ -79,6 +79,10 @@ class ResultQueries:
                 'SELECT status,count(*) AS count FROM attempts' + where + ' GROUP BY status', values)}
         return {'total': sum(counts.values()), 'by_status': counts}
 
+    def case_summary(self, **params):
+        from ..reporting.cases import summary
+        return summary(self.path, **params)
+
     def detail(self, identity):
         identity = str(uuid.UUID(identity))
         with reading(self.path) as conn:

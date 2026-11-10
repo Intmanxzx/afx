@@ -29,6 +29,7 @@ async function details(identity) {
   const request = ++detailGeneration;
   $('detail').hidden = false; $('detail-message').textContent = '加载中…';
   $('detail-content').textContent = ''; $('command').value = ''; $('copy').disabled = true;
+  $('failure-details')?.replaceChildren();
   try {
     const result = await api('api/attempts/' + encodeURIComponent(identity));
     if(request !== detailGeneration) return;
@@ -45,7 +46,7 @@ async function details(identity) {
     table.append(header);
     for(const shape of result.shape_results) {
       const row = document.createElement('tr');
-      for(const value of [shape.shape_index,({pass:'Pass',fail:'Failed',error:'Failed'}[shape.correctness]||'Unkown'),(shape.performance==='error'?'Failed':shape.performance==='measured'?'已记录（见口径）':'Unkown'),shape.first_call_combined_ns == null ? '—' : (shape.first_call_combined_ns/1e6).toFixed(3),shape.mean_wall_ns == null ? '—' : (shape.mean_wall_ns/1e6).toFixed(3),shape.error_stage || '—',shape.error_summary || '—']) cell(row,value);
+      for(const value of [shape.shape_index,({pass:'Pass',fail:'Failed'}[shape.correctness]||'Unkown'),(shape.performance==='error'?'Failed':shape.performance==='measured'?'已记录（见口径）':'Unkown'),shape.first_call_combined_ns == null ? '—' : (shape.first_call_combined_ns/1e6).toFixed(3),shape.mean_wall_ns == null ? '—' : (shape.mean_wall_ns/1e6).toFixed(3),shape.error_stage || '—',shape.error_summary || '—']) cell(row,value);
       table.append(row);
     }
     $('shape-detail').replaceChildren(table);
@@ -89,7 +90,7 @@ function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
 function renderRecords(items){
  const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
  const definitions=[{key:'seed',label:'Seed / 用例',width:220,defaultVisible:true},{key:'user_name',label:'用户',width:140,defaultVisible:true}];
- for(const b of backends){if(b!=='cpu')definitions.push({key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:true});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:true});}
+ for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:true});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:true},{key:b+':logs',label:b+' 日志',width:130,defaultVisible:true});}
  definitions.push({key:'time',label:'时间',width:180,defaultVisible:true},...extraColumns.map(([key,label])=>({key,label,width:210,defaultVisible:false})));
  const fragment=document.createDocumentFragment();
  for(const item of items){const tr=document.createElement('tr');
@@ -98,10 +99,12 @@ function renderRecords(items){
  else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
- if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':['fail','error'].includes(latest.correctness_status)?'failed':'';text=state==='pass'?'Pass':state==='failed'?'Failed':null;}
+ if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'failed':'';text=state==='pass'?'Pass':state==='failed'?'Failed':null;}
+ if(kind==='function'){state=['error','unsupported'].includes(latest.status)?'failed':['ok','fail'].includes(latest.status)?'pass':'';text=state==='pass'?'Pass':state==='failed'?'Failed':null;}
+ if(kind==='logs'&&['error','unsupported','fail'].includes(latest.status))text=latest.status==='fail'?'查看误差':'查看日志';
  if(kind==='kernel'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
  if(kind==='total')text=seconds(latest.total_ns);
- if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;button.addEventListener('click',()=>details(latest.id));td.append(button);populated=true;}
+ if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id);});td.append(button);populated=true;}
  if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unkown');button.addEventListener('click',()=>details(attempt.id));history.append(button);}td.append(history);}
  caseMetadata.set(latest.id,item.metadata);}}
  else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
@@ -202,9 +205,11 @@ function renderStatisticsTables(result){
 }
 
 function renderFailureDetails(result){
- let box=$('failure-details');if(!box){box=document.createElement('section');box.id='failure-details';$('shape-detail').after(box);}box.replaceChildren();
- const raw=result.contexts.execution.diagnostics;if(!raw)return;
- const data=JSON.parse(raw);
+ let box=$('failure-details');if(!box){box=document.createElement('section');box.id='failure-details';$('detail-message').after(box);}box.replaceChildren();
+ const raw=result.contexts.execution.diagnostics;
+ const data=raw?JSON.parse(raw):{shapes:{}};
+ if(!data.error&&result.error_summary)data.error=result.error_summary;
+ for(const shape of result.shape_results||[]){if(shape.error_summary&&!data.shapes?.[String(shape.shape_index)]?.error){data.shapes??={};data.shapes[String(shape.shape_index)]={...(data.shapes[String(shape.shape_index)]||{}),error:shape.error_summary};}}
  if(!data.error&&!Object.keys(data.shapes||{}).length)return;
  const title=document.createElement('h3');title.textContent='核心日志与精度误差';box.append(title);
  if(data.error){const log=document.createElement('pre');log.textContent=data.error;box.append(log);}

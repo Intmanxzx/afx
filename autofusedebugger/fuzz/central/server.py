@@ -104,7 +104,7 @@ def create_server(database,port=8090):
                         raise ValueError('unknown field')
                     for key in ('limit','after'):
                         if key in params:params[key]=int(params[key])
-                    result=queries.page(**params,newest=True) if route=='/api/results' else queries.summary(**params)
+                    result=queries.page(**params,newest=True) if route=='/api/results' else queries.case_summary(**params)
                     if route=='/api/results':
                         from contextlib import closing
                         from ..storage.repository import _connect

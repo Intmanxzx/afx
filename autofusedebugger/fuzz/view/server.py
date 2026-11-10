@@ -96,7 +96,7 @@ def create_server(database, *, port=0):
                     for key in ('limit','after'):
                         if key in params:
                             params[key] = int(params[key])
-                    value = queries.page(**params) if route == 'api/results' else queries.summary(**params)
+                    value = queries.page(**params) if route == 'api/results' else queries.case_summary(**params)
                 elif route == 'api/compare' and set(params) == {'left', 'right'}:
                     from ..storage.comparison import compare
                     value = compare(database, params['left'], params['right'])

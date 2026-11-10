@@ -66,7 +66,8 @@ def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
     monkeypatch.setattr(report,'case_metadata',lambda *args:pytest.fail('must not regenerate during query'))
     result=statistics(repo.path)
     assert result['attempts']==2 and result['case_groups']==1
-    assert {r['label'] for r in result['backend']}=={'cpu','af-legacy'}
+    assert {r['label'] for r in result['backend']}=={'af-legacy'}
+    assert sum(r['count'] for r in result['overall'])==1
     assert len(result['stages'])==6
     assert result['kernel_profiler']['kernel_count'] is None
     assert result['performance'][0]['performance']=='not_requested'
