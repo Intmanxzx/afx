@@ -544,3 +544,17 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - round42/round43各261项fuzz回归通过；追加CPU真实oracle/二级不一致仍Failed测试9项通过。round41定向39项通过。round43浏览器12组/24条记录通过。父进程异常日志测试含os._exit(7)、脱敏和SQLite持久化。
 - 扩展回归round42：503 passed / 5 failed（排除已单测的架构/hosting重复项）。对上一commit 0dd0fa4在独立baseline目录重跑5个失败：4个复现（CANN GE fork、旧NNSmith seed42、两项prefusion Linear.graph），1个单跑通过；当前版本也将单独复查该项，不能未经验证把全部失败归为历史。
 - 修正CLI收敛后部署模板遗漏：Dockerfile、systemd、backup.sh和操作文档统一admin/maintenance；公网定时备份也升级命令并实际触发验证。旧运维脚本不能长期依赖旧venv语义。
+
+## 32. 九项反馈验收（2026-11-10）
+
+1–3：普通setup只有--user/--token/--sync-interval，默认https://autofuse.online。4：预算自适应保守计算，串行worker=1，不宣称全局最优。5：公开eager-npu。6：CPU+AF-MLIR必选、实际CPU oracle、按需eager-npu复核。7：默认无限/stop，有限count惰性投放。8：核心日志及精度误差入SQLite、同步和Web详情；worker异常/超时有界日志。9：公网已清理旧结果并完成100组真实严格MLIR采集。
+
+最终统计：100唯一seed，200条case/backend，600条shape；CPU 100成功；AF-MLIR 9成功、91功能/编译错误（不是91精度不一致）。shape pass327/error273。91错误均有严格MLIR核心日志。全部100 seed重新物化指纹一致、短文本10字符，批次200任务全部completed（完成任务不等于用例通过），所有结果自动上传。
+
+- 原始批次归档审计：round43-final-audit.json，ACK200/pending0。后续最终浏览器发现1条case分成两组，原因是该CPU/MLIR运行间构建wheel生成package metadata，Debugger版本从null变为0.1.2。未伪造修改历史环境：使用安装版重新跑该seed的CPU/MLIR对，上传后备份并精确删除原2条，保留tombstone；中心最终仍100case/200attempt，个人本地保留202条（含原2条历史），ACK应202。
+- 最终公网Playwright：100行，每行CPU/AF-MLIR并排，姓名MLIR NPU、CANN9.3.0/Autofuse c1b46272、10字符seed、核心日志、稳定刷新全部通过，JS错误为空。网站https://autofuse.online，线上venv-round43，wheel SHA256 `6a275b716760c1864bb15af8ea299ef7588db80898496441f54e8d8eeb6fe89f`。
+- NPU隔离安装runtime-round43；`bin/autofusedbg-npu`更新指向该版本、隔离MLIR库和round40-home，旧包装有备份。安装版源码目录外CPU replay通过。新测试默认无限；此次验收批次有限100，结束后未擅自继续烧卡。
+- 私有完整备份、定时backup服务实际触发Result=success、恢复副本integrity=ok；轻量一致性快照check-db通过。没有本地安装、测试、DB或截图产物；保留用户index.html搜索占位文字修改未提交。
+- 非fuzz扩展回归的第5个失败在当前版本单跑也通过（0.11s）；4个基线可复现失败+1个全套时才失败，未在本次跨范围改旧调试器/NNSmith。
+
+仍未声称完成的长期能力：准确独立compile/kernel指标、CPU/NPU流水拆分、多worker吞吐、Triton当前CANN兼容、任意图MLIR能力API、父进程被强杀时完整日志恢复。自然精度失败此次100组未出现；二级判定真实NPU故障注入和网页误差fixture均通过，不能把注入记录充当真实精度失败数据。

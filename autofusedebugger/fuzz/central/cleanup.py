@@ -16,7 +16,14 @@ def purge_all_results(path, *, expected_count):
     return _purge(path, expected_count=expected_count, incomplete=False)
 
 
-def _purge(path, *, expected_count, incomplete):
+def purge_attempts(path, identities):
+    """Reviewed exact-ID cleanup, retaining the same anti-resurrection guards."""
+    if not identities or len(set(identities)) != len(identities):
+        raise ValueError('nonempty unique attempt IDs required')
+    return _purge(path, expected_count=len(identities), incomplete=False, identities=identities)
+
+
+def _purge(path, *, expected_count, incomplete, identities=None):
     with closing(_connect(path, writable=True)) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
         query="""SELECT a.id,a.result_hash,o.user_id FROM attempts a
@@ -26,7 +33,9 @@ def _purge(path, *, expected_count, incomplete):
             query += """WHERE json_extract(c.payload,'$.cann') IS NULL
             AND json_extract(c.payload,'$.autofuse_binary') IS NULL
             AND json_extract(c.payload,'$.autofuse_commit') IS NULL"""
-        rows=conn.execute(query).fetchall()
+        if identities:
+            query += ' WHERE a.id IN (' + ','.join('?' for _ in identities) + ')'
+        rows=conn.execute(query, identities or ()).fetchall()
         if len(rows)!=expected_count:
             raise ValueError('record count changed; review before deleting')
         conn.execute('CREATE TABLE IF NOT EXISTS deleted_attempts (id TEXT PRIMARY KEY, result_hash TEXT NOT NULL, user_id TEXT NOT NULL)')
