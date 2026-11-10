@@ -18,6 +18,18 @@ with create_server(repo.path) as server:
    browser=p.chromium.launch();page=browser.new_page(viewport={'width':1800,'height':1100});errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
    page.goto(server.viewer_url+'#records',wait_until='networkidle')
    expect(page.locator('#total')).to_have_text('3');expect(page.locator('#rows tr')).to_have_count(3)
+   assert page.locator('.cards>div>span').all_inner_texts()==['测试记录','功能失败','精度失败','精度通过']
+   assert page.locator('.cards small').count()==0
+   for identity,color in [('errors','rgb(211, 79, 67)'),('fail','rgb(185, 133, 0)'),('ok','rgb(20, 125, 104)')]:
+    assert page.locator('#'+identity).evaluate('(e)=>getComputedStyle(e).color')==color
+   assert page.locator('.log-length').evaluate('(e)=>getComputedStyle(e).flexDirection')=='row'
+   assert page.locator('th').evaluate_all('(els)=>els.every(e=>getComputedStyle(e).textAlign==="center")')
+   log_input=page.locator('.log-length input')
+   log_input.fill('60');log_input.press('Enter')
+   expect(log_input).to_have_value('60')
+   assert page.evaluate('localStorage.getItem("af-fuzz.log-length")')=='60'
+   assert len(page.locator('[data-column="af-mlir:logs"] .error-preview').first.inner_text())<=63
+   log_input.fill('999');log_input.press('Enter');expect(log_input).to_have_value('500')
    headers=page.locator('#case-columns').inner_text()
    for title in ['输入 Shape / Dtype','静态 / 动态','triton-npu 功能','triton-npu 日志']:assert title in headers
    assert 'x1[2,3,fp32], x2[2,1,fp32]' in page.locator('#rows [data-column=inputs]').first.inner_text()

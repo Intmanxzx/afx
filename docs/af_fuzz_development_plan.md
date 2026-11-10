@@ -600,3 +600,10 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 最终验收：npussh mlir round52 全fuzz **275 passed**（188.81s，仅已有NNSmith可选pygraphviz告警）；最终隔离浏览器probe通过。公网浏览器：300shape/27Pass/273功能Failed、pass/Failed/SQL过滤与图表一致、短seed查询、15.6/14.2/0.0秒逐shape展示、紧凑输入与OP、日志详情通过，JS errors=[]。截图/日志只保存在远端round52-*。
 - 部署：oracle1 `venv-round52`；wheel SHA256 `21e9f9b486d0bb5f84767f35c80c224556e79ed07304b94ec5df10c08bd5f203`；部署前一致性备份 `private/before-round52.sqlite`。重建200条派生索引以保留OP顺序，原始attempt/shape数据与用户token没有清理、没有重跑。管理员生成/轮换token及客户端只传token用隔离HTTP测试验证，未在生产新增测试账户。
 - 未完成边界：没有旧版本/同环境冷暖缓存性能A/B，无法把首次调用15秒归因到某个编译子阶段；kernel/独立编译指标未伪造。SQL是WHERE安全子集，不开放任意数据库SQL。用户原有搜索placeholder修改保留于工作树，不纳入本轮commit。
+
+## Round53：顶部统计及表格交互（2026-11-10）
+
+- 四项按测试记录/功能失败/精度失败/精度通过排序，移除全部卡片底部提示；颜色按稳定ID绑定，避免位置变化导致红黄绿错位。
+- 错误摘要长度label与输入框横排；change或Enter均立即重新渲染当前列表，不整页重载、不重置筛选/分页；输入限制40–500，超界钳制并写回输入框与localStorage。Enter上限、持久化加入远端浏览器验收。
+- 所有表头居中，阶段耗时/性能表补用语义th而非普通td。
+- 验证：npussh mlir 32项定向测试通过，隔离浏览器及公网浏览器全部通过（四卡文案/顺序/红黄绿、无提示、横排、Enter即时应用、500钳制、偏好持久化、记录和阶段表头居中，JS错误为空）。线上venv-round53；wheel SHA256 `43d8298b0ed349c648efe7147e8bc45dfdc8a27a1ed6e2e63b517704c3b0c2e4`，部署前备份private/before-round53.sqlite，无结果数据变更。未在本地测试或生成临时文件，原placeholder修改保留。

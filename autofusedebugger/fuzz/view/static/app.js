@@ -24,8 +24,8 @@ async function api(path) {
   if(!response.ok) throw new Error(value.error || '读取失败');
   return value;
 }
-function cell(row, value) {
-  const td = document.createElement('td'); td.textContent = value; row.append(td); return td;
+function cell(row, value, tag="td") {
+  const td = document.createElement(tag); td.textContent = value; row.append(td); return td;
 }
 async function details(identity, shapeIndex=null) {
   const request = ++detailGeneration;
@@ -131,7 +131,15 @@ $('reset-filters').addEventListener('click',()=>{form.reset();form.requestSubmit
 $('page-size').addEventListener('change',()=>{pageSize=Number($('page-size').value);try{localStorage.setItem('af-fuzz.page-size',String(pageSize));}catch{}page=0;cursors=[0];load();});
 $('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;load();}});$('previous').addEventListener('click',()=>{if(page>0){page--;load();}});
 $('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('command').value);$('detail-message').textContent='已复制';}catch{$('command').select();}});
-const logControl=document.createElement('label');logControl.className='log-length';logControl.textContent='错误摘要长度 ';const logInput=document.createElement('input');logInput.type='number';logInput.min='40';logInput.max='500';logInput.value=String(logLength);logInput.addEventListener('change',()=>{const next=Math.max(40,Math.min(500,Number(logInput.value)||100));if(next===logLength)return;logLength=next;logInput.value=String(logLength);try{localStorage.setItem('af-fuzz.log-length',String(logLength));}catch{}renderRecords(lastRows);});logControl.append(logInput);$('column-picker').before(logControl);
+const logControl=document.createElement('label');logControl.className='log-length';logControl.textContent='错误摘要长度 ';const logInput=document.createElement('input');logInput.type='number';logInput.min='40';logInput.max='500';logInput.value=String(logLength);function applyLogLength(){
+ const next=Math.max(40,Math.min(500,Math.trunc(Number(logInput.value))||100));
+ logInput.value=String(next);logLength=next;
+ try{localStorage.setItem('af-fuzz.log-length',String(logLength));}catch{}
+ renderRecords(lastRows);
+}
+logInput.addEventListener('change',applyLogLength);
+logInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();applyLogLength();}});
+logControl.append(logInput);$('column-picker').before(logControl);
 load();setInterval(()=>{if(!document.hidden){load(true);loadCharts();}},30000);
 
 // Compare explicit attempt IDs from a bounded same-seed list, never join by name.
@@ -212,13 +220,13 @@ function renderProvenance(result){
  for(const [key,label] of Object.entries(labels)){if(env[key]){const row=document.createElement('tr');cell(row,label);cell(row,String(env[key]));table.append(row);}}box.append(table);
  const telemetry=result.contexts.execution.telemetry?JSON.parse(result.contexts.execution.telemetry):{stages:{},shapes:{}};
  const timings=document.createElement('table'),names={generation:'生成',capability:'能力检查',prepare:'准备（非编译完成）',input_binding:'输入绑定',first_call_combined:'首次调用（含惰性编译）',correctness:'精度校验',execution_total:'整图执行总计',compile:'独立编译',kernel_mean:'Kernel'};
- const head=document.createElement('tr');for(const name of ['范围','阶段','耗时'])cell(head,name);timings.append(head);
+ const head=document.createElement('tr');for(const name of ['范围','阶段','耗时'])cell(head,name,'th');timings.append(head);
  for(const [scope,metrics] of [...Object.entries(telemetry.shapes||{}).map(([k,v])=>['当前用例 S'+k,v]),['整图计时（总计包含各shape，不重复相加）',telemetry.stages||{}]])for(const [key,value] of Object.entries(metrics)){const row=document.createElement('tr');cell(row,scope);cell(row,names[key]||key);cell(row,duration(value));timings.append(row);}
  $('timing-detail').replaceChildren(timings);
 }
 
 function renderStatisticsTables(result){
- const t=document.createElement('table'),head=document.createElement('tr');for(const label of ['后端','指标','样本','均值','最大'])cell(head,label);t.append(head);
+ const t=document.createElement('table'),head=document.createElement('tr');for(const label of ['后端','指标','样本','均值','最大'])cell(head,label,'th');t.append(head);
  for(const r of result.precise_metrics||[]){const row=document.createElement('tr');for(const value of [r.backend,r.stage==='compile'?'编译耗时':'Kernel 耗时',r.samples,duration(r.mean_ns),duration(r.max_ns)])cell(row,value);t.append(row);}
  $('performance-table').replaceChildren(t);$('metric-empty').hidden=!!result.precise_metrics?.length;
 }
