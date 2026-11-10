@@ -19,12 +19,18 @@ def initialize(path):
         conn.execute('CREATE TABLE IF NOT EXISTS owners (attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), user_id TEXT NOT NULL REFERENCES users(id))')
 
 
-def create_user(path, display_name, key_file):
+def create_user(path, display_name, key_file=None):
     from pathlib import Path
     if not isinstance(display_name,str) or not display_name.strip() or len(display_name)>80 or any(ord(c)<32 for c in display_name):
         raise ValueError('invalid display name')
     initialize(path)
     identity=str(uuid.uuid4()); key=secrets.token_urlsafe(40)
+    if key_file is None:
+        with closing(_connect(path,writable=True)) as conn,conn:
+            conn.execute('INSERT INTO users(id,display_name,key_hash) VALUES (?,?,?)',
+                         (identity,display_name,hashlib.sha256(key.encode()).hexdigest()))
+        # Offline admin explicitly requests a credential: print exactly once.
+        return {'user_id':identity,'display_name':display_name,'token':key}
     target=Path(key_file).expanduser().resolve()
     # Never print or store plaintext key in database. Offline admin distributes file.
     import os
@@ -117,11 +123,19 @@ def ingest(path, key, payload):
         return {'source_id':source,'ack':ack,'accepted':len(items)}
 
 
-def rotate_key(path, user_id, key_file):
+def rotate_key(path, user_id, key_file=None):
     """Offline administrator key rotation; identity and all data ownership persist."""
     from pathlib import Path
     import os
     identity = str(uuid.UUID(user_id))
+    if key_file is None:
+        key = secrets.token_urlsafe(40)
+        with closing(_connect(path, writable=True)) as conn, conn:
+            cursor = conn.execute('UPDATE users SET key_hash=? WHERE id=? AND active=1',
+                                  (hashlib.sha256(key.encode()).hexdigest(), identity))
+            if cursor.rowcount != 1:
+                raise ValueError('active administrator-managed user not found')
+        return {'user_id': identity, 'token': key, 'rotated': True}
     target = Path(key_file).expanduser().resolve()
     key = secrets.token_urlsafe(40)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

@@ -44,7 +44,6 @@ def main(argv=None):
         p.set_defaults(command=command)
         p.add_argument("--data-dir", help=argparse.SUPPRESS if command=="setup" else None)
         if command == "setup":
-            p.add_argument('--user', required=True, help='administrator-issued personal name')
             p.add_argument('--token', required=True, help='administrator-issued secret; never printed')
             p.add_argument('--sync-interval', type=float, default=30)
     seed = maintenance.add_parser("seed", help="inspect a frozen short-seed case without execution")
@@ -88,11 +87,9 @@ def main(argv=None):
     admin = administration.add_parser("user", help="offline administrator creates an upload identity")
     admin.add_argument("database")
     admin.add_argument("display_name")
-    admin.add_argument("key_file")
     rotate = administration.add_parser("rotate-token", help="offline administrator rotates an existing upload key")
     rotate.add_argument("database")
     rotate.add_argument("user")
-    rotate.add_argument("key_file")
     sync = maintenance.add_parser("sync", help="configure/run independent automatic upload")
     sync.add_argument("action", choices=("configure", "once", "run", "start", "status", "reset-epoch", "verify"))
     sync.add_argument("--data-dir", required=True)
@@ -117,7 +114,7 @@ def main(argv=None):
             result = backup(args.database, args.destination)
         elif args.command == "admin-user":
             from .central.repository import create_user
-            result = create_user(args.database, args.display_name, args.key_file)
+            result = create_user(args.database, args.display_name)
         elif args.command == "sync":
             from .sync.client import configure, once, run, start, status, reset, verify_identity
             home = data_home(args.data_dir)
@@ -141,10 +138,10 @@ def main(argv=None):
             with reading(args.database) as conn:
                 row=conn.execute('SELECT id FROM users WHERE display_name=?',(args.user,)).fetchone()
             if row is None:raise ValueError('unknown user')
-            result = rotate_key(args.database, row[0], args.key_file)
+            result = rotate_key(args.database, row[0])
         elif args.command == "setup":
             from .onboarding import initialize_user
-            result = initialize_user(args.data_dir, args.user, args.token, args.sync_interval)
+            result = initialize_user(args.data_dir, args.token, args.sync_interval)
         elif args.command == "seed":
             from .generation import materialize, content_manifest, workload_id
             import time

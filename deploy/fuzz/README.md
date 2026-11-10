@@ -5,7 +5,7 @@
 ```sh
 python3 -m venv venv
 venv/bin/pip install --no-deps ./autofusedebugger-0.1.2-py3-none-any.whl
-venv/bin/autofusedbg fuzz admin user ./data/results.sqlite '唯一展示名' ./private/upload.key
+venv/bin/autofusedbg fuzz admin user ./data/results.sqlite 'niuyuhu'
 venv/bin/autofusedbg fuzz admin serve ./data/results.sqlite --port 8090
 ```
 
@@ -14,7 +14,7 @@ key 文件为0600。管理员通过安全渠道离线分发，不在线申请；
 ## 自动同步
 
 ```sh
-autofusedbg fuzz setup --user NAME --token "$FUZZ_TOKEN" --sync-interval 30
+autofusedbg fuzz setup --token "$FUZZ_TOKEN" --sync-interval 30
 ```
 
 将sync run配置成systemd服务（用户/路径选当前环境；Restart=on-failure、UMask=0077），首次setup后长期运行，不逐批publish。同步独立于测试，故障重试不阻塞执行。结果attempt不可变，新结果新UUID；source/递增revision/本地ACK和中心receipt持久化。重复ACK丢失可幂等重试。每周期最多20批×50条，周期可配置1..86400秒。配置变更下一周期生效。
@@ -37,7 +37,7 @@ Docker可选：把wheel放本目录，`mkdir data; chown 10001 data; docker comp
 一次完成本地setup和30秒后台上传（不需逐批操作）：
 
 ```sh
-autofusedbg fuzz setup --data-dir ./fuzz-data --user NAME --token "$FUZZ_TOKEN" --sync-interval 30
+autofusedbg fuzz setup --data-dir ./fuzz-data --token "$FUZZ_TOKEN" --sync-interval 30
 autofusedbg fuzz maintenance sync status --data-dir ./fuzz-data
 ```
 

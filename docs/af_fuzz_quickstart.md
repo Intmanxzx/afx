@@ -7,7 +7,7 @@
 在已有可用Torch/CANN的NPU环境安装同版本包，管理员离线发放姓名和token：
 
 ```sh
-autofusedbg fuzz setup --user niuyuhu --token "$FUZZ_TOKEN" --sync-interval 30
+autofusedbg fuzz setup --token "$FUZZ_TOKEN" --sync-interval 30
 autofusedbg fuzz run                 # 持续运行，默认后台
 autofusedbg fuzz status
 autofusedbg fuzz stop

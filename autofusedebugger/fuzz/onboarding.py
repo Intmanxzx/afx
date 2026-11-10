@@ -14,9 +14,7 @@ from .resources import adaptive_defaults
 ENDPOINT='https://autofuse.online'
 
 
-def initialize_user(home, user, token, interval=30, *, opener=urlopen, start_sync=True):
-    if not user or not user.strip() or len(user)>80:
-        raise ValueError('user must be a nonempty personal name')
+def initialize_user(home, token, interval=30, *, opener=urlopen, start_sync=True):
     if not isinstance(token,str) or not 20<=len(token)<=256 or any(ord(c)<33 for c in token):
         raise ValueError('invalid token')
     if not 1<=interval<=86400:
@@ -29,8 +27,9 @@ def initialize_user(home, user, token, interval=30, *, opener=urlopen, start_syn
         identity=json.loads(raw)
         import uuid
         uuid.UUID(identity['user_id'])
-        if identity['display_name']!=user:
-            raise ValueError('user does not match administrator-issued token')
+        user = identity['display_name']
+        if not isinstance(user, str) or not user.strip() or len(user)>80:
+            raise ValueError('invalid server identity')
     except (OSError,KeyError,TypeError,json.JSONDecodeError):
         raise ValueError('token verification failed; check network and administrator-issued identity') from None
     home=data_home(home);home.mkdir(parents=True,exist_ok=True,mode=0o700)

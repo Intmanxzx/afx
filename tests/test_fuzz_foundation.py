@@ -185,5 +185,5 @@ def test_setup_short_user_flag(tmp_path, capsys):
         main(['setup', '--help'])
     assert exc.value.code == 0
     help_text = capsys.readouterr().out
-    assert '--user ' in help_text
+    assert '--token ' in help_text and '--user ' not in help_text
     assert '--user-name' not in help_text and '--display-name' not in help_text

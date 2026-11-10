@@ -142,9 +142,9 @@ def test_setup_configures_and_starts_sync_once_with_admin_key(tmp_path,monkeypat
     import io,uuid
     from autofusedebugger.fuzz import onboarding
     actual=onboarding.initialize_user
-    monkeypatch.setattr(onboarding,'initialize_user',lambda home,user,token,interval: actual(home,user,token,interval,
-        opener=lambda *a,**k:io.BytesIO(json.dumps({'user_id':str(uuid.uuid4()),'display_name':user}).encode())))
-    assert main(['setup','--data-dir',str(tmp_path),'--user','Tester','--token',key.read_text(),'--sync-interval','30'])==0
+    monkeypatch.setattr(onboarding,'initialize_user',lambda home,token,interval: actual(home,token,interval,
+        opener=lambda *a,**k:io.BytesIO(json.dumps({'user_id':str(uuid.uuid4()),'display_name':'Tester'}).encode())))
+    assert main(['setup','--data-dir',str(tmp_path),'--token',key.read_text(),'--sync-interval','30'])==0
     assert len(calls)==1
     assert json.loads((tmp_path/'sync.json').read_text())['interval']==30
 
@@ -207,3 +207,27 @@ def test_identity_is_authenticated_and_does_not_expose_key(tmp_path):
                 assert json.load(response) == {'user_id': user['user_id'], 'display_name': 'Identity'}
         finally:
             server.shutdown(); thread.join()
+
+
+def test_token_only_setup_resolves_cloud_name(tmp_path, monkeypatch):
+    from autofusedebugger.fuzz import onboarding
+    from autofusedebugger.fuzz.central.server import create_server
+    from autofusedebugger.fuzz.central.repository import create_user
+    import threading
+    server_db=tmp_path/'central.sqlite'
+    identity=create_user(server_db,'niuyuhu')
+    with create_server(server_db,port=0) as server:
+        thread=threading.Thread(target=server.serve_forever);thread.start()
+        try:
+            monkeypatch.setattr(onboarding,'ENDPOINT',f'http://127.0.0.1:{server.server_port}')
+            # Production configure enforces HTTPS; this local fixture only tests
+            # real identity authentication and config identity assignment.
+            from autofusedebugger.fuzz.sync import client
+            monkeypatch.setattr(client,'configure',lambda *args:None)
+            home=tmp_path/'client'
+            result=onboarding.initialize_user(home,identity['token'],start_sync=False)
+            assert result['user']=='niuyuhu'
+            assert json.loads((home/'config.json').read_text())['identity']['user_id']==identity['user_id']
+            assert identity['token'] not in json.dumps(result)
+        finally:
+            server.shutdown();thread.join()
