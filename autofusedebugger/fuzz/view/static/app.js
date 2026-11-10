@@ -28,6 +28,7 @@ function cell(row, value, tag="td") {
   const td = document.createElement(tag); td.textContent = value; row.append(td); return td;
 }
 async function details(identity, shapeIndex=null) {
+  hideFieldTooltip();
   const request = ++detailGeneration;
   $('detail').hidden = false; $('detail-message').textContent = '加载中…';
   $('detail-content').textContent = ''; $('command').value = ''; $('copy').disabled = true;
@@ -53,7 +54,7 @@ const preferenceKey='af-fuzz.record-columns.v3';
 let columnPreferences={order:[],visibility:{}},currentColumns=[],lastData='',lastRows=[];
 try{const saved=JSON.parse(localStorage.getItem(preferenceKey));if(saved&&Array.isArray(saved.order)&&saved.visibility&&typeof saved.visibility==='object')columnPreferences=saved;}catch{}
 function orderedColumns(){return [...columnPreferences.order.map(key=>currentColumns.find(c=>c.key===key)).filter(Boolean),...currentColumns.filter(c=>!columnPreferences.order.includes(c.key))];}
-function isVisible(c){return columnPreferences.visibility[c.key]??(c.defaultVisible&&c.populated);}
+function isVisible(c){return columnPreferences.visibility[c.key]??(c.defaultVisible&&(c.populated||c.key==='af-mlir:total'));}
 function saveColumns(){try{localStorage.setItem(preferenceKey,JSON.stringify(columnPreferences));}catch{}applyColumns();renderColumnPicker();}
 function configureColumns(definitions){currentColumns=definitions;applyColumns();if(!$('column-picker').open)renderColumnPicker();}
 function applyColumns(){
@@ -190,9 +191,9 @@ function navigate(){
   $('page-title').textContent={overview:'总览',records:'功能&精度',performance:'性能分析',backends:'后端'}[name];
   document.querySelectorAll('nav a').forEach(el=>{el.classList.toggle('active',el.dataset.page===name);if(el.dataset.page===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
 }
-window.addEventListener('hashchange',navigate);
+window.addEventListener('hashchange',()=>{hideFieldTooltip();navigate();});
 $('close-detail').addEventListener('click',()=>{location.hash='records';navigate();});
-loadCharts();navigate();
+
 
 function duration(ns){return ns==null?'Unkown':(ns/1e6).toFixed(3)+' ms';}
 function versionText(v){return ['cann','torch','torch_npu','autofuse_commit'].map(k=>({cann:'CANN',torch:'Torch',torch_npu:'Torch NPU',autofuse_commit:'Autofuse'}[k])+': '+(v[k]||(k==='autofuse_commit'&&v.autofuse_binary?'binary '+v.autofuse_binary.slice(0,12):'未采集'))).join(' ｜ ');}
@@ -339,3 +340,5 @@ document.addEventListener('focusout',hideFieldTooltip);
 document.addEventListener('keydown',event=>{if(event.key==='Escape')hideFieldTooltip();});
 window.addEventListener('scroll',event=>{if(event.target!==fieldTooltip)hideFieldTooltip();},true);
 window.addEventListener('resize',hideFieldTooltip);
+
+loadCharts();navigate();
