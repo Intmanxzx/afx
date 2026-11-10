@@ -18,7 +18,7 @@ with create_server(repo.path) as server:
    browser=p.chromium.launch();page=browser.new_page(viewport={'width':1800,'height':1100});errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
    page.goto(server.viewer_url+'#records',wait_until='networkidle')
    expect(page.locator('#total')).to_have_text('3');expect(page.locator('#rows tr')).to_have_count(3)
-   assert page.locator('.cards>div>span').all_inner_texts()==['测试记录','功能失败','精度失败','精度通过']
+   assert page.locator('.cards>div>span').all_inner_texts()==['测试记录','功能Failed','精度Failed','Pass']
    assert page.locator('.cards small').count()==0
    for identity,color in [('errors','rgb(211, 79, 67)'),('fail','rgb(185, 133, 0)'),('ok','rgb(20, 125, 104)')]:
     assert page.locator('#'+identity).evaluate('(e)=>getComputedStyle(e).color')==color
@@ -32,15 +32,23 @@ with create_server(repo.path) as server:
    log_input.fill('999');log_input.press('Enter');expect(log_input).to_have_value('500')
    page.locator('nav [data-page=overview]').click()
    assert page.locator('#legendOverall button').all_inner_texts()==['Pass','精度Failed','功能Failed']
+   expect(page.locator('#legendOverall [data-status=gen_error]')).to_have_attribute('aria-pressed','false')
+   expect(page.locator('#chartOverall .seg[data-key=gen_error]')).to_have_count(0)
+   page.locator('#legendOverall [data-status=gen_error]').click()
    page.locator('#chartOverall .seg[data-key=gen_error]').dispatch_event('pointerenter')
    expect(page.locator('#vizTooltip')).to_contain_text('功能Failed')
    assert 'gen_error' not in page.locator('#vizTooltip').inner_text()
    toggle=page.locator('#legendOverall [data-status=gen_error]');toggle.click()
    expect(toggle).to_have_attribute('aria-pressed','false');toggle.click()
    page.evaluate("updateStatistics({...latestStatistics,overall:[{label:'全部',status:'unknown',count:1}]})")
-   expect(page.locator('#legendOverall [data-status=unknown]')).to_have_text('Unknown')
+   expect(page.locator('#legendOverall [data-status=unknown]')).to_have_text('Unkown')
    page.reload(wait_until='networkidle')
    page.locator('nav [data-page=records]').click()
+   expect(page.locator('[data-column="af-mlir:function"] .failed')).to_have_text('功能Failed')
+   page.evaluate('''()=>{const items=structuredClone(lastRows);const a=items[0].backends['af-mlir'][0];a.correctness_status='fail';a.measurement_status='error';renderRecords(items);}''')
+   expect(page.locator('[data-column="af-mlir:accuracy"] .accuracy-failed')).to_have_text('精度Failed')
+   expect(page.locator('[data-column="af-mlir:kernel"] .failed')).to_have_text('性能Failed')
+   page.evaluate('renderRecords(lastRows)')
    headers=page.locator('#case-columns').inner_text()
    for title in ['输入 Shape / Dtype','静态 / 动态','triton-npu 功能','triton-npu 日志']:assert title in headers
    assert 'x1[2,3,fp32], x2[2,1,fp32]' in page.locator('#rows [data-column=inputs]').first.inner_text()

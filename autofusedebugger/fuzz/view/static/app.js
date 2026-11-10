@@ -44,7 +44,7 @@ async function details(identity, shapeIndex=null) {
     $('detail-content').parentElement.hidden=true;
     const table = document.createElement('table');
     for(const shape of result.shape_results) {
-      for(const [label,value] of [['当前 Shape',shape.shape_index],['功能',shape.correctness==='error'?'Failed':['pass','fail'].includes(shape.correctness)?'Pass':'Unknown'],['精度',({pass:'Pass',fail:'Failed'}[shape.correctness]||'Unknown')],['首次调用（含惰性编译）',duration(shape.first_call_combined_ns)],['错误阶段',shape.error_stage||'—']]){const row=document.createElement('tr');cell(row,label);const td=cell(row,String(value));if(['功能','精度'].includes(label))td.className=value==='Pass'?'pass':value==='Failed'?(label==='精度'?'accuracy-failed':'failed'):'unknown';table.append(row);}
+      for(const [label,value] of [['当前 Shape',shape.shape_index],['功能',shape.correctness==='error'?'功能Failed':['pass','fail'].includes(shape.correctness)?'Pass':'Unkown'],['精度',({pass:'Pass',fail:'精度Failed'}[shape.correctness]||'Unkown')],...(shape.performance==='error'?[['性能','性能Failed']]:[]),['首次调用（含惰性编译）',duration(shape.first_call_combined_ns)],['错误阶段',shape.error_stage||'—']]){const row=document.createElement('tr');cell(row,label);const td=cell(row,String(value));if(['功能','精度','性能'].includes(label))td.className=value==='Pass'?'pass':String(value).endsWith('Failed')?(label==='精度'?'accuracy-failed':'failed'):'unknown';table.append(row);}
     }
     $('shape-detail').replaceChildren(table);
     $('detail-message').textContent = ''; $('copy').disabled = false;
@@ -82,7 +82,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape')$('column-pi
 $('all-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=true;saveColumns();});
 $('no-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=false;saveColumns();});
 $('reset-columns').addEventListener('click',()=>{columnPreferences={order:[],visibility:{}};saveColumns();});
-function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unknown';return span;}
+function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unkown';return span;}
 function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
 function renderRecords(items){
  const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
@@ -103,13 +103,14 @@ function renderRecords(items){
  else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
- if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'Failed':null;}
- if(kind==='function'){state=['error','unsupported'].includes(latest.status)?'failed':['ok','fail'].includes(latest.status)?'pass':'';text=state==='pass'?'Pass':state==='failed'?'Failed':null;}
+ if(latest){let text=null,state='';if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}
+ if(kind==='function'){state=['error','unsupported'].includes(latest.status)?'failed':['ok','fail'].includes(latest.status)?'pass':'';text=state==='pass'?'Pass':state==='failed'?'功能Failed':null;}
  if(kind==='logs'&&['error','unsupported','fail'].includes(latest.status))text=shortLog(latest.core_error||(latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
- if(kind==='kernel'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
+ if(kind==='kernel'&&latest.measurement_status==='error'){text='性能Failed';state='failed';}
+ if(kind==='kernel'&&latest.measurement_status!=='error'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
  if(kind==='total')text=seconds(latest.total_ns);
  if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape：输入绑定 + 首次调用（含惰性编译）+ 精度校验；不等于 Kernel 耗时';if(kind==='logs'){button.title=latest.core_error||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
- if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unknown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
+ if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unkown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
  caseMetadata.set(latest.id,item.metadata);}}
  else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
  if(!populated)td.append(unknown());if(populated)c.populated=true;
@@ -199,13 +200,13 @@ window.addEventListener('hashchange',navigate);
 $('close-detail').addEventListener('click',()=>{location.hash='records';navigate();});
 loadCharts();navigate();
 
-function duration(ns){return ns==null?'Unknown':(ns/1e6).toFixed(3)+' ms';}
+function duration(ns){return ns==null?'Unkown':(ns/1e6).toFixed(3)+' ms';}
 function versionText(v){return ['cann','torch','torch_npu','autofuse_commit'].map(k=>({cann:'CANN',torch:'Torch',torch_npu:'Torch NPU',autofuse_commit:'Autofuse'}[k])+': '+(v[k]||(k==='autofuse_commit'&&v.autofuse_binary?'binary '+v.autofuse_binary.slice(0,12):'未采集'))).join(' ｜ ');}
 function graphText(meta={}){return (meta.op_types||[]).join(' · ');}
 function tensorText(shapes={},weights=[],types={}){
  const short={float16:'fp16',float32:'fp32',float64:'fp64',bfloat16:'bf16'};
  const entries=[...Object.entries(shapes).map(([n,s])=>({shape:s,dtype:types[n]})),...weights];
- return entries.map((t,i)=>'x'+(i+1)+'['+[...t.shape,short[t.dtype]||t.dtype||'Unknown'].join(',')+']').join(', ');
+ return entries.map((t,i)=>'x'+(i+1)+'['+[...t.shape,short[t.dtype]||t.dtype||'Unkown'].join(',')+']').join(', ');
 }
 function shortLog(text){return text.length>logLength?text.slice(0,logLength)+'...':text;}
 function renderCaseInfo(result){
