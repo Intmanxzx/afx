@@ -17,6 +17,9 @@ with create_server(repo.path) as server:
   with sync_playwright() as p:
    browser=p.chromium.launch();page=browser.new_page(viewport={'width':1800,'height':1100});errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
    page.goto(server.viewer_url+'#records',wait_until='networkidle')
+   assert page.locator('.workspace>header').count()==0
+   assert page.locator('.topbar #refresh-time').count()==1
+   assert page.locator('.cards').bounding_box()['y']-page.locator('.topbar').bounding_box()['height']<32
    expect(page.locator('#total')).to_have_text('3');expect(page.locator('#rows tr')).to_have_count(3)
    assert page.locator('.cards>div>span').all_inner_texts()==['测试记录','功能Failed','精度Failed','Pass']
    assert page.locator('.cards small').count()==0

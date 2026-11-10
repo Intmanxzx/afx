@@ -28,3 +28,6 @@
 th,thead td{text-align:left}
 
 .legend button{display:inline-flex;align-items:center;gap:5px}
+
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.topbar #refresh-time{margin-left:auto;color:#a8c1b6;white-space:nowrap;font-size:12px}
