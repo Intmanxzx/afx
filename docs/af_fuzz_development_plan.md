@@ -479,3 +479,11 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - mlir已知acceptance-home、round21-e2e-home的sync.json原子切换到新域名，30秒周期不变，密钥/ACK不变。没有创建新测试数据。
 - 远端Playwright：新站记录页2分组/3条结果、新summary 200、旧API不跳转200、旧页面跳新域名保留fragment均通过，无pageerror。Caddy备份/etc/caddy/Caddyfile.before-autofuse-online。
 - 浏览器列偏好按origin隔离，旧esay.app localStorage不会自动迁移到新域名。
+
+## 27. 精度/性能结果拆列与用户归属过滤（2026-11-09）
+
+- 后端不再用一个“通过”概括所有阶段。每后端独立精度结果、性能测量、总耗时列；accuracy由shape正确性事实聚合，性能失败不抹除已通过的精度。性能仅标记已测量/未测量/测量失败/部分测量/未完成，没有性能达标阈值就不称性能通过。
+- 性能列逐shape展示mean_wall_ns（同步wall-time/次），不拿generation+execution总耗时冒充性能。总耗时仍单列，历史部分计时明确标注。历史重试也分别展示精度/测量状态。
+- 用户ID默认列、点击ID填入筛选；精确ID参数化SQL作用于分页、汇总、statistics。筛选进入URL可收藏/分享，不读token、不把公开筛选当鉴权。旧列偏好迁移展开后端列，保留版本选择并默认启用用户ID。
+- 小批12case/24attempt验证：独立状态、ID点击/无结果/重置、列偏好、桌面和手机布局均通过；focused=50 passed。公网浏览器验证同样通过，目前仍3条真实记录，无新增大批测试。
+- 公网round33，备份private/before-round33.sqlite；wheel SHA256 6ef5aae7042a5ffe0cef06154c8636777eb8da2b27e8e2de98af4e80edd7bc9b。测试/安装全部远端，本地无生成文件。

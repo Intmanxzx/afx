@@ -7,9 +7,9 @@ function beijing(value) {
   return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(date);
 }
 const caseMetadata = new Map();
-const labels = {ok:'通过',fail:'精度失败',error:'异常',unsupported:'不支持'};
+const labels = {ok:'执行成功',fail:'精度失败',error:'异常',unsupported:'不支持'};
 const initial = new URLSearchParams(location.search);
-for (const name of ['seed','status']) if(initial.has(name)) form.elements[name].value = initial.get(name);
+for (const name of ['seed','status','user_id']) if(initial.has(name)) form.elements[name].value = initial.get(name);
 let applied = parameters();
 let cursors = [0], page = 0, next = null, generation = 0, detailGeneration = 0;
 function parameters() {
@@ -18,6 +18,7 @@ function parameters() {
   const status = form.elements.status.value;
   if(seed) p.set('seed',seed);
   if(status) p.set('status',status);
+  if(form.elements.user_id.value.trim())p.set('user_id',form.elements.user_id.value.trim());
   return p;
 }
 async function api(path) {
@@ -58,10 +59,15 @@ async function details(identity) {
     $('detail').scrollIntoView({behavior:'smooth',block:'start'});
   } catch(error) {if(request === detailGeneration) $('detail-message').textContent = error.message;}
 }
-const extraColumns=[['cann','CANN'],['torch','Torch'],['torch_npu','Torch NPU'],['autofuse_commit','Autofuse commit'],['autofuse_binary','Autofuse binary'],['triton','Triton'],['python','Python'],['package_version','Debugger'],['machine','架构'],['platform','系统'],['user_id','用户 ID'],['source_id','来源 ID'],['batch_id','批次']];
+const extraColumns=[['cann','CANN'],['torch','Torch'],['torch_npu','Torch NPU'],['autofuse_commit','Autofuse commit'],['autofuse_binary','Autofuse binary'],['triton','Triton'],['python','Python'],['package_version','Debugger'],['machine','架构'],['platform','系统'],['source_id','来源 ID'],['batch_id','批次']];
 const preferenceKey='af-fuzz.record-columns.v1';
 let columnPreferences={order:[],hidden:extraColumns.map(([key])=>key)}, currentColumns=[];
 try{const saved=JSON.parse(localStorage.getItem(preferenceKey));if(saved && Array.isArray(saved.order)&&saved.order.every(x=>typeof x==='string')&&Array.isArray(saved.hidden)&&saved.hidden.every(x=>typeof x==='string'))columnPreferences=saved;}catch{}
+if(!columnPreferences.outcomesV2){
+ columnPreferences.order=columnPreferences.order.flatMap(key=>key.startsWith('backend:')?['accuracy','performance','duration'].map(kind=>key+':'+kind):[key]);
+ columnPreferences.order=columnPreferences.order.filter(key=>key!=='user_id');columnPreferences.order.splice(1,0,'user_id');
+ columnPreferences.hidden=columnPreferences.hidden.filter(key=>key!=='user_id');columnPreferences.outcomesV2=true;
+}
 function saveColumns(){try{localStorage.setItem(preferenceKey,JSON.stringify(columnPreferences));}catch{}applyColumns();renderColumnPicker();}
 function configureColumns(definitions){
  currentColumns=definitions;
@@ -87,7 +93,7 @@ function renderColumnPicker(){
    for(const [offset,text] of [[-1,'上移'],[1,'下移']]){const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=offset<0?'↑':'↓';button.setAttribute('aria-label',label+text);button.disabled=index+offset<0||index+offset>=columns.length;button.addEventListener('click',()=>{const other=columns[index+offset][0],a=columnPreferences.order.indexOf(key),b=columnPreferences.order.indexOf(other);[columnPreferences.order[a],columnPreferences.order[b]]=[columnPreferences.order[b],columnPreferences.order[a]];saveColumns();});row.append(button);}options.append(row);
  });
 }
-$('reset-columns').addEventListener('click',()=>{columnPreferences={order:currentColumns.map(c=>c[0]),hidden:extraColumns.map(c=>c[0])};saveColumns();});
+$('reset-columns').addEventListener('click',()=>{columnPreferences={order:currentColumns.map(c=>c[0]),hidden:extraColumns.map(c=>c[0]),outcomesV2:true};saveColumns();});
 async function load() {
 
   const request = ++generation;
@@ -120,26 +126,28 @@ async function load() {
       const meta=document.createElement('small');meta.className='case-ops';meta.textContent=(item.metadata.op_types||[]).join(' · ')+' ｜ '+(item.metadata.n_nodes??'—')+' 节点';seedCell.append(meta);
       const mode=document.createElement('span');mode.className='config-label';mode.textContent=(item.execution?.static_only?'静态':'动态')+' · '+(item.evaluation?.performance?'正确性 + 性能':'正确性');seedCell.append(mode);
       const device=cell(tr,'');const name=document.createElement('strong');name.textContent=item.device_name||'设备未记录';device.append(name);
+      const userCell=cell(tr,'');
+      const userButton=document.createElement('button');userButton.className='user-filter secondary';userButton.textContent=item.user_id||'未采集';userButton.title='只看此用户';userButton.disabled=!item.user_id;
+      userButton.addEventListener('click',()=>{form.elements.user_id.value=item.user_id;form.requestSubmit();});userCell.append(userButton);
       for(const backend of backends){
-        const td=cell(tr,'');const attempts=item.backends[backend]||[];
-        if(!attempts.length){const empty=document.createElement('span');empty.className='not-run';empty.textContent='未运行';td.append(empty);continue;}
-        const latest=attempts[0];const button=document.createElement('button');button.className='backend-result secondary';
-        const state=document.createElement('span');state.className='state '+(Object.hasOwn(labels,latest.status)?latest.status:'');state.textContent=labels[latest.status]||latest.status;
-        const time=document.createElement('span');time.className='result-duration';time.textContent=duration(latest.total_ns);
-        const scope=document.createElement('span');scope.className='result-scope';scope.textContent=latest.duration_scope==='partial_recorded_only'?'已记录阶段耗时':'生成 + 执行总耗时';
-        button.append(state,time,scope);button.setAttribute('aria-label',backend+' '+state.textContent+'，查看详情');
-        button.addEventListener('click',()=>details(latest.id));td.append(button);
-        const target=document.createElement('small');target.textContent=latest.device||'设备序号未采集';td.append(target);
-        if(attempts.length>1){const history=document.createElement('details');history.className='history';const title=document.createElement('summary');title.textContent=attempts.length+' 次运行';history.append(title);
-          for(const attempt of attempts){const link=document.createElement('button');link.className='history-result secondary';link.textContent=beijing(attempt.created_at)+' '+labels[attempt.status];link.addEventListener('click',()=>details(attempt.id));history.append(link);}td.append(history);}
+        const attempts=item.backends[backend]||[], latest=attempts[0];
+        const accuracyCell=cell(tr,''),performanceCell=cell(tr,''),timeCell=cell(tr,'');
+        if(!latest){for(const td of [accuracyCell,performanceCell,timeCell])td.textContent='未运行';continue;}
+        const correctness={pass:'精度通过',fail:'精度失败',error:'校验异常',unsupported:'不支持',not_checked:'未校验',not_requested:'未请求'};
+        const measurement={measured:'已测量',partial:'部分测量',error:'测量失败',not_completed:'未完成',not_requested:'未测量'};
+        for(const [td,text] of [[accuracyCell,correctness[latest.correctness_status]||'未校验'],[performanceCell,measurement[latest.measurement_status]||'未测量']]){const button=document.createElement('button');button.className='outcome-button secondary';button.textContent=text;button.addEventListener('click',()=>details(latest.id));td.append(button);}
+        for(const shape of latest.shapes.filter(s=>s.performance==='measured')){const metric=document.createElement('small');metric.textContent='S'+shape.shape_index+' · '+duration(shape.mean_wall_ns);performanceCell.append(metric);}
+        if(latest.shapes.some(s=>s.performance==='measured')){const metric=document.createElement('small');metric.textContent='同步 wall-time / 次';performanceCell.append(metric);}
+        timeCell.textContent=duration(latest.total_ns);const scope=document.createElement('small');scope.textContent=latest.duration_scope==='partial_recorded_only'?'仅已记录阶段':'生成 + 执行';timeCell.append(scope);
+        if(attempts.length>1){const history=document.createElement('details'),title=document.createElement('summary');history.className='history';title.textContent=attempts.length+' 次运行';history.append(title);for(const attempt of attempts){const button=document.createElement('button');button.className='history-result secondary';button.textContent=beijing(attempt.created_at)+' · '+(correctness[attempt.correctness_status]||'未校验')+' / '+(measurement[attempt.measurement_status]||'未测量');button.addEventListener('click',()=>details(attempt.id));history.append(button);}accuracyCell.append(history);}
         caseMetadata.set(latest.id,item.metadata);
       }
       const date=cell(tr,'');date.className='case-date';date.textContent=beijing(item.created_at);
-      const keys=['seed','device',...backends.map(b=>'backend:'+b),'time'];
+      const keys=['seed','device','user_id',...backends.flatMap(b=>['accuracy','performance','duration'].map(kind=>'backend:'+b+':'+kind)),'time'];
       for(const [key,label] of extraColumns){cell(tr,item.versions[key]??item[key]??'未采集');keys.push(key);}
       [...tr.children].forEach((td,i)=>td.dataset.column=keys[i]);$('rows').append(tr);
     }
-    const definitions=[['seed','Seed / 测试配置',220],['device','设备',180],...backends.map(b=>['backend:'+b,b,190]),['time','时间',180],...extraColumns.map(([key,label])=>[key,label,210])];
+    const definitions=[['seed','Seed / 测试配置',220],['user_id','用户 ID',170],['device','设备',150],...backends.flatMap(b=>[['backend:'+b+':accuracy',b+' · 精度',130],['backend:'+b+':performance',b+' · 性能测量',170],['backend:'+b+':duration',b+' · 总耗时',150]]),['time','时间',180],...extraColumns.map(([key,label])=>[key,label,210])];
     configureColumns(definitions);
     next = result.next_cursor;
     $('next').disabled = next === null; $('previous').disabled = page === 0;

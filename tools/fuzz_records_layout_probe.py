@@ -18,7 +18,7 @@ if not repo.path.exists():
                 'status':'fail' if index==2 and backend=='npu-eager' else 'ok',
                 'execution':{'backend':backend,'device':'cpu' if backend=='cpu' else 'npu:0','static_only':index%3==0,'batch_id':'small-layout-check',
                              'telemetry':json.dumps({'version':1,'stages':{'generation':1000,'execution_total':2394258000},'shapes':{}})},
-                'evaluation':{'performance':index%2==0},'shape_results':[]},
+                'evaluation':{'performance':index%2==0},'shape_results':[{'shape_index':0,'correctness':'pass','performance':'measured' if index%2==0 else 'not_requested','mean_wall_ns':1000 if index%2==0 else None}]},
                 environment={'device_name':'MLIR NPU' if index%2 else '测试设备 · 很长的设备名字也不应越界',
                              'installation_id':'baba3078-6137-47e6-aac3-1c9ebda1e71d','user_id':'64899d98-b1dd-466d-bd89-82cf86296446',
                              'cann':'9.3.0','torch':'2.10.0+cpu','torch_npu':'2.10.0.post7.dev20261015','autofuse_binary':'d'*64})
@@ -47,8 +47,17 @@ with create_server(repo.path) as server:
             page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(server.viewer_url+'#records',wait_until='networkidle')
             expect(page.locator('#rows tr')).to_have_count(12)
-            expect(page.locator('#case-columns th')).to_have_count(5)
+            expect(page.locator('#case-columns th')).to_have_count(10)
             expect(page.locator('#case-columns')).not_to_contain_text('af-mlir')
+            expect(page.locator('#case-columns [data-column=user_id]')).to_be_visible()
+            assert '精度通过' in page.locator('#rows').inner_text()
+            assert '已测量' in page.locator('#rows').inner_text() and '未测量' in page.locator('#rows').inner_text()
+            page.locator('#rows .user-filter').first.click()
+            expect(page.locator('[name=user_id]')).to_have_value('64899d98-b1dd-466d-bd89-82cf86296446')
+            expect(page.locator('#total')).to_have_text('24')
+            page.locator('[name=user_id]').fill('nobody');page.locator('button[type=submit]').click()
+            expect(page.locator('#total')).to_have_text('0');expect(page.locator('#rows tr')).to_have_count(0)
+            page.locator('#reset-filters').click();expect(page.locator('#rows tr')).to_have_count(12)
             geometry(page)
             page.screenshot(path=str(root/'records-desktop.png'),full_page=True)
             expect(page.locator('.topbar nav')).to_be_visible()
@@ -68,7 +77,7 @@ with create_server(repo.path) as server:
             page.screenshot(path=str(root/'records-expanded.png'),full_page=True)
             page.set_viewport_size({'width':390,'height':844});geometry(page)
             page.screenshot(path=str(root/'records-mobile.png'),full_page=True)
-            page.locator('#rows button').first.click();expect(page.locator('#timing-detail table')).to_be_visible()
+            page.locator('#rows .outcome-button').first.click();expect(page.locator('#timing-detail table')).to_be_visible()
             assert not errors,errors
             browser.close()
         print(json.dumps({'cases':12,'attempts':24,'geometry':'no overlap or text overflow','desktop':1440,'mobile':390,'errors':errors}))

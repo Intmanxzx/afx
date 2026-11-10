@@ -3,8 +3,8 @@ from ..storage.queries import reading, filters
 from ..backend_names import display_backend
 
 
-def statistics(database, *, seed=None, status=None):
-    clauses, values = filters(seed, status)
+def statistics(database, *, seed=None, status=None, user_id=None):
+    clauses, values = filters(seed, status, user_id)
     where = ' WHERE ' + ' AND '.join('a.'+c for c in clauses) if clauses else ''
     with reading(database) as conn:
         conn.execute('BEGIN')

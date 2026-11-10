@@ -20,7 +20,7 @@ def reading(path):
         conn.close()
 
 
-def filters(seed=None, status=None):
+def filters(seed=None, status=None, user_id=None):
     clauses, values = [], []
     if seed is not None:
         from ..contracts import Seed
@@ -32,6 +32,11 @@ def filters(seed=None, status=None):
         if status not in {'ok', 'fail', 'error', 'unsupported'}:
             raise ValueError('invalid status filter')
         clauses.append('status=?'); values.append(status)
+    if user_id is not None:
+        if not isinstance(user_id, str) or not 1 <= len(user_id) <= 256:
+            raise ValueError('invalid user filter')
+        clauses.append('id IN (SELECT attempt_id FROM attempt_facts WHERE user_id=?)')
+        values.append(user_id)
     return clauses, values
 
 
@@ -41,12 +46,12 @@ class ResultQueries:
         with reading(path):
             pass
 
-    def page(self, *, limit=50, after=0, seed=None, status=None, newest=False):
+    def page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, newest=False):
         if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
             raise ValueError('invalid pagination')
         if type(newest) is not bool:
             raise ValueError('invalid ordering')
-        clauses, values = filters(seed, status)
+        clauses, values = filters(seed, status, user_id)
         clauses.append('rowid<?' if newest else 'rowid>?')
         values.extend((after if after or not newest else 2**63-1, limit + 1))
         with reading(self.path) as conn:
@@ -61,8 +66,8 @@ class ResultQueries:
         more = len(rows) > limit
         return {'items': rows[:limit], 'next_cursor': rows[limit-1]['rowid'] if more else None}
 
-    def summary(self, *, seed=None, status=None):
-        clauses, values = filters(seed, status)
+    def summary(self, *, seed=None, status=None, user_id=None):
+        clauses, values = filters(seed, status, user_id)
         where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
         with reading(self.path) as conn:
             counts = {row['status']: row['count'] for row in conn.execute(
@@ -102,7 +107,7 @@ class ResultQueries:
         result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
         return result
 
-    def case_page(self, *, limit=50, after=0, seed=None, status=None):
+    def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None):
         """Group comparable runs, retaining every attempt in backend history.
 
         Status selects groups, not their members: a failure filter must still show
@@ -110,7 +115,7 @@ class ResultQueries:
         """
         if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
             raise ValueError('invalid pagination')
-        clauses, values = filters(seed, status)
+        clauses, values = filters(seed, status, user_id)
         where = ' WHERE ' + ' AND '.join('a.'+c for c in clauses) if clauses else ''
         with reading(self.path) as conn:
             conn.execute('BEGIN')
@@ -138,6 +143,8 @@ class ResultQueries:
                     member['device'] = json.loads(row['execution']).get('device')
                     member['stages'] = [dict(r) for r in conn.execute('SELECT shape_index,stage,duration_ns FROM stage_metrics WHERE attempt_id=? ORDER BY shape_index,stage',(row['id'],))]
                     member['shapes'] = [dict(r) for r in conn.execute('SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index',(row['id'],))]
+                    from ..reporting.outcomes import outcomes
+                    member.update(outcomes(member, json.loads(row['evaluation'])))
                     item['backends'].setdefault(backend, []).append(member)
                 items.append(item)
         return {'items':items,'next_cursor':groups[limit-1]['cursor'] if len(groups)>limit else None}
