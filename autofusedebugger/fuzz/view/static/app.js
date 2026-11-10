@@ -90,7 +90,7 @@ function renderRecords(items){
  // Existing column preferences keep their order; place the newly split column
  // beside Seed on the first visit, rather than at the far end of the table.
  if(columnPreferences.order.length&&!columnPreferences.order.includes('ops'))columnPreferences.order.splice(Math.max(0,columnPreferences.order.indexOf('seed')+1),0,'ops');
- for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:true});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:true},{key:b+':logs',label:b+' 日志',width:300,defaultVisible:true});}
+ for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:false});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:false},{key:b+':logs',label:b+' 日志',width:300,defaultVisible:true});}
  definitions.push({key:'time',label:'时间',width:180,defaultVisible:true},...extraColumns.map(([key,label])=>({key,label,width:210,defaultVisible:false})));
  const fragment=document.createDocumentFragment();
  for(const item of items){const tr=document.createElement('tr');
@@ -193,7 +193,7 @@ function navigate(){
   const name=['overview','records','performance'].includes(fragment)?fragment:'overview';
   for(const key of ['overview','records','performance'])$(key+'-page').hidden=key!==name;
   $('detail').hidden=true;$('comparison').hidden=true;
-  $('page-title').textContent={overview:'总览',records:'测试记录',performance:'性能与耗时',backends:'后端'}[name];
+  $('page-title').textContent={overview:'总览',records:'功能&精度',performance:'性能分析',backends:'后端'}[name];
   document.querySelectorAll('nav a').forEach(el=>{el.classList.toggle('active',el.dataset.page===name);if(el.dataset.page===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
 }
 window.addEventListener('hashchange',navigate);

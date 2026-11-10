@@ -626,3 +626,9 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 测试记录及详情按功能/精度/性能错误分别显示功能Failed/精度Failed/性能Failed，正常Pass，未知按用户要求拼写Unkown；不把缺失性能数据伪造失败。
 - npussh mlir定向9 passed；隔离浏览器覆盖三种失败显示、非零未知、图例开关；公网验证六图默认隐藏/恢复、卡片和记录名称通过，JS errors=[]。公网测试首次错误假设50条全失败，改为核对实际失败单元格文案后通过，未改变数据。
 - 部署venv-round56，wheel SHA256 579cea99d57d6b205496398721e983d6752f30cb3efab7b99dcae684c7bb910b；无数据库变更，本地无测试/构建临时文件，原placeholder修改仍保留。
+
+## Round57：功能精度与性能分析入口（2026-11-10）
+
+- 菜单、页面标题/区块标题同步改为功能&精度、性能分析；保留records/performance路由，旧链接继续有效。
+- 功能&精度默认隐藏kernel/总耗时列，保留自定义列可选及既有用户显式偏好；聚焦功能精度日志。性能分析仍只汇总compile/kernel_mean真实指标，未采集时明确空状态，不把first_call_combined或总耗时包装为编译/kernel性能。
+- npussh mlir精确性能2项测试、隔离浏览器与公网浏览器通过（导航/标题/默认列/空状态/刷新，无JS错误）。部署venv-round57，wheel SHA256 a415393d9de97090f41727ef83d0dcbd6654e802ffa32451f52705b7374c6e7e；无结果库变更。本地未安装执行测试、未创建临时产物，原placeholder修改保留。
