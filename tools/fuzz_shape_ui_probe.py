@@ -68,7 +68,7 @@ with create_server(repo.path) as server:
    assert page.locator('#rows [data-column=inputs]').nth(0).inner_text()!=page.locator('#rows [data-column=inputs]').nth(1).inner_text()
    page.locator('.log-length input').fill('40');page.locator('.log-length input').press('Tab')
    button=page.locator('[data-column="af-mlir:logs"] .error-preview').first
-   assert len(button.inner_text())<=43 and button.inner_text().endswith('...')
+   assert len(button.inner_text())<=43
    button.click();expect(page).to_have_url(re.compile(r'#attempt=.*&shape=1$'));expect(page.locator('#failure-details')).to_contain_text('selected shape failure',timeout=15000)
    expect(page.locator('#shape-detail tr')).to_have_count(5)
    assert 'shape=1' in page.url

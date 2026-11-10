@@ -638,3 +638,11 @@ round28-focused=42 passed；round29浏览器在本地远端服务和公网都通
 - 删除导航下独立header占位，统计卡片直接接导航；更新时间移到导航右上角，窄屏自动换行。页面h1保留屏幕阅读器语义但不占布局空间。
 - npussh mlir隔离浏览器验证无header、卡片顶部间距<32px、更新时间位置、详情/导航及移动端无溢出；纯布局修改未重跑Python全量。构建和测试均远端，无本地临时产物。
 - 公网验证右上角位置、卡片紧接导航、390px移动端无横向溢出通过，JS errors=[]。部署venv-round58，wheel SHA256 81628adb2bc966003fb60c24b916c4762f08a4d4bf279e6a6e2dec5b674b4054；无结果库变更，保留旧服务配置可回退。
+
+## Round59：运行详情错误及计时（2026-11-10）
+
+- 核对用户当前attempt be755eeb-e954-416d-9bdb-b2fe1ab66839：三shape共用运行stderr，含3条AF_MLIR_STRICT，其中2条重复；每shape异常尾部均含Codegen generate kernel failed or abort。旧摘要截取生成源码开头，旧详情反复摊开共享日志，均难读。
+- 摘要和详情共用shape-first诊断提取器，优先当前shape代码生成错误，重复native行去重。当前错误首先显示，已保存shape日志及运行级补充日志默认折叠，不虚构共享日志shape归属；保留原始已保存日志供展开。移除固定无价值说明，有误差数值时才显示精度误差表。
+- first_call_combined明确翻译首次调用（惰性编译/执行/同步），它是工具阶段枚举、不是错误日志或准确编译定位。当前失败调用耗时回退到已采集telemetry，修复shape字段null但计时存在的问题。
+- 当前shape计时与默认折叠的整次运行计时分开，执行总计包含能力检查/准备/全部shape、生成单独列出，不能全部相加。示例capability4.131s/prepare1.207s/execution_total8.291s/generation0.0016s；无法从旧日志确定lowering具体缺失算子或恢复未保存内容。
+- 验证：npussh mlir定向12+36项测试通过、隔离浏览器通过；公网针对用户精确attempt/S0验证核心codegen错误、折叠日志/去重native线索、失败阶段中文、失败调用1.981s计时、分区总计与刷新通过，JS errors=[]。直接urllib公网读取被403拒绝后改为服务器只读库核对及真实浏览器验证，没有绕过鉴权。部署venv-round59，wheel SHA256 ae7366a4ecbefe2b6b8291ba73a99e549458ff9b2aeb4e5fbeffd8386ba74b37；不改原始库数据，无本地临时文件。

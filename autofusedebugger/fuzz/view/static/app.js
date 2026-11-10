@@ -44,7 +44,7 @@ async function details(identity, shapeIndex=null) {
     $('detail-content').parentElement.hidden=true;
     const table = document.createElement('table');
     for(const shape of result.shape_results) {
-      for(const [label,value] of [['当前 Shape',shape.shape_index],['功能',shape.correctness==='error'?'功能Failed':['pass','fail'].includes(shape.correctness)?'Pass':'Unkown'],['精度',({pass:'Pass',fail:'精度Failed'}[shape.correctness]||'Unkown')],...(shape.performance==='error'?[['性能','性能Failed']]:[]),['首次调用（含惰性编译）',duration(shape.first_call_combined_ns)],['错误阶段',shape.error_stage||'—']]){const row=document.createElement('tr');cell(row,label);const td=cell(row,String(value));if(['功能','精度','性能'].includes(label))td.className=value==='Pass'?'pass':String(value).endsWith('Failed')?(label==='精度'?'accuracy-failed':'failed'):'unknown';table.append(row);}
+      for(const [label,value] of [['当前 Shape',shape.shape_index],['功能',shape.correctness==='error'?'功能Failed':['pass','fail'].includes(shape.correctness)?'Pass':'Unkown'],['精度',({pass:'Pass',fail:'精度Failed'}[shape.correctness]||'Unkown')],...(shape.performance==='error'?[['性能','性能Failed']]:[]),['首次调用（含惰性编译）',duration(shape.first_call_combined_ns??JSON.parse(result.contexts.execution.telemetry||'{}').shapes?.[shape.shape_index]?.first_call_combined)],['失败阶段',stageName(shape.error_stage)]]){const row=document.createElement('tr');cell(row,label);const td=cell(row,String(value));if(['功能','精度','性能'].includes(label))td.className=value==='Pass'?'pass':String(value).endsWith('Failed')?(label==='精度'?'accuracy-failed':'failed'):'unknown';table.append(row);}
     }
     $('shape-detail').replaceChildren(table);
     $('detail-message').textContent = ''; $('copy').disabled = false;
@@ -220,10 +220,13 @@ function renderProvenance(result){
  const labels={device_name:'用户',cann:'CANN',torch:'Torch',torch_npu:'Torch NPU',autofuse_commit:'Autofuse commit',autofuse_binary:'Autofuse binary',triton:'Triton',python:'Python',package_version:'Debugger',machine:'架构',platform:'系统'};
  for(const [key,label] of Object.entries(labels)){if(env[key]){const row=document.createElement('tr');cell(row,label);cell(row,String(env[key]));table.append(row);}}box.append(table);
  const telemetry=result.contexts.execution.telemetry?JSON.parse(result.contexts.execution.telemetry):{stages:{},shapes:{}};
- const timings=document.createElement('table'),names={generation:'生成',capability:'能力检查',prepare:'准备（非编译完成）',input_binding:'输入绑定',first_call_combined:'首次调用（含惰性编译）',correctness:'精度校验',execution_total:'整图执行总计',compile:'独立编译',kernel_mean:'Kernel'};
- const head=document.createElement('tr');for(const name of ['范围','阶段','耗时'])cell(head,name,'th');timings.append(head);
- for(const [scope,metrics] of [...Object.entries(telemetry.shapes||{}).map(([k,v])=>['当前用例 S'+k,v]),['整图计时（总计包含各shape，不重复相加）',telemetry.stages||{}]])for(const [key,value] of Object.entries(metrics)){const row=document.createElement('tr');cell(row,scope);cell(row,names[key]||key);cell(row,duration(value));timings.append(row);}
- $('timing-detail').replaceChildren(timings);
+ const host=$('timing-detail');host.replaceChildren();
+ const headingTime=document.createElement('h3');headingTime.textContent='当前 Shape 耗时';host.append(headingTime);
+ function timingTable(metrics){const table=document.createElement('table');const head=document.createElement('tr');cell(head,'阶段','th');cell(head,'耗时','th');table.append(head);for(const [key,value] of Object.entries(metrics)){const row=document.createElement('tr');cell(row,stageName(key));cell(row,duration(value));table.append(row);}return table;}
+ for(const metrics of Object.values(telemetry.shapes||{}))host.append(timingTable(metrics));
+ if(!Object.keys(telemetry.shapes||{}).length){const empty=document.createElement('p');empty.textContent='未采集当前 Shape 阶段耗时';host.append(empty);}
+ if(Object.keys(telemetry.stages||{}).length){const panel=document.createElement('details'),summary=document.createElement('summary');summary.textContent='本次运行计时（全部 Shape）';panel.append(summary);const note=document.createElement('p');note.className='muted';note.textContent='执行总计包含能力检查、准备和全部 Shape；生成耗时单独记录。下列指标不能逐项相加。';panel.append(note,timingTable(telemetry.stages));host.append(panel);}
+
 }
 
 function renderStatisticsTables(result){
@@ -232,18 +235,18 @@ function renderStatisticsTables(result){
  $('performance-table').replaceChildren(t);$('metric-empty').hidden=!!result.precise_metrics?.length;
 }
 
+function stageName(stage){return ({generation:'生成用例',capability:'后端能力检查',prepare:'准备执行器（不代表编译完成）',input_binding:'输入绑定',first_call_combined:'首次调用（惰性编译 / 执行 / 同步）',correctness:'精度校验',execution_total:'执行总计',compile:'独立编译',kernel_mean:'Kernel 平均耗时',performance:'性能测量'}[stage]||stage||'Unkown');}
 function renderFailureDetails(result){
  let box=$('failure-details');if(!box){box=document.createElement('section');box.id='failure-details';$('detail-message').after(box);}box.replaceChildren();
- const raw=result.contexts.execution.diagnostics;
- const data=raw?JSON.parse(raw):{shapes:{}};
- if(!data.error&&result.error_summary)data.error=result.error_summary;
- for(const shape of result.shape_results||[]){if(shape.error_summary&&!data.shapes?.[String(shape.shape_index)]?.error){data.shapes??={};data.shapes[String(shape.shape_index)]={...(data.shapes[String(shape.shape_index)]||{}),error:shape.error_summary};}}
- if(!data.error&&!Object.keys(data.shapes||{}).length)return;
- const title=document.createElement('h3');title.textContent='错误诊断与精度误差';box.append(title);const note=document.createElement('p');note.className='muted';note.textContent='展示已采集的核心日志和异常上下文；旧记录采集时被截断的部分无法恢复。';box.append(note);
- if(data.error){const label=document.createElement('h4');label.textContent='整图共享核心日志（历史采集，可能涉及其他 Shape）';box.append(label);const log=document.createElement('pre');log.textContent=data.error;box.append(log);}
+ const data=JSON.parse(result.contexts.execution.diagnostics||'{}'),view=result.diagnostic_view||{};
+ function text(tag,value){const el=document.createElement(tag);el.textContent=value;box.append(el);return el;}
+ function folded(label,content){if(!content)return;const panel=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent=label;pre.textContent=content;panel.append(summary,pre);box.append(panel);}
+ if(view.summary&&['error','unsupported','fail'].includes(result.status)){text('h3',view.shape_log?'当前 Shape 错误':'运行错误（未归属 Shape）');text('pre',view.summary).className='core-error';if(view.explanation)text('p',view.explanation);text('p','失败阶段：'+stageName(result.error_stage));}
+ folded('当前 Shape 已保存日志',view.shape_log);
+ if(view.shared_lines?.length){const panel=document.createElement('details'),summary=document.createElement('summary');summary.textContent='运行级补充日志（未按 Shape 归属）';panel.append(summary);if(view.shared_explanation){const note=document.createElement('p');note.textContent=view.shared_explanation;panel.append(note);}const pre=document.createElement('pre');pre.textContent=view.shared_lines.join('\n');panel.append(pre);if(view.shared_log){const raw=document.createElement('details'),label=document.createElement('summary'),log=document.createElement('pre');label.textContent='展开已保存的运行日志';log.textContent=view.shared_log;raw.append(label,log);panel.append(raw);}box.append(panel);}
  for(const [index,metrics] of Object.entries(data.shapes||{})){
-  const heading=document.createElement('h4');heading.textContent='当前 Shape '+index+(metrics.basis?' · 判定标准：'+metrics.basis:' · 错误上下文');box.append(heading);
-  const table=document.createElement('table');for(const [key,label] of [['cpu_pass','CPU一致'],['secondary_used','已运行 eager-npu'],['secondary_pass','eager-npu一致'],['max_abs','最大绝对误差'],['mean_abs','平均绝对误差'],['max_rel','最大相对误差'],['mismatches','不一致元素'],['elements','总元素'],['nonfinite','非有限元素']]){if(metrics[key]===undefined)continue;const row=document.createElement('tr');cell(row,label);cell(row,String(metrics[key]));table.append(row);}box.append(table);
-  if(metrics.error){const log=document.createElement('pre');log.textContent=metrics.error;box.append(log);}
+  const table=document.createElement('table');
+  for(const [key,label] of [['basis','判定标准'],['cpu_pass','CPU一致'],['secondary_used','已运行 eager-npu'],['secondary_pass','eager-npu一致'],['max_abs','最大绝对误差'],['mean_abs','平均绝对误差'],['max_rel','最大相对误差'],['mismatches','不一致元素'],['elements','总元素'],['nonfinite','非有限元素']]){if(metrics[key]===undefined)continue;const row=document.createElement('tr');cell(row,label);cell(row,String(metrics[key]));table.append(row);}
+  if(table.children.length){text('h3','精度误差 · S'+index);box.append(table);}
  }
 }

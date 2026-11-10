@@ -102,3 +102,14 @@ def test_short_seed_search_and_current_shape_metadata(tmp_path):
     assert q.case_summary(q=f"WHERE seed = '{short}'")['total']==3
     assert [r['shape_index'] for r in q.case_page(q='[2,4]')['items']]==[1]
     assert q.case_summary(q="WHERE shape_index = -1")['total']==0
+
+
+def test_detail_deduplicates_and_scopes_diagnostics():
+    from autofusedebugger.fuzz.failure_details import diagnostic_view,core_error
+    data={'error':"error: '\nAF_MLIR_STRICT gate=lowering shortfall=yes\nAF_MLIR_STRICT gate=lowering shortfall=yes",'shapes':{'0':{'error':'generated source\nCodegen generate kernel failed or abort'}}}
+    view=diagnostic_view(data,0)
+    assert view['summary']=='Codegen generate kernel failed or abort'
+    assert len(view['shared_lines'])==1
+    assert '不能' in view['shared_explanation']
+    assert core_error(data,0)==view['summary']
+    assert diagnostic_view({'error':'same','shapes':{'0':{'error':'same'}}},0)['shared_log']==''

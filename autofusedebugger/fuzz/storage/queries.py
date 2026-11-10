@@ -137,6 +137,9 @@ class ResultQueries:
                 telemetry = json.loads(execution['telemetry'])
                 telemetry['shapes'] = {k:v for k,v in telemetry.get('shapes',{}).items() if k == str(shape_index)}
                 execution['telemetry'] = json.dumps(telemetry)
+        from ..failure_details import diagnostic_view
+        diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
+        result['diagnostic_view'] = diagnostic_view(diagnostics, shape_index, result.get('error_summary', ''))
         return result
 
     def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None):

@@ -32,11 +32,45 @@ def validate(raw):
 
 
 def core_error(diagnostics, index, fallback=''):
-    """Prefer compiler diagnostics over wrapper code/traceback boilerplate."""
+    """Use the same shape-first summary as the detail page."""
+    return diagnostic_view(diagnostics, index, fallback)['summary']
+
+
+def diagnostic_view(diagnostics, index, fallback=''):
+    """Separate shape evidence from run-wide stderr; never infer attribution."""
     shape = diagnostics.get('shapes', {}).get(str(index), {})
-    texts = [shape.get('native_error', ''), diagnostics.get('error', ''), shape.get('error', ''), fallback or '']
-    for text in texts:
-        for line in text.splitlines():
-            if any(word in line.lower() for word in ('unsupportedoperation:', 'error:', 'fatal:', 'runtimeerror:')) and len(line.strip()) > 12:
-                return redact(line.strip())[:1600]
-    return redact(next((t.strip() for t in texts if t.strip()), ''))[:1600]
+    local = shape.get('error', '') or fallback or ''
+    shared = diagnostics.get('error', '')
+
+    def useful(text):
+        lines = []
+        for raw in text.splitlines():
+            line = redact(raw.strip())
+            if len(line) < 12 or line.lower() in {"error:", "error: '"}:
+                continue
+            if any(word in line.lower() for word in (
+                'unsupportedoperation:', 'fatal:', 'error:', 'runtimeerror:',
+                'codegen generate kernel failed', 'af_mlir_strict',
+            )) and line not in lines:
+                # Wrapper exceptions often append generated source on the same line.
+                lines.append(line.split('Failed to execute graph code:')[0] +
+                             'Failed to execute graph code' if 'Failed to execute graph code:' in line else line)
+        return lines
+
+    current = useful(local)
+    if not current:
+        current = useful(fallback)
+    # Prefer concrete codegen/native diagnostics over wrapper exceptions.
+    current.sort(key=lambda line: 'failed to execute graph code' in line.lower())
+    shared_lines = [line for line in useful(shared) if line not in current]
+    summary = current[0] if current else (redact(local).strip().splitlines() or [''])[0]
+    if not summary and shared_lines:
+        summary = '运行级日志：' + shared_lines[0]
+    return {'summary': summary[:1600], 'shape_lines': current,
+            'shared_lines': shared_lines, 'shape_log': redact(local),
+            'shared_log': redact(shared) if shared.strip() != local.strip() else '',
+            'explanation': ('Kernel代码生成失败或中止；具体不支持的算子/原因未在已保存日志中给出。'
+                            if 'Codegen generate kernel failed' in local else ''),
+            'shared_explanation': ('本次运行触发AF-MLIR严格模式的lowering检查（shortfall=yes）。'
+                                   '这是运行级线索，不能仅凭该日志确定各shape的具体失败原因。'
+                                   if 'AF_MLIR_STRICT' in shared and 'shortfall=yes' in shared else '')}
