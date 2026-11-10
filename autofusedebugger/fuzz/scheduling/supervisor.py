@@ -1,4 +1,5 @@
 """Bounded concurrent workers with process-group cleanup and per-device exclusion."""
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import json
 import math
@@ -80,8 +81,13 @@ def _has_result(database, task):
         if row is None:
             return False
         contexts, _ = _record(conn, row)
+        worker_failed=row['oracle_id']=='worker-failed/1' and row['error_stage']=='worker' and row['status']=='error'
         generation_failed=row['oracle_id']=='generation-failed/1' and row['error_stage']=='generation' and row['status']=='error'
-        if generation_failed:
+        if worker_failed:
+            from ..contracts import fingerprint
+            expected_workload=fingerprint({'worker_failed':task['seed']})
+            expected_oracles={'worker-failed/1'}
+        elif generation_failed:
             from ..contracts import fingerprint
             expected_workload=fingerprint({'generation_failed':task['seed']})
             expected_oracles={'generation-failed/1'}
@@ -94,7 +100,7 @@ def _has_result(database, task):
             bundle=materialize_spec(spec)
         else:
             bundle = materialize(task['seed'])
-        if not generation_failed:
+        if not (generation_failed or worker_failed):
             expected_workload=workload_id(bundle)
             expected_oracles={oracle_id(bundle),'torch-eager-cpu/1'}
         saved_execution = dict(contexts['execution'])
@@ -150,19 +156,16 @@ def _save_worker_failure(ledger, database, task, reason, log):
     """Persist a terminated attempt, but keep its task explicitly resumable."""
     if not json.loads(task['execution']).get('save_results', True):
         return
-    from ..generation import materialize, workload_id
     from ..storage import ResultRepository
     from ..environment import collect
-    try:
-        bundle = materialize(task['seed'])
-        workload = workload_id(bundle)
-    except Exception:
-        from ..contracts import fingerprint
-        workload = fingerprint({'generation_failed':task['seed']})
+    from ..contracts import fingerprint
+    # No graph generation in finalization. An unassigned worker failure has no
+    # Shape and uses its own sentinel, never masquerades as generation failure.
+    workload = fingerprint({'worker_failed': task['seed']})
     execution = json.loads(task['execution'])
     execution['diagnostics'] = json.dumps({'version': 1, 'error': (reason+'\n'+log)[-1600:], 'shapes': {}})
     result = {'seed': task['seed'], 'workload_id': workload,
-              'oracle_id': 'torch-eager-cpu/1', 'backend': execution['backend'],
+              'oracle_id': 'worker-failed/1', 'backend': execution['backend'],
               'execution': execution, 'evaluation': json.loads(task['evaluation']),
               'status': 'error', 'error_stage': 'worker', 'error_summary': reason,
               'shape_results': []}
@@ -196,42 +199,56 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
         summary = dict(_reconcile(ledger, database), completed=0)
         if _ready is not None:
             _ready()
+        from ..storage.lifecycle import append, stamp
         active = {}
-        def finish(identity, reason):
-            state=active.pop(identity); task=state['task']; child=state['child']
+        finalizing = {}
+        finalizer = ThreadPoolExecutor(max_workers=budget.cpu_workers, thread_name_prefix="fuzz-finalize")
+        def finish(state, reason):
+            task=state['task']; child=state['child']
             if child is not None: _terminate_group(child)
             log=state['tail'].finish() if state['tail'] is not None else ''
             state['scratch'].cleanup()
             ephemeral_done=(not json.loads(task['execution']).get('save_results',True)
                             and reason=='worker_exit:0:without_result')
             if ephemeral_done or _has_result(database,task):
-                ledger.complete(task['id'],task['claim']); summary['completed']+=1
+                ledger.complete(task['id'],task['claim']); return 'completed'
             else:
                 if reason=='timeout' or reason.startswith('worker_exit:'):
                     _save_worker_failure(ledger,database,task,reason,log)
-                ledger.interrupt(task['id'],task['claim'],reason); summary['interrupted']+=1
+                ledger.interrupt(task['id'],task['claim'],reason); return 'interrupted'
 
         try:
             while True:
+                for identity, (state, future) in list(finalizing.items()):
+                    if future.done():
+                        summary[future.result()] += 1
+                        del finalizing[identity]
                 from .campaign import refill
                 for _ in range(budget.cpu_workers):
                     if not refill(ledger, target_pending=budget.cpu_workers): break
-                busy={json.loads(state['task']['execution'])['device'] for state in active.values()}
+                busy={json.loads(state['task']['execution'])['device'] for state in list(active.values()) + [s for s, _ in finalizing.values()]}
+                from .placement import candidates, claim_on, admission
                 for candidate in _tasks(ledger):
-                    if len(active)>=budget.cpu_workers: break
+                    if len(active) + len(finalizing)>=budget.cpu_workers: break
                     if candidate['state']!='pending': continue
                     execution=json.loads(candidate['execution'])
-                    device=execution['device']
-                    if device!='cpu' and device in busy: continue
+                    device=next((d for d in candidates(ledger, candidate) if d=='cpu' or d not in busy), None)
+                    if device is None: continue
                     _validate_task(candidate)
                     budget.admit(ledger.path.parent,candidate); budget.admit(database.parent)
                     scratch=tempfile.TemporaryDirectory(prefix='.fuzz-worker-',dir=ledger.path.parent)
-                    task=ledger.claim(candidate['id'])
+                    task=claim_on(ledger,candidate,device)
                     if task is None:
                         scratch.cleanup(); continue
                     state={'task':task,'scratch':scratch,'child':None,'tail':None,'deadline':time.monotonic()+timeout}
                     active[task['id']]=state
                     database.parent.mkdir(parents=True,exist_ok=True)
+                    if execution.get('save_results', True):
+                        observed = admission(ledger, task['id'])
+                        if observed is not None:
+                            append(database, task['attempt_id'], 'admitted', observed)
+                            append(database, task['attempt_id'], 'ready', observed)
+                        append(database, task['attempt_id'], 'dispatched')
                     env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
                     env.update(TMPDIR=scratch.name,TORCHINDUCTOR_CACHE_DIR=str(Path(scratch.name)/'inductor'),
                                TRITON_CACHE_DIR=str(Path(scratch.name)/'triton'),
@@ -241,13 +258,14 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     from ..core_logs import ProcessTail
                     state['tail']=ProcessTail(state['child'].stdout)
                     busy.add(device)
-                if not active:
+                if not active and not finalizing:
                     if refill(ledger,target_pending=budget.cpu_workers): continue
                     return summary
                 # Budgets cover the complete active pool, not one budget per worker.
                 from .budgets import group_rss, scratch_size
                 pool_reason=None
-                if budget.memory_budget_bytes and sum(group_rss(s['child'].pid) for s in active.values())>budget.memory_budget_bytes:
+                sampled = list(active.values()) + [s for s, _ in finalizing.values()]
+                if budget.memory_budget_bytes and sum(group_rss(s['child'].pid) for s in sampled)>budget.memory_budget_bytes:
                     pool_reason='memory_budget_exceeded'
                 if budget.cache_budget_bytes and sum(scratch_size(s['scratch'].name) for s in active.values())>budget.cache_budget_bytes:
                     pool_reason='scratch_budget_exceeded'
@@ -257,16 +275,20 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     if not reason and ledger.get(identity)['state']=='stop_requested': reason='user_stop'
                     if not reason and time.monotonic()>=state['deadline']: reason='timeout'
                     if not reason and child.poll() is not None: reason=f'worker_exit:{child.returncode}:without_result'
-                    if reason: finish(identity,reason)
+                    if reason:
+                        active.pop(identity)
+                        finalizing[identity]=(state,finalizer.submit(finish,state,reason))
                 time.sleep(.05)
         except BaseException as exc:
             reason='supervisor_interrupted' if isinstance(exc,KeyboardInterrupt) else f'supervisor_error:{type(exc).__name__}'
             # Reap every worker even if one acknowledgement fails.
             for identity in list(active):
-                try: finish(identity,reason)
+                try: finish(active.pop(identity),reason)
                 except Exception:
                     pass
             raise
+        finally:
+            finalizer.shutdown(wait=True)
 
 
 def resume(ledger, database, identity):

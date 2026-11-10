@@ -53,7 +53,12 @@ def acknowledge(path, source, revision):
         maximum=conn.execute('SELECT coalesce(max(revision),0) FROM sync_outbox').fetchone()[0]
         if identity is None or source!=identity[0] or type(revision) is not int or not identity[1]<=revision<=maximum:
             raise ValueError('invalid sync ACK')
+        completed = [r[0] for r in conn.execute('SELECT attempt_id FROM sync_outbox WHERE revision>? AND revision<=?', (identity[1], revision))]
         conn.execute('UPDATE sync_identity SET ack=? WHERE id=1',(revision,))
+    from ..storage.lifecycle import append, stamp
+    observed = stamp()
+    for attempt_id in completed:
+        append(path, attempt_id, 'uploaded_ack', observed)
 
 
 def reset_epoch(path):

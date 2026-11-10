@@ -108,6 +108,9 @@ class ResultRepository:
             index_attempt(conn, attempt_id)
             from ..sync.outbox import enqueue
             enqueue(conn, attempt_id)
+        from .lifecycle import append, stamp
+        observed = stamp()  # Result transaction has successfully returned.
+        append(self.path, attempt_id, 'persisted', observed)
         return attempt_id
 
     def list(self, *, limit=50, after=None, seed=None):

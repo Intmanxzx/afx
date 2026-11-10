@@ -30,20 +30,36 @@ def refill(ledger, target_pending=1):
         row=conn.execute('SELECT payload,remaining,stopped FROM campaign WHERE id=1').fetchone()
         if not row or row[2] or row[1]==0:return False
         if target_pending==1 and conn.execute("SELECT 1 FROM tasks WHERE state IN ('pending','running','stop_requested')").fetchone():return False
-        if conn.execute("SELECT count(*) FROM tasks WHERE state='pending'").fetchone()[0]>=target_pending:return False
-        config=json.loads(row[0]);entropy=secrets.randbelow(36**9)
+        config=json.loads(row[0])
+        pending=[json.loads(r[0]) for r in conn.execute("SELECT execution FROM tasks WHERE state='pending'")]
+        # Resource-aware refill, still bounded independently of total history.
+        # A backlog for one resource must not starve the other class.
+        required={c['device']=='cpu' for c in config['configs']}
+        covered=all(sum((p['device']=='cpu')==cpu for p in pending)>=target_pending for cpu in required)
+        prefetch_limit=target_pending * max(1,len(config['configs'])) * max(1,len(config.get('devices',[])))
+        if covered or len(pending)>=prefetch_limit:return False
+        entropy=secrets.randbelow(36**9)
         dynamic=not all(c.get('static_only') for c in config['configs']) and bool(entropy & 1)
         seed=str((3 if dynamic else 2)*2**128+entropy)
         active = conn.execute("SELECT count(*) FROM tasks WHERE state NOT IN ('completed','cancelled')").fetchone()[0]
         capacity = conn.execute('SELECT max_active FROM queue_config').fetchone()[0]
         if active + len(config['configs']) > capacity:
             return False
+        from .placement import initialize as initialize_placement
+        initialize_placement(conn)
+        identities = []
         for template in config['configs']:
             execution=dict(template,static_only=not dynamic)
             if execution['device']!='cpu' and config.get('devices'):
                 execution['device']=config['devices'][config.get('next_device',0)%len(config['devices'])]
+            identity = str(uuid.uuid4())
+            identities.append(identity)
+            if execution['device'] != 'cpu' and config.get('devices'):
+                conn.execute('INSERT INTO task_devices VALUES (?,?)', (identity, canonical_json(config['devices'])))
             conn.execute('INSERT INTO tasks(id,seed,execution,evaluation,state,revision,reason) VALUES (?,?,?,?,?,0,?)',
-                         (str(uuid.uuid4()),seed,canonical_json(execution),canonical_json(config['evaluation']),'pending',''))
+                         (identity,seed,canonical_json(execution),canonical_json(config['evaluation']),'pending',''))
+        from .placement import admit
+        admit(conn, identities)
         config['next_device']=config.get('next_device',0)+1
         conn.execute('UPDATE campaign SET payload=? WHERE id=1',(canonical_json(config),))
         if row[1] is not None:conn.execute('UPDATE campaign SET remaining=remaining-1 WHERE id=1')

@@ -20,7 +20,7 @@ def execute(bundle, adapter, evaluation):
         diagnostics = result.pop('_diagnostics', {'version':1,'shapes':{}})
         result.setdefault('execution', {})['diagnostics'] = json.dumps(diagnostics)
         shapes = {str(row['shape_index']): row.pop('_timings', {}) for row in result['shape_results']}
-        result.setdefault('execution', {})['telemetry'] = json.dumps({'version':1,'stages':stages,'shapes':shapes})
+        result.setdefault('execution', {})['telemetry'] = json.dumps({'version':2,'stages':stages,'shapes':shapes})
         result.pop('_secondary', None)
         return result
     finally:
@@ -70,6 +70,7 @@ def _execute(bundle, adapter, evaluation):
     for index in indices:
         row = {"shape_index": index, "correctness": "not_checked", "performance": "not_requested", "_timings": {}}
         result["shape_results"].append(row)
+        processing_started = time.perf_counter_ns()
         stage = "input_binding"
         try:
             started=time.perf_counter_ns()
@@ -92,14 +93,6 @@ def _execute(bundle, adapter, evaluation):
                     diagnostic=adapter.diagnose_accuracy(output,expected)
                     diagnostic.update(cpu_pass=False,secondary_used=False,basis='cpu')
                     result['_diagnostics']['shapes'][str(index)]=diagnostic
-                    if adapter.name=='af-mlir':
-                        diagnostic['secondary_used']=True
-                        secondary=adapter.secondary_output(bundle,index)
-                        secondary_pass=adapter.outputs_equal(output,secondary)
-                        diagnostic['secondary_pass']=secondary_pass
-                        diagnostic['basis']='eager-npu' if secondary_pass else 'cpu+eager-npu'
-                        row['correctness']='pass' if secondary_pass else 'fail'
-                        result.setdefault('_secondary',[]).append({'shape_index':index,'matches_af_mlir':secondary_pass})
                 row['_timings']['correctness']=time.perf_counter_ns()-started
             if evaluation.performance:
                 # Only explicit device-profiler measurements qualify. Wall time
@@ -127,6 +120,8 @@ def _execute(bundle, adapter, evaluation):
                 row["correctness"] = "error"
                 if evaluation.performance:
                     row["performance"] = "skipped"
+        finally:
+            row["_timings"]["shape_processing"] = time.perf_counter_ns() - processing_started
     result["status"] = "error" if any("error_stage" in r for r in result["shape_results"]) else (
         "fail" if any(r["correctness"] == "fail" for r in result["shape_results"]) else "ok")
     return result

@@ -86,7 +86,7 @@ function renderRecords(items){
  // Existing column preferences keep their order; place the newly split column
  // beside Seed on the first visit, rather than at the far end of the table.
  if(columnPreferences.order.length&&!columnPreferences.order.includes('ops'))columnPreferences.order.splice(Math.max(0,columnPreferences.order.indexOf('seed')+1),0,'ops');
- for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:false});definitions.push({key:b+':total',label:b+' 总耗时',width:150,defaultVisible:b==='af-mlir'},{key:b+':logs',label:b+' 运行日志摘要',width:300,defaultVisible:true});}
+ for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:false});definitions.push({key:b+':total',label:b+' 处理耗时（s）',width:150,defaultVisible:b==='af-mlir'},{key:b+':e2e',label:b+' 端到端延迟（s）',width:150,defaultVisible:false},{key:b+':logs',label:b+' 运行日志摘要',width:300,defaultVisible:true});}
  definitions.push({key:'time',label:'时间',width:180,defaultVisible:true},...extraColumns.map(([key,label])=>({key,label,width:210,defaultVisible:false})));
  const fragment=document.createDocumentFragment();
  for(const item of items){const tr=document.createElement('tr');
@@ -103,8 +103,9 @@ function renderRecords(items){
  if(kind==='logs'&&(log||['error','unsupported','fail'].includes(latest.status)))text=shortLog(log||(b==='af-mlir'?'未保存运行日志 · 查看详情':latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
  if(kind==='kernel'&&latest.measurement_status==='error'){text='性能Failed';state='failed';}
  if(kind==='kernel'&&latest.measurement_status!=='error'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
- if(kind==='total')text=seconds(latest.total_ns);
- if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape：输入绑定 + 首次调用（含惰性编译）+ 精度校验；不等于 Kernel 耗时';if(kind==='logs'){button.title=log||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
+ if(kind==='total')text=seconds(latest.processing_ns)||'未采集';
+ if(kind==='e2e')text=seconds(latest.end_to_end_ns)||'未采集';
+ if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape 处理开始至要求的评估结束的墙钟跨度；不含共享准备，不等于 Kernel 耗时';if(kind==='logs'){button.title=log||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
  if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unkown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
  caseMetadata.set(latest.id,item.metadata);}}
  else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
@@ -222,17 +223,23 @@ function renderProvenance(result){
  const note=document.createElement('p');note.className='muted';note.textContent='本次运行 '+result.shape_count+' 个 Shape 的计时。执行总计包含能力检查、准备和这些 Shape；生成耗时单独记录。下列指标不能逐项相加。';host.append(note);
  const tableTime=document.createElement('table'),head=document.createElement('tr');cell(head,'阶段','th');cell(head,'耗时','th');tableTime.append(head);
  for(const [key,value] of Object.entries(telemetry.stages||{})){const row=document.createElement('tr');cell(row,stageName(key));cell(row,(value/1e9).toFixed(3)+' s');tableTime.append(row);}
+ for(const [index,metrics] of Object.entries(telemetry.shapes||{})){for(const [key,value] of Object.entries(metrics)){const row=document.createElement('tr');cell(row,'S'+index+' '+stageName(key));cell(row,(value/1e9).toFixed(3)+' s');tableTime.append(row);}}
  if(tableTime.children.length>1)host.append(tableTime);else{const empty=document.createElement('p');empty.textContent='未采集本次运行计时';host.append(empty);}
 
+ const life=document.createElement('p');life.className='muted';life.textContent='生命周期（本地观测，跨时钟域不相减）：'+((result.lifecycle||[]).map(e=>e.event+' '+e.wall_time).join(' → ')||'未采集')+'。端到端延迟：'+(seconds(result.end_to_end_ns)||'未采集');host.append(life);
 }
 
 function renderStatisticsTables(result){
+ const efficiency=document.createElement('table'),eh=document.createElement('tr');for(const label of ['后端','处理耗时样本数','平均处理耗时（s）','最大处理耗时（s）'])cell(eh,label,'th');efficiency.append(eh);
+ for(const r of result.tool_efficiency?.processing||[]){const row=document.createElement('tr');for(const value of [r.backend,r.samples,seconds(r.mean_ns),seconds(r.max_ns)])cell(row,value);efficiency.append(row);}
+ const unavailable=document.createElement('p');unavailable.className='muted';unavailable.textContent='成功 Shape/min：未采集 · 已完成 Shape/min（含失败）：未采集 · CPU 资源池使用率：未采集 · NPU 执行槽使用率：未采集。'+(result.tool_efficiency?.note||'');$('efficiency-table').replaceChildren(efficiency,unavailable);
+
  const t=document.createElement('table'),head=document.createElement('tr');for(const label of ['后端','指标','样本','均值','最大'])cell(head,label,'th');t.append(head);
  for(const r of result.precise_metrics||[]){const row=document.createElement('tr');for(const value of [r.backend,r.stage==='compile'?'编译耗时':'Kernel 耗时',r.samples,duration(r.mean_ns),duration(r.max_ns)])cell(row,value);t.append(row);}
  $('performance-table').replaceChildren(t);$('metric-empty').hidden=!!result.precise_metrics?.length;
 }
 
-function stageName(stage){return ({generation:'生成用例',capability:'后端能力检查',prepare:'准备执行器（不代表编译完成）',input_binding:'输入绑定',first_call_combined:'首次调用（惰性编译 / 执行 / 同步）',correctness:'精度校验',execution_total:'执行总计',compile:'独立编译',kernel_mean:'Kernel 平均耗时',performance:'性能测量'}[stage]||stage||'Unkown');}
+function stageName(stage){return ({shape_processing:'Shape 处理耗时（墙钟跨度）',generation:'生成用例',capability:'后端能力检查',prepare:'准备执行器（不代表编译完成）',input_binding:'输入绑定',first_call_combined:'首次调用（惰性编译 / 执行 / 同步）',correctness:'精度校验',execution_total:'执行总计',compile:'独立编译',kernel_mean:'Kernel 平均耗时',performance:'性能测量'}[stage]||stage||'Unkown');}
 function renderFailureDetails(result){
  const view=result.diagnostic_view||{};
  function section(id,title,content){const box=$(id);box.replaceChildren();const heading=document.createElement('h3'),pre=document.createElement('pre');heading.textContent=title;pre.textContent=content;box.append(heading,pre);return box;}

@@ -117,6 +117,8 @@ class TaskLedger:
             if count + len(additions) > capacity:
                 raise ValueError('active task budget exhausted; entire batch rejected')
             conn.executemany("INSERT INTO tasks(id,seed,execution,evaluation,state) VALUES (?,?,?,?,'pending')", additions)
+            from .placement import admit
+            admit(conn, [row[0] for row in additions])
         return identities
 
     def claim(self, identity=None):
@@ -183,6 +185,10 @@ class TaskLedger:
                                    "WHERE id=? AND state IN ('interrupted','cancelled')", (identity,)).rowcount
             if changed != 1:
                 raise ValueError('only interrupted or cancelled tasks can resume')
+            from .placement import admit
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='task_admission'").fetchone():
+                conn.execute('DELETE FROM task_admission WHERE task_id=?', (identity,))
+            admit(conn, [identity])
 
     def page(self, *, limit=100, after=0):
         if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:

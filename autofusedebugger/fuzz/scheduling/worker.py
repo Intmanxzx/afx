@@ -17,6 +17,9 @@ def run(queue, database, identity, claim):
     task = TaskLedger(queue).get(identity)
     if task['state'] not in {'running', 'stop_requested'} or task['claim'] != claim:
         raise ValueError('worker claim is stale')
+    from ..storage.lifecycle import append
+    if json.loads(task['execution']).get('save_results', True):
+        append(database, task['attempt_id'], 'started')
     config = ExecutionConfig(**json.loads(task['execution']))
     evaluation = EvaluationConfig(**json.loads(task['evaluation']))
     from .supervisor import _validate_task
@@ -38,6 +41,7 @@ def run(queue, database, identity, claim):
                 'execution':dict(asdict(config),diagnostics=json.dumps({'version':1,'error':message,'shapes':{}})),
                 'evaluation':asdict(evaluation)}
         if config.save_results:
+            append(database, task['attempt_id'], 'finished')
             ResultRepository(database).save(result,environment=collect(Path(queue).parent.parent),attempt_id=task['attempt_id'])
         else:
             print(json.dumps({'seed':task['seed'],'status':'error','stage':'generation','saved':False}))
@@ -58,6 +62,7 @@ def run(queue, database, identity, claim):
         return 0
     from ..environment import collect
     from pathlib import Path
+    append(database, task['attempt_id'], 'finished')
     environment=collect(Path(queue).parent.parent)
     ResultRepository(database).save(result, environment=environment, attempt_id=task['attempt_id'])
     return 0  # A failed correctness result is still a durably completed attempt.

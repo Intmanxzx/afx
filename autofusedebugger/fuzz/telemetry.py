@@ -2,7 +2,7 @@
 import json
 
 STAGES = {'generation','capability','prepare','input_binding','first_call_combined',
-          'correctness','warmup','measurement','execution_total','compile','kernel_mean'}
+          'correctness','warmup','measurement','execution_total','compile','kernel_mean','shape_processing'}
 
 
 def validate(raw):
@@ -11,7 +11,7 @@ def validate(raw):
     value=json.loads(raw)
     if not isinstance(value, dict):
         raise ValueError('invalid telemetry object')
-    if set(value)-{'version','stages','shapes'} or value.get('version')!=1:
+    if set(value)-{'version','stages','shapes'} or value.get('version') not in {1,2}:
         raise ValueError('invalid telemetry version')
     def metrics(items):
         if not isinstance(items,dict) or set(items)-STAGES:

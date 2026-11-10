@@ -91,6 +91,9 @@ class ResultQueries:
             if row is None:
                 raise LookupError('attempt not found')
             result = dict(row)
+            from .lifecycle import read, elapsed
+            result['lifecycle'] = read(conn, identity)
+            result['end_to_end_ns'] = elapsed(result['lifecycle'], 'admitted', 'persisted')
             result['shape_results'] = [dict(r) for r in conn.execute(
                 'SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index LIMIT 1025', (identity,))]
             if len(result['shape_results']) > 1024:
@@ -192,9 +195,12 @@ class ResultQueries:
                     member['stages'] = [m for m in member['stages'] if m['shape_index'] == index]
                     # Profiler values are nested measurements, not additional
                     # elapsed phases. Never add kernel/compile time twice.
-                    elapsed = [m['duration_ns'] for m in member['stages'] if m['stage'] not in {'kernel_mean','compile'}]
+                    elapsed = [m['duration_ns'] for m in member['stages'] if m['stage'] not in {'kernel_mean','compile','shape_processing'}]
                     member['total_ns'] = sum(elapsed) if elapsed else None
-                    member['duration_scope'] = 'shape_execution'
+                    member['processing_ns'] = next((m['duration_ns'] for m in member['stages'] if m['stage']=='shape_processing'), None)
+                    from .lifecycle import read, elapsed
+                    member['end_to_end_ns'] = elapsed(read(conn, row['id']), 'admitted', 'persisted') if index >= 0 else None
+                    member['duration_scope'] = 'legacy_shape_stage_sum'
                     if member['shapes']:
                         shape = member['shapes'][0]
                         member['status'] = {'pass':'ok','fail':'fail','error':'error'}.get(shape['correctness'], 'unknown')

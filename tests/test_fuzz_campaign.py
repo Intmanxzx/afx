@@ -26,7 +26,7 @@ def test_infinite_refill_stopped_atomically(tmp_path):
     assert not refill(ledger)
 
 
-def test_secondary_reference_only_on_disagreement():
+def test_cpu_disagreement_never_triggers_secondary_or_changes_to_pass():
     from autofusedebugger.fuzz.execution import execute
     from fuzz_fixtures import bundle as materialize
     class Adapter:
@@ -39,12 +39,12 @@ def test_secondary_reference_only_on_disagreement():
         def cpu_reference(self,*a):return None
         def compare(self,*a):return False
         def diagnose_accuracy(self,*a):return {'max_abs':1.0,'mismatches':1,'elements':2}
-        def secondary_output(self,*a):return None
+        def secondary_output(self,*a):pytest.fail('automatic secondary forbidden')
         def outputs_equal(self,*a):return True
     result=execute(materialize('680564733841876926926749214863536422954'),Adapter(),EvaluationConfig())
-    assert result['status']=='ok'
+    assert result['status']=='fail'
     detail=json.loads(result['execution']['diagnostics'])['shapes']['0']
-    assert detail['cpu_pass'] is False and detail['secondary_pass'] is True
+    assert detail['cpu_pass'] is False and detail['secondary_used'] is False and detail['basis'] == 'cpu' and 'secondary_pass' not in detail
     adapter=Adapter();adapter.compare=lambda *a:True
     adapter.secondary_output=lambda *a:pytest.fail('secondary should not execute')
     assert execute(materialize('680564733841876926926749214863536422954'),adapter,EvaluationConfig())['status']=='ok'
@@ -121,7 +121,7 @@ def test_secondary_disagreement_stays_failed_and_cpu_uses_actual_reference():
             assert expected == 'actual-cpu-output'
             return False
         def diagnose_accuracy(self, *args): return {'max_abs': 2.0}
-        def secondary_output(self, *args): return 'eager-output'
+        def secondary_output(self, *args): pytest.fail('automatic secondary forbidden')
         def outputs_equal(self, left, right):
             assert (left, right) == ('af-output', 'eager-output')
             return False
@@ -129,5 +129,5 @@ def test_secondary_disagreement_stays_failed_and_cpu_uses_actual_reference():
     assert result['status'] == 'fail'
     assert result['oracle_id'] == 'torch-eager-cpu/1'
     assert all(row['correctness'] == 'fail' for row in result['shape_results'])
-    assert all(not item['secondary_pass'] and item['basis'] == 'cpu+eager-npu'
+    assert all(not item['secondary_used'] and item['basis'] == 'cpu' and 'secondary_pass' not in item
                for item in json.loads(result['execution']['diagnostics'])['shapes'].values())

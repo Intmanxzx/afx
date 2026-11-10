@@ -15,6 +15,11 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None):
         result = {}
         result['stages']=[dict(r) for r in conn.execute(cte+'SELECT a.backend,m.stage,count(*) AS samples,sum(m.duration_ns) AS total_ns,avg(m.duration_ns) AS mean_ns,max(m.duration_ns) AS max_ns'+base+' JOIN stage_metrics m ON m.attempt_id=a.id'+stage_where+' GROUP BY a.backend,m.stage',values)]
         result['performance']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,CASE WHEN json_extract(f.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END AS mode,s.correctness,s.performance,s.metric,count(*) AS samples,avg(s.mean_wall_ns) AS mean_ns,min(s.mean_wall_ns) AS min_ns,max(s.mean_wall_ns) AS max_ns"+base+' JOIN shapes s ON s.attempt_id=a.id'+shape_where+' GROUP BY a.backend,mode,s.correctness,s.performance,s.metric',values)]
+        result['tool_efficiency'] = {'version': 1, 'scope': 'attempt_shape_processing',
+            'processing': [r for r in result['stages'] if r['stage']=='shape_processing'],
+            'success_shapes_per_min': None, 'completed_shapes_per_min': None,
+            'cpu_pool_utilization': None, 'npu_slot_utilization': None,
+            'note': '未采集完整调度窗口及资源租约；不能从阶段和推导吞吐或使用率。'}
         result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
         result['errors']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.error_stage,count(*) AS count"+base+where+' GROUP BY a.backend,a.error_stage',values) if r['error_stage']]
         result['case_groups']=conn.execute(cte+'SELECT count(DISTINCT f.group_id)'+base+where,values).fetchone()[0]

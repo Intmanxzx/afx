@@ -38,10 +38,10 @@ autofusedbg fuzz replay D000000016 --static-only  # 仅基础 shape，静态编�
 autofusedbg fuzz replay C000000016 --save      # 保存结果并加入自动上传队列
 ```
 
-- 默认 CPU 为对照、AF-MLIR 为被测后端；AF-MLIR 对 CPU 精度不一致时用 eager-npu 复核，记录判定依据。
+- 默认 CPU 为对照、AF-MLIR 为被测后端；对 CPU 精度不一致即失败，不自动复核或改判。需要人工复核时执行 `autofusedbg fuzz replay <seed> --backend eager-npu --save`，生成独立记录，不覆盖原结果。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
 - C seed 保留单个静态 Shape；新增 D seed 在同一 NNSmith 图和固定权重上生成 3 个不同的合法 Shape，使用动态编译。新随机批跑按 seed 奇偶约 1:1 选择静态/动态；`--static-only` 可只产生静态用例。无法生成 3 个合法样本的 D seed 显式失败，不偷换成静态用例。旧 C seed 的重放内容不变。
-- 默认探测所有可见 NPU，并在不同逻辑卡间轮转分配用例。同一逻辑卡同一时刻只运行一个任务，跨进程仍由物理 UUID 锁保护。CPU 与不同 NPU 卡可并发；总并发受 `cpu_workers`（`--workers`）约束，workers × compile_threads 不得超过有效 CPU 核数，内存和缓存预算按整个活动池合计。
+- 默认探测所有可见 NPU，随机 campaign 派发时选择空闲兼容卡，不提前固定到忙卡；显式队列/replay 仍遵守设备约束。同一逻辑卡同一时刻只运行一个任务，跨进程仍由物理 UUID 锁保护。CPU 与不同 NPU 卡可并发；总并发受 `cpu_workers`（`--workers`）约束，workers × compile_threads 不得超过有效 CPU 核数，内存和缓存预算按整个活动池合计。
 - 老 setup 若保存了 `cpu_workers=1`，仍尊重该配置；双卡机器可显式用 `--workers 4 --compile-threads 1`，提供两个 NPU 任务及 CPU 任务的并发余量。吞吐提升取决于生成、编译、执行耗时，不保证单个 kernel 更快。
 - `--perf` 请求性能采集；目前无法可靠拆分的编译/kernel 指标留空，不能把首次调用或总耗时当 kernel 性能。
 - 使用--save时，功能失败保存短错误、阶段和已采集上下文；精度失败保存误差统计。长日志、tensor、编译产物不默认上传。
@@ -162,3 +162,16 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 ### NNSmith执行环境
 
 run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。当前安装路径仍需显式提供该隔离环境（例如在激活的环境中设置PYTHONPATH）；`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。自动化依赖准备尚待完成。
+
+
+### 合并执行观测基线（2026-11-10）
+
+当前仍是 case/backend 合并 worker，不是完整阶段级调度；不开放未验证的 split 或持久运行时选项。D seed 的三个 Shape 在同一实例、同卡按序执行。收尾线程有界，超时/崩溃不会在调度主循环重新生成图。
+
+新版记录使用 telemetry v2，页面“处理耗时（s）”为 Shape 实际处理墙钟跨度；历史未采集显示未采集，不用旧阶段和冒充。端到端列默认可在列设置中打开；目前只对同一 Linux boot 域内新接纳且有持久化事件的本地队列记录可计算。生命周期事件是独立本地表，不进入 immutable hash，目前不上传/不导出公开 snapshot；中心端到端列及未实现的吞吐/资源池使用率显示未采集。停止/重启后的缺失事件不补造。
+
+部署应先升级中心使其接受 v2 telemetry，再更新客户端；回滚中心到旧版本前先停新客户端上传（旧版本不接受 v2）。生产库不回拷旧快照，避免丢失上线后的数据；旧环境保留，私有备份包含身份、ACK。完整资源池、共享参考、持久 session、事件同步和窗口统计的实施边界见设计 9.10。
+
+本切片部署记录：oracle1 使用 `/home/ubuntu/af-fuzz/venv-stage-baseline-1110`，新增 override 为 `/etc/systemd/system/af-fuzz.service.d/zzz-stage-baseline-1110.conf`（排序在既有 override 之后）。私有备份与切换前 service 配置位于 `/home/ubuntu/af-fuzz/backups/stage-baseline-1110/`，不要公开。回滚时先暂停 v2 客户端上传，将新增 override 移出 `.conf` 后缀范围，再 daemon-reload/restart；不覆盖生产库。已核对线上 app.js 与本地产物 SHA256 一致，服务 active，用户/来源/ACK receipts/结果数量与备份相同、integrity_check=ok。
+
+mlir 入口仍是 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/bin/autofusedbg-npu`，现在引用 `/mnt/workspace/af-fuzz/stage-baseline-1110/installed`。原入口备份为同目录 `autofusedbg-npu.before-stage-baseline-1110`，复制回原入口即可回滚客户端；配置及凭据未改动。隔离 home 下通过新入口执行 D16 eager-npu，3 Shape 均成功、记录 telemetry v2；未上传测试记录。完整测试日志、构建安装日志、基准 JSON 均在 `/mnt/workspace/af-fuzz/stage-baseline-1110/`。
