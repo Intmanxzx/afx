@@ -18,11 +18,47 @@ let pageSize=10;
 try{const size=Number(localStorage.getItem('af-fuzz.page-size'));if([10,25,50,100,200].includes(size))pageSize=size;}catch{}
 $('page-size').value=String(pageSize);
 function parameters(){const p=new URLSearchParams();const q=form.elements.q.value.trim();if(q)p.set('q',q);return p;}
+const responseCache=new Map(), pendingRequests=new Map();
+const cacheNotice=document.createElement('span');cacheNotice.id='cache-status';
+cacheNotice.setAttribute('role','status');$('refresh-time').after(cacheNotice);
+const staleRoutes=new Set();
+function updateCacheStatus(response,route){
+ if(response.headers.get('X-Cache-State')==='stale')staleRoutes.add(route);else staleRoutes.delete(route);
+ cacheNotice.textContent=staleRoutes.size?' · 缓存更新失败，暂时显示上次成功的数据':'';
+ const generated=Number(response.headers.get('X-Data-Generated-At'));
+ if(generated)$('refresh-time').textContent='数据生成于 '+beijing(new Date(generated*1000));
+ else if(response.ok)$('refresh-time').textContent='更新于 '+beijing(new Date());
+}
 async function api(path) {
-  const response = await fetch(path, {cache:'no-store',credentials:'omit'});
-  const value = await response.json();
-  if(!response.ok) throw new Error(value.error || '读取失败');
+ const route=path.split('?')[0], old=pendingRequests.get(route);
+ if(old?.path===path)return old.promise;
+ // Only replace list/chart reads; independent detail requests remain untouched.
+ const managed=['api/summary','api/cases','api/statistics'].includes(route);
+ if(managed&&old)old.controller.abort();
+ const controller=new AbortController(), cached=responseCache.get(path);
+ const promise=(async()=>{
+  const headers=cached?{'If-None-Match':cached.etag}:{};
+  const response=await fetch(path,{cache:'no-store',credentials:'omit',headers,signal:controller.signal});
+  if(managed)updateCacheStatus(response,route);
+  if(response.status===304&&cached)return cached.value;
+  const value=await response.json();
+  if(!response.ok)throw new Error(value.error||'读取失败');
+  const etag=response.headers.get('ETag');
+  if(etag){
+   if(responseCache.size>=8&&!responseCache.has(path))responseCache.delete(responseCache.keys().next().value);
+   responseCache.set(path,{etag,value});
+  }
   return value;
+ })();
+ if(managed)pendingRequests.set(route,{path,promise,controller});
+ try{return await promise;}finally{if(pendingRequests.get(route)?.promise===promise)pendingRequests.delete(route);}
+}
+function activePage(){return location.hash.startsWith('#attempt=')?'detail':(location.hash.slice(1)||'overview');}
+function refreshVisible(silent=false){
+ const name=activePage();
+ if(name==='detail'||(silent&&name==='records'&&page>0))return;
+ load(silent,name==='records');
+ if(name!=='records')loadCharts();
 }
 function cell(row, value, tag="td") {
   const td = document.createElement(tag); td.textContent = value; row.append(td); return td;
@@ -113,7 +149,7 @@ function renderRecords(items){
  }fragment.append(tr);}
  $('rows').replaceChildren(fragment);configureColumns(definitions);
 }
-async function load(silent=false){
+async function load(silent=false,includeList=true){
  const request=++generation,list=new URLSearchParams(applied);list.set('limit',String(pageSize));list.set('after',String(cursors[page]));
  if(!silent)$('message').textContent='加载中…';
  // A whole-dataset count must not hold the first page hostage. Keep failures
@@ -124,15 +160,15 @@ async function load(silent=false){
   $('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)).toLocaleString();
   return null;
  }).catch(error=>{if(request===generation)for(const id of ['total','ok','fail','errors'])$(id).textContent='—';return error;});
- try{const result=await api('api/cases?'+list);if(request!==generation)return;
- $('refresh-time').textContent='更新于 '+beijing(new Date());
+ try{if(includeList){const result=await api('api/cases?'+list);if(request!==generation)return;
  const signature=JSON.stringify(result.items);if(signature!==lastData){if(silent&&($('column-picker').open||$('rows').querySelector('details[open]')))return;lastData=signature;lastRows=result.items;renderRecords(result.items);}
  next=result.next_cursor;$('next').disabled=next===null;$('previous').disabled=page===0;$('page-label').textContent=`第 ${page+1} 页 · ${result.items.length} 条`;$('message').textContent=result.items.length?'':'没有符合条件的结果。';
- }catch(error){if(request===generation)$('message').textContent=error.message;}
+ }else if(request===generation){$('message').textContent='';}
+ }catch(error){if(request===generation&&error.name!=='AbortError')$('message').textContent=error.message;}
  const summaryError=await summaryTask;
- if(summaryError&&request===generation)$('message').textContent+=' 汇总加载失败：'+summaryError.message;
+ if(summaryError&&summaryError.name!=='AbortError'&&request===generation)$('message').textContent+=' 汇总加载失败：'+summaryError.message;
 }
-form.addEventListener('submit',event=>{event.preventDefault();applied=parameters();history.replaceState(null,'',location.pathname+(applied.size?'?'+applied:'')+location.hash);page=0;cursors=[0];detailGeneration++;$('detail').hidden=true;load();loadCharts();});
+form.addEventListener('submit',event=>{event.preventDefault();applied=parameters();history.replaceState(null,'',location.pathname+(applied.size?'?'+applied:'')+location.hash);page=0;cursors=[0];detailGeneration++;$('detail').hidden=true;refreshVisible();});
 $('reset-filters').addEventListener('click',()=>{form.reset();form.requestSubmit();});
 $('page-size').addEventListener('change',()=>{pageSize=Number($('page-size').value);try{localStorage.setItem('af-fuzz.page-size',String(pageSize));}catch{}page=0;cursors=[0];load();});
 $('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;load();}});$('previous').addEventListener('click',()=>{if(page>0){page--;load();}});
@@ -146,7 +182,8 @@ const logControl=document.createElement('label');logControl.className='log-lengt
 logInput.addEventListener('change',applyLogLength);
 logInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();applyLogLength();}});
 logControl.append(logInput);$('column-picker').before(logControl);
-load();setInterval(()=>{if(!document.hidden){load(true);loadCharts();}},30000);
+setInterval(()=>{if(!document.hidden)refreshVisible(true);},15000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshVisible(true);});
 
 // Compare explicit attempt IDs from a bounded same-seed list, never join by name.
 $('compare').addEventListener('click', async () => {
@@ -189,7 +226,7 @@ async function loadCharts(){
     const signature=JSON.stringify(result);
     if(signature!==lastChartData){lastChartData=signature;updateStatistics(result);renderStatisticsTables(result);}
     $('chart-message').textContent='';
-  }catch(error){if(current===chartGeneration)$('chart-message').textContent=error.message;}
+  }catch(error){if(current===chartGeneration&&error.name!=='AbortError')$('chart-message').textContent=error.message;}
 }
 function navigate(){
   const fragment=location.hash.slice(1)||'overview';
@@ -201,7 +238,7 @@ function navigate(){
   $('page-title').textContent={overview:'总览',records:'功能&精度',performance:'性能分析',backends:'后端'}[name];
   document.querySelectorAll('nav a').forEach(el=>{el.classList.toggle('active',el.dataset.page===name);if(el.dataset.page===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
 }
-window.addEventListener('hashchange',()=>{hideFieldTooltip();navigate();});
+window.addEventListener('hashchange',()=>{hideFieldTooltip();navigate();refreshVisible();});
 $('close-detail').addEventListener('click',()=>{location.hash='records';navigate();});
 
 
@@ -363,7 +400,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape')hideFieldToo
 window.addEventListener('scroll',event=>{if(event.target!==fieldTooltip)hideFieldTooltip();},true);
 window.addEventListener('resize',hideFieldTooltip);
 
-loadCharts();navigate();
+navigate();refreshVisible();
 
 function lifecycleTime(value){
  const date=new Date(value);

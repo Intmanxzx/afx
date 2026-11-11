@@ -14,7 +14,7 @@
 
 `inductor_npu_ext` 如果已经随 `torch_npu` 打包，无需再次安装。
 
-Fuzz 的客户端、云端和离线查看命令见 [Fuzz 使用说明](af_fuzz_usage.md)。
+Fuzz 的客户端、云端和离线查看命令见 [Fuzz 使用说明](fuzz/fuzz_usage.md)。
 
 安装工具：
 

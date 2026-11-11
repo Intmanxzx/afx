@@ -27,5 +27,5 @@ class ScenarioParser(argparse.ArgumentParser):
   maintenance -h                         列出全部维护命令
 
 使用 autofusedbg fuzz COMMAND -h 查看参数；云端命令用 admin COMMAND -h。
-完整说明：docs/af_fuzz_usage.md
+完整说明：docs/fuzz/fuzz_usage.md
 '''

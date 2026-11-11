@@ -12,9 +12,9 @@ autofusedbg fuzz replay C000000016
 autofusedbg fuzz view ./results.sqlite
 ```
 
-[使用说明](docs/af_fuzz_usage.md)：客户端、云端、本地查看、发布。
+[使用说明](docs/fuzz/fuzz_usage.md)：客户端、云端、本地查看、发布。
 
-[设计文档](docs/af_fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
+[设计文档](docs/fuzz/fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
 
 公网结果入口：https://autofuse.online 。启用--save后客户端默认每30秒自动上报，CPU作为精度对照，按shape统计用例。
 
@@ -24,7 +24,7 @@ autofusedbg fuzz view ./results.sqlite
 
 ### 方式一：wheel 包安装
 
-从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 使用说明](docs/af_fuzz_usage.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
+从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 使用说明](docs/fuzz/fuzz_usage.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
 
 ```bash
 python3 -m pip install ./autofusedebugger-0.1.2-py3-none-any.whl

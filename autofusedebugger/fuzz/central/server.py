@@ -33,22 +33,25 @@ class Server(HTTPServer):
             self.shutdown_request(request);self.slots.release()
     def server_close(self):
         super().server_close();self.pool.shutdown(wait=True)
+        if hasattr(self, 'public_cache'):self.public_cache.close()
 
 
-def create_server(database,port=8090):
+def create_server(database,port=8090, *, cache_interval=15):
     database=Path(database).resolve();initialize(database);queries=ResultQueries(database)
+    from .cache import PublicCache, PAGE_SIZES
+    public_cache = PublicCache(database, interval=cache_interval)
     statistics_lock = threading.Lock()
     statistics_cache = {}
 
     def cached_statistics(params):
         from ..reporting.statistics import statistics
         key=tuple(sorted(params.items()))
-        # One chart calculation per key/30s instead of four simultaneous full
+        # One chart calculation per key/15s instead of four simultaneous full
         # rollups competing with uploads on a small server. Bounded cache.
         with statistics_lock:
             now=time.monotonic()
             entry=statistics_cache.get(key)
-            if entry and now-entry[0]<30:return entry[1]
+            if entry and now-entry[0]<15:return entry[1]
             value=statistics(database, **params)
             if len(statistics_cache)>=16:statistics_cache.pop(next(iter(statistics_cache)))
             statistics_cache[key]=(time.monotonic(),value)
@@ -57,7 +60,7 @@ def create_server(database,port=8090):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):
             pass
-        def send(self,status,value,mime='application/json; charset=utf-8',policy=None):
+        def send(self,status,value,mime='application/json; charset=utf-8',policy=None,headers=None):
             body=value if isinstance(value,bytes) else json.dumps(value,ensure_ascii=True,allow_nan=False).encode()
             if len(body)>(16 if mime.startswith('text/html') else 2)*1024*1024:
                 status,body=413,b'{"error":"response too large"}'
@@ -65,8 +68,23 @@ def create_server(database,port=8090):
             for key,value in {'Content-Type':mime,'Content-Length':str(len(body)),'Cache-Control':'no-store',
                 'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
                 'Content-Security-Policy':policy or "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'"}.items():
-                self.send_header(key,value)
-            self.end_headers();self.wfile.write(body)
+                if status != 304 or key != 'Content-Length':self.send_header(key,value)
+            for key,value in (headers or {}).items():self.send_header(key,value)
+            self.end_headers()
+            if status != 304:self.wfile.write(body)
+        def cached(self, key):
+            entry, failed = public_cache.get(key)
+            if entry is None:
+                return self.send(503, {'error':'公共数据准备中，请稍后重试'},
+                                 headers={'Retry-After':'15', 'X-Cache-State':'warming'})
+            headers = {'ETag':entry.etag,
+                       'X-Data-Generated-At':str(entry.generated_at),
+                       'X-Cache-State':'stale' if failed else 'ready'}
+            tags = [tag.strip().removeprefix('W/') for tag in self.headers.get('If-None-Match','').split(',')]
+            if entry.status == 200 and (entry.etag in tags or '*' in tags):
+                return self.send(304, b'', headers=headers)
+            return self.send(entry.status, entry.body, headers=headers)
+
         def do_GET(self):
             try:
                 if len(self.path)>2048:
@@ -89,7 +107,7 @@ def create_server(database,port=8090):
                     name={'/':'index.html','/report':'index.html','/app.js':'app.js','/charts.js':'charts.js','/style.css':'style.css'}[route]
                     data=resources.files('autofusedebugger.fuzz.view').joinpath('static').joinpath(name).read_bytes()
                     if route=='/':
-                        data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'页面每30秒刷新；上传周期由测试端配置'.encode())
+                        data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'公共缓存每15秒检查更新；页面每15秒刷新；上传周期由测试端配置'.encode())
                     return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8'}[route])
                 raw=parse_qs(url.query,keep_blank_values=True,max_num_fields=8)
                 if any(len(v)!=1 for v in raw.values()):
@@ -97,6 +115,8 @@ def create_server(database,port=8090):
                 params={k:v[0] for k,v in raw.items()}
                 if route == '/api/statistics' and not set(params)-{'seed','status','user_id','q'}:
                     from ..reporting.statistics import statistics
+                    if set(params) <= {'q'} and not params.get('q'):
+                        return self.cached('statistics')
                     self.send(200, cached_statistics(params))
                     return
                 if route == '/api/cases':
@@ -104,6 +124,9 @@ def create_server(database,port=8090):
                         raise ValueError('unknown field')
                     for key in ('limit','after'):
                         if key in params: params[key]=int(params[key])
+                    if (set(params) <= {'limit','after','q'} and not params.get('q')
+                            and params.get('after',0) == 0 and params.get('limit',50) in PAGE_SIZES):
+                        return self.cached('cases:'+str(params.get('limit',50)))
                     self.send(200, queries.case_page(**params))
                     return
                 if route=='/api/compare' and set(params)=={'left','right'}:
@@ -115,6 +138,8 @@ def create_server(database,port=8090):
                         raise ValueError('unknown field')
                     for key in ('limit','after'):
                         if key in params:params[key]=int(params[key])
+                    if route == '/api/summary' and set(params) <= {'q'} and not params.get('q'):
+                        return self.cached('summary')
                     result=queries.page(**params,newest=True) if route=='/api/results' else queries.case_summary(**params)
                     if route=='/api/results':
                         from contextlib import closing
@@ -166,7 +191,10 @@ def create_server(database,port=8090):
                 self.send(503,{'error':'upload temporarily unavailable'})
         def do_DELETE(self):self.send(405,{'error':'method not allowed'})
         do_PUT=do_PATCH=do_DELETE
-    return Server(('127.0.0.1',port),Handler)
+    server = Server(('127.0.0.1',port),Handler)
+    server.public_cache = public_cache
+    public_cache.start()
+    return server
 
 
 def serve(database,port=8090):

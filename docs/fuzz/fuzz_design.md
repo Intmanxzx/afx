@@ -1,6 +1,6 @@
 # Fuzz 设计
 
-本文件描述当前 `autofusedebugger/fuzz` 及已确认的演进设计；第 9 节为分期方案，9.10 保留第一切片历史，9.11 记录当前阶段调度、资源池及观测实现与验证边界。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](af_fuzz_usage.md)。
+本文件描述当前 `autofusedebugger/fuzz` 及已确认的演进设计；第 9 节为分期方案，9.10 保留第一切片历史，9.11 记录当前阶段调度、资源池及观测实现与验证边界。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](fuzz_usage.md)。
 
 ## 1. 模块与依赖
 
@@ -364,3 +364,108 @@ oracle1 已切换到新环境，服务 active；公开 app.js SHA256 `fd8108a52b
 ### 9.14 长跑数据规模下查询修复
 
 生产新增约 9600 attempt 后，summary/cases/statistics 触发旧 3 秒读查询期限，HTTP 503 使网站看似无数据，实际原始记录仍在。修复：rollup 不携带完整 diagnostics/telemetry 参与排序，只保留当前聚合需要的列；无搜索时不构造关联搜索投影；统计页在同一只读快照中物化窄临时表复用，优先使用已完成窗口聚合；统计请求使用有界 16 项/30 秒合并缓存。列表/汇总/统计的读预算为 10 秒，其余保持 3 秒，主库仍 mode=ro。缓存可能延迟最多 30 秒，不会修改结果。约 9638 条生产副本验证列表/汇总约 0.6–1.8 秒、统计冷请求约 3–7 秒，公开统计热请求约 0.15 秒；不声称解决无限数据规模问题。
+
+
+## 附录 A：可重放采样协议 E/F
+
+协议与验证记录保留如下；文中的部署路径和硬件状态为当时快照，操作前应核对现状。
+
+E 为静态、F 为同一固定图的三组合法动态 shape。C/D 的图和数值字节不变；已经持久化的旧 campaign 继续使用 C/D，新建 campaign 默认 E/F。配置编码进 128-bit seed entropy，短码因此比 C/D 长；无需外部配置即可 replay。不要给已有 seed 追加采样参数。
+
+```sh
+autofusedbg fuzz run --tensor-scale default --count 100 --save
+autofusedbg fuzz run --tensor-scale large --value-dist-mode llm --dtype-mode mixed --count 100
+autofusedbg fuzz run --dim-range 1 1000000 --max-elem-per-tensor 10000000 --dim-dist-mode half_normal --count 100
+```
+
+### 历史因子逐项核对
+
+| 因子 | 历史行为 | E/F 行为 |
+|---|---|---|
+| 轴长 | default `[1,131072]` 半正态；small/medium/large 均匀；16k–128k 对数正态 | 同档位、同 NNSmith 抽样函数；范围、分布和元素预算可覆盖 |
+| 元素预算 | small 65,536；medium 1,048,576；large 16,777,216；default 524,288 | 保留；预算是每张量上限，不是单轴范围 |
+| 图节点数 | 2 到 max_nodes 均匀，默认上限 5；上限 1 时固定 1 | 恢复；超时未完成节点预算明确报错 |
+| rank | `random.choice(rank_choices)`，默认初始 rank 0–5 | 同固定源码；不是正态抽样，最终 rank 可能经反向插图超过初始范围 |
+| 轴位置 | 首尾轴权重 3，中间 1；多轴无放回加权抽样 | 保留；Transpose 第二轴仍在其余轴中均匀抽样 |
+| Reduce 轴数 | 固定源码 MultiAxisReduceBase 的均匀轴数抽样 | 保留，不退化为单轴 |
+| dtype | 旧硬件探测后可用 dtype 池，浮点候选有额外权重 | 恢复 float16/float32 候选（默认 mixed），可指定单一精度；不使用机器相关探测改变 seed |
+| 数值 | uniform、log_scale、llm、recommendation，区分 input/weight | 恢复公式与角色区分；独立 seed-local RNG，不再固定为 C/D 的 65 个离散值 |
+| 动态候选 | 小尺寸、原尺寸附近、半尺寸候选，seeded shuffle；不改常量 | F 恢复该候选范围与随机顺序，并验证中间张量预算；D 不变 |
+
+数值公式：uniform `[3,7)`；log_scale 随机符号乘 `10**U(-4,4)`；llm 权重 `N(0,.02²)`、输入 `N(0,.2²)` 且 5% 元素放大 100–10000 倍；recommendation 权重 `N(0,1/numel)`、输入 `[0,1)`。新协议复现的是这些分布及固定字节，不承诺与旧 Torch RNG 同 seed 逐字节一致。不会用数值搜索替换为另一分布；溢出/非有限输出作为测试结果保留。
+
+### 范围与限制
+
+- E/F 编码支持轴上下界至 16,777,215、元素预算至 33,554,431、节点上限 255、solver timeout 至 511 秒。原始 32-bit 随机种子和配置共同决定身份。
+- `--generation-timeout` 是写入 seed 的求解上限；`--timeout` 是外部 worker/stage 墙钟安全上限（默认 120 秒），大预算实验需同时调高后者。
+- 实际输入分布受符号约束、broadcast、Reduce、元素预算挤压影响，不能宣称最终轴长严格服从初始分布。预算挤压可产生 1，即使请求范围下界大于 1。
+- 不扩展当前九种 op 的执行词汇，不声称恢复旧探测池的所有算子/整数 dtype；当前存储协议支持 float16/float32。bf16 在历史实现也未完成。
+- rank 环境覆盖不属于 E/F 配置；非默认 `NNSMITH_MAX_RANK` 明确拒绝，避免环境改变重放。
+- Case/output artifact 仍有独立 64 MiB 安全上限，多张量大图可能明确拒绝，不会降低 shape 伪装成功。
+- F 无法找到三组合法输入时明确失败。采样失败必须纳入统计，不能只报告接受样本。
+- 源码/Z3 指纹继续固定；跨平台求解器确定性仍未宣称完全保证。
+
+### 验证
+
+`tools/fuzz_shape_distribution.py --count 128 --output ...` 同时审计 C/D/E/F，按最终输入、rank、轴位置、动态 sample、Transpose 过滤前后分层，并记录错误与 dtype/元素数。单测同时覆盖配置往返、历史档位逐字段一致、边界轴权重、最终输入大轴、角色数值统计、C/D 重放不变、保存元数据重新物化、动态和 dtype CPU 执行。
+
+2026-11-10 的 128 组审计：C 128 接受，D 91 接受/37 失败，E 128 接受，F 98 接受/30 失败。C/D 最大基准输入轴为 8；E/F 为 122,468。E 基准输入共 499 个轴，其中 102 个大于 8、88 个大于 8,192，包含 float16/float32。原始报告为本次验证产物，不作为协议定义。
+
+部署：oracle1 使用 `/home/ubuntu/af-fuzz/venv-sampling-1110`，部署前私有一致性备份及 service 原配置在 `/home/ubuntu/af-fuzz/private/sampling-1110/`。服务切换不改生产库；回滚时恢复该目录的 service 配置并重启，不回拷旧数据库覆盖新结果。mlir 客户端安装在 `/mnt/workspace/af-fuzz/sampling-1110/installed`，原入口保存在同目录 `entry.before`。没有终止或改写原有长跑 campaign；新建 campaign 才启用 E/F。
+
+硬件检查：通过 `npussh mlir` 使用两张 Ascend910（逻辑 0/1，物理 12/13），对轴长 66,371 的静态 E 和三组动态 F，eager-NPU/AF-MLIR 均通过 CPU 精度对比（共 8 个 device/backend/mode 组合）。百万轴覆盖另以三个分布的固定 `[1000000,1000000]` 配置验证最终输入包含 1,000,000，而非只检查抽样函数。
+
+
+## 附录 B：数据查看性能优化记录（2026-11-10）
+
+以下为当时的性能测量及部署记录，并非当前服务配置或性能保证；操作前应核对现状。
+
+### 定位与修改
+
+在 oracle1 约 235MB、9890 attempts / 13391 shapes 的在线数据库上分析查询计划，并通过 SQLite backup 创建私有一致性快照。没有清空结果或修改身份。
+
+- `attempt_facts(group_id,attempt_id)` 覆盖索引避免分组扫描读取宽 execution/diagnostics 字段。
+- 用窄键 `max(rowid)` 选择每组最新 backend，再读取其上下文；不改变重试覆盖规则。
+- 无筛选列表按 rowid 窗口选择候选组，完整保留每组 backend/history。候选不足时扩展窗口；游标及 Shape 顺序保持不变。
+- 文本/SQL 搜索采用一次性匹配集合；Pass/Failed 等状态直接筛聚合状态，避免构造日志搜索投影。
+- 图表在同一只读事务中复用 connection-local latest/cases/attempts 临时表，避免重复聚合和重复解析日志 JSON。没有引入持久结果缓存。
+- 列表独立于汇总返回后渲染；汇总失败显示错误，不将已有列表当成空结果。
+
+### 验证
+
+同一私有快照，原 `venv-query-fix-1110` 与优化代码对照：20 条列表、汇总、Failed 列表、完整统计 JSON 排序序列化后的 SHA256 全部一致。该次串行测量如下（秒；线上负载与缓存会引起明显波动，不是 SLA）：
+
+| 查询 | 原实现 wall / CPU | 优化 wall / CPU |
+|---|---:|---:|
+| 20 条列表 | 2.212 / 1.068 | 0.097 / 0.096 |
+| 汇总 | 1.586 / 1.469 | 0.716 / 0.715 |
+| Failed 列表 | 2.408 / 1.777 | 0.900 / 0.820 |
+| 完整统计（latest 复用阶段） | 12.906 / 5.342 | 3.790 / 2.810 |
+
+最终版进一步将 telemetry joins 改为窄 selected_attempts 表，完整统计 JSON 校验值仍一致；部署后 loopback 串行验证：列表 0.202s、汇总 0.889s、统计 3.210s、Failed 0.900s、无匹配的 transpose 全文搜索 2.601s，全部 HTTP 200。全文子串搜索仍需扫描，尚未实现大规模全文索引；不应把当前结果外推到百万记录。
+
+查询、Shape、同步、存储、统计与 viewer 相关测试：104 passed / 2 skipped。新增多窗口分页、重试、部分 Shape、无 Shape 错误、极大游标与完整 rollup 对照。另一次包含 hosting 的测试出现 6 个调度 SQLite 锁失败，非本次查询改动范围；没有宣称全套测试通过。
+
+### 部署与回滚
+
+分析过程中另一项采样工作发布了 `venv-sampling-1110`；最终以它为基底创建 `/home/ubuntu/af-fuzz/venv-query-performance-1110`，只叠加 reporting/cases.py、reporting/index.py、reporting/statistics.py、storage/queries.py、view/static/app.js。采样实现保持不变。
+
+服务 override：`/etc/systemd/system/af-fuzz.service.d/query-performance-1110.conf`。私有一致性备份、原服务配置位于 `/home/ubuntu/af-fuzz/private/query-performance-1110/`，不得发布或入库。上线后核对备份内用户、来源、attempt ID 均未丢失，线上继续接收新结果。
+
+回滚前核对是否已有更新部署。若仍为本版本，将此 override 移出 `.conf` 后缀范围，执行 `systemctl daemon-reload` 和 `systemctl restart af-fuzz.service`，回到主服务的 sampling 环境。不要恢复旧数据库覆盖新上传；新增索引可保留。
+
+最终校验：生产库 `integrity_check=ok`；上线前备份中的 1 个用户、5 个来源及 10042 个 attempt ID 均保留（检查时线上已增至 10133 条 attempts）。线上 app.js 与本地 SHA256 一致。浏览器实测记录页加载、下一页成功。
+
+### 公共快照与 15＋15 秒刷新
+
+后端单个 `public-cache` 线程每 15 秒检查持久 SQLite 连接的 `PRAGMA data_version`，没有提交变化则不重新计算。结果上传、阶段事实和维护写入都能被检测；数据库文件被替换时重新连接。首次启动异步预热，公共请求返回带 Retry-After 的 503，而不是自行计算。
+
+后台生成无筛选统计及汇总、第一页列表（10/20/25/50/100/200 条），预序列化响应并生成 ETag；完成后短锁原子替换。汇总直接从统计 overall 派生，避免重复聚合且与统计一致。列表和统计各有自己的只读事务，持续写入时它们并非严格相同的数据库快照。单条响应继续限制为 2MiB，超过限制仍返回 413。后台统计允许最多 30 秒 SQL 时间，交互查询仍保留原 10 秒限制；慢刷新不重叠、不堆积任务。刷新失败保留旧快照、记录日志，并通过 X-Cache-State 和前端提示暴露故障。
+
+无筛选首页请求只消费缓存，支持 If-None-Match / 304。任意筛选和非首页按需执行，筛选统计仍有最多 16 项、15 秒短时缓存。客户端每 15 秒只刷新当前页面所需数据，隐藏标签暂停；详情和历史分页不自动刷新。相同在途请求合并，换筛选取消旧请求；客户端 ETag 缓存最多 8 项。显示服务端数据生成时间，而非把取缓存时间当成新数据时间。15＋15 不含计算、网络或上传等待，并非严格 30 秒 SLA。
+
+验证：108 passed / 2 skipped，覆盖外部写入失效、无写入不重算、失败保留快照、预热、ETag、请求不触发 builder、各页大小游标，以及实际 JS helper 的页面路由、请求合并和取消。oracle1 私有快照预热约 15.46 秒；5 类公共接口各 20 次、4 并发条件请求均返回 304，中位约 1–2ms。上线后 loopback 首次响应约 0.9–4ms，条件响应约 0.6–0.7ms，筛选仍走实时查询（约 1.2 秒）。这些是低并发样本，不是最大吞吐测试。
+
+部署环境 `/home/ubuntu/af-fuzz/venv-public-cache-1110` 基于原 `venv-dfc65e4`，新增 override 为 `/etc/systemd/system/af-fuzz.service.d/zzz-public-cache-1110.conf`。私有一致性备份和服务配置保存到 `/home/ubuntu/af-fuzz/private/public-cache-1110/`。核对用户、来源及备份中所有 attempt ID 均无丢失。回滚前核对最新服务配置，再将此 override 移出 .conf 后缀，daemon-reload/restart；不覆盖生产数据库。
+
+HTTPS 从 oracle1 访问域名验证 200、缓存响应头及线上 JS 与本地 SHA256 一致。本机浏览器和 curl 当次均遇到 TLS/连接关闭，未完成本次在线视觉验收；不能把服务器侧 HTTPS 成功等同于浏览器验收。

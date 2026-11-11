@@ -54,7 +54,7 @@ def test_ingest_idempotence_conflict_identity_and_atomicity(tmp_path):
 def test_http_sync_lost_ack_retry_and_public_query(tmp_path):
     serverdb=tmp_path/'server';key=tmp_path/'key';create_user(serverdb,'Tester',key)
     home=tmp_path/'home';home.mkdir();repo=ResultRepository(home/'results');repo.save(result())
-    server=create_server(serverdb,0)
+    server=create_server(serverdb,0,cache_interval=.1)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:
         endpoint=f'http://127.0.0.1:{server.server_port}'
@@ -63,6 +63,9 @@ def test_http_sync_lost_ack_retry_and_public_query(tmp_path):
         opener=build_opener(ProxyHandler({})).open
         assert once(home,repo.path,opener=opener)['uploaded']==1
         assert once(home,repo.path,opener=opener)['pending']==0
+        from test_fuzz_public_cache import wait_until
+        wait_until(lambda: server.public_cache.get('summary')[0] is not None and
+                   json.loads(server.public_cache.get('summary')[0].body)['total']==1)
         with opener(endpoint+'/api/summary') as response:assert json.load(response)['total']==1
         with opener(endpoint+'/') as response:assert '主导航' in response.read().decode()
         repo.save(result('680564733841876926926749214863536422955'))

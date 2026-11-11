@@ -1,6 +1,6 @@
 # Fuzz 服务部署模板
 
-操作说明、身份发放、备份恢复和升级步骤统一见 [Fuzz 使用说明](../../docs/af_fuzz_usage.md#二云端身份汇总网站)。本目录仅保留部署文件，不维护另一份设计或测试流水账。
+操作说明、身份发放、备份恢复和升级步骤统一见 [Fuzz 使用说明](../../docs/fuzz/fuzz_usage.md#二云端身份汇总网站)。本目录仅保留部署文件，不维护另一份设计或测试流水账。
 
 - `Dockerfile` / `compose.yaml`：固定 Python 镜像与 wheel 版本；将对应 wheel 放到本目录，升级时同步修改版本。Linux host network 供宿主机 TLS 代理访问 loopback 服务。
 - `Caddyfile`：HTTPS 代理；使用前核对域名/DNS、80/443 端口和证书持久化目录。

@@ -148,7 +148,7 @@ class ResultQueries:
         result['diagnostic_view'] = diagnostic_view(diagnostics, shape_index, result.get('error_summary', ''))
         return result
 
-    def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None):
+    def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None, _include_cursors=False):
         """Group comparable runs, retaining every attempt in backend history.
 
         Filters select current shape cases, retaining passing CPU peers and backend
@@ -222,4 +222,7 @@ class ResultQueries:
                     member.update(outcomes(member, json.loads(row['evaluation'])))
                     item['backends'].setdefault(backend, []).append(member)
                 items.append(item)
-        return {'items':items,'next_cursor':groups[limit-1]['cursor'] if len(groups)>limit else None}
+        result = {'items':items,'next_cursor':groups[limit-1]['cursor'] if len(groups)>limit else None}
+        if _include_cursors:
+            result['_cursors'] = [group['cursor'] for group in groups[:limit]]
+        return result

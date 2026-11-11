@@ -1,6 +1,6 @@
 # Fuzz 使用说明
 
-同一个 `autofusedebugger` wheel 提供客户端、云端和本地查看器。架构及能力边界见[设计文档](af_fuzz_design.md)。
+同一个 `autofusedebugger` wheel 提供客户端、云端和本地查看器。架构及能力边界见[设计文档](fuzz_design.md)。
 
 ## 安装
 
@@ -75,7 +75,7 @@ autofusedbg fuzz admin rotate-token /srv/fuzz/results.sqlite niuyuhu
 
 没有在线注册。管理员在服务器终端执行命令；服务端保存 token hash，不保存可还原的 token。网站提供总览、功能&精度、性能分析及按 shape 的运行详情，支持用户过滤、列选择和受限 SQL WHERE 查询。网站结果默认公开，不能上传秘密日志。
 
-Linux 部署可使用 [Compose、Caddy、systemd 模板](../deploy/fuzz/README.md)。固定 wheel 版本；先验证再切换，不直接执行不受控的升级命令。
+Linux 部署可使用 [Compose、Caddy、systemd 模板](../../deploy/fuzz/README.md)。固定 wheel 版本；先验证再切换，不直接执行不受控的升级命令。
 
 ### 备份、恢复、升级、迁移
 
@@ -123,7 +123,7 @@ autofusedbg fuzz view ./results.snapshot.sqlite --no-browser --port 8091
 
 ## 四、维护者：构建和发布
 
-流程：**推送版本 Tag → 测试、构建 wheel → 创建 GitCode Release 并上传同一 wheel → 发布 PyPI**。流水线见 [release.yml](../.gitcode/workflows/release.yml)，脚本见 [release_wheel.py](../tools/release_wheel.py)。不是点击网页“发布 Release”触发；GitCode 的 `release.published` 触发器尚无已确认支持依据。
+流程：**推送版本 Tag → 测试、构建 wheel → 创建 GitCode Release 并上传同一 wheel → 发布 PyPI**。流水线见 [release.yml](../../.gitcode/workflows/release.yml)，脚本见 [release_wheel.py](../../tools/release_wheel.py)。不是点击网页“发布 Release”触发；GitCode 的 `release.published` 触发器尚无已确认支持依据。
 
 发布前需管理员：
 
@@ -224,4 +224,4 @@ autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --de
 
 ### 大 Shape 与分布采样
 
-新建随机 campaign 默认使用可重放 E/F 协议；旧 C/D 和已持久化的旧 campaign 不改含义。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes` 和 `--generation-timeout`。完整历史对照、公式、预算限制和验证方法见 [采样协议](af_fuzz_sampling.md)。要使正在运行的旧 campaign 使用新采样，需正常停止后新建，不能原地改旧 seed。
+新建随机 campaign 默认使用可重放 E/F 协议；旧 C/D 和已持久化的旧 campaign 不改含义。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes` 和 `--generation-timeout`。完整历史对照、公式、预算限制和验证方法见 [采样协议](fuzz_design.md#附录-a可重放采样协议-ef)。要使正在运行的旧 campaign 使用新采样，需正常停止后新建，不能原地改旧 seed。

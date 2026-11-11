@@ -3,13 +3,13 @@ from ..storage.queries import reading
 from ..backend_names import display_backend
 
 
-def statistics(database, *, seed=None, status=None, user_id=None, q=None):
+def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeout=10):
     from .cases import rollup, reuse_latest
     cte, values = rollup(seed, status, user_id, q)
     where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id)'
     shape_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id AND selected.shape_index=s.shape_index)'
     stage_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id AND (m.shape_index=-1 OR selected.shape_index=m.shape_index))'
-    with reading(database, timeout=10) as conn:
+    with reading(database, timeout=_timeout) as conn:
         conn.execute('BEGIN')
         # Materialize the narrow rollup once per read snapshot, not once per
         # chart. Main database is opened mode=ro; only connection-local temp
