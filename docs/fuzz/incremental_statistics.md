@@ -31,3 +31,9 @@
 本次尚未部署：oracle1 SSH 在握手阶段反复超时/断开，未取得生产快照或完成线上对照。线上仍为上一轮 30 秒检查＋失败退避版本。部署前必须重新检查有效 ExecStart 和文件哈希，私有一致性备份后，仅叠加 central/cache.py、reporting/statistics.py、reporting/efficiency.py 和 reporting/incremental.py；不要混入其他并行 UI 修改。先用备份库做隔离结果对照与构建计时，再切换生产。
 
 回滚代码时，先停止服务并删除本模块 `public_*_v1` 触发器（不是原始数据），避免旧代码不消费 journal 却持续积累；派生文件可移开保留。不要恢复旧结果库覆盖新上传。
+
+### 后续提交与两端部署核对
+
+代码提交 `0b97f92`。通过 `npussh mlir` 在原 team-release-06cf0da 安装上仅叠加本次五个文件，安装目录为 `/mnt/workspace/af-fuzz/incremental-1111/installed`。远端相关测试 60 passed（关闭环境中缺失 execnet 的第三方 pytest 插件自动加载，补齐测试 fixtures 后重跑）。正式入口 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/bin/autofusedbg-npu` 已切到新目录，入口备份为 `incremental-1111/private-backup/autofusedbg-npu.before`；从 /tmp 验证 CLI 和模块路径，五个文件 SHA256 与本地相同。没有运行 NPU kernel 性能测试，也没有宣称长跑 campaign 正在运行。
+
+oracle1 曾恢复 SSH：实际生产仍为 venv-failure-classification-1110 的上一轮缓存降载版本。私有快照和隔离候选包已创建于 `/home/ubuntu/af-fuzz/private/incremental-1111/`。快照旧全量统计 12.25 秒，增量 bootstrap 已保存两轮进度，随后 SSH 连接中断；尚未取得最终一致性/增量耗时结果，也未替换生产文件。隔离验证脚本 `/tmp/oracle-incremental-check.py` 可能仍在运行或已完成，重新连接后先检查，勿重复启动；快照用于试验会被修改，不可当作原样生产恢复备份。正式部署仍需新的私有一致性备份、快照验证完成、源文件哈希检查和线上服务/API 验证。
