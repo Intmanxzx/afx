@@ -10,7 +10,7 @@ import struct
 from ..contracts import Seed, TensorSpec, CaseSpec, CaseBundle, canonical_json
 
 ORACLE_ID = 'nnsmith-cpu/5'
-SOURCE_SHA256 = 'a1a524f235f8b6299c397fd12c383d4b15a80f027230ece2d7d18259f92c872e'
+SOURCE_SHA256 = 'c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5'
 Z3_VERSION = '4.12.2'
 OPS = ('Add', 'Mul', 'Neg', 'ReLU', 'Transpose', 'ReduceSum', 'ReduceMean', 'ReduceMin', 'ReduceMax')
 NAMES = dict(zip(OPS, ('add', 'mul', 'neg', 'relu', 'transpose', 'sum', 'mean', 'amin', 'amax')))
