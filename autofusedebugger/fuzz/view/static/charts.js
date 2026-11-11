@@ -218,6 +218,13 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
 const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['unknown'])]));let latestStatistics=null;
 window.updateStatistics = result => {
  latestStatistics=result;
+ const failureBox=document.getElementById('failure-path-breakdown');
+ if(failureBox){failureBox.replaceChildren();const rows=result.failure_path||[];const total=rows.reduce((n,r)=>n+r.count,0);
+  for(const [key,label] of [['mlir_failed','MLIR 路径失败'],['unconfirmed','未确认 MLIR 路径']]){
+   const count=rows.filter(r=>r.label===key).reduce((n,r)=>n+r.count,0),text=document.createElement('span');
+   text.textContent=label+'：'+count.toLocaleString()+' / '+total.toLocaleString();failureBox.append(text);
+  }
+ }
  const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_failed:0,gen_error:0,unknown:0});const key=r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='gen_failed'?'gen_failed':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};
  const overall=convert(result.overall,'Overall')[0]||{};
  drawDonut('chartOverall','legendOverall',STATUS_KEYS.map(s=>({label:s,value:overall[s]||0,color:STATUS_COLORS[s]})));

@@ -20,7 +20,7 @@ from .failure_origin import VERSION as CLASSIFICATION_VERSION
 
 VERSION = 2
 BATCH = 64
-COUNT_FIELDS = ('overall', 'backend', 'category', 'dtype', 'op', 'dimension', 'elements', 'mode', 'errors')
+COUNT_FIELDS = ('overall', 'backend', 'category', 'dtype', 'op', 'dimension', 'elements', 'mode', 'errors', 'failure_path')
 
 
 def initialize(database):

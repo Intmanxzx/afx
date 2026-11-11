@@ -42,12 +42,17 @@
   <summary>SQL 条件与字段</summary>
   <p>以 WHERE 开头；支持 =、!=、&lt;、&gt;、LIKE、AND、OR 和括号。文本用单引号；不接受任意 SQL 语句。</p>
   <code>WHERE status = 'Pass' AND backend = 'af-mlir'</code>
-  <p>字段：seed（短 seed 或完整数字）, shape_index, status（Pass / gen_failed / function_failed / accuracy_failed / Unknown）, backend, function_status（Pass / 构图Failed / Failed / Unknown）, accuracy_status（Pass / Failed / Unknown）, user, op, input_shape, input_dtype, mode（static / dynamic）, cann, torch, torch_npu, autofuse_commit, created_at</p>
+  <p>字段：seed（短 seed 或完整数字）, shape_index, status（Pass / gen_failed / function_failed / accuracy_failed / Unknown）, backend, function_status（Pass / 构图Failed / Failed / Unknown）, failure_path（mlir_failed / unconfirmed / not_applicable）, accuracy_status（Pass / Failed / Unknown）, user, op, input_shape, input_dtype, mode（static / dynamic）, cann, torch, torch_npu, autofuse_commit, created_at</p>
   <p>构图Failed：NNSmith 生成、CPU 参考执行或 Torch/Dynamo/Inductor 编译链路失败。功能Failed：有明确 Autofuse 编译或执行失败证据；不能仅凭 InductorError 包装或进入 AF 路径判定。精度Failed：执行成功但精度校验未通过。Unknown：未执行、证据不足或设备占用、超时等环境异常；不计为 AF 功能失败。</p>
 </details>
 <p id="message" role="status" aria-live="polite"></p>
 <section id="overview-page" class="page">
   <div class="section-heading"><h2>用例统计分布</h2><span class="muted">按当前筛选统计</span></div>
+  <article class="chart-card" aria-label="功能失败路径">
+    <h3>功能Failed · MLIR 路径</h3>
+    <p>仅按失败日志确认；未确认不等于非 MLIR，运行级日志不跨 Shape 归因。</p>
+    <div id="failure-path-breakdown" class="legend"></div>
+  </article>
   <p id="chart-message" role="status"></p>
   <div class="chart-grid">
     <article class="chart-card"><h3>正确性分布</h3><p>按测试用例统计</p><svg id="chartOverall" viewBox="0 0 380 260" role="img" aria-label="正确性分布"></svg><div class="legend" id="legendOverall"></div></article>

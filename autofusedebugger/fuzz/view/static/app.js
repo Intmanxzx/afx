@@ -135,7 +135,7 @@ function renderRecords(items){
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
  if(latest){let text=null,state='';const log=b==='af-mlir'?(latest.run_log||''):latest.core_error;if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}
- if(kind==='function'){const category=latest.function_status||'unknown';state=category==='gen_failed'?'graph-failed':category==='function_failed'?'failed':category==='pass'?'pass':'';text=state==='pass'?'Pass':state==='graph-failed'?'构图Failed':state==='failed'?'功能Failed':null;}
+ if(kind==='function'){const category=latest.function_status||'unknown';state=category==='gen_failed'?'graph-failed':category==='function_failed'?'failed':category==='pass'?'pass':'';text=state==='pass'?'Pass':state==='graph-failed'?'构图Failed':state==='failed'?(latest.mlir_failure?.path==='mlir_failed'?'功能Failed · MLIR':'功能Failed · 路径未确认'):null;}
  if(kind==='logs'&&(log||['error','unsupported','fail'].includes(latest.status)))text=shortLog(log||(b==='af-mlir'?'未保存运行日志 · 查看详情':latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
  if(kind==='kernel'&&latest.measurement_status==='error'){text='性能Failed';state='failed';}
  if(kind==='kernel'&&latest.measurement_status!=='error'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
@@ -374,6 +374,9 @@ function renderStatisticsTables(result){
 function stageName(stage){return ({generate:'共享生成',reference:'CPU 期望结果',compare:'CPU 结果校验',record:'持久化',shape_processing:'Shape 处理耗时（墙钟跨度）',generation:'生成用例',capability:'后端能力检查',prepare:'准备执行器（不代表编译完成）',input_binding:'输入绑定',first_call_combined:'首调(惰性编译/执行/同步)',correctness:'精度校验',execution_total:'执行总计',compile:'独立编译',kernel_mean:'Kernel 平均耗时',performance:'性能测量'}[stage]||stage||'Unknown');}
 function renderFailureDetails(result){
  const view=result.diagnostic_view||{};
+ const path=result.mlir_failure;
+ if(path?.path==='mlir_failed')view.explanation='MLIR 路径失败（'+(path.scope==='shape'?'当前 Shape':'单 Shape 运行日志')+'）：'+path.evidence;
+ else if(path?.path==='unconfirmed')view.explanation='已确认 AF 功能失败，但现有日志不能确认是 MLIR 路径失败。';
  function section(id,title,content){const box=$(id);box.replaceChildren();const heading=document.createElement('h3'),pre=document.createElement('pre');heading.textContent=title;pre.textContent=content;box.append(heading,pre);return box;}
  section('ascir-detail','ASCIR 表达的图结构',view.shape_log||'未保存当前 Shape 的 ASCIR / 图结构文本');
  // Full saved run log already contains its extracted shared lines; do not repeat them.

@@ -7,7 +7,7 @@ Missing/truncated evidence stays unknown; immutable result records are untouched
 import json
 import re
 
-VERSION = 3  # Included in the disposable public-statistics cache identity.
+VERSION = 5  # Included in the disposable public-statistics cache identity.
 AF_BACKENDS = {'af-mlir', 'af-legacy'}
 TORCH_CAUSES = re.compile(
     r'UnsupportedIndexExpr|Unsupported index_expr|unknown SymPy node|'
@@ -17,8 +17,33 @@ TORCH_CAUSES = re.compile(
     r'(?:torch\._dynamo\.exc\.)?InternalTorchDynamoError', re.I)
 
 
+# GELOGI/GELOGD prefixes are intentionally ignored. Both colon forms and whitespace
+# variants occur in producer logs; numeric values follow MlirCodegenStatus.
+MLIR_RESULT = re.compile(r'\bMLIR\s+Codegen\s+Result\s*[:：]\s*'
+                         r'(?:(?:mlir::bridge::)?MlirCodegenStatus::)?'
+                         r'(kNotSupported|kFailed|kSucceeded|[012])\b', re.I)
+MLIR_RESULT_HEADER = re.compile(r'\bMLIR\s+Codegen\s+Result\s*[:：]', re.I)
+
+
+def explicit_mlir_results(text):
+    results = []
+    for line in text.splitlines():
+        if 'Failed to execute graph code:' in line:
+            continue
+        if MLIR_RESULT_HEADER.search(line):
+            match = MLIR_RESULT.search(line)
+            state = match[1].lower() if match else 'unknown'
+            state = {'0': 'knotsupported', '1': 'kfailed', '2': 'ksucceeded'}.get(state, state)
+            results.append((state, line))
+    return results
+
+
 def af_failure(evidence):
     lowered = evidence.lower()
+    if any(state == 'kfailed' for state, _ in explicit_mlir_results(evidence)):
+        return True
+    if MLIR_FAILED_GATE.search(evidence):
+        return True
     if ('codegen generate kernel failed' in lowered or
             'no plan with an mlir-supported template' in lowered):
         return True
@@ -100,3 +125,61 @@ def classify(backend, status, stage='', summary='', diagnostics=None, index=-1):
 def sql_status(backend, stage, summary, diagnostics, index):
     category = classify(backend, 'error', stage or '', summary or '', diagnostics, index)
     return 'error' if category == 'function_failed' else category
+
+
+# These gates return a failed strict MLIR verdict. `none` means success and
+# `cube-fusion` is outside this path, not an MLIR codegen failure.
+MLIR_FAILED_GATE = re.compile(
+    r'\bAF_MLIR_STRICT\s+gate=(?:soc-version|candidate-preparation|'
+    r'pipeline-session|lowering|artifact-assembly|exception)\s+'
+    r'shortfall=(?:yes|no|unknown)\b', re.I)
+MLIR_ERROR = re.compile(
+    r'no plan with an MLIR-supported template|'
+    r'\b(?:RunMlirCodegen|MLIR codegen|MLIR lowering)\b[^\n]*(?:failed|failure|error:)', re.I)
+
+
+def mlir_failure_evidence(backend, status, stage='', summary='', diagnostics=None, index=-1, shape_count=None):
+    """A subcategory of function_failed, never inferred from backend selection.
+
+    Shared stderr is eligible only for a single Shape (or an unshaped attempt).
+    It cannot identify the failed Shape in a multi-Shape attempt. The returned
+    line is a diagnostic, not a claim that all preceding pipeline stages passed.
+    """
+    if classify(backend, status, stage, summary, diagnostics, index) != 'function_failed':
+        return {'path': 'not_applicable', 'scope': '', 'evidence': ''}
+    if isinstance(diagnostics, str):
+        try:
+            diagnostics = json.loads(diagnostics)
+        except (TypeError, ValueError):
+            diagnostics = {}
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    shapes = diagnostics.get('shapes', {})
+    local = summary + '\n' + shapes.get(str(index), {}).get('error', '')
+    sources = [('shape', local)]
+    # An explicit AF graph-validation failure is not moved into MLIR by stderr
+    # from another subgraph in the same invocation.
+    if (not re.search(r'Check dtype failed|Check shape failed', local, re.I) and
+            ((index == -1 and not shapes and shape_count in (None, 0)) or
+             (index >= 0 and shape_count == 1))):
+        sources.append(('run', diagnostics.get('error', '')))
+    from ..failure_details import redact
+    # Scan all attributable sources before consulting the legacy heuristics.
+    explicit = [(scope, state, line) for scope, text in sources
+                for state, line in explicit_mlir_results(text)]
+    if explicit:
+        failed = next(((scope, line) for scope, state, line in explicit if state == 'kfailed'), None)
+        scope, line = failed or (explicit[0][0], explicit[0][2])
+        return {'path': 'mlir_failed' if failed else 'unconfirmed',
+                'scope': scope, 'evidence': redact(line.strip())[:1600]}
+    # Compatibility only: remove once all producers emit MLIR Codegen Result.
+    for scope, text in sources:
+        for line in text.splitlines():
+            if 'Failed to execute graph code:' in line:
+                continue  # Generated source in an exception is not a verdict.
+            if MLIR_FAILED_GATE.search(line) or MLIR_ERROR.search(line):
+                return {'path': 'mlir_failed', 'scope': scope, 'evidence': redact(line.strip())[:1600]}
+    return {'path': 'unconfirmed', 'scope': '', 'evidence': ''}
+
+
+def failure_path(backend, status, stage='', summary='', diagnostics=None, index=-1, shape_count=None):
+    return mlir_failure_evidence(backend, status, stage, summary, diagnostics, index, shape_count)['path']

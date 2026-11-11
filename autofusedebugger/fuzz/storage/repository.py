@@ -71,9 +71,10 @@ def _connect(path, writable=False):
         if new:
             _initialize(conn)
         _check(conn)
-        from ..reporting.failure_origin import sql_status
+        from ..reporting.failure_origin import sql_status, failure_path
         from functools import lru_cache
         conn.create_function('failure_status', 5, lru_cache(maxsize=256)(sql_status), deterministic=True)
+        conn.create_function('failure_path', 7, lru_cache(maxsize=256)(failure_path), deterministic=True)
         if writable:
             from .sqlite_utils import enable_wal
             enable_wal(conn)

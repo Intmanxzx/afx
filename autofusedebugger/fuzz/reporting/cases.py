@@ -39,12 +39,23 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
              WHEN s.correctness='pass' THEN 'ok'
              WHEN s.shape_index IS NULL AND b.status IN ('error','unsupported')
                   THEN failure_status(b.backend,b.error_stage,b.error_summary,(SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),-1)
-             WHEN s.shape_index IS NULL THEN b.status ELSE 'unknown' END AS status
+             WHEN s.shape_index IS NULL THEN b.status ELSE 'unknown' END AS status,
+        CASE WHEN s.correctness='error' OR (s.shape_index IS NULL AND b.status IN ('error','unsupported'))
+             THEN failure_path(b.backend,'error',coalesce(s.error_stage,b.error_stage),
+                  coalesce(s.error_summary,b.error_summary),
+                  (SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),
+                  coalesce(s.shape_index,-1),
+                  (SELECT count(*) FROM shapes all_shapes WHERE all_shapes.attempt_id=b.id)) ELSE 'not_applicable' END AS failure_path
         FROM backend_latest b LEFT JOIN shapes s ON s.attempt_id=b.id
     ),
     unfiltered_cases AS (
         SELECT group_id, shape_index, max(attempt_cursor)*2048+1024-shape_index AS cursor, min(workload_id) AS workload_id,
         min(execution) AS execution,
+        CASE WHEN max(CASE WHEN backend='af-mlir' THEN failure_path END) IS NOT NULL
+             THEN max(CASE WHEN backend='af-mlir' THEN failure_path END)
+             WHEN max(CASE WHEN failure_path='mlir_failed' THEN 1 ELSE 0 END)=1 THEN 'mlir_failed'
+             WHEN max(CASE WHEN failure_path='unconfirmed' THEN 1 ELSE 0 END)=1 THEN 'unconfirmed'
+             ELSE 'not_applicable' END AS failure_path,
         CASE
           WHEN max(CASE WHEN backend='af-mlir' THEN status END) IS NOT NULL
             THEN max(CASE WHEN backend='af-mlir' THEN status END)
@@ -56,7 +67,7 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
           ELSE 'ok' END AS status
         FROM latest GROUP BY group_id,shape_index
     ), projection AS (
-        SELECT c.group_id,c.shape_index,b.backend,b.seed,b.created_at,f.device_name AS user,
+        SELECT c.group_id,c.shape_index,c.failure_path,b.backend,b.seed,b.created_at,f.device_name AS user,
         CASE c.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'accuracy_failed'
              WHEN 'gen_failed' THEN 'gen_failed'
              WHEN 'error' THEN 'function_failed' WHEN 'unsupported' THEN 'function_failed' ELSE 'Unknown' END AS status,
