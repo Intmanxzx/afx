@@ -116,12 +116,21 @@ function renderRecords(items){
 async function load(silent=false){
  const request=++generation,list=new URLSearchParams(applied);list.set('limit',String(pageSize));list.set('after',String(cursors[page]));
  if(!silent)$('message').textContent='加载中…';
- try{const [summary,result]=await Promise.all([api('api/summary?'+applied),api('api/cases?'+list)]);if(request!==generation)return;
+ // A whole-dataset count must not hold the first page hostage. Keep failures
+ // visible without replacing a valid list with an empty state.
+ if(!silent)for(const id of ['total','ok','fail','errors'])$(id).textContent='…';
+ const summaryTask=api('api/summary?'+applied).then(summary=>{
+  if(request!==generation)return;
+  $('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)).toLocaleString();
+  return null;
+ }).catch(error=>{if(request===generation)for(const id of ['total','ok','fail','errors'])$(id).textContent='—';return error;});
+ try{const result=await api('api/cases?'+list);if(request!==generation)return;
  $('refresh-time').textContent='更新于 '+beijing(new Date());
- $('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)).toLocaleString();
  const signature=JSON.stringify(result.items);if(signature!==lastData){if(silent&&($('column-picker').open||$('rows').querySelector('details[open]')))return;lastData=signature;lastRows=result.items;renderRecords(result.items);}
  next=result.next_cursor;$('next').disabled=next===null;$('previous').disabled=page===0;$('page-label').textContent=`第 ${page+1} 页 · ${result.items.length} 条`;$('message').textContent=result.items.length?'':'没有符合条件的结果。';
  }catch(error){if(request===generation)$('message').textContent=error.message;}
+ const summaryError=await summaryTask;
+ if(summaryError&&request===generation)$('message').textContent+=' 汇总加载失败：'+summaryError.message;
 }
 form.addEventListener('submit',event=>{event.preventDefault();applied=parameters();history.replaceState(null,'',location.pathname+(applied.size?'?'+applied:'')+location.hash);page=0;cursors=[0];detailGeneration++;$('detail').hidden=true;load();loadCharts();});
 $('reset-filters').addEventListener('click',()=>{form.reset();form.requestSubmit();});

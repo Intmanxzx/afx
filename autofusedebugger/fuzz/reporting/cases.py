@@ -7,19 +7,30 @@ AF-MLIR is authoritative when present; CPU-only/incomplete cases are unknown.
 from ..storage.queries import filters
 
 
-def rollup(seed=None, status=None, user_id=None, q=None):
+def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
     clauses, values = filters(seed, None, user_id, None)
+    if rowid_window is not None:
+        clauses.append('rowid BETWEEN ? AND ?')
+        values.extend(rowid_window)
     where = ' WHERE ' + ' AND '.join('a.' + c for c in clauses) if clauses else ''
-    sql = """WITH selected AS (
+    # Rank only narrow keys. Sorting execution/diagnostic JSON for every
+    # historical attempt makes even a small first page proportional to log size.
+    selected = ("""selected AS (
         SELECT DISTINCT f.group_id FROM attempts a
         JOIN attempt_facts f ON f.attempt_id=a.id""" + where + """
-    ), ranked AS (
-        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status, a.rowid AS attempt_cursor, f.group_id,
-        json_object('static_only',json_extract(f.execution,'$.static_only')) AS execution,
-        row_number() OVER (PARTITION BY f.group_id,a.backend ORDER BY a.rowid DESC) AS rank
-        FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id
-        JOIN selected g ON g.group_id=f.group_id
-    ), backend_latest AS (SELECT * FROM ranked WHERE rank=1),
+    ), """) if clauses else ''
+    selection = ' JOIN selected g ON g.group_id=f.group_id' if clauses else ''
+    sql = 'WITH ' + selected + """backend_keys AS (
+        SELECT f.group_id,a.backend,max(a.rowid) AS attempt_cursor
+        FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id""" + selection + """
+        GROUP BY f.group_id,a.backend
+    ), backend_latest AS MATERIALIZED (
+        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status,
+               k.attempt_cursor,k.group_id,
+               json_object('static_only',json_extract(f.execution,'$.static_only')) AS execution
+        FROM backend_keys k JOIN attempts a ON a.rowid=k.attempt_cursor
+        JOIN attempt_facts f ON f.attempt_id=a.id
+    ),
     latest AS (
         SELECT b.id,b.group_id,b.workload_id,b.execution,b.backend,b.attempt_cursor,
         coalesce(s.shape_index,-1) AS shape_index,
@@ -67,12 +78,23 @@ def rollup(seed=None, status=None, user_id=None, q=None):
         JOIN backend_latest b ON b.id=l.id JOIN attempt_facts f ON f.attempt_id=b.id
         JOIN case_facts cf ON cf.workload_id=c.workload_id
     ), cases AS (
-        SELECT c.* FROM unfiltered_cases c WHERE EXISTS (
-        SELECT 1 FROM projection p WHERE p.group_id=c.group_id AND p.shape_index=c.shape_index AND ("""
+        SELECT c.* FROM unfiltered_cases c WHERE (c.group_id,c.shape_index) IN (
+        SELECT p.group_id,p.shape_index FROM projection p WHERE ("""
     from .search import condition
     predicate, query_values = condition(q)
-    if not q:
-        sql = sql[:sql.index('    ), cases AS (')] + '    ), cases AS (SELECT c.* FROM unfiltered_cases c WHERE 1=1'
+    state_queries = {
+        'pass': "c.status='ok'",
+        'failed': "c.status IN ('error','unsupported','fail')",
+        '功能failed': "c.status IN ('error','unsupported')",
+        'function_failed': "c.status IN ('error','unsupported')",
+        '精度failed': "c.status='fail'",
+        'accuracy_failed': "c.status='fail'",
+        'unknown': "c.status='unknown'",
+    }
+    state_predicate = state_queries.get(q.strip().lower()) if q else None
+    if not q or state_predicate:
+        sql = sql[:sql.index('    ), cases AS (')] + '    ), cases AS (SELECT c.* FROM unfiltered_cases c WHERE ' + (state_predicate or '1=1')
+        query_values = []
     else:
         sql += predicate + '))'
     values.extend(query_values)
@@ -92,3 +114,39 @@ def summary(database, **params):
         counts = {r['status']:r['count'] for r in conn.execute(
             sql + 'SELECT status,count(*) AS count FROM cases GROUP BY status', values)}
     return {'total':sum(counts.values()), 'by_status':counts, 'unit':'shape_case'}
+
+
+def page_keys(conn, *, limit, after=0, seed=None, status=None, user_id=None, q=None):
+    """Bound unfiltered pages by rowid, without truncating backend history.
+
+    A case cursor's integer quotient by 2048 is its newest contributing
+    attempt rowid (shape indices are -1..1023). Selecting groups with any
+    attempt in this window therefore includes every case in the cursor range.
+    Expand for retries, sparse/deleted rows, and partial backend shape sets.
+    """
+    upper = (after // 2048 if after else
+             conn.execute('SELECT coalesce(max(rowid),0) FROM attempts').fetchone()[0])
+    width = max(128, limit * 4)
+    while True:
+        lower = max(0, upper - width)
+        bounded = not any((seed, status, user_id, q))
+        cte, values = rollup(seed, status, user_id, q,
+                            rowid_window=(lower, upper) if bounded else None)
+        rows = conn.execute(cte +
+            'SELECT * FROM cases WHERE cursor<? ORDER BY cursor DESC LIMIT ?',
+            (*values, after or 2**63-1, limit+1)).fetchall()
+        # Cases below this range can come from older peers of a selected group.
+        # They are not yet safe to return: an unselected group may precede them.
+        if not bounded or lower == 0:
+            return rows
+        rows = [row for row in rows if row['cursor'] >= lower * 2048]
+        if len(rows) > limit:
+            return rows
+        width *= 2
+
+
+def reuse_latest(sql):
+    """Use the connection-local latest snapshot for subsequent chart rollups."""
+    start = sql.index('    latest AS (')
+    end = sql.index('    unfiltered_cases AS (', start)
+    return sql[:start] + '    latest AS (SELECT * FROM selected_latest),\n' + sql[end:]

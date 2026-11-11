@@ -4,27 +4,35 @@ from ..backend_names import display_backend
 
 
 def statistics(database, *, seed=None, status=None, user_id=None, q=None):
-    from .cases import rollup
+    from .cases import rollup, reuse_latest
     cte, values = rollup(seed, status, user_id, q)
-    where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=f.group_id)'
-    shape_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=f.group_id AND selected.shape_index=s.shape_index)'
-    stage_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=f.group_id AND (m.shape_index=-1 OR selected.shape_index=m.shape_index))'
+    where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id)'
+    shape_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id AND selected.shape_index=s.shape_index)'
+    stage_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id AND (m.shape_index=-1 OR selected.shape_index=m.shape_index))'
     with reading(database, timeout=10) as conn:
         conn.execute('BEGIN')
         # Materialize the narrow rollup once per read snapshot, not once per
         # chart. Main database is opened mode=ro; only connection-local temp
         # tables are writable. No persistent derived cache can become stale.
         conn.execute('PRAGMA query_only=OFF')
-        conn.execute('CREATE TEMP TABLE selected_cases AS '+cte+'SELECT * FROM cases',values)
-        conn.execute('CREATE INDEX selected_case_keys ON selected_cases(group_id,shape_index)')
         conn.execute('CREATE TEMP TABLE selected_latest AS '+cte+'SELECT * FROM latest',values)
+        conn.execute('CREATE TEMP TABLE selected_cases AS '+reuse_latest(cte)+'SELECT * FROM cases',values)
+        conn.execute('CREATE INDEX selected_case_keys ON selected_cases(group_id,shape_index)')
+        # Keep wide execution/diagnostic blobs out of every telemetry join.
+        # Mode is per attempt (including retries), not borrowed from latest.
+        conn.execute("""CREATE TEMP TABLE selected_attempts AS
+            SELECT a.id,a.backend,a.error_stage,f.group_id,
+                   CASE WHEN json_extract(f.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END AS mode
+            FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id
+            JOIN case_facts c ON c.workload_id=a.workload_id
+            WHERE EXISTS (SELECT 1 FROM selected_cases s WHERE s.group_id=f.group_id)""")
         conn.execute('PRAGMA query_only=ON')
         cte='WITH cases AS (SELECT * FROM selected_cases), latest AS (SELECT * FROM selected_latest) '
         values=[]
-        base = ' FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id JOIN case_facts c ON c.workload_id=a.workload_id'
+        base = ' FROM selected_attempts a'
         result = {}
         result['stages']=[dict(r) for r in conn.execute(cte+'SELECT a.backend,m.stage,count(*) AS samples,sum(m.duration_ns) AS total_ns,avg(m.duration_ns) AS mean_ns,max(m.duration_ns) AS max_ns'+base+' JOIN stage_metrics m ON m.attempt_id=a.id'+stage_where+' GROUP BY a.backend,m.stage',values)]
-        result['performance']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,CASE WHEN json_extract(f.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END AS mode,s.correctness,s.performance,s.metric,count(*) AS samples,avg(s.mean_wall_ns) AS mean_ns,min(s.mean_wall_ns) AS min_ns,max(s.mean_wall_ns) AS max_ns"+base+' JOIN shapes s ON s.attempt_id=a.id'+shape_where+' GROUP BY a.backend,mode,s.correctness,s.performance,s.metric',values)]
+        result['performance']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.mode,s.correctness,s.performance,s.metric,count(*) AS samples,avg(s.mean_wall_ns) AS mean_ns,min(s.mean_wall_ns) AS min_ns,max(s.mean_wall_ns) AS max_ns"+base+' JOIN shapes s ON s.attempt_id=a.id'+shape_where+' GROUP BY a.backend,mode,s.correctness,s.performance,s.metric',values)]
         result['tool_efficiency'] = {'version': 1, 'scope': 'attempt_shape_processing',
             'processing': [r for r in result['stages'] if r['stage']=='shape_processing'],
             'success_shapes_per_min': None, 'completed_shapes_per_min': None,
@@ -35,7 +43,7 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None):
         result['tool_efficiency']['windows']=efficiency(conn,selected_ids,use_cached=True)
         result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
         result['errors']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.error_stage,count(*) AS count"+base+where+' GROUP BY a.backend,a.error_stage',values) if r['error_stage']]
-        result['case_groups']=conn.execute(cte+'SELECT count(DISTINCT f.group_id)'+base+where,values).fetchone()[0]
+        result['case_groups']=conn.execute(cte+'SELECT count(DISTINCT a.group_id)'+base+where,values).fetchone()[0]
         result['attempts']=conn.execute(cte+'SELECT count(*)'+base+where,values).fetchone()[0]
         # User-facing coverage/quality uses cases, not the number of CPU peers
         # or backend retries. Stage/performance telemetry above remains per-run.

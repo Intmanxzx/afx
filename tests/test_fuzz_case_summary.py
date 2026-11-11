@@ -46,5 +46,40 @@ def test_unfiltered_rollup_does_not_sort_full_diagnostics():
     assert 'cases AS (SELECT c.* FROM unfiltered_cases c WHERE 1=1)' in sql
     assert not values
     filtered, values = rollup(q='relu')
-    assert 'SELECT 1 FROM projection p' in filtered
+    assert 'SELECT p.group_id,p.shape_index FROM projection p' in filtered
     assert values
+
+
+def test_bounded_page_keys_match_full_rollup_with_retries_and_sparse_shapes(tmp_path):
+    import sqlite3
+    from autofusedebugger.fuzz.reporting.cases import page_keys, rollup
+    from test_fuzz_shape_cases import record
+    repo = ResultRepository(tmp_path/'pages')
+    # More than one rowid window, with old backend peers and fresh retries.
+    for batch in range(85):
+        for backend in ('cpu', 'af-mlir'):
+            value = record(backend, ['pass', 'error', 'pass'])
+            value['execution']['batch_id'] = str(batch)
+            repo.save(value)
+    value = record('af-mlir', ['pass'])
+    value['execution']['batch_id'] = '0'
+    repo.save(value)
+    value = record('af-mlir', [])
+    value['execution']['batch_id'] = 'early'
+    value['status'] = 'error'
+    repo.save(value)
+    with sqlite3.connect(repo.path) as conn:
+        conn.row_factory = sqlite3.Row
+        cte, args = rollup()
+        expected = [dict(r) for r in conn.execute(cte+'SELECT * FROM cases ORDER BY cursor DESC', args)]
+        for limit in (1, 7, 50, 200):
+            actual = []; after = 0
+            while True:
+                rows = page_keys(conn, limit=limit, after=after)
+                actual.extend(dict(r) for r in rows[:limit])
+                if len(rows) <= limit:
+                    break
+                after = rows[limit-1]['cursor']
+            assert actual == expected
+        # A legal client cursor well beyond the newest row must also work.
+        assert [dict(r) for r in page_keys(conn, limit=7, after=2**63-1)] == expected[:8]

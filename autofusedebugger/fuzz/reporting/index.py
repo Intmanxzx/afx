@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS attempt_facts(
  versions TEXT NOT NULL, execution TEXT NOT NULL, evaluation TEXT NOT NULL,
  total_ns INTEGER, duration_scope TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS report_groups ON attempt_facts(group_id);
+CREATE INDEX IF NOT EXISTS report_group_attempt ON attempt_facts(group_id,attempt_id);
 CREATE TABLE IF NOT EXISTS stage_metrics(
  attempt_id TEXT NOT NULL REFERENCES attempts(id), shape_index INTEGER NOT NULL,
  stage TEXT NOT NULL, duration_ns INTEGER NOT NULL,

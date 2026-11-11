@@ -158,16 +158,19 @@ class ResultQueries:
             raise ValueError('invalid pagination')
         with reading(self.path, timeout=10) as conn:
             conn.execute('BEGIN')
-            from ..reporting.cases import rollup
-            cte, values = rollup(seed, status, user_id, q)
-            groups = conn.execute(cte + 'SELECT * FROM cases WHERE cursor<? ORDER BY cursor DESC LIMIT ?',
-                                  (*values, after or 2**63-1, limit+1)).fetchall()
+            from ..reporting.cases import page_keys
+            groups = page_keys(conn, limit=limit, after=after, seed=seed,
+                               status=status, user_id=user_id, q=q)
             items = []
             from ..contracts import Seed
             from ..backend_names import display_backend
+            group_rows = {}
             for group in groups[:limit]:
-                rows = conn.execute('SELECT a.*,f.*,a.rowid AS cursor FROM attempt_facts f '
+                rows = group_rows.get(group['group_id'])
+                if rows is None:
+                    rows = conn.execute('SELECT a.*,f.*,a.rowid AS cursor FROM attempt_facts f '
                     'JOIN attempts a ON a.id=f.attempt_id WHERE group_id=? ORDER BY a.rowid DESC LIMIT 1001', (group['group_id'],)).fetchall()
+                    group_rows[group['group_id']] = rows
                 if len(rows)>1000: raise ValueError('case history exceeds query limit')
                 first = rows[0]
                 meta = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(first['workload_id'],)).fetchone()
