@@ -232,10 +232,11 @@ function navigate(){
   const fragment=location.hash.slice(1)||'overview';
   const attempt=new URLSearchParams(fragment).get('attempt');
   if(attempt){const shape=new URLSearchParams(fragment).get('shape');details(attempt,shape===null?null:Number(shape));return;}
-  const name=['overview','records','performance'].includes(fragment)?fragment:'overview';
-  for(const key of ['overview','records','performance'])$(key+'-page').hidden=key!==name;
+  const route=fragment==='performance'?'efficiency':fragment;
+  const name=['overview','records','efficiency','kernel'].includes(route)?route:'overview';
+  for(const key of ['overview','records','efficiency','kernel'])$(key+'-page').hidden=key!==name;
   $('detail').hidden=true;$('comparison').hidden=true;
-  $('page-title').textContent={overview:'总览',records:'功能&精度',performance:'性能分析',backends:'后端'}[name];
+  $('page-title').textContent={overview:'总览',records:'功能&精度',efficiency:'工具效率',kernel:'Kernel性能',backends:'后端'}[name];
   document.querySelectorAll('nav a').forEach(el=>{el.classList.toggle('active',el.dataset.page===name);if(el.dataset.page===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
 }
 window.addEventListener('hashchange',()=>{hideFieldTooltip();navigate();refreshVisible();});
@@ -279,13 +280,92 @@ function renderProvenance(result){
  const life=document.createElement('p');life.className='muted';life.title=(result.lifecycle||[]).map(e=>e.event+' '+e.wall_time).join(' → ');life.textContent='生命周期（UTC，悬停查看日期）：'+((result.lifecycle||[]).map(e=>e.event+' '+lifecycleTime(e.wall_time)).join(' → ')||'未采集')+'。端到端延迟：'+(seconds(result.end_to_end_ns)||'未采集');host.append(life);
 }
 
-function renderStatisticsTables(result){
- const efficiency=document.createElement('table'),eh=document.createElement('tr');for(const label of ['后端','处理耗时样本数','平均处理耗时（s）','最大处理耗时（s）'])cell(eh,label,'th');efficiency.append(eh);
- for(const r of result.tool_efficiency?.processing||[]){const row=document.createElement('tr');for(const value of [r.backend,r.samples,seconds(r.mean_ns),seconds(r.max_ns)])cell(row,value);efficiency.append(row);}
- const unavailable=document.createElement('p');unavailable.className='muted';unavailable.textContent='成功 Shape/min：未采集 · 已完成 Shape/min（含失败）：未采集 · CPU 资源池使用率：未采集 · NPU 执行槽使用率：未采集。';$('efficiency-table').replaceChildren(efficiency,unavailable);
+// Keep the selected scope across background refreshes, without pinning "latest".
+const efficiencyView={windowId:'',query:'',page:0,details:false,processing:false};
+const efficiencyPageSize=10;
+function efficiencyGroups(rows){
+ const groups=new Map();
+ for(const r of rows){
+  const key=JSON.stringify([r.backend,r.environment_id,r.mode]);
+  if(!groups.has(key))groups.set(key,{backend:r.backend,environment_id:r.environment_id,mode:r.mode,rows:[],success:0,failed:0,case_errors:0,completed:0});
+  const g=groups.get(key);g.rows.push(r);
+  for(const name of ['success','failed','case_errors','completed'])g[name]+=Number(r[name]||0);
+ }
+ return [...groups.values()];
+}
+function renderEfficiency(result){
+ const host=$('efficiency-table');host.replaceChildren();
+ const element=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;};
+ const table=(headers)=>{const t=element('table'),head=element('tr');for(const h of headers)cell(head,h,'th');t.append(head);return t;};
+ const wrap=t=>{const box=element('div',undefined,'table-scroll');box.append(t);return box;};
+ const windows=new Map();
+ for(const row of result.tool_efficiency?.windows||[]){if(!windows.has(row.window_id))windows.set(row.window_id,[]);windows.get(row.window_id).push(row);}
+ const ids=[...windows.keys()];
+ const toolbar=element('div',undefined,'efficiency-toolbar');
+ const label=element('label','运行窗口 '),select=element('select');select.setAttribute('aria-label','运行窗口');
+ const latest=element('option','最近一次已完成运行');latest.value='';select.append(latest);
+ ids.forEach((id,i)=>{const option=element('option',`${i===0?'最新':'历史 '+i} · ${id}`);option.value=id;select.append(option);});
+ if(efficiencyView.windowId&&!windows.has(efficiencyView.windowId)){
+  efficiencyView.windowId='';efficiencyView.page=0;
+  host.append(element('p','原选窗口已不在当前结果中，已切换到最近一次已完成运行。','muted'));
+ }
+ select.value=efficiencyView.windowId;select.disabled=!ids.length;label.append(select);toolbar.append(label);
+ const filter=element('input');filter.type='search';filter.placeholder='筛选后端 / 环境 / static / dynamic';filter.setAttribute('aria-label','工具效率维度筛选');filter.value=efficiencyView.query;toolbar.append(filter);host.append(toolbar);
+ const body=element('div');host.append(body);
+ const render=()=>{
+  body.replaceChildren();
+  const id=efficiencyView.windowId||ids[0],rows=windows.get(id)||[];
+  if(!rows.length){body.append(element('p','暂无已完成运行窗口的效率数据。','muted'));return;}
+  const window=rows[0],duration=Number(window.window_seconds);
+  const scope=element('p',`当前窗口：${id} · 时长 ${Number.isFinite(duration)?duration.toFixed(1)+' s':'未采集'} · 可选 ${ids.length} 个窗口（最多最近 100 个）`,'muted efficiency-scope');body.append(scope);
+  body.append(element('p','吞吐按完整窗口时长计算；下表只合并同后端、同环境、同 Shape 模式的计数。资源占用属于整个窗口，不随下方筛选变化。','muted'));
+  const cards=element('div',undefined,'efficiency-cards');
+  const card=(title,value)=>{const box=element('div');box.append(element('span',title),element('strong',value));cards.append(box);};
+  card('CPU 资源池使用率',window.cpu_pool_utilization==null?'未采集':(100*window.cpu_pool_utilization).toFixed(1)+'%');
+  const devices=Object.entries(window.npu_slot_utilization||{});
+  devices.forEach(([uuid,value],i)=>{card('NPU '+(i+1)+' 执行槽使用率',(100*value).toFixed(1)+'%');cards.lastChild.title=uuid;});
+  card('窗口取消 / 写库失败',(window.cancelled_attempts??'未采集')+' / '+(window.record_failed_attempts??'未采集'));body.append(cards);
+  body.append(element('p','CPU 为 token-seconds / 容量，NPU 为执行槽占用 / 设备时间，不等于实测 CPU / AICore 使用率；窗口包含填充和排空。','muted'));
+  const tokens=efficiencyView.query.toLowerCase().split(/\s+/).filter(Boolean);
+  const groups=efficiencyGroups(rows).filter(g=>tokens.every(t=>[g.backend,g.environment_id,g.mode,...g.rows.map(r=>r.hardware||'')].join(' ').toLowerCase().includes(t)));
+  const pages=Math.max(1,Math.ceil(groups.length/efficiencyPageSize));efficiencyView.page=Math.min(efficiencyView.page,pages-1);
+  const visible=groups.slice(efficiencyView.page*efficiencyPageSize,(efficiencyView.page+1)*efficiencyPageSize);
+  const summary=table(['后端 / Shape 模式','环境','成功 / 失败 Shape / Case 错误','成功 Shape/min','已完成 Shape/min（含失败）','处理 P50 / P95','端到端 P50 / P95']);
+  const rate=n=>duration>0?(n*60/duration).toFixed(2):'未采集';
+  const latency=(g,key)=>g.rows.length===1?(seconds(g.rows[0][key+'_p50_ns'])||'未采集')+' / '+(seconds(g.rows[0][key+'_p95_ns'])||'未采集'):'见分组明细';
+  for(const g of visible){const tr=element('tr');for(const value of [g.backend+' / '+g.mode,(g.environment_id||'未知').slice(0,12),g.success+' / '+g.failed+' / '+g.case_errors,rate(g.success),rate(g.completed),latency(g,'processing'),latency(g,'e2e')])cell(tr,value);tr.children[1].title=g.environment_id;summary.append(tr);}
+  body.append(wrap(summary));
+  if(!groups.length)body.append(element('p','没有匹配的后端或环境。','muted'));
+  const pager=element('div',undefined,'efficiency-toolbar');
+  const previous=element('button','上一页'),next=element('button','下一页');previous.disabled=efficiencyView.page===0;next.disabled=efficiencyView.page>=pages-1;
+  previous.onclick=()=>{efficiencyView.page--;render();};next.onclick=()=>{efficiencyView.page++;render();};
+  pager.append(element('span',`${groups.length} 个对比分组 · 第 ${efficiencyView.page+1} / ${pages} 页 · 每页 ${efficiencyPageSize} 组`),previous,next);body.append(pager);
+  const details=element('details',undefined,'efficiency-details');details.open=efficiencyView.details;
+  details.append(element('summary','诊断明细：当前页分组的冷 / 热、状态、延迟与环境'));
+  const detailBody=element('div');details.append(detailBody);let populated=false;
+  const populate=()=>{
+   if(populated)return;populated=true;
+   detailBody.append(element('p','不同冷 / 热和状态分组的 P50/P95 不能直接平均，以下保留各组原始统计；唯一 Shape 数也不跨组相加。','muted'));
+   for(const g of visible){
+    detailBody.append(element('h4',g.backend+' / '+g.mode+' · '+g.environment_id.slice(0,12)));
+    const environment=element('details');environment.append(element('summary','完整环境与设备信息'));
+    environment.append(element('pre',JSON.stringify({environment_id:g.environment_id,hardware:g.rows[0].hardware,software:g.rows[0].software,devices:Object.fromEntries(devices)},null,2)));detailBody.append(environment);
+    const t=table(['冷 / 热 · 状态','成功 / 失败 / Case 错误','处理 P50 / P95（s）','端到端 P50 / P95（s）','唯一 Shape / 重试','摊销秒/Shape','冷 / 热调用数']);
+    for(const r of g.rows){const tr=element('tr');for(const value of [r.temperature+' / '+r.status,r.success+' / '+r.failed+' / '+r.case_errors,(seconds(r.processing_p50_ns)||'未采集')+' / '+(seconds(r.processing_p95_ns)||'未采集'),(seconds(r.e2e_p50_ns)||'未采集')+' / '+(seconds(r.e2e_p95_ns)||'未采集'),r.unique_shapes+' / '+(r.retry_attempts??'未采集'),r.amortized_seconds_per_shape==null?'未采集':r.amortized_seconds_per_shape.toFixed(2),r.cold+' / '+r.warm])cell(tr,value);t.append(tr);}detailBody.append(wrap(t));
+   }
+  };
+  if(details.open)populate();details.ontoggle=()=>{efficiencyView.details=details.open;if(details.open)populate();};body.append(details);
+ };
+ select.onchange=()=>{efficiencyView.windowId=select.value;efficiencyView.page=0;render();};
+ filter.oninput=()=>{efficiencyView.query=filter.value;efficiencyView.page=0;render();};render();
+ const processing=element('details',undefined,'efficiency-details');processing.open=efficiencyView.processing;
+ processing.append(element('summary','全部匹配记录的处理耗时（非当前窗口）'));
+ const t=table(['后端','处理耗时样本数','平均处理耗时（s）','最大处理耗时（s）']);
+ for(const r of result.tool_efficiency?.processing||[]){const tr=element('tr');for(const v of [r.backend,r.samples,seconds(r.mean_ns),seconds(r.max_ns)])cell(tr,v);t.append(tr);}processing.append(wrap(t));processing.ontoggle=()=>{efficiencyView.processing=processing.open;};host.append(processing);
+}
 
- const windows=result.tool_efficiency?.windows||[];
- if(windows.length){const filter=document.createElement('input');filter.placeholder='筛选 Backend / 环境版本 ID / static / dynamic / cold / warm / success / failed';filter.setAttribute('aria-label','工具效率维度筛选');$('efficiency-table').append(filter);unavailable.textContent='有限批次窗口包含填充/排空；CPU 为 token-seconds / 容量，NPU 为执行槽占用 / 设备时间，不等于实测 CPU/AICore 使用率。状态筛选不缩短窗口。';const wt=document.createElement('table'),wh=document.createElement('tr');for(const label of ['Backend / 模式','环境版本 ID','成功 Shape/min','已完成 Shape/min（含失败）','成功 / 失败 / Case错误','唯一 Shape / 重试','窗口取消 / 写库失败','处理 P50 / P95（s）','端到端 P50 / P95（s）','摊销秒/Shape','CPU 资源池使用率','NPU 执行槽使用率','冷 / 热'])cell(wh,label,'th');wt.append(wh);for(const r of windows){const row=document.createElement('tr');row.dataset.efficiencyFilter=[r.backend,r.environment_id,r.mode,r.cold?'cold':'',r.warm?'warm':'',r.success?'success':'',r.failed?'failed':''].join(' ');for(const v of [r.backend+' / '+r.mode+' / '+r.temperature+' / '+r.status,r.environment_id+' '+(r.hardware||'')+' '+JSON.stringify(r.software||{}),r.success_shapes_per_min.toFixed(2),r.completed_shapes_per_min.toFixed(2),r.success+' / '+r.failed+' / '+r.case_errors,r.unique_shapes+' / '+(r.retry_attempts??'未采集'),(r.cancelled_attempts??'未采集')+' / '+(r.record_failed_attempts??'未采集'),(seconds(r.processing_p50_ns)||'未采集')+' / '+(seconds(r.processing_p95_ns)||'未采集'),(seconds(r.e2e_p50_ns)||'未采集')+' / '+(seconds(r.e2e_p95_ns)||'未采集'),r.amortized_seconds_per_shape==null?'未采集':r.amortized_seconds_per_shape.toFixed(2),(100*r.cpu_pool_utilization).toFixed(1)+'%',Object.entries(r.npu_slot_utilization).map(([k,v])=>k+': '+(100*v).toFixed(1)+'%').join(' · '),r.cold+' / '+r.warm])cell(row,v);wt.append(row);}$('efficiency-table').append(wt);filter.addEventListener('input',()=>{const tokens=filter.value.toLowerCase().split(/\s+/).filter(Boolean);for(const row of wt.querySelectorAll('tr[data-efficiency-filter]'))row.hidden=!tokens.every(t=>row.dataset.efficiencyFilter.toLowerCase().includes(t));});}
+function renderStatisticsTables(result){
+ renderEfficiency(result);
  const t=document.createElement('table'),head=document.createElement('tr');for(const label of ['后端','指标','样本','均值','最大'])cell(head,label,'th');t.append(head);
  for(const r of result.precise_metrics||[]){const row=document.createElement('tr');for(const value of [r.backend,r.stage==='compile'?'编译耗时':'Kernel 耗时',r.samples,duration(r.mean_ns),duration(r.max_ns)])cell(row,value);t.append(row);}
  $('performance-table').replaceChildren(t);$('metric-empty').hidden=!!result.precise_metrics?.length;

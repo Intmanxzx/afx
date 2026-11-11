@@ -75,6 +75,8 @@ def run(home,database, _fd=None):
     with (os.fdopen(_fd,'a') if _fd is not None else (home/'sync.lock').open('a')) as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise ValueError('sync daemon already running') from None
+        from ..runtime import start_heartbeat
+        start_heartbeat(home)
         while True:
             interval=30
             try:

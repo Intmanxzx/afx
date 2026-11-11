@@ -10,6 +10,8 @@ import uuid
 from .records import canonical, digest, normalize
 from .schema import APPLICATION_ID, SCHEMA_VERSION, DDL, TABLE_COLUMNS
 
+SQLITE_TIMEOUT_SECONDS = 60
+
 
 def _check(conn):
     if conn.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID:
@@ -54,11 +56,16 @@ def _connect(path, writable=False):
             finally:
                 temporary.unlink(missing_ok=True)
         new = False
-        conn = sqlite3.connect(str(path), timeout=10)
+        conn = sqlite3.connect(str(path), timeout=SQLITE_TIMEOUT_SECONDS)
     else:
         new = False
-        conn = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=10)
+        conn = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=SQLITE_TIMEOUT_SECONDS)
     try:
+        # Keep the timeout explicit as well as passing it to sqlite3.connect:
+        # some deployments open the same database from multiple processes and
+        # a later connection configuration must not silently reset the busy
+        # handler before an administrative write.
+        conn.execute(f'PRAGMA busy_timeout={SQLITE_TIMEOUT_SECONDS * 1000}')
         conn.execute('PRAGMA trusted_schema=OFF')
         conn.execute('PRAGMA foreign_keys=ON')
         if new:

@@ -1,0 +1,145 @@
+"""Live fleet: authenticated ownership, deduplication, freshness and rate safety."""
+import json
+import uuid
+from contextlib import closing
+
+import pytest
+
+from autofusedebugger.fuzz.central.repository import initialize, create_user
+from autofusedebugger.fuzz.central.runtime import initialize as init_runtime, ingest, snapshot, connect
+from autofusedebugger.fuzz.storage.repository import _connect
+
+
+def sample(source=None, run=None, machine='host-a', seq=1, elapsed=0, count=0):
+    return dict(version=1,machine_id=machine,machine_name='machine-a',source_id=source or str(uuid.uuid4()),runs=[dict(run_id=run or str(uuid.uuid4()),sequence=seq,age=0,elapsed=elapsed,state='running',devices=[dict(uuid='physical-card',model='Ascend910',logical='npu:0',busy=True)],stages={'first_call_combined':1},queued=2,active_cases=1,completed=count,success=count,case_errors=0,record_failed=0,backend=['af-mlir'],versions={'torch':'2.10'})])
+
+
+@pytest.fixture
+def central(tmp_path):
+    path=tmp_path/'central.sqlite';initialize(path)
+    with closing(connect(path)) as conn,conn:init_runtime(conn)
+    return path,create_user(path,'Alice'),create_user(path,'Bob')
+
+
+def test_identity_dedup_rates_and_disconnect(central):
+    db,a,b=central;p=sample();ingest(db,a['token'],p,now=100)
+    p['runs'][0].update(sequence=2,elapsed=10,completed=20,success=15)
+    ingest(db,a['token'],p,now=110)
+    # Retry must not refresh run presence or duplicate its throughput.
+    ingest(db,a['token'],p,now=120)
+    d=snapshot(db,now=120);assert d['summary']['busy_cards']==1
+    assert d['summary']['completed_per_min']==20/5
+    assert d['machines'][0]['user_name']=='Alice'
+    assert d['machines'][0]['runs'][0]['age_seconds']==10
+    # Same physical machine/card, another user/process: one global resource.
+    ingest(db,b['token'],sample(),now=120)
+    d=snapshot(db,now=120);assert d['summary']['busy_cards']==1
+    assert d['summary']['online_machines']==1
+    assert d['summary']['active_users']==2
+    assert len(d['machines'])==2
+    assert len(snapshot(db,user_id=b['user_id'],now=120)['machines'])==1
+    with pytest.raises(PermissionError):ingest(db,b['token'],p,now=130)
+    assert snapshot(db,now=190)['summary']['busy_cards']==0
+    assert snapshot(db,now=190)['summary']['online_machines']==0
+    # Catch-up after a gap must not be counted as a huge live burst.
+    p['runs'][0].update(sequence=3,elapsed=1000,completed=10000,success=9000)
+    ingest(db,a['token'],p,now=1100)
+    assert snapshot(db,now=1100)['summary']['completed_per_min']==0
+
+
+def test_validation_and_stale_observation(central):
+    db,a,b=central;p=sample();p['user_id']=b['user_id']
+    with pytest.raises(ValueError):ingest(db,a['token'],p,now=100)
+    p.pop('user_id');p['runs'][0]['age']=90;ingest(db,a['token'],p,now=100)
+    d=snapshot(db,now=100)
+    assert d['summary']['online_machines']==1 and d['summary']['busy_cards']==0
+    assert d['machines'][0]['cards'][0]['status']=='unknown'
+    p['runs'][0]['age']=float('nan')
+    with pytest.raises(ValueError):ingest(db,a['token'],p)
+    with pytest.raises(ValueError):snapshot(db,minutes='2')
+
+
+def test_filters_and_counter_regression(central):
+    db,a,b=central;p=sample();ingest(db,a['token'],p,now=100)
+    assert snapshot(db,backend='af-mlir',model='Ascend910',version='2.10',now=100)['summary']['busy_cards']==1
+    assert snapshot(db,backend='other',now=100)['summary']['busy_cards']==0
+    p['runs'][0].update(sequence=2,elapsed=10,completed=5,success=5);ingest(db,a['token'],p,now=110)
+    p['runs'][0].update(sequence=3,elapsed=20,completed=4,success=4)
+    with pytest.raises(ValueError):ingest(db,a['token'],p,now=120)
+
+
+def test_client_auth_and_stale_samples(tmp_path):
+    from autofusedebugger.fuzz.runtime import heartbeat, atomic, boot_id
+    import time
+    token='private-test-key-not-an-identity'
+    (tmp_path/'token').write_text(token)
+    (tmp_path/'sync.json').write_text(json.dumps(dict(endpoint='https://example.invalid',key_file=str(tmp_path/'token'))))
+    p=sample();(tmp_path/'config.json').write_text(json.dumps(dict(source_id=p['source_id'])))
+    atomic(tmp_path/'runtime/a.json',dict(boot=boot_id(),monotonic=time.monotonic()-5,sample=p['runs'][0]))
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def read(self,n):return b'{"accepted":true}'
+    def opener(request,timeout):
+        assert request.get_header('Authorization')=='Bearer '+token
+        body=json.loads(request.data)
+        assert 'user_id' not in body and token not in request.data.decode()
+        assert 4<=body['runs'][0]['age']<20
+        return Response()
+    heartbeat(tmp_path,opener=opener)
+
+
+def test_runtime_http_routes_and_credential(central):
+    from autofusedebugger.fuzz.central.server import create_server
+    from urllib.request import urlopen, Request
+    from urllib.error import HTTPError
+    import threading
+    db,a,b=central
+    with create_server(db,port=0) as server:
+        thread=threading.Thread(target=server.serve_forever);thread.start()
+        root='http://127.0.0.1:'+str(server.server_port)
+        try:
+            req=Request(root+'/api/heartbeat',json.dumps(sample()).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+a['token']})
+            with urlopen(req) as r:assert json.load(r)['accepted']
+            with urlopen(root+'/api/runtime') as r:assert json.load(r)['summary']['busy_cards']==1
+            with urlopen(root+'/runtime.js') as r:assert b'fleetState' in r.read()
+            req=Request(root+'/api/heartbeat',b'{}',headers={'Content-Type':'application/json'})
+            with pytest.raises(HTTPError) as error:urlopen(req)
+            assert error.value.code==401
+        finally:server.shutdown();thread.join()
+
+
+def test_concurrent_heartbeats_and_server_names(central):
+    from concurrent.futures import ThreadPoolExecutor
+    db,a,b=central
+    payloads=[sample(machine='host-'+str(i)) for i in range(16)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda p:ingest(db,a['token'],p,now=100),payloads))
+    result=snapshot(db,now=100)
+    assert result['summary']['online_machines']==16
+    assert result['summary']['busy_cards']==16
+    assert {m['user_name'] for m in result['machines']}=={'Alice'}
+
+
+def test_reporter_counts_each_shape_not_whole_attempt(tmp_path):
+    from autofusedebugger.fuzz.runtime import Reporter
+    reporter=Reporter(tmp_path,[])
+    reporter.record({'status':'fail','shape_results':[{'correctness':'pass'},{'correctness':'fail'}]},'af-mlir')
+    assert reporter.completed==2 and reporter.success==1
+    reporter.record({'status':'ok','shape_results':[{'correctness':'pass'}]},'cpu')
+    assert reporter.completed==2
+    reporter.record({'status':'error','shape_results':[]},'af-mlir')
+    assert reporter.case_errors==1
+
+
+def test_sampled_case_metadata_roundtrip():
+    from dataclasses import replace, asdict
+    from autofusedebugger.fuzz.case_spec import decode, encode
+    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    from tests.fuzz_fixtures import three_shapes_spec
+    spec=three_shapes_spec();config=SamplingConfig();graph=json.loads(spec.graph_json)
+    graph.update(dialect='nnsmith-sampled/5',sampling=asdict(config))
+    spec=replace(spec,seed=config.seed(42,True),graph_json=json.dumps(graph,sort_keys=True,separators=(',',':')))
+    assert decode(encode(spec))==spec
+    graph['sampling']['dim_max']=2
+    with pytest.raises(ValueError):decode(encode(replace(spec,graph_json=json.dumps(graph,sort_keys=True,separators=(',',':')))))

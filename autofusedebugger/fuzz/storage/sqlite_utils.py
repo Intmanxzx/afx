@@ -3,7 +3,7 @@ import sqlite3
 import time
 
 
-def enable_wal(conn, timeout=10):
+def enable_wal(conn, timeout=60):
     """Concurrent first-open journal transitions can bypass SQLite busy_timeout.
 
     Retry only BUSY/LOCKED, outside any transaction, within a finite deadline.
