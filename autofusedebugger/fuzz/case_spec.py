@@ -24,8 +24,13 @@ def decode(raw):
     if len(spec.shape_samples)>16 or not spec.output_samples:
         raise ValueError('invalid shape samples')
     graph=json.loads(spec.graph_json)
-    if graph.get('dialect')!='nnsmith-ert/3' or len(graph.get('nodes',[]))>64:
+    expected='nnsmith-sampled/5' if spec.seed.version in {5,6} else 'nnsmith-ert/3'
+    if graph.get('dialect')!=expected or len(graph.get('nodes',[]))>64:
         raise ValueError('invalid NNSmith graph metadata')
+    if spec.seed.version in {5,6}:
+        from .generation.sampling import decode as decode_sampling
+        config,_=decode_sampling(spec.seed)
+        if graph.get('sampling')!=asdict(config):raise ValueError('sampling metadata differs from seed')
     allowed={'add','mul','neg','relu','transpose','sum','mean','amin','amax'}
     if any(node.get('op') not in allowed for node in graph['nodes']):
         raise ValueError('invalid op metadata')

@@ -10,7 +10,7 @@ import webbrowser
 
 from ..storage.queries import ResultQueries
 
-ASSETS = {'report': ('index.html', 'text/html; charset=utf-8'), 'charts.js': ('charts.js', 'text/javascript; charset=utf-8'), '': ('index.html', 'text/html; charset=utf-8'),
+ASSETS = {'runtime.js': ('runtime.js', 'text/javascript; charset=utf-8'), 'report': ('index.html', 'text/html; charset=utf-8'), 'charts.js': ('charts.js', 'text/javascript; charset=utf-8'), '': ('index.html', 'text/html; charset=utf-8'),
           'app.js': ('app.js', 'text/javascript; charset=utf-8'),
           'style.css': ('style.css', 'text/css; charset=utf-8')}
 

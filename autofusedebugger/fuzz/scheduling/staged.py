@@ -52,6 +52,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
         window_start = stamp()
         completed_attempts = []
         window_summary = dict(summary)
+        from ..runtime import Reporter
+        reporter=Reporter(ledger.path.parent.parent,pool.devices)
         finalizer = ThreadPoolExecutor(max_workers=1,thread_name_prefix="stage-facts")
         finalized = {}
         if _ready: _ready()
@@ -200,9 +202,12 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 if response['ok']:
                     ledger.complete(session.task['id'],session.task['claim']);summary['completed']+=1
                     completed_attempts.append(session.task['attempt_id'])
+                    reporter.record(s.output['result'],json.loads(session.task['execution'])['backend'])
                     if response['value'].get('status')!='ok':summary['failed']+=1
                 else:
                     ledger.interrupt(session.task['id'],session.task['claim'],'record_failed');summary['interrupted']+=1;summary['record_failed']+=1
+                    from ..runtime import atomic
+                    atomic(ledger.path.parent/'last-record-error.json',{'error':str(response.get('error','unknown'))[-2000:]})
                 session.task['done']=True
 
         try:
@@ -288,6 +293,9 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     except Exception as exc:
                         s.facts['lease']=pool.release(s.identity)
                         finish(s,{'ok':False,'error':str(exc)})
+                if reporter.enabled and time.monotonic()-reporter.last>=5:
+                    with ledger._connection() as conn:queued=conn.execute("SELECT count(*) FROM tasks WHERE state='pending'").fetchone()[0]
+                    reporter.publish(cases,stages,pool,queued,summary)
                 # Count idle RSS too. Kill active groups on measured overflow;
                 # response failure becomes an explicit result, never a retry.
                 rss=sum(group_rss(w['child'].pid) for w in list(pool.workers))
@@ -304,6 +312,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             finish_window(database,window_id,window_start,pool,{k:v-window_summary.get(k,0) for k,v in summary.items()})
             return summary
         finally:
+            reporter.publish({}, {}, pool, 0, summary, state='idle' if not cases else 'error',force=True)
             pool.close()
             finalizer.shutdown(wait=True)
             for case in cases.values():

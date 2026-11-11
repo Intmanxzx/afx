@@ -26,3 +26,10 @@ def test_wal_does_not_mask_non_busy_failure():
             raise sqlite3.OperationalError('bad database')
     with pytest.raises(sqlite3.OperationalError, match='bad database'):
         enable_wal(Connection())
+
+
+def test_wal_default_retry_window_covers_busy_admin_writes():
+    # Keep the production retry window long enough for a central cache refresh
+    # or a short-lived upload burst to release its SQLite writer lock.
+    import inspect
+    assert inspect.signature(enable_wal).parameters['timeout'].default >= 60

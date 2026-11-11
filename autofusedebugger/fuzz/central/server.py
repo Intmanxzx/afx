@@ -38,6 +38,10 @@ class Server(HTTPServer):
 
 def create_server(database,port=8090, *, cache_interval=15):
     database=Path(database).resolve();initialize(database);queries=ResultQueries(database)
+    from contextlib import closing
+    from ..storage.repository import _connect
+    from .runtime import initialize as initialize_runtime, connect as runtime_connect
+    with closing(runtime_connect(database)) as conn,conn:initialize_runtime(conn)
     from .cache import PublicCache, PAGE_SIZES
     public_cache = PublicCache(database, interval=cache_interval)
     statistics_lock = threading.Lock()
@@ -103,16 +107,20 @@ def create_server(database,port=8090, *, cache_interval=15):
                     return self.send(200, {'user_id': user, 'display_name': name})
                 if route=='/healthz':
                     return self.send(200,{'status':'ok','protocol':1})
-                if route in {'/','/report','/app.js','/charts.js','/style.css'}:
-                    name={'/':'index.html','/report':'index.html','/app.js':'app.js','/charts.js':'charts.js','/style.css':'style.css'}[route]
+                if route in {'/','/report','/app.js','/charts.js','/style.css','/runtime.js'}:
+                    name={'/':'index.html','/report':'index.html','/app.js':'app.js','/charts.js':'charts.js','/style.css':'style.css','/runtime.js':'runtime.js'}[route]
                     data=resources.files('autofusedebugger.fuzz.view').joinpath('static').joinpath(name).read_bytes()
                     if route=='/':
                         data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'公共缓存每15秒检查更新；页面每15秒刷新；上传周期由测试端配置'.encode())
-                    return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8'}[route])
+                    return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/runtime.js':'text/javascript; charset=utf-8'}[route])
                 raw=parse_qs(url.query,keep_blank_values=True,max_num_fields=8)
                 if any(len(v)!=1 for v in raw.values()):
                     raise ValueError('duplicate field')
                 params={k:v[0] for k,v in raw.items()}
+                if route == '/api/runtime':
+                    from .runtime import snapshot
+                    if set(params)-{'user_id','machine_id','model','backend','version','minutes'}:raise ValueError('unknown field')
+                    return self.send(200,snapshot(database,**params))
                 if route == '/api/statistics' and not set(params)-{'seed','status','user_id','q'}:
                     from ..reporting.statistics import statistics
                     if set(params) <= {'q'} and not params.get('q'):
@@ -161,7 +169,7 @@ def create_server(database,port=8090, *, cache_interval=15):
             except (OSError,sqlite3.Error):
                 self.send(503,{'error':'database unavailable'})
         def do_POST(self):
-            if self.path not in {'/api/upload','/api/facts'}:return self.send(404,{'error':'not found'})
+            if self.path not in {'/api/upload','/api/facts','/api/heartbeat'}:return self.send(404,{'error':'not found'})
             try:
                 if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type','').split(';')[0]!='application/json':
                     return self.send(400,{'error':'JSON Content-Length required'})
@@ -177,7 +185,10 @@ def create_server(database,port=8090, *, cache_interval=15):
                 with closing(_connect(database)) as conn:authenticate(conn,auth[7:])
                 body=self.rfile.read(length)
                 if len(body)!=length:raise ValueError('incomplete body')
-                if self.path=='/api/facts':
+                if self.path=='/api/heartbeat':
+                    from .runtime import ingest as heartbeat
+                    result=heartbeat(database,auth[7:],json.loads(body))
+                elif self.path=='/api/facts':
                     from ..sync.facts import ingest as ingest_facts
                     result=ingest_facts(database,auth[7:],json.loads(body))
                 else:
@@ -187,7 +198,9 @@ def create_server(database,port=8090, *, cache_interval=15):
                 self.send(401,{'error':'invalid credential or ownership'})
             except (ValueError,KeyError,TypeError,OverflowError):
                 self.send(400,{'error':'invalid batch or revision conflict'})
-            except (OSError,sqlite3.Error):
+            except (OSError,sqlite3.Error) as exc:
+                import logging
+                logging.getLogger(__name__).warning('upload unavailable: %s %s',type(exc).__name__,getattr(exc,'sqlite_errorname',''))
                 self.send(503,{'error':'upload temporarily unavailable'})
         def do_DELETE(self):self.send(405,{'error':'method not allowed'})
         do_PUT=do_PATCH=do_DELETE
