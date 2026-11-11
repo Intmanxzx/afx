@@ -329,7 +329,7 @@ def replay(args):
         batch=str(uuid.uuid4());seed=Seed.parse(args.seed)
         for backend in ([args.backend] if args.backend else ['cpu','af-mlir']):
             config=ExecutionConfig(backend,'cpu' if backend=='cpu' else args.device or 'npu:0',budget.compile_threads,
-                scheduling='staged',static_only=args.static_only or seed.version==3,batch_id=batch,save_results=args.save)
+                scheduling='staged',static_only=args.static_only or seed.version in {3,5},batch_id=batch,save_results=args.save)
             ledger.enqueue(seed,config,EvaluationConfig(performance=args.performance,warmup_steps=args.warmup_steps,measured_steps=args.measured_steps))
         result=drain(ledger,database,timeout=120)
         print(json.dumps(result))

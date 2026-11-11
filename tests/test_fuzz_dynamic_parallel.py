@@ -42,7 +42,7 @@ def test_campaign_mix_and_round_robin(tmp_path,monkeypatch):
     assert campaign.refill(ledger,target_pending=4)
     assert campaign.refill(ledger,target_pending=4)
     tasks=ledger.page()['items']
-    assert [Seed.parse(t['seed']).version for t in tasks]==[3,3,4,4]
+    assert [Seed.parse(t['seed']).version for t in tasks]==[5,5,6,6]
     assert [json.loads(t['execution'])['device'] for t in tasks]==['cpu','npu:0','cpu','npu:1']
     assert [json.loads(t['execution'])['static_only'] for t in tasks]==[True,True,False,False]
 

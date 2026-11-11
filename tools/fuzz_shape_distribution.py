@@ -8,13 +8,16 @@ from autofusedebugger.fuzz.contracts import Seed
 from autofusedebugger.fuzz.generation import plan
 
 
-def audit(count):
+def audit(count, versions=(3,4,5,6), config=None):
+    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    config = config or SamplingConfig()
     rng=random.Random(20261110)
     hist=defaultdict(Counter); accepted=Counter(); errors=Counter(); records=[]
     for _ in range(count):
         entropy=rng.randrange(36**9)
-        for version in (3,4):
-            seed=Seed((version-1)*2**128+entropy)
+        for version in versions:
+            seed=(config.seed(entropy % 2**32, dynamic=version==6) if version in {5,6}
+                  else Seed((version-1)*2**128+entropy))
             try:spec=plan(seed)
             except Exception as exc:
                 errors[f'{version}:{type(exc).__name__}']+=1
@@ -25,7 +28,8 @@ def audit(count):
             for sample,inputs in enumerate(spec.shape_samples):
                 for position,t in enumerate(inputs):
                     records.append({'seed':str(seed),'version':version,'sample':sample,
-                                    'input':position,'shape':t.shape,'transpose':transpose})
+                                    'input':position,'shape':t.shape,'transpose':transpose,'nodes':len(json.loads(spec.graph_json)['nodes']),
+                                    'dtype':t.dtype,'elements':__import__('math').prod(t.shape)})
                     for axis,size in enumerate(t.shape):
                         for population in (['all'] if transpose else ['all','no_transpose']):
                             hist[f'v{version}/{population}/S{sample}/input{position}/rank{len(t.shape)}/axis{axis}'][size]+=1
@@ -36,8 +40,10 @@ def audit(count):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--count',type=int,default=256)
-    parser.add_argument('--output',required=True);args=parser.parse_args()
+    parser.add_argument('--output',required=True)
+    parser.add_argument('--versions', nargs='+', type=int, default=[3,4,5,6], choices=[3,4,5,6])
+    args=parser.parse_args()
     if not 1<=args.count<=10000:parser.error('count must be 1..10000')
-    result=audit(args.count);Path(args.output).write_text(json.dumps(result,indent=2))
+    result=audit(args.count, tuple(args.versions));Path(args.output).write_text(json.dumps(result,indent=2))
     print(json.dumps({k:v for k,v in result.items() if k!='records' and k!='histograms'}))
     print(json.dumps({k:v for k,v in result['histograms'].items() if k.endswith('/all_axes')},sort_keys=True))

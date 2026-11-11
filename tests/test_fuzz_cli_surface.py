@@ -120,15 +120,18 @@ def test_sync_uses_remembered_home(tmp_path, monkeypatch, capsys):
 
 def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     observed = []
     def launch(ledger, database, specifications, **kwargs):
         observed.append(kwargs)
         return {'state': 'test'}
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
-    configs, evaluation, count, devices = observed[-1]['campaign']
+    configs, evaluation, count, devices, excluded, sampling = observed[-1]['campaign']
+    assert sampling['dim_dist_mode'] == 'half_normal'
+    assert sampling['dim_max'] == 131072
     assert count is None and observed[-1]['foreground']
     assert all(not c.save_results for c in configs)
     assert main(['run', '--count', '3', '--save']) == 0
-    configs, _, count, devices = observed[-1]['campaign']
+    configs, _, count, devices, excluded, sampling = observed[-1]['campaign']
     assert count == 3 and all(c.save_results for c in configs)

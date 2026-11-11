@@ -14,12 +14,12 @@ def test_fuzz_does_not_import_legacy_debugger_or_nnsmith():
             if isinstance(node, ast.ImportFrom):
                 assert node.level <= 2, path
                 module = node.module or ""
-                assert not module.startswith("nnsmith") or path.name == "nnsmith_v3.py", path
+                assert not module.startswith("nnsmith") or path.name in {"nnsmith_v3.py", "nnsmith_sampled.py"}, path
                 if module.startswith("autofusedebugger"):
                     assert module.startswith("autofusedebugger.fuzz"), path
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("nnsmith") or path.name == "nnsmith_v3.py", path
+                    assert not alias.name.startswith("nnsmith") or path.name in {"nnsmith_v3.py", "nnsmith_sampled.py"}, path
 
 
 def test_generation_and_contracts_do_not_depend_on_outer_layers():
@@ -42,7 +42,7 @@ runpy.run_module('autofusedebugger.fuzz',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert 'NNSmith C protocol' in result.stdout
+    assert 'NNSmith C/D replay' in result.stdout
 
 
 def test_view_and_storage_do_not_depend_on_execution_layers():

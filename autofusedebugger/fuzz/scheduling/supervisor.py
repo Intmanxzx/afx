@@ -59,7 +59,7 @@ def _validate_task(task):
     else:
         raise ValueError('unsupported managed backend')
     from ..contracts import Seed
-    if 'seed' in task and Seed.parse(task['seed']).version not in {3,4}:
+    if 'seed' in task and Seed.parse(task['seed']).version not in {3,4,5,6}:
         raise ValueError('retired template task; cannot resume with NNSmith')
     if type(config.compile_threads) is not int or not 1 <= config.compile_threads <= (os.cpu_count() or 1):
         raise ValueError('compile thread budget exceeds available CPU count')
@@ -93,7 +93,7 @@ def _has_result(database, task):
             expected_oracles={'generation-failed/1'}
         elif contexts['execution'].get('case_spec'):
             from ..case_spec import decode
-            from ..generation.nnsmith_v3 import materialize_spec
+            from ..generation import materialize_spec
             spec=decode(contexts['execution']['case_spec'])
             if str(spec.seed)!=task['seed']:
                 raise ValueError('saved case seed conflicts with task')

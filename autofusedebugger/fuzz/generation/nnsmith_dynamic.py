@@ -20,7 +20,7 @@ def _reshape(tensor, shape):
                    stride=tuple(math.prod(shape[i+1:]) for i in range(len(shape))))
 
 
-def output_shapes(graph, inputs, weights):
+def output_shapes(graph, inputs, weights, max_elements=4096):
     values = {t.name: t.shape for t in (*inputs, *weights)}
     for node in graph['nodes']:
         shapes = [values[name] for name in node['inputs']]
@@ -42,13 +42,13 @@ def output_shapes(graph, inputs, weights):
             shape = [s for i, s in enumerate(shape) if i not in dims]
         elif op not in {'neg', 'relu'}:
             raise ValueError('unsupported shape inference')
-        if math.prod(shape) > 4096:
+        if math.prod(shape) > max_elements:
             raise ValueError('dynamic intermediate exceeds element budget')
         values[node['output']] = tuple(shape)
     return [values[name] for name in graph['outputs']]
 
 
-def variants(spec):
+def variants(spec, max_elements=4096, dim_range=None, rng=None):
     graph = json.loads(spec.graph_json)
     # Changing every occurrence preserves input/input broadcast relationships.
     # Never resize a captured constant/weight or specialize singleton dimensions.
@@ -56,12 +56,19 @@ def variants(spec):
     extents = sorted({d for t in spec.inputs for d in t.shape if d > 1} - fixed)
     for extent in extents:
         samples = [spec.inputs]; outputs = [spec.output_samples[0]]
-        for size in sorted({2, 3, 4, max(2, extent-1), extent+1} - {extent}):
+        sizes = sorted({2, 3, 4, max(2, extent-1), extent+1} - {extent})
+        if rng is not None:
+            sizes = sorted({2, 3, 4, 8, 16, max(2, extent//2), max(2, extent-1),
+                            extent+1, extent+2} - {extent})
+            rng.shuffle(sizes)
+        for size in sizes:
+            if dim_range is not None and not dim_range[0] <= size <= dim_range[1]:
+                continue
             inputs = tuple(_reshape(t, [size if d == extent else d for d in t.shape]) for t in spec.inputs)
-            if any(math.prod(t.shape) > 4096 for t in inputs):
+            if any(math.prod(t.shape) > max_elements for t in inputs):
                 continue
             try:
-                shapes = output_shapes(graph, inputs, spec.weights)
+                shapes = output_shapes(graph, inputs, spec.weights, max_elements)
             except (ValueError, IndexError):
                 continue
             samples.append(inputs)

@@ -221,3 +221,7 @@ autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --de
 当前 oracle1 环境为 `/home/ubuntu/af-fuzz/venv-continuous-1110`，旧版本/旧备份/旧结果已按要求清除；systemd 主服务直接引用新环境，不再叠加历史 override。身份与 ACK、防旧数据回流的 tombstone 保留。后续自动备份只备份新数据，不再使用已经删除的旧环境。客户端新安装为 `/mnt/workspace/af-fuzz/continuous-1110/installed`。
 
 长跑查询修复环境：oracle1 `venv-query-fix-1110`。页面统计最多缓存 30 秒，列表/汇总/统计查询保留 10 秒上限。出现 `database unavailable` 不等于数据为空，需分别检查接口状态和数据库记录，不能通过清空结果“修复”。
+
+### 大 Shape 与分布采样
+
+新建随机 campaign 默认使用可重放 E/F 协议；旧 C/D 和已持久化的旧 campaign 不改含义。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes` 和 `--generation-timeout`。完整历史对照、公式、预算限制和验证方法见 [采样协议](af_fuzz_sampling.md)。要使正在运行的旧 campaign 使用新采样，需正常停止后新建，不能原地改旧 seed。

@@ -82,7 +82,7 @@ class TorchAdapter:
         import json
         torch = self.torch
         graph = json.loads(bundle.spec.graph_json)
-        if graph.get('dialect') != 'nnsmith-ert/3':
+        if graph.get('dialect') not in {'nnsmith-ert/3', 'nnsmith-sampled/5'}:
             raise UnsupportedBackend('only NNSmith graphs are supported')
         from ..generation.nnsmith_v3 import execute_graph
         forward = execute_graph(torch, graph,
