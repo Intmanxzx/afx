@@ -40,22 +40,6 @@ import importlib
 import os
 from typing import Dict, List, Optional, Sequence, Set, Type
 
-from autofusedebugger.nnsmith_integration._nnsmith_patch import (
-    ensure_ascendc_patch_applied,
-)
-
-# Redundant safety net, not the primary guarantee: `autofusedebugger`'s own
-# __init__.py already calls this before any submodule (including this one)
-# gets imported, which is the earliest point that's actually early enough
-# (see that file's comment for why -- a later call site, including this
-# one, can be too late if some other nnsmith-importing module got imported
-# first and bound now-stale names from nnsmith.abstract.op). Calling it
-# again here is a no-op once already applied, kept only in case this module
-# is ever imported through a path that somehow bypasses the package's own
-# __init__ (shouldn't happen under normal Python import semantics, but the
-# cost of this extra call is negligible either way).
-ensure_ascendc_patch_applied()
-
 from nnsmith.abstract.op import AbsOpBase
 
 # NNSmith op class names (as returned by `AbsOpBase.name()`, e.g. "core.Add")
@@ -194,9 +178,8 @@ _ASCENDC_A5_ONLY_ADDITIONS: List[str] = [
     # Without it, `_LoweringGuard.has(aten.index_select.default)` is False
     # -- not because of a dtype mismatch or a missing registration, but
     # because the module containing that registration call is never
-    # imported at all. `autofusedebugger/__init__.py` sets this
-    # unconditionally (before any torch_npu import can happen) precisely
-    # because this op exists in the allowlist; see that file's comment.
+    # imported at all. The fuzz execution initializer sets this before loading
+    # execution dependencies; ordinary package import does not change it.
     # Verified end to end: a graph combining `index_select` with downstream
     # elementwise ops produces zero `lowering_fallbacks` with the flag set.
     "core.IndexSelect",
@@ -207,7 +190,7 @@ _ASCENDC_A5_ONLY_ADDITIONS: List[str] = [
     # but this reading is NOT yet confirmed for Gather the way it was for
     # IndexSelect -- see below). Per the same static reading, covered by the
     # same TORCHINDUCTOR_ASCENDC_DEBUG="gather" opt-in flag and the same
-    # unconditional env var set in `autofusedebugger/__init__.py`.
+    # explicit environment configuration in historical NNSmith probes.
     #
     # NOT YET CONFIRMED on real A5 hardware (unlike core.IndexSelect above,
     # which went through that confirmation already) -- added here on the
@@ -270,8 +253,9 @@ OP_CATEGORIES: Dict[str, Set[str]] = {
     },
     # Shape/layout-only ops: no arithmetic, just which position holds which
     # value (or how many positions exist).
+    "transpose": {"core.Transpose"},
     "view": {
-        "core.Reshape", "core.Transpose", "core.Squeeze", "core.Concat",
+        "core.Reshape", "core.Squeeze", "core.Concat",
         "core.Cast", "core.Slice", "core.ExpandLast1", "core.ExpandLast2",
         "core.ExpandLast3", "core.ExpandLast4", "core.Tril", "core.Triu",
     },

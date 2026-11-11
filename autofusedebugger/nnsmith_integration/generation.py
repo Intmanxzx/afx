@@ -190,7 +190,7 @@ class GenerationConfig:
             raise ValueError("max_nodes must be positive")
 
 
-def generate_case(*, opset, model_cls, case_seed: int, config: GenerationConfig):
+def generate_case(*, opset, model_cls, case_seed: int, config: GenerationConfig, trace=None):
     profile = TENSOR_SCALE_PROFILES[config.tensor_scale]
     set_seed(case_seed)
     max_nodes = random.randint(2, config.max_nodes) if config.max_nodes >= 2 else config.max_nodes
@@ -205,16 +205,32 @@ def generate_case(*, opset, model_cls, case_seed: int, config: GenerationConfig)
         )
         ir = gen.make_concrete()
         del gen
+    if trace is not None:
+        trace.graph(ir)
     with _seeded_materialization(case_seed):
         model = model_cls.from_gir(ir)
+        if trace is not None:
+            trace.weights("weights_initial", model)
         model.refine_weights(value_dist_mode=config.value_dist_mode, max_search_steps=_NUMERIC_SEARCH_STEPS)
+        if trace is not None:
+            trace.weights("weights_refined", model)
         oracle = model.make_oracle(mode=config.value_dist_mode)
+        if trace is not None:
+            trace.inputs("inputs", oracle.input)
+            from autofusedebugger.fuzz.diagnostics import validate_input_signature
+            validate_input_signature(
+                [{"name": n, "dtype": str(v.dtype), "shape": list(v.shape)}
+                 for n, v in model.input_like.items()], oracle.input, stage="materialized_input_signature")
     case = TestCase(model, oracle)
     if config.dynamic_shapes:
         from .dynamic_shapes import build_workload, workload_metadata, workload_fingerprint
         with _seeded_materialization(case_seed):
             samples, axes = build_workload(case, seed=case_seed, variants=config.dynamic_variants,
                 max_elements=config.max_elem_per_tensor or profile["max_elem_per_tensor"])
+        if trace is not None:
+            trace.record("dynamic_axes", axes)
+            for index, sample in enumerate(samples):
+                trace.inputs(f"dynamic_inputs_{index}", sample.inputs)
         case.dynamic_samples = samples
         case.dynamic_axes = axes
         case.dynamic_metadata = workload_metadata(samples, axes)

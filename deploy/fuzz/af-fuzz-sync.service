@@ -1,0 +1,17 @@
+# Template: replace user, interpreter and data directory with installation paths.
+[Unit]
+Description=Autofuse Fuzz automatic outbox uploader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=developer
+ExecStart=/opt/autofusedbg/venv/bin/autofusedbg fuzz maintenance sync run --data-dir /var/lib/autofusedbg
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
