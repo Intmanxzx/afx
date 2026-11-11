@@ -185,6 +185,10 @@ class IncrementalStatistics:
                         more = cache.execute('SELECT 1 FROM pending LIMIT 1').fetchone()
                         if not more:
                             result = self._render(cache,source)
+                        # Commit the completed batch explicitly before touching the
+                        # source journal. The surrounding connection is deliberately
+                        # not allowed to roll back a saved checkpoint on timeout.
+                        cache.commit()
                 # Commit sidecar first, then prune journal. A crash in between
                 # replays nothing twice (checkpoint); new commits have larger seq.
                 with closing(_connect(self.database,writable=True)) as writer, writer:
