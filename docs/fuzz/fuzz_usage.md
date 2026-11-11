@@ -161,7 +161,7 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 
 ### NNSmith执行环境
 
-run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。当前安装路径仍需显式提供该隔离环境（例如在激活的环境中设置PYTHONPATH）；`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。自动化依赖准备尚待完成。
+run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁、安装Z3，并自动校验源码树指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，环境被改动后会自动重置修复。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
 
 
 ### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）

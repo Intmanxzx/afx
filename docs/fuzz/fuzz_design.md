@@ -35,7 +35,7 @@ run/replay统一使用NNSmith `graph_gen.model_gen`，通过symbolic-cinit与独
 
 C/D + 9位 base36 为新批次的 10 字符 seed；C 保持单静态 Shape，D 在同一图和固定权重上构造 3 个合法不同 Shape，不能构造时显式失败，不退回静态。图由NNSmith生成，数据字节由字段寻址SHA256和规范小端编码生成，避免Torch全局RNG影响输入。workload指纹覆盖完整规格与字节，缓存不参与确定性保证。
 
-依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `a1a524f235f8b6299c397fd12c383d4b15a80f027230ece2d7d18259f92c872e`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
+依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。环境由 `autofusedebugger/nnsmith_integration/install_af_fuzz.sh` 一键复现：脚本按固定顺序应用全部补丁并校验指纹，补丁顺序与指纹强绑定。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
 
 图、输入/输出规格作为受限轻量case_spec进入结果和同步协议，云端与离线view直接索引采集数据，不重新生成图、不依赖NNSmith。它不是重放所需的缓存。普通import不加载NNSmith；真正生成时才检查依赖。
 
