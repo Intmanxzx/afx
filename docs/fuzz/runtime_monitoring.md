@@ -7,7 +7,9 @@
 
 总览仅展示结果统计和用例分布，不展示实时运行面板，也不轮询心跳。实时运行面板仅保留在工具效率页，默认全部用户，支持用户、机器、卡型号、后端、版本及 1/5/15/60 分钟范围筛选。每个用户/机器一行，每页 10 行，展开看物理卡和执行器阶段。同一机器/卡跨用户和进程在全局资源计数中去重。后端、型号、版本目前是**运行会话筛选**，吞吐是匹配会话整体产出，不是细分到单卡或单后端的基准。
 
-用例结果分类：NNSmith 生成图或 CPU 参考校验阶段失败记为“构图Failed”（`gen_failed`）；图已生成后在 AF 编译、执行或结果校验链路失败记为“功能Failed”（`function_failed`）。精度执行成功但数值不一致仍单独记为“精度Failed”。
+用例结果分类：NNSmith 生成、CPU 参考执行以及 Torch/Dynamo/Inductor/torch_npu 编译问题统一记为“构图Failed”（`gen_failed`）；只有明确 Autofuse 错误证据（例如 strict gate `shortfall=yes`、AF codegen 失败）才记为“功能Failed”（`function_failed`）。`InductorError` 包装、生成代码中的 AF import、`shortfall=no` 均不是 AF 错误证据。当前 Shape 的明确 Torch 错误优先于其他 Shape 的共享 AF 日志；不能确认归属、设备占用、超时等显示 Unknown，不计为功能失败。执行成功但数值不一致仍单独记为“精度Failed”。
+
+分类在读取存量及新增结果时使用同一函数，不改写原始 status、诊断、hash 或身份。升级分类版本会使可丢弃的增量统计侧库重算全部历史 group；不能继续使用旧规则的汇总缓存。
 
 ## 采集与统计
 

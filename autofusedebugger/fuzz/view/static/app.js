@@ -135,7 +135,7 @@ function renderRecords(items){
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
  if(latest){let text=null,state='';const log=b==='af-mlir'?(latest.run_log||''):latest.core_error;if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}
- if(kind==='function'){const category=latest.function_status||(['error','unsupported'].includes(latest.status)?(latest.error_stage==='generation'?'gen_failed':'function_failed'):['ok','fail'].includes(latest.status)?'pass':'');state=category==='gen_failed'?'graph-failed':category==='function_failed'?'failed':category==='pass'?'pass':'';text=state==='pass'?'Pass':state==='graph-failed'?'构图Failed':state==='failed'?'功能Failed':null;}
+ if(kind==='function'){const category=latest.function_status||'unknown';state=category==='gen_failed'?'graph-failed':category==='function_failed'?'failed':category==='pass'?'pass':'';text=state==='pass'?'Pass':state==='graph-failed'?'构图Failed':state==='failed'?'功能Failed':null;}
  if(kind==='logs'&&(log||['error','unsupported','fail'].includes(latest.status)))text=shortLog(log||(b==='af-mlir'?'未保存运行日志 · 查看详情':latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
  if(kind==='kernel'&&latest.measurement_status==='error'){text='性能Failed';state='failed';}
  if(kind==='kernel'&&latest.measurement_status!=='error'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');

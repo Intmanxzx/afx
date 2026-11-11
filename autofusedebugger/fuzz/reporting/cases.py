@@ -25,20 +25,20 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id""" + selection + """
         GROUP BY f.group_id,a.backend
     ), backend_latest AS MATERIALIZED (
-        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status,a.error_stage,
+        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status,a.error_stage,a.error_summary,
                k.attempt_cursor,k.group_id,
                json_object('static_only',json_extract(f.execution,'$.static_only')) AS execution
         FROM backend_keys k JOIN attempts a ON a.rowid=k.attempt_cursor
         JOIN attempt_facts f ON f.attempt_id=a.id
     ),
-    latest AS (
+    latest AS MATERIALIZED (
         SELECT b.id,b.group_id,b.workload_id,b.execution,b.backend,b.attempt_cursor,
         coalesce(s.shape_index,-1) AS shape_index,
-        CASE WHEN s.correctness='error' THEN 'error'
+        CASE WHEN s.correctness='error' THEN failure_status(b.backend,s.error_stage,s.error_summary,(SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),s.shape_index)
              WHEN s.correctness='fail' THEN 'fail'
              WHEN s.correctness='pass' THEN 'ok'
              WHEN s.shape_index IS NULL AND b.status IN ('error','unsupported')
-                  THEN CASE WHEN b.error_stage IN ('generation','reference') THEN 'gen_failed' ELSE b.status END
+                  THEN failure_status(b.backend,b.error_stage,b.error_summary,(SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),-1)
              WHEN s.shape_index IS NULL THEN b.status ELSE 'unknown' END AS status
         FROM backend_latest b LEFT JOIN shapes s ON s.attempt_id=b.id
     ),
@@ -153,6 +153,6 @@ def page_keys(conn, *, limit, after=0, seed=None, status=None, user_id=None, q=N
 
 def reuse_latest(sql):
     """Use the connection-local latest snapshot for subsequent chart rollups."""
-    start = sql.index('    latest AS (')
+    start = sql.index('    latest AS MATERIALIZED (')
     end = sql.index('    unfiltered_cases AS (', start)
     return sql[:start] + '    latest AS (SELECT * FROM selected_latest),\n' + sql[end:]

@@ -5,7 +5,7 @@ from autofusedebugger.fuzz.reporting.statistics import statistics
 
 def save(repo, batch, backend, status, *, user='alice'):
     return repo.save({'seed':'680564733841876926926749214863536422954','workload_id':'a'*64,'oracle_id':'ref/1','backend':backend,
-        'status':status,'execution':{'backend':backend,'batch_id':batch},'shape_results':[{'shape_index':0,'correctness':{'ok':'pass','error':'error','fail':'fail'}[status],'performance':'not_requested'}]},
+        'status':status,'execution':{'backend':backend,'batch_id':batch},'shape_results':[{'shape_index':0,'correctness':{'ok':'pass','error':'error','fail':'fail'}[status],'performance':'not_requested','error_summary':'Codegen generate kernel failed' if status=='error' else ''}]},
         environment={'installation_id':user,'user_id':user,'device_name':user})
 
 
@@ -68,7 +68,9 @@ def test_bounded_page_keys_match_full_rollup_with_retries_and_sparse_shapes(tmp_
     value['execution']['batch_id'] = 'early'
     value['status'] = 'error'
     repo.save(value)
-    with sqlite3.connect(repo.path) as conn:
+    from contextlib import closing
+    from autofusedebugger.fuzz.storage.repository import _connect
+    with closing(_connect(repo.path)) as conn:
         conn.row_factory = sqlite3.Row
         cte, args = rollup()
         expected = [dict(r) for r in conn.execute(cte+'SELECT * FROM cases ORDER BY cursor DESC', args)]

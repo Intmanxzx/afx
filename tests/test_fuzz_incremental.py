@@ -189,7 +189,9 @@ def test_replace_group_and_transaction_rollback(tmp_path):
 def test_group_query_plan_uses_group_index(tmp_path):
     from autofusedebugger.fuzz.reporting.cases import rollup
     db=tmp_path/'db';initialize(db);save(ResultRepository(db),'a','af-mlir','ok')
-    with sqlite3.connect(db) as conn:
+    from autofusedebugger.fuzz.storage.repository import _connect
+    from contextlib import closing
+    with closing(_connect(db)) as conn:
         sql,args=rollup()
         sql=sql.replace('GROUP BY f.group_id,a.backend','WHERE f.group_id=? GROUP BY f.group_id,a.backend')
         plans=[r[3] for r in conn.execute('EXPLAIN QUERY PLAN '+sql+'SELECT * FROM latest',['missing'])]

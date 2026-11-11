@@ -120,6 +120,7 @@ class ResultQueries:
         result['backend_display'] = display_backend(result['backend'])
         result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
         result['shape_count'] = len(result['shape_results'])
+        diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
         if shape_index is not None:
             if type(shape_index) is not int or not -1 <= shape_index < 1024:
                 raise ValueError('invalid shape index')
@@ -144,7 +145,10 @@ class ResultQueries:
                 telemetry['shapes'] = {k:v for k,v in telemetry.get('shapes',{}).items() if k == str(shape_index)}
                 execution['telemetry'] = json.dumps(telemetry)
         from ..failure_details import diagnostic_view
-        diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
+        from ..reporting.failure_origin import classify
+        result['function_status'] = classify(result['backend'], result['status'],
+            result.get('error_stage', ''), result.get('error_summary', ''), diagnostics,
+            shape_index if shape_index is not None else -1)
         result['diagnostic_view'] = diagnostic_view(diagnostics, shape_index, result.get('error_summary', ''))
         return result
 
@@ -211,17 +215,11 @@ class ResultQueries:
                         member['status'] = {'pass':'ok','fail':'fail','error':'error'}.get(shape['correctness'], 'unknown')
                         member['error_stage'] = shape['error_stage']
                         member['error_summary'] = shape['error_summary']
-                    # Generation failures happen before a backend receives a
-                    # graph. Keep them separate from AF compile/execute errors
-                    # so the UI does not call a bad NNSmith graph a function
-                    # failure.
-                    member['function_status'] = (
-                        'gen_failed' if member['status'] in {'error', 'unsupported'}
-                        and member['error_stage'] in {'generation', 'reference'} else
-                        'function_failed' if member['status'] in {'error', 'unsupported'} else
-                        'pass' if member['status'] in {'ok', 'fail'} else 'unknown')
                     from ..failure_details import core_error
                     diagnostics = json.loads(json.loads(row['execution']).get('diagnostics', '{}'))
+                    from ..reporting.failure_origin import classify
+                    member['function_status'] = classify(row['backend'], member['status'],
+                        member['error_stage'], member['error_summary'], diagnostics, index)
                     member['core_error'] = core_error(diagnostics, index, member['error_summary'])
                     from ..failure_details import redact
                     member['run_log'] = redact(diagnostics.get('error', ''))

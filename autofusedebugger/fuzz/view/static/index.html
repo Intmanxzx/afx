@@ -43,7 +43,7 @@
   <p>以 WHERE 开头；支持 =、!=、&lt;、&gt;、LIKE、AND、OR 和括号。文本用单引号；不接受任意 SQL 语句。</p>
   <code>WHERE status = 'Pass' AND backend = 'af-mlir'</code>
   <p>字段：seed（短 seed 或完整数字）, shape_index, status（Pass / gen_failed / function_failed / accuracy_failed / Unknown）, backend, function_status（Pass / 构图Failed / Failed / Unknown）, accuracy_status（Pass / Failed / Unknown）, user, op, input_shape, input_dtype, mode（static / dynamic）, cann, torch, torch_npu, autofuse_commit, created_at</p>
-  <p>构图Failed：NNSmith 生成图或 CPU 参考校验阶段失败，目标后端尚未进入功能测试。功能Failed：图已生成，但目标后端编译或执行异常（不代表精度不一致）。精度Failed：执行成功但精度校验未通过。Unknown：未执行、未采集或没有目标后端判定。</p>
+  <p>构图Failed：NNSmith 生成、CPU 参考执行或 Torch/Dynamo/Inductor 编译链路失败。功能Failed：有明确 Autofuse 编译或执行失败证据；不能仅凭 InductorError 包装或进入 AF 路径判定。精度Failed：执行成功但精度校验未通过。Unknown：未执行、证据不足或设备占用、超时等环境异常；不计为 AF 功能失败。</p>
 </details>
 <p id="message" role="status" aria-live="polite"></p>
 <section id="overview-page" class="page">

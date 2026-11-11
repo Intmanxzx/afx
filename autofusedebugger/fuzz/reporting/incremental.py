@@ -16,7 +16,9 @@ from ..storage.queries import reading
 from .statistics import statistics
 from .efficiency import statistics as efficiency
 
-VERSION = 1
+from .failure_origin import VERSION as CLASSIFICATION_VERSION
+
+VERSION = 2
 BATCH = 64
 COUNT_FIELDS = ('overall', 'backend', 'category', 'dtype', 'op', 'dimension', 'elements', 'mode', 'errors')
 
@@ -126,7 +128,7 @@ class IncrementalStatistics:
 
     def _identity(self):
         s = self.database.stat()
-        return json.dumps([VERSION,s.st_dev,s.st_ino])
+        return json.dumps([VERSION,CLASSIFICATION_VERSION,s.st_dev,s.st_ino])
 
     def prepare(self):
         identity = self._identity()
