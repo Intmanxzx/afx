@@ -1,21 +1,128 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Autofuse Fuzz</title><link rel="stylesheet" href="style.css"><script src="charts.js" defer></script><script src="app.js" defer></script><script src="runtime.js" defer></script></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autofuse Fuzz</title>
+<link rel="stylesheet" href="style.css">
+<script src="charts.js" defer></script>
+<script src="app.js" defer></script>
+<script src="runtime.js" defer></script>
+</head>
 <body>
-<div class="topbar"><a class="brand" href="#overview"><span class="brand-icon">AF</span><div>Autofuse<span>FUZZ WORKSPACE</span></div></a><nav aria-label="主导航"><a href="#overview" data-page="overview">◫ <span>总览</span></a><a href="#records" data-page="records">☷ <span>功能&amp;精度</span></a><a href="#efficiency" data-page="efficiency">工具效率</a><a href="#kernel" data-page="kernel">Kernel性能</a></nav><span id="refresh-time" class="muted">正在加载</span></div>
-<div class="workspace"><h1 id="page-title" class="sr-only">总览</h1><main>
-<section class="cards" aria-label="结果概览"><div><span>测试记录</span><strong id="total">—</strong></div><div><span>功能Failed</span><strong id="errors">—</strong></div><div><span>精度Failed</span><strong id="fail">—</strong></div><div><span>Pass</span><strong id="ok">—</strong></div></section>
-<form id="filters" class="filter-bar"><label class="search-label"><input name="q" aria-label="搜索所有列" placeholder="任意项模糊搜索" autocomplete="off"></label><button type="submit">搜索</button><button id="reset-filters" type="button" class="secondary">重置</button></form><details class="query-help"><summary>SQL 条件与字段</summary><p>以 WHERE 开头；支持 =、!=、&lt;、&gt;、LIKE、AND、OR 和括号。文本用单引号；不接受任意 SQL 语句。</p><code>WHERE status = 'Pass' AND backend = 'af-mlir'</code><p>字段：seed（短 seed 或完整数字）, shape_index, status（Pass / function_failed / accuracy_failed / Unknown）, backend, function_status, accuracy_status（Pass / Failed / Unknown）, user, op, input_shape, input_dtype, mode（static / dynamic）, cann, torch, torch_npu, autofuse_commit, created_at</p><p>功能Failed：目标后端编译或执行异常（不代表精度不一致）。精度Failed：执行成功但精度校验未通过。Unknown：未执行、未采集或没有目标后端判定。</p></details><p id="message" role="status" aria-live="polite"></p>
-<section id="overview-page" class="page"><section id="fleet-overview" class="panel fleet-panel" aria-live="polite"></section><div class="section-heading"><h2>用例统计分布</h2><span class="muted">按当前筛选统计</span></div><p id="chart-message" role="status"></p><div class="chart-grid">
-<article class="chart-card"><h3>正确性分布</h3><p>按测试用例统计</p><svg id="chartOverall" viewBox="0 0 380 260" role="img" aria-label="正确性分布"></svg><div class="legend" id="legendOverall"></div></article>
-<article class="chart-card"><h3>后端分布</h3><p>对比各执行后端的结果</p><svg id="chartBackend" viewBox="0 0 380 260" role="img" aria-label="后端分布"></svg><div class="legend" id="legendBackend"></div></article>
-<article class="chart-card"><h3>算子覆盖</h3><p>一条记录可包含多个算子类别</p><svg id="chartCategory" viewBox="0 0 380 260" role="img" aria-label="算子覆盖"></svg><div class="legend" id="legendCategory"></div></article>
-<article class="chart-card"><h3>数据类型</h3><p>输入和输出的 dtype 分布</p><svg id="chartDtype" viewBox="0 0 380 260" role="img" aria-label="数据类型"></svg><div class="legend" id="legendDtype"></div></article>
-<article class="chart-card"><h3>最大维度</h3><p>按张量最大单维度分组</p><svg id="chartShapeDim" viewBox="0 0 380 260" role="img" aria-label="最大维度"></svg><div class="legend" id="legendShapeDim"></div></article>
-<article class="chart-card"><h3>张量规模</h3><p>按张量最大元素数分组</p><svg id="chartShapeElem" viewBox="0 0 380 260" role="img" aria-label="张量规模"></svg><div class="legend" id="legendShapeElem"></div></article>
-</div></section>
-<section id="records-page" class="page" hidden><div class="section-heading"><h2>功能&amp;精度</h2><details id="column-picker"><summary>自定义列</summary><div class="column-popover"><div id="column-options"></div><div class="column-actions"><button id="all-columns" type="button" class="secondary">全选</button><button id="no-columns" type="button" class="secondary">全不选</button><button id="reset-columns" type="button" class="secondary">恢复默认</button></div></div></details></div><section class="panel"><div class="table-scroll"><table class="case-table"><thead id="case-columns"></thead><tbody id="rows"></tbody></table></div><div class="pagination"><span id="page-label"></span><label class="page-size-label">每页<select id="page-size"><option selected>10</option><option>25</option><option>50</option><option>100</option><option>200</option></select>条</label><div><button id="previous" class="secondary" disabled>上一页</button><button id="next" disabled>下一页</button></div></div></section></section>
-<section id="efficiency-page" class="page" hidden><section id="fleet-efficiency" class="panel fleet-panel" aria-live="polite"></section><details class="panel"><summary>历史运行诊断（按上方结果搜索条件，独立于实时设备筛选）</summary><section id="tool-efficiency"><h3>历史窗口分位数与资源占用</h3><div id="efficiency-table"></div></section></details></section>
-<section id="kernel-page" class="page" hidden><div class="section-heading"><h2>Kernel性能</h2></div><article class="panel"><p class="muted">只展示真实采集的编译 / Kernel 计时，不用工具吞吐代替 Kernel 性能。跨环境结果仅为描述统计，不作为同用例配对加速比。</p><div id="performance-table" class="table-scroll"></div><p id="metric-empty" class="muted">暂无独立编译耗时或 Kernel 性能数据</p></article></section><section class="panel detail" id="detail" hidden><div class="section-heading"><h2>运行详情</h2><button id="close-detail" class="secondary">返回记录</button></div><label class="command">重放命令<input id="command" readonly></label><button id="copy">复制命令</button> <button id="compare" class="secondary">对比同 seed 结果</button><p id="detail-message" role="status"></p><section id="case-meta"></section><section id="ascir-detail"></section><section id="failure-details"></section><div id="timing-detail" class="table-scroll"></div><div id="provenance"></div><details hidden><summary>完整记录与环境</summary><pre id="detail-content"></pre></details></section>
-<section class="panel detail" id="comparison" hidden><h2>后端对比</h2><p id="comparison-message" role="status"></p><pre id="comparison-content"></pre></section>
-</main></div><div id="vizTooltip" class="viz-tooltip"></div></body></html>
+<header class="topbar">
+  <a class="brand" href="#overview">
+    <span class="brand-icon" aria-hidden="true">AF</span>
+    <span class="brand-text">Autofuse<small>FUZZ WORKSPACE</small></span>
+  </a>
+  <span class="status-group"><span id="refresh-time" class="muted">正在加载</span></span>
+  <nav aria-label="主导航">
+    <a href="#overview" data-page="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg><span>总览</span></a>
+    <a href="#records" data-page="records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5"/><path d="m3.5 12 1.5 1.5L7.5 11"/><path d="m3.5 18 1.5 1.5L7.5 17"/></svg><span>功能&amp;精度</span></a>
+    <a href="#efficiency" data-page="efficiency"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>工具效率</span></a>
+    <a href="#kernel" data-page="kernel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></svg><span>Kernel性能</span></a>
+  </nav>
+</header>
+<div class="workspace">
+<h1 id="page-title" class="sr-only">总览</h1>
+<main>
+<section class="cards" aria-label="结果概览">
+  <div class="kpi kpi-total"><span>测试记录</span><strong id="total">—</strong></div>
+  <div class="kpi kpi-graph"><span>构图Failed</span><strong id="gen-errors">—</strong></div>
+  <div class="kpi kpi-fail"><span>功能Failed</span><strong id="errors">—</strong></div>
+  <div class="kpi kpi-accuracy"><span>精度Failed</span><strong id="fail">—</strong></div>
+  <div class="kpi kpi-pass"><span>Pass</span><strong id="ok">—</strong></div>
+</section>
+<form id="filters" class="filter-bar">
+  <label class="search-label"><input name="q" aria-label="搜索所有列" placeholder="任意项模糊搜索" autocomplete="off"></label>
+  <button type="submit">搜索</button>
+  <button id="reset-filters" type="button" class="secondary">重置</button>
+</form>
+<details class="query-help">
+  <summary>SQL 条件与字段</summary>
+  <p>以 WHERE 开头；支持 =、!=、&lt;、&gt;、LIKE、AND、OR 和括号。文本用单引号；不接受任意 SQL 语句。</p>
+  <code>WHERE status = 'Pass' AND backend = 'af-mlir'</code>
+  <p>字段：seed（短 seed 或完整数字）, shape_index, status（Pass / gen_failed / function_failed / accuracy_failed / Unknown）, backend, function_status（Pass / 构图Failed / Failed / Unknown）, failure_path（mlir_failed / unconfirmed / not_applicable）, accuracy_status（Pass / Failed / Unknown）, user, op, input_shape, input_dtype, mode（static / dynamic）, cann, torch, torch_npu, autofuse_commit, created_at</p>
+  <p>构图Failed：NNSmith 生成、CPU 参考执行或 Torch/Dynamo/Inductor 编译链路失败。功能Failed：有明确 Autofuse 编译或执行失败证据；不能仅凭 InductorError 包装或进入 AF 路径判定。精度Failed：执行成功但精度校验未通过。Unknown：未执行、证据不足或设备占用、超时等环境异常；不计为 AF 功能失败。</p>
+</details>
+<p id="message" role="status" aria-live="polite"></p>
+<section id="overview-page" class="page">
+  <div class="section-heading"><h2>用例统计分布</h2><span class="muted">按当前筛选统计</span></div>
+  <article class="chart-card" aria-label="功能失败路径">
+    <h3>功能Failed · MLIR 路径</h3>
+    <p>仅按失败日志确认；未确认不等于非 MLIR，运行级日志不跨 Shape 归因。</p>
+    <div id="failure-path-breakdown" class="legend"></div>
+  </article>
+  <p id="chart-message" role="status"></p>
+  <div class="chart-grid">
+    <article class="chart-card"><h3>正确性分布</h3><p>按测试用例统计</p><svg id="chartOverall" viewBox="0 0 380 260" role="img" aria-label="正确性分布"></svg><div class="legend" id="legendOverall"></div></article>
+    <article class="chart-card"><h3>后端分布</h3><p>对比各执行后端的结果</p><svg id="chartBackend" viewBox="0 0 380 260" role="img" aria-label="后端分布"></svg><div class="legend" id="legendBackend"></div></article>
+    <article class="chart-card"><h3>算子覆盖</h3><p>一条记录可包含多个算子类别</p><svg id="chartCategory" viewBox="0 0 380 260" role="img" aria-label="算子覆盖"></svg><div class="legend" id="legendCategory"></div></article>
+    <article class="chart-card"><h3>数据类型</h3><p>输入和输出的 dtype 分布</p><svg id="chartDtype" viewBox="0 0 380 260" role="img" aria-label="数据类型"></svg><div class="legend" id="legendDtype"></div></article>
+    <article class="chart-card"><h3>最大维度</h3><p>按张量最大单维度分组</p><svg id="chartShapeDim" viewBox="0 0 380 260" role="img" aria-label="最大维度"></svg><div class="legend" id="legendShapeDim"></div></article>
+    <article class="chart-card"><h3>张量规模</h3><p>按张量最大元素数分组</p><svg id="chartShapeElem" viewBox="0 0 380 260" role="img" aria-label="张量规模"></svg><div class="legend" id="legendShapeElem"></div></article>
+  </div>
+</section>
+<section id="records-page" class="page" hidden>
+  <div class="section-heading">
+    <h2>功能&amp;精度</h2>
+    <details id="column-picker">
+      <summary>自定义列</summary>
+      <div class="column-popover">
+        <div id="column-options"></div>
+        <div class="column-actions">
+          <button id="all-columns" type="button" class="secondary">全选</button>
+          <button id="no-columns" type="button" class="secondary">全不选</button>
+          <button id="reset-columns" type="button" class="secondary">恢复默认</button>
+        </div>
+      </div>
+    </details>
+  </div>
+  <section class="panel">
+    <div class="table-scroll"><table class="case-table"><thead id="case-columns"></thead><tbody id="rows"></tbody></table></div>
+    <div class="pagination">
+      <span id="page-label"></span>
+      <label class="page-size-label">每页<select id="page-size"><option selected>10</option><option>25</option><option>50</option><option>100</option><option>200</option></select>条</label>
+      <div><button id="previous" class="secondary" disabled>上一页</button><button id="next" disabled>下一页</button></div>
+    </div>
+  </section>
+</section>
+<section id="efficiency-page" class="page" hidden>
+  <section id="fleet-efficiency" class="panel fleet-panel" aria-live="polite"></section>
+  <details class="panel history-panel">
+    <summary>历史运行诊断（按上方结果搜索条件，独立于实时设备筛选）</summary>
+    <section id="tool-efficiency"><h3>历史窗口分位数与资源占用</h3><div id="efficiency-table"></div></section>
+  </details>
+</section>
+<section id="kernel-page" class="page" hidden>
+  <div class="section-heading"><h2>Kernel性能</h2></div>
+  <article class="panel">
+    <p class="muted">只展示真实采集的编译 / Kernel 计时，不用工具吞吐代替 Kernel 性能。跨环境结果仅为描述统计，不作为同用例配对加速比。</p>
+    <div id="performance-table" class="table-scroll"></div>
+    <p id="metric-empty" class="muted">暂无独立编译耗时或 Kernel 性能数据</p>
+  </article>
+</section>
+<section class="panel detail" id="detail" hidden>
+  <div class="section-heading"><h2>运行详情</h2><button id="close-detail" class="secondary">返回记录</button></div>
+  <div class="command-bar">
+    <label class="command">重放命令<input id="command" readonly></label>
+    <div class="command-actions"><button id="copy">复制命令</button><button id="compare" class="secondary">对比同 seed 结果</button></div>
+  </div>
+  <p id="detail-message" role="status"></p>
+  <section id="case-meta"></section>
+  <section id="ascir-detail"></section>
+  <section id="failure-details"></section>
+  <div id="timing-detail" class="table-scroll"></div>
+  <div id="provenance"></div>
+  <details hidden><summary>完整记录与环境</summary><pre id="detail-content"></pre></details>
+</section>
+<section class="panel detail" id="comparison" hidden>
+  <h2>后端对比</h2>
+  <p id="comparison-message" role="status"></p>
+  <pre id="comparison-content"></pre>
+</section>
+</main>
+</div>
+<div id="vizTooltip" class="viz-tooltip"></div>
+</body>
+</html>

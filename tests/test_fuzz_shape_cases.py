@@ -11,7 +11,7 @@ def record(backend, states):
     return {'seed':str(2*2**128+42),'workload_id':workload_id(bundle()),
       'oracle_id':'ref/1','backend':backend,'status':'error' if 'error' in states else 'ok',
       'execution':{'case_spec':encode(three_shapes_spec()),'backend':backend,'batch_id':'batch','telemetry':json.dumps({'version':1,'stages':{'execution_total':900},'shapes':{str(i):{'first_call_combined':100+i} for i in range(len(states))}}),
-        'diagnostics':json.dumps({'version':1,'error':'error: native lowering failed','shapes':{'1':{'error':'shape one only'}}})},
+        'diagnostics':json.dumps({'version':1,'error':'error: Autofuse native lowering failed','shapes':{'1':{'error':'shape one only'}}})},
       'shape_results':[{'shape_index':i,'correctness':state,'performance':'not_requested','error_summary':'bad' if state=='error' else ''} for i,state in enumerate(states)]}
 
 
@@ -140,3 +140,23 @@ def test_missing_or_duplicate_run_log_remains_explicit():
     view = diagnostic_view({'error': 'same', 'shapes': {'0': {'error': 'same'}}}, 0)
     assert view['run_log'] == 'same'
     assert view['shared_log'] == ''
+
+
+def test_generation_failure_is_gen_failed_not_function_failed(tmp_path):
+    repo = ResultRepository(tmp_path/'db')
+    row = record('af-mlir', [])
+    row['status'] = 'error'
+    row['error_stage'] = 'generation'
+    row['error_summary'] = 'NNSmith could not construct a valid graph'
+    # No shapes means this is the generation-level failure row persisted by the
+    # scheduler, rather than an AF compile/execute error.
+    identity = repo.save(row)
+    q = ResultQueries(repo.path)
+    assert q.case_summary() == {'total': 1, 'by_status': {'gen_failed': 1}, 'unit': 'shape_case'}
+    item = q.case_page()['items'][0]
+    backend = item['backends']['af-mlir'][0]
+    assert item['status'] == 'gen_failed'
+    assert backend['function_status'] == 'gen_failed'
+    assert q.case_summary(q='构图Failed')['total'] == 1
+    assert q.case_summary(q='功能Failed')['total'] == 0
+    assert q.detail(identity)['error_stage'] == 'generation'

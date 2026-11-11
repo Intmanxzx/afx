@@ -188,7 +188,7 @@ def test_central_chart_requests_share_bounded_cache(tmp_path, monkeypatch):
     from urllib.request import urlopen
     from autofusedebugger.fuzz.central.server import create_server
     calls=[]
-    monkeypatch.setattr('autofusedebugger.fuzz.reporting.statistics.statistics',
+    monkeypatch.setattr('autofusedebugger.fuzz.reporting.incremental.IncrementalStatistics.refresh',
                         lambda *args,**kwargs: calls.append(kwargs) or {'attempts':1,'overall':[]})
     server=create_server(tmp_path/'db',0)
     assert server.public_cache.ready.wait(5)

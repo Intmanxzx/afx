@@ -10,6 +10,7 @@ from .failure_details import redact
 def capture_tail(limit=16384, *, forward=False):
     chunks = bytearray()
     important = bytearray()
+    verdicts = bytearray()
     read_fd, write_fd = os.pipe()
     saved = [os.dup(fd) for fd in (1, 2)]
 
@@ -18,6 +19,9 @@ def capture_tail(limit=16384, *, forward=False):
         context_lines = 0
         def collect(line):
             nonlocal context_lines
+            if b'mlir codegen result' in b' '.join(line.lower().split()):
+                verdicts.extend(line + b'\n')
+                del verdicts[:-600]
             if any(word in line.lower() for word in (b'error:', b'af_mlir_strict', b'unsupportedoperation', b'fatal')):
                 context_lines = 3
             if context_lines:
@@ -48,7 +52,11 @@ def capture_tail(limit=16384, *, forward=False):
     try:
         os.dup2(write_fd, 1); os.dup2(write_fd, 2)
         os.close(write_fd)
-        yield lambda: redact(bytes(important or chunks).decode('utf-8', errors='replace'))[-1600:]
+        def tail():
+            verdict = redact(bytes(verdicts).decode('utf-8', errors='replace'))[-600:]
+            rest = redact(bytes(important or chunks).decode('utf-8', errors='replace'))
+            return verdict + rest[-(1600-len(verdict)):] if verdict else rest[-1600:]
+        yield tail
     finally:
         sys.stdout.flush(); sys.stderr.flush()
         for fd, original in zip((1, 2), saved):

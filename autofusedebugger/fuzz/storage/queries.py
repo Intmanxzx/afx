@@ -120,6 +120,7 @@ class ResultQueries:
         result['backend_display'] = display_backend(result['backend'])
         result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
         result['shape_count'] = len(result['shape_results'])
+        diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
         if shape_index is not None:
             if type(shape_index) is not int or not -1 <= shape_index < 1024:
                 raise ValueError('invalid shape index')
@@ -144,7 +145,13 @@ class ResultQueries:
                 telemetry['shapes'] = {k:v for k,v in telemetry.get('shapes',{}).items() if k == str(shape_index)}
                 execution['telemetry'] = json.dumps(telemetry)
         from ..failure_details import diagnostic_view
-        diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
+        from ..reporting.failure_origin import classify, mlir_failure_evidence
+        result['function_status'] = classify(result['backend'], result['status'],
+            result.get('error_stage', ''), result.get('error_summary', ''), diagnostics,
+            shape_index if shape_index is not None else -1)
+        result['mlir_failure'] = mlir_failure_evidence(result['backend'], result['status'],
+            result.get('error_stage', ''), result.get('error_summary', ''), diagnostics,
+            shape_index if shape_index is not None else -1, result['shape_count'])
         result['diagnostic_view'] = diagnostic_view(diagnostics, shape_index, result.get('error_summary', ''))
         return result
 
@@ -175,13 +182,14 @@ class ResultQueries:
                 first = rows[0]
                 meta = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(first['workload_id'],)).fetchone()
                 item = {key:first[key] for key in ('seed','workload_id','source_id','device_name','user_id','batch_id','created_at')}
-                item.update(user_name=first['device_name'], case_id=group['group_id'], seed_short=Seed.parse(item['seed']).short,
+                item.update(user_name=first['device_name'], case_id=group['group_id'], status=group['status'], seed_short=Seed.parse(item['seed']).short,
                             execution=json.loads(first['execution']), evaluation=json.loads(first['evaluation']),
                             versions=json.loads(first['versions']), metadata=json.loads(meta[0]) if meta else {}, backends={})
                 # List pages carry only previews. Full logs/timing payloads are
                 # fetched on detail navigation, not repeated for every shape.
                 item['execution'] = {k:v for k,v in item['execution'].items() if k not in {'diagnostics','telemetry'}}
                 index = group['shape_index']
+                item['failure_path'] = group['failure_path']
                 item['shape_index'] = index
                 item['case_id'] += ':' + str(index)
                 variants = item['metadata'].get('shape_variants', [])
@@ -194,6 +202,7 @@ class ResultQueries:
                     member['device'] = json.loads(row['execution']).get('device')
                     member['stages'] = [dict(r) for r in conn.execute('SELECT shape_index,stage,duration_ns FROM stage_metrics WHERE attempt_id=? ORDER BY shape_index,stage',(row['id'],))]
                     member['shapes'] = [dict(r) for r in conn.execute('SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index',(row['id'],))]
+                    member['shape_count'] = len(member['shapes'])
                     member['shapes'] = [s for s in member['shapes'] if s['shape_index'] == index]
                     if not member['shapes'] and index >= 0:
                         continue
@@ -213,6 +222,11 @@ class ResultQueries:
                         member['error_summary'] = shape['error_summary']
                     from ..failure_details import core_error
                     diagnostics = json.loads(json.loads(row['execution']).get('diagnostics', '{}'))
+                    from ..reporting.failure_origin import classify, mlir_failure_evidence
+                    member['function_status'] = classify(row['backend'], member['status'],
+                        member['error_stage'], member['error_summary'], diagnostics, index)
+                    member['mlir_failure'] = mlir_failure_evidence(row['backend'], member['status'],
+                        member['error_stage'], member['error_summary'], diagnostics, index, member['shape_count'])
                     member['core_error'] = core_error(diagnostics, index, member['error_summary'])
                     from ..failure_details import redact
                     member['run_log'] = redact(diagnostics.get('error', ''))

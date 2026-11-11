@@ -25,39 +25,54 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id""" + selection + """
         GROUP BY f.group_id,a.backend
     ), backend_latest AS MATERIALIZED (
-        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status,
+        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status,a.error_stage,a.error_summary,
                k.attempt_cursor,k.group_id,
                json_object('static_only',json_extract(f.execution,'$.static_only')) AS execution
         FROM backend_keys k JOIN attempts a ON a.rowid=k.attempt_cursor
         JOIN attempt_facts f ON f.attempt_id=a.id
     ),
-    latest AS (
+    latest AS MATERIALIZED (
         SELECT b.id,b.group_id,b.workload_id,b.execution,b.backend,b.attempt_cursor,
         coalesce(s.shape_index,-1) AS shape_index,
-        CASE WHEN s.correctness='error' THEN 'error'
+        CASE WHEN s.correctness='error' THEN failure_status(b.backend,s.error_stage,s.error_summary,(SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),s.shape_index)
              WHEN s.correctness='fail' THEN 'fail'
              WHEN s.correctness='pass' THEN 'ok'
-             WHEN s.shape_index IS NULL AND b.status IN ('error','unsupported') THEN b.status
-             WHEN s.shape_index IS NULL THEN b.status ELSE 'unknown' END AS status
+             WHEN s.shape_index IS NULL AND b.status IN ('error','unsupported')
+                  THEN failure_status(b.backend,b.error_stage,b.error_summary,(SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),-1)
+             WHEN s.shape_index IS NULL THEN b.status ELSE 'unknown' END AS status,
+        CASE WHEN s.correctness='error' OR (s.shape_index IS NULL AND b.status IN ('error','unsupported'))
+             THEN failure_path(b.backend,'error',coalesce(s.error_stage,b.error_stage),
+                  coalesce(s.error_summary,b.error_summary),
+                  (SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),
+                  coalesce(s.shape_index,-1),
+                  (SELECT count(*) FROM shapes all_shapes WHERE all_shapes.attempt_id=b.id)) ELSE 'not_applicable' END AS failure_path
         FROM backend_latest b LEFT JOIN shapes s ON s.attempt_id=b.id
     ),
     unfiltered_cases AS (
         SELECT group_id, shape_index, max(attempt_cursor)*2048+1024-shape_index AS cursor, min(workload_id) AS workload_id,
         min(execution) AS execution,
+        CASE WHEN max(CASE WHEN backend='af-mlir' THEN failure_path END) IS NOT NULL
+             THEN max(CASE WHEN backend='af-mlir' THEN failure_path END)
+             WHEN max(CASE WHEN failure_path='mlir_failed' THEN 1 ELSE 0 END)=1 THEN 'mlir_failed'
+             WHEN max(CASE WHEN failure_path='unconfirmed' THEN 1 ELSE 0 END)=1 THEN 'unconfirmed'
+             ELSE 'not_applicable' END AS failure_path,
         CASE
           WHEN max(CASE WHEN backend='af-mlir' THEN status END) IS NOT NULL
             THEN max(CASE WHEN backend='af-mlir' THEN status END)
           WHEN sum(CASE WHEN backend NOT IN ('cpu','cpu-eager') THEN 1 ELSE 0 END)=0 THEN 'unknown'
+          WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status='gen_failed' THEN 1 ELSE 0 END)=1 THEN 'gen_failed'
           WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status IN ('error','unsupported') THEN 1 ELSE 0 END)=1 THEN 'error'
           WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status='fail' THEN 1 ELSE 0 END)=1 THEN 'fail'
           WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status='unknown' THEN 1 ELSE 0 END)=1 THEN 'unknown'
           ELSE 'ok' END AS status
         FROM latest GROUP BY group_id,shape_index
     ), projection AS (
-        SELECT c.group_id,c.shape_index,b.backend,b.seed,b.created_at,f.device_name AS user,
+        SELECT c.group_id,c.shape_index,c.failure_path,b.backend,b.seed,b.created_at,f.device_name AS user,
         CASE c.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'accuracy_failed'
+             WHEN 'gen_failed' THEN 'gen_failed'
              WHEN 'error' THEN 'function_failed' WHEN 'unsupported' THEN 'function_failed' ELSE 'Unknown' END AS status,
         CASE l.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'Pass'
+             WHEN 'gen_failed' THEN '构图Failed'
              WHEN 'error' THEN 'Failed' WHEN 'unsupported' THEN 'Failed' ELSE 'Unknown' END AS function_status,
         CASE l.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'Failed' ELSE 'Unknown' END AS accuracy_status,
         json_extract(cf.metadata,'$.op_types') AS op,
@@ -84,9 +99,11 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
     predicate, query_values = condition(q)
     state_queries = {
         'pass': "c.status='ok'",
-        'failed': "c.status IN ('error','unsupported','fail')",
+        'failed': "c.status IN ('error','unsupported','gen_failed','fail')",
         '功能failed': "c.status IN ('error','unsupported')",
         'function_failed': "c.status IN ('error','unsupported')",
+        '构图failed': "c.status='gen_failed'",
+        'gen_failed': "c.status='gen_failed'",
         '精度failed': "c.status='fail'",
         'accuracy_failed': "c.status='fail'",
         'unknown': "c.status='unknown'",
@@ -99,7 +116,7 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         sql += predicate + '))'
     values.extend(query_values)
     if status:
-        if status not in {'ok','fail','error','unsupported','unknown'}:
+        if status not in {'ok','fail','error','unsupported','gen_failed','unknown'}:
             raise ValueError('invalid status filter')
         sql += ' AND c.status=?'
         values.append(status)
@@ -147,6 +164,6 @@ def page_keys(conn, *, limit, after=0, seed=None, status=None, user_id=None, q=N
 
 def reuse_latest(sql):
     """Use the connection-local latest snapshot for subsequent chart rollups."""
-    start = sql.index('    latest AS (')
+    start = sql.index('    latest AS MATERIALIZED (')
     end = sql.index('    unfiltered_cases AS (', start)
     return sql[:start] + '    latest AS (SELECT * FROM selected_latest),\n' + sql[end:]

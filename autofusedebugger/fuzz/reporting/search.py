@@ -5,7 +5,7 @@ are bound parameters. No functions, statements, comments or subqueries.
 """
 import re
 
-FIELDS = ('seed', 'shape_index', 'status', 'backend', 'function_status',
+FIELDS = ('failure_path', 'seed', 'shape_index', 'status', 'backend', 'function_status',
           'accuracy_status', 'user', 'op', 'input_shape', 'input_dtype', 'mode',
           'cann', 'torch', 'torch_npu', 'autofuse_commit', 'created_at')
 TOKEN = re.compile(r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>-?\d+)|(?P<op><=|>=|!=|<>|=|<|>|\(|\))|(?P<word>[A-Za-z_][A-Za-z_0-9]*))")

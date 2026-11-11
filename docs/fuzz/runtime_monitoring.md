@@ -5,7 +5,13 @@
 导航为总览、功能&精度、工具效率、Kernel性能；旧 `#performance` 链接兼容工具效率。
 服务器管理员登记用户并签发 token。客户端 identity、结果、阶段事实和心跳请求均通过 Bearer token 鉴权；服务端根据 token 确定 user-id 和用户名，不接收心跳自报用户归属。公开只读页面不需要 token。
 
-总览与工具效率默认全部用户，支持用户、机器、卡型号、后端、版本及 1/5/15/60 分钟范围筛选。每个用户/机器一行，每页 10 行，展开看物理卡和执行器阶段。同一机器/卡跨用户和进程在全局资源计数中去重。后端、型号、版本目前是**运行会话筛选**，吞吐是匹配会话整体产出，不是细分到单卡或单后端的基准。
+总览仅展示结果统计和用例分布，不展示实时运行面板，也不轮询心跳。实时运行面板仅保留在工具效率页，默认全部用户，支持用户、机器、卡型号、后端、版本及 1/5/15/60 分钟范围筛选。每个用户/机器一行，每页 10 行，展开看物理卡和执行器阶段。同一机器/卡跨用户和进程在全局资源计数中去重。后端、型号、版本目前是**运行会话筛选**，吞吐是匹配会话整体产出，不是细分到单卡或单后端的基准。
+
+用例结果分类：NNSmith 生成、CPU 参考执行以及 Torch/Dynamo/Inductor/torch_npu 编译问题统一记为“构图Failed”（`gen_failed`）；只有明确 Autofuse 错误证据（例如 strict gate `shortfall=yes`、AF codegen 失败）才记为“功能Failed”（`function_failed`）。`InductorError` 包装、生成代码中的 AF import、`shortfall=no` 均不是 AF 错误证据。当前 Shape 的明确 Torch 错误优先于其他 Shape 的共享 AF 日志；不能确认归属、设备占用、超时等显示 Unknown，不计为功能失败。执行成功但数值不一致仍单独记为“精度Failed”。
+
+功能Failed 下仅细分日志可确认的 `mlir_failed`（MLIR 路径失败）与 `unconfirmed`（路径未确认）。优先匹配 `MLIR Codegen Result：kFailed/kSucceeded/kNotSupported`（也支持英文冒号、DEBUG 前缀及枚举整数 1/2/0）。只有 `kFailed` 确认 MLIR 失败；出现新结果标记后不再使用旧规则覆盖成功或 NotSupported。无新标记时，暂时保留下述旧日志规则，待所有生产者更新后再清理。后端名、AF import、通用 `Codegen generate kernel failed` 不足以确认 MLIR 失败。`AF_MLIR_STRICT` 的失败 gate 可作证据，`shortfall=yes/no/unknown` 只说明能力不足与否；`gate=none` 为成功，`gate=cube-fusion` 为范围外，不归为 MLIR 失败。详情保留证据原文和 Shape/运行级作用域。共享日志仅在确认只有一个 Shape 或尚无 Shape 时参与路径判断，不能根据缺少其他 Shape 日志推断是单 Shape。图校验报错不因共享日志变成 MLIR 失败。列表、统计及 SQL 筛选 `WHERE failure_path = 'mlir_failed'` 使用同一规则；“未确认”不等于“非 MLIR”。
+
+分类在读取存量及新增结果时使用同一函数，不改写原始 status、诊断、hash 或身份。升级分类版本会使可丢弃的增量统计侧库重算全部历史 group；不能继续使用旧规则的汇总缓存。
 
 ## 采集与统计
 
@@ -33,3 +39,7 @@ NPU 安装 `/mnt/workspace/af-fuzz/fleet-runtime-1110/installed`；私有队列/
 实时观测使用独立的 `results.sqlite.runtime.sqlite` WAL 数据库，避免历史结果上传事务长时间阻塞心跳；权威用户认证仍读取原中心库，结果库不复制 token/hash 到观测库。此库不是结果/ACK 的一部分，生产备份如需保留运行历史，应额外做 SQLite 一致性备份。
 
 联调同时发现已有 E/F 采样生成的 `nnsmith-sampled/5` 元数据未被 CaseSpec 解码器接受，导致写库失败；解码器已按 seed 版本验证对应 dialect 和冻结采样配置，新增回归测试。升级期间写库失败的任务以原队列的 resume/reconcile 流程恢复，不删除旧结果。
+
+### MLIR 返回值日志采集
+
+`MLIR Codegen Result` 已由 GELOGI 输出。采集器不按日志等级过滤，并给该标记保留有界空间，避免后续错误日志挤掉返回值。但采集器只能读取 worker 的 stdout/stderr，不能恢复被运行库日志级别过滤或只写到 slog 文件的 INFO 日志。需要采集新标记时，在启动 NPU worker 前配置 `ASCEND_GLOBAL_LOG_LEVEL=1 ASCEND_SLOG_PRINT_TO_STDOUT=1`；既有持久 worker 需重启才能可靠应用。这里不自动修改全局日志等级，也不扫描其他进程的日志文件。未采集到标记时沿用旧逻辑，不把缺失当成成功。

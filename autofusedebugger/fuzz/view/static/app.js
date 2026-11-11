@@ -114,7 +114,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape')$('column-pi
 $('all-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=true;saveColumns();});
 $('no-columns').addEventListener('click',()=>{for(const c of currentColumns)columnPreferences.visibility[c.key]=false;saveColumns();});
 $('reset-columns').addEventListener('click',()=>{columnPreferences={order:[],visibility:{}};saveColumns();});
-function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unkown';return span;}
+function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unknown';return span;}
 function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
 function renderRecords(items){
  const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
@@ -135,14 +135,14 @@ function renderRecords(items){
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
  if(latest){let text=null,state='';const log=b==='af-mlir'?(latest.run_log||''):latest.core_error;if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}
- if(kind==='function'){state=['error','unsupported'].includes(latest.status)?'failed':['ok','fail'].includes(latest.status)?'pass':'';text=state==='pass'?'Pass':state==='failed'?'功能Failed':null;}
+ if(kind==='function'){const category=latest.function_status||'unknown';state=category==='gen_failed'?'graph-failed':category==='function_failed'?'failed':category==='pass'?'pass':'';text=state==='pass'?'Pass':state==='graph-failed'?'构图Failed':state==='failed'?(latest.mlir_failure?.path==='mlir_failed'?'功能Failed · MLIR':'功能Failed · 路径未确认'):null;}
  if(kind==='logs'&&(log||['error','unsupported','fail'].includes(latest.status)))text=shortLog(log||(b==='af-mlir'?'未保存运行日志 · 查看详情':latest.status==='fail'?'精度不一致 · 查看误差':'错误摘要未采集 · 查看详情'));
  if(kind==='kernel'&&latest.measurement_status==='error'){text='性能Failed';state='failed';}
  if(kind==='kernel'&&latest.measurement_status!=='error'&&latest.kernel_ns.length)text=latest.kernel_ns.map(m=>'S'+m.shape_index+' '+(m.duration_ns/1e6).toFixed(3)+' ms').join(' · ');
  if(kind==='total')text=seconds(latest.processing_ns)||'未采集';
  if(kind==='e2e')text=seconds(latest.end_to_end_ns)||'未采集';
  if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape 处理开始至要求的评估结束的墙钟跨度；不含共享准备，不等于 Kernel 耗时';if(kind==='logs'){button.title=log||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
- if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unkown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
+ if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unknown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
  caseMetadata.set(latest.id,item.metadata);}}
  else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
  if(!populated)td.append(unknown());if(populated)c.populated=true;
@@ -154,12 +154,12 @@ async function load(silent=false,includeList=true){
  if(!silent)$('message').textContent='加载中…';
  // A whole-dataset count must not hold the first page hostage. Keep failures
  // visible without replacing a valid list with an empty state.
- if(!silent)for(const id of ['total','ok','fail','errors'])$(id).textContent='…';
+ if(!silent)for(const id of ['total','ok','fail','errors','gen-errors'])$(id).textContent='…';
  const summaryTask=api('api/summary?'+applied).then(summary=>{
   if(request!==generation)return;
-  $('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)).toLocaleString();
+  $('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('gen-errors').textContent=(summary.by_status.gen_failed||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)).toLocaleString();
   return null;
- }).catch(error=>{if(request===generation)for(const id of ['total','ok','fail','errors'])$(id).textContent='—';return error;});
+ }).catch(error=>{if(request===generation)for(const id of ['total','ok','fail','errors','gen-errors'])$(id).textContent='—';return error;});
  try{if(includeList){const result=await api('api/cases?'+list);if(request!==generation)return;
  const signature=JSON.stringify(result.items);if(signature!==lastData){if(silent&&($('column-picker').open||$('rows').querySelector('details[open]')))return;lastData=signature;lastRows=result.items;renderRecords(result.items);}
  next=result.next_cursor;$('next').disabled=next===null;$('previous').disabled=page===0;$('page-label').textContent=`第 ${page+1} 页 · ${result.items.length} 条`;$('message').textContent=result.items.length?'':'没有符合条件的结果。';
@@ -243,13 +243,13 @@ window.addEventListener('hashchange',()=>{hideFieldTooltip();navigate();refreshV
 $('close-detail').addEventListener('click',()=>{location.hash='records';navigate();});
 
 
-function duration(ns){return ns==null?'Unkown':(ns/1e6).toFixed(3)+' ms';}
+function duration(ns){return ns==null?'Unknown':(ns/1e6).toFixed(3)+' ms';}
 function versionText(v){return ['cann','torch','torch_npu','autofuse_commit'].map(k=>({cann:'CANN',torch:'Torch',torch_npu:'Torch NPU',autofuse_commit:'Autofuse'}[k])+': '+(v[k]||(k==='autofuse_commit'&&v.autofuse_binary?'binary '+v.autofuse_binary.slice(0,12):'未采集'))).join(' ｜ ');}
 function graphText(meta={}){return (meta.op_types||[]).join(' · ');}
 function tensorText(shapes={},weights=[],types={}){
  const short={float16:'fp16',float32:'fp32',float64:'fp64',bfloat16:'bf16'};
  const entries=[...Object.entries(shapes).map(([n,s])=>({shape:s,dtype:types[n]})),...weights];
- return entries.map((t,i)=>'x'+(i+1)+'['+[...t.shape,short[t.dtype]||t.dtype||'Unkown'].join(',')+']').join(', ');
+ return entries.map((t,i)=>'x'+(i+1)+'['+[...t.shape,short[t.dtype]||t.dtype||'Unknown'].join(',')+']').join(', ');
 }
 function shortLog(text){return text.length>logLength?text.slice(0,logLength)+'...':text;}
 function renderCaseInfo(result){
@@ -371,9 +371,12 @@ function renderStatisticsTables(result){
  $('performance-table').replaceChildren(t);$('metric-empty').hidden=!!result.precise_metrics?.length;
 }
 
-function stageName(stage){return ({generate:'共享生成',reference:'CPU 期望结果',compare:'CPU 结果校验',record:'持久化',shape_processing:'Shape 处理耗时（墙钟跨度）',generation:'生成用例',capability:'后端能力检查',prepare:'准备执行器（不代表编译完成）',input_binding:'输入绑定',first_call_combined:'首调(惰性编译/执行/同步)',correctness:'精度校验',execution_total:'执行总计',compile:'独立编译',kernel_mean:'Kernel 平均耗时',performance:'性能测量'}[stage]||stage||'Unkown');}
+function stageName(stage){return ({generate:'共享生成',reference:'CPU 期望结果',compare:'CPU 结果校验',record:'持久化',shape_processing:'Shape 处理耗时（墙钟跨度）',generation:'生成用例',capability:'后端能力检查',prepare:'准备执行器（不代表编译完成）',input_binding:'输入绑定',first_call_combined:'首调(惰性编译/执行/同步)',correctness:'精度校验',execution_total:'执行总计',compile:'独立编译',kernel_mean:'Kernel 平均耗时',performance:'性能测量'}[stage]||stage||'Unknown');}
 function renderFailureDetails(result){
  const view=result.diagnostic_view||{};
+ const path=result.mlir_failure;
+ if(path?.path==='mlir_failed')view.explanation='MLIR 路径失败（'+(path.scope==='shape'?'当前 Shape':'单 Shape 运行日志')+'）：'+path.evidence;
+ else if(path?.path==='unconfirmed')view.explanation='已确认 AF 功能失败，但现有日志不能确认是 MLIR 路径失败。';
  function section(id,title,content){const box=$(id);box.replaceChildren();const heading=document.createElement('h3'),pre=document.createElement('pre');heading.textContent=title;pre.textContent=content;box.append(heading,pre);return box;}
  section('ascir-detail','ASCIR 表达的图结构',view.shape_log||'未保存当前 Shape 的 ASCIR / 图结构文本');
  // Full saved run log already contains its extracted shared lines; do not repeat them.

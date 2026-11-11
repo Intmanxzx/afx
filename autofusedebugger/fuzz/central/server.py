@@ -9,6 +9,7 @@ import threading
 import time
 from urllib.parse import urlsplit, parse_qs
 
+from .cache import INTERVAL
 from .repository import initialize, ingest
 from ..storage.queries import ResultQueries
 
@@ -36,7 +37,7 @@ class Server(HTTPServer):
         if hasattr(self, 'public_cache'):self.public_cache.close()
 
 
-def create_server(database,port=8090, *, cache_interval=15):
+def create_server(database,port=8090, *, cache_interval=INTERVAL):
     database=Path(database).resolve();initialize(database);queries=ResultQueries(database)
     from contextlib import closing
     from ..storage.repository import _connect
@@ -80,7 +81,7 @@ def create_server(database,port=8090, *, cache_interval=15):
             entry, failed = public_cache.get(key)
             if entry is None:
                 return self.send(503, {'error':'公共数据准备中，请稍后重试'},
-                                 headers={'Retry-After':'15', 'X-Cache-State':'warming'})
+                                 headers={'Retry-After':str(max(1, int(cache_interval))), 'X-Cache-State':'warming'})
             headers = {'ETag':entry.etag,
                        'X-Data-Generated-At':str(entry.generated_at),
                        'X-Cache-State':'stale' if failed else 'ready'}
@@ -111,7 +112,7 @@ def create_server(database,port=8090, *, cache_interval=15):
                     name={'/':'index.html','/report':'index.html','/app.js':'app.js','/charts.js':'charts.js','/style.css':'style.css','/runtime.js':'runtime.js'}[route]
                     data=resources.files('autofusedebugger.fuzz.view').joinpath('static').joinpath(name).read_bytes()
                     if route=='/':
-                        data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'公共缓存每15秒检查更新；页面每15秒刷新；上传周期由测试端配置'.encode())
+                        data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'公共缓存每轮结束后等待30秒再检查更新，失败时退避；页面每15秒刷新；上传周期由测试端配置'.encode())
                     return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/runtime.js':'text/javascript; charset=utf-8'}[route])
                 raw=parse_qs(url.query,keep_blank_values=True,max_num_fields=8)
                 if any(len(v)!=1 for v in raw.values()):
