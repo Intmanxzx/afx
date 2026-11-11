@@ -6,6 +6,7 @@ const STATUS_COLORS = {
   pass: _rootStyle.getPropertyValue('--viz-pass').trim(),
   fail: _rootStyle.getPropertyValue('--viz-fail').trim(),
   error: _rootStyle.getPropertyValue('--viz-gen-error').trim(),
+  gen_failed: '#d97706',
   gen_error: _rootStyle.getPropertyValue('--viz-gen-error').trim(),
 };
 const VIZ = {
@@ -17,8 +18,8 @@ const VIZ = {
   textMuted: _rootStyle.getPropertyValue('--viz-text-muted').trim(),
 };
 const FONT = 'system-ui, -apple-system, sans-serif';
-const STATUS_KEYS = ['pass', 'fail', 'gen_error', 'unknown'];
-const STATUS_LABELS = {pass:'Pass',fail:'精度Failed',gen_error:'功能Failed',unknown:'Unkown'};
+const STATUS_KEYS = ['pass', 'fail', 'gen_failed', 'gen_error', 'unknown'];
+const STATUS_LABELS = {pass:'Pass',fail:'精度Failed',gen_failed:'构图Failed',gen_error:'功能Failed',unknown:'Unknown'};
 
 // ---- 悬停浮层（替代原生 <title>）：跟随鼠标，内容用 textContent 写入，
 // 系列名/分类名来自用户数据，不能走 innerHTML 拼接。 ----
@@ -80,7 +81,7 @@ function attachTooltip(el, content) {
 
 function drawDonut(svgId, legendId, segments) {
   const svg = document.querySelector('#' + svgId);
-  const W = 380, H = 200, cx = 190, cy = 98, r = 72, ringW = 24;
+  const W = 380, H = 220, cx = 190, cy = 128, r = 84, ringW = 24;
   const total = segments.reduce((s, seg) => s + seg.value, 0);
   // Legends carry labels only; numbers belong in tooltips.
   const legend = document.querySelector('#' + legendId);
@@ -94,7 +95,8 @@ function drawDonut(svgId, legendId, segments) {
   }
   const C = 2 * Math.PI * r;
   let offset = 0;
-  const parts = [];
+  // 浅色轨道铺满整圈，避免非 100% 时内侧留出突兀的空洞。
+  const parts = [`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${VIZ.grid}" stroke-width="${ringW}"></circle>`];
   // 从 12 点方向顺时针：先整体 rotate(-90)，再逐段用 dasharray/dashoffset。
   for (const seg of segments.filter(s => s.value > 0)) {
     const frac = seg.value / total;
@@ -111,8 +113,8 @@ function drawDonut(svgId, legendId, segments) {
   const passVal = segments.find(s => s.label === 'pass');
   svg.innerHTML = `
     <g transform="rotate(-90 ${cx} ${cy})">${parts.join('')}</g>
-    <text x="${cx}" y="${cy - 3}" text-anchor="middle" fill="${VIZ.textPrimary}" font-family="${FONT}" font-size="27" font-weight="650">${passRate}%</text>
-    <text x="${cx}" y="${cy + 16}" text-anchor="middle" fill="${VIZ.textMuted}" font-family="${FONT}" font-size="11">pass rate · ${passVal ? passVal.value : 0}/${total}</text>
+    <text x="${cx}" y="${cy - 3}" text-anchor="middle" fill="${VIZ.textPrimary}" font-family="${FONT}" font-size="27" font-weight="650" style="font-variant-numeric:tabular-nums">${passRate}%</text>
+    <text x="${cx}" y="${cy + 16}" text-anchor="middle" fill="${VIZ.textMuted}" font-family="${FONT}" font-size="11" style="font-variant-numeric:tabular-nums">pass rate · ${passVal ? passVal.value : 0}/${total}</text>
   `;
   // 每段挂 tooltip（value 从闭包里的 segments 取，聚焦/悬停同款内容）。
   svg.querySelectorAll('.seg').forEach(el => {
@@ -201,7 +203,7 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
     parts.push(`<text x="${x + barW / 2}" y="${topPad + chartH + 20}" text-anchor="middle" fill="${VIZ.textSecondary}" font-family="${FONT}" font-size="12" pointer-events="none">${escapeChart(label)}</text>`);
   });
   svg.innerHTML = gridLines + parts.join('');
-  // 每段挂 tooltip：分类名做标题，pass/fail/gen_error 计数 + 总数。
+  // 每段挂 tooltip：分类名做标题，pass/fail/gen_failed/gen_error 计数 + 总数。
   svg.querySelectorAll('.seg').forEach(el => {
     const [catKey, statusKey] = el.dataset.key.split('|');
     attachTooltip(el, () => {
@@ -213,10 +215,10 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
   });
 }
 
-const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['gen_error','unknown'])]));let latestStatistics=null;
+const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['unknown'])]));let latestStatistics=null;
 window.updateStatistics = result => {
  latestStatistics=result;
- const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_error:0,unknown:0});const key=r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};
+ const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_failed:0,gen_error:0,unknown:0});const key=r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='gen_failed'?'gen_failed':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};
  const overall=convert(result.overall,'Overall')[0]||{};
  drawDonut('chartOverall','legendOverall',STATUS_KEYS.map(s=>({label:s,value:overall[s]||0,color:STATUS_COLORS[s]})));
  for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,convert(result[key],id));
