@@ -25,7 +25,7 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id""" + selection + """
         GROUP BY f.group_id,a.backend
     ), backend_latest AS MATERIALIZED (
-        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status,
+        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status,a.error_stage,
                k.attempt_cursor,k.group_id,
                json_object('static_only',json_extract(f.execution,'$.static_only')) AS execution
         FROM backend_keys k JOIN attempts a ON a.rowid=k.attempt_cursor
@@ -37,7 +37,8 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         CASE WHEN s.correctness='error' THEN 'error'
              WHEN s.correctness='fail' THEN 'fail'
              WHEN s.correctness='pass' THEN 'ok'
-             WHEN s.shape_index IS NULL AND b.status IN ('error','unsupported') THEN b.status
+             WHEN s.shape_index IS NULL AND b.status IN ('error','unsupported')
+                  THEN CASE WHEN b.error_stage IN ('generation','reference') THEN 'gen_failed' ELSE b.status END
              WHEN s.shape_index IS NULL THEN b.status ELSE 'unknown' END AS status
         FROM backend_latest b LEFT JOIN shapes s ON s.attempt_id=b.id
     ),
@@ -48,6 +49,7 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
           WHEN max(CASE WHEN backend='af-mlir' THEN status END) IS NOT NULL
             THEN max(CASE WHEN backend='af-mlir' THEN status END)
           WHEN sum(CASE WHEN backend NOT IN ('cpu','cpu-eager') THEN 1 ELSE 0 END)=0 THEN 'unknown'
+          WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status='gen_failed' THEN 1 ELSE 0 END)=1 THEN 'gen_failed'
           WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status IN ('error','unsupported') THEN 1 ELSE 0 END)=1 THEN 'error'
           WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status='fail' THEN 1 ELSE 0 END)=1 THEN 'fail'
           WHEN max(CASE WHEN backend NOT IN ('cpu','cpu-eager') AND status='unknown' THEN 1 ELSE 0 END)=1 THEN 'unknown'
@@ -56,8 +58,10 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
     ), projection AS (
         SELECT c.group_id,c.shape_index,b.backend,b.seed,b.created_at,f.device_name AS user,
         CASE c.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'accuracy_failed'
+             WHEN 'gen_failed' THEN 'gen_failed'
              WHEN 'error' THEN 'function_failed' WHEN 'unsupported' THEN 'function_failed' ELSE 'Unknown' END AS status,
         CASE l.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'Pass'
+             WHEN 'gen_failed' THEN '构图Failed'
              WHEN 'error' THEN 'Failed' WHEN 'unsupported' THEN 'Failed' ELSE 'Unknown' END AS function_status,
         CASE l.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'Failed' ELSE 'Unknown' END AS accuracy_status,
         json_extract(cf.metadata,'$.op_types') AS op,
@@ -84,9 +88,11 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
     predicate, query_values = condition(q)
     state_queries = {
         'pass': "c.status='ok'",
-        'failed': "c.status IN ('error','unsupported','fail')",
+        'failed': "c.status IN ('error','unsupported','gen_failed','fail')",
         '功能failed': "c.status IN ('error','unsupported')",
         'function_failed': "c.status IN ('error','unsupported')",
+        '构图failed': "c.status='gen_failed'",
+        'gen_failed': "c.status='gen_failed'",
         '精度failed': "c.status='fail'",
         'accuracy_failed': "c.status='fail'",
         'unknown': "c.status='unknown'",
@@ -99,7 +105,7 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         sql += predicate + '))'
     values.extend(query_values)
     if status:
-        if status not in {'ok','fail','error','unsupported','unknown'}:
+        if status not in {'ok','fail','error','unsupported','gen_failed','unknown'}:
             raise ValueError('invalid status filter')
         sql += ' AND c.status=?'
         values.append(status)

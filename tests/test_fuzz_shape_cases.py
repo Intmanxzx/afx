@@ -140,3 +140,23 @@ def test_missing_or_duplicate_run_log_remains_explicit():
     view = diagnostic_view({'error': 'same', 'shapes': {'0': {'error': 'same'}}}, 0)
     assert view['run_log'] == 'same'
     assert view['shared_log'] == ''
+
+
+def test_generation_failure_is_gen_failed_not_function_failed(tmp_path):
+    repo = ResultRepository(tmp_path/'db')
+    row = record('af-mlir', [])
+    row['status'] = 'error'
+    row['error_stage'] = 'generation'
+    row['error_summary'] = 'NNSmith could not construct a valid graph'
+    # No shapes means this is the generation-level failure row persisted by the
+    # scheduler, rather than an AF compile/execute error.
+    identity = repo.save(row)
+    q = ResultQueries(repo.path)
+    assert q.case_summary() == {'total': 1, 'by_status': {'gen_failed': 1}, 'unit': 'shape_case'}
+    item = q.case_page()['items'][0]
+    backend = item['backends']['af-mlir'][0]
+    assert item['status'] == 'gen_failed'
+    assert backend['function_status'] == 'gen_failed'
+    assert q.case_summary(q='构图Failed')['total'] == 1
+    assert q.case_summary(q='功能Failed')['total'] == 0
+    assert q.detail(identity)['error_stage'] == 'generation'

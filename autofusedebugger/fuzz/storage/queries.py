@@ -175,7 +175,7 @@ class ResultQueries:
                 first = rows[0]
                 meta = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(first['workload_id'],)).fetchone()
                 item = {key:first[key] for key in ('seed','workload_id','source_id','device_name','user_id','batch_id','created_at')}
-                item.update(user_name=first['device_name'], case_id=group['group_id'], seed_short=Seed.parse(item['seed']).short,
+                item.update(user_name=first['device_name'], case_id=group['group_id'], status=group['status'], seed_short=Seed.parse(item['seed']).short,
                             execution=json.loads(first['execution']), evaluation=json.loads(first['evaluation']),
                             versions=json.loads(first['versions']), metadata=json.loads(meta[0]) if meta else {}, backends={})
                 # List pages carry only previews. Full logs/timing payloads are
@@ -211,6 +211,15 @@ class ResultQueries:
                         member['status'] = {'pass':'ok','fail':'fail','error':'error'}.get(shape['correctness'], 'unknown')
                         member['error_stage'] = shape['error_stage']
                         member['error_summary'] = shape['error_summary']
+                    # Generation failures happen before a backend receives a
+                    # graph. Keep them separate from AF compile/execute errors
+                    # so the UI does not call a bad NNSmith graph a function
+                    # failure.
+                    member['function_status'] = (
+                        'gen_failed' if member['status'] in {'error', 'unsupported'}
+                        and member['error_stage'] in {'generation', 'reference'} else
+                        'function_failed' if member['status'] in {'error', 'unsupported'} else
+                        'pass' if member['status'] in {'ok', 'fail'} else 'unknown')
                     from ..failure_details import core_error
                     diagnostics = json.loads(json.loads(row['execution']).get('diagnostics', '{}'))
                     member['core_error'] = core_error(diagnostics, index, member['error_summary'])
