@@ -9,7 +9,8 @@ import time
 from ..storage.queries import ResultQueries
 from ..storage.repository import _connect
 
-INTERVAL = 15
+INTERVAL = 30
+MAX_RETRY_INTERVAL = 300
 PAGE_SIZES = (10, 20, 25, 50, 100, 200)
 MAX_BODY = 2 * 1024 * 1024
 
@@ -34,6 +35,7 @@ def response(value, generated_at):
 class PublicCache:
     def __init__(self, database, *, interval=INTERVAL):
         self.database = database
+        self._statistics = None
         self.interval = interval
         self._lock = threading.Lock()
         self._entries = {}
@@ -54,12 +56,14 @@ class PublicCache:
             return self._entries.get(key), self._failed
 
     def build(self):
-        from ..reporting.statistics import statistics
+        from ..reporting.incremental import IncrementalStatistics
         queries = ResultQueries(self.database)
         # One bounded list read; derive page sizes using the original SQL cursors.
         page = queries.case_page(limit=200, _include_cursors=True)
         cursors = page.pop('_cursors')
-        charts = statistics(self.database, _timeout=30)
+        if self._statistics is None:
+            self._statistics = IncrementalStatistics(self.database, stopped=self._stop.is_set)
+        charts = self._statistics.refresh()
         counts = {row['status']:row['count'] for row in charts['overall']}
         values = {'summary': {'total':sum(counts.values()), 'by_status':counts, 'unit':'shape_case'},
                   'statistics': charts}
@@ -76,15 +80,19 @@ class PublicCache:
         conn = None
         version = None
         file_id = None
+        retry_delay = self.interval
         try:
             while not self._stop.is_set():
-                start = time.monotonic()
+                delay = self.interval
                 try:
                     stat = self.database.stat()
                     identity = (stat.st_dev, stat.st_ino)
                     if conn is None or identity != file_id:
                         if conn is not None:
                             conn.close()
+                        from ..reporting.incremental import IncrementalStatistics
+                        self._statistics = IncrementalStatistics(self.database, stopped=self._stop.is_set)
+                        self._statistics.prepare()
                         conn = _connect(self.database)
                         file_id = identity
                         version = None
@@ -103,12 +111,17 @@ class PublicCache:
                     else:
                         with self._lock:
                             self._failed = False
+                    retry_delay = self.interval
                 except Exception:
                     with self._lock:
                         self._failed = True
-                    logging.getLogger(__name__).exception('Public cache refresh failed; keeping last snapshot')
-                # No overlapping builds or catch-up bursts after a slow refresh.
-                self._stop.wait(max(1, self.interval - (time.monotonic()-start)))
+                    delay = retry_delay
+                    retry_delay = min(max(self.interval, MAX_RETRY_INTERVAL), retry_delay * 2)
+                    logging.getLogger(__name__).exception(
+                        'Public cache refresh failed; keeping last snapshot; retry in %.1fs', delay)
+                # Rest AFTER work, including slow/failed builds. Never catch up
+                # by immediately rescanning a busy database. Shutdown wakes this wait.
+                self._stop.wait(delay)
         finally:
             if conn is not None:
                 conn.close()

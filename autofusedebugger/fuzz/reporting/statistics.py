@@ -1,20 +1,30 @@
 """SQL aggregation over persisted facts; no graph generation or tensor imports."""
+from contextlib import nullcontext
+
 from ..storage.queries import reading
 from ..backend_names import display_backend
 
 
-def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeout=10):
+def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeout=10, _conn=None, _group=None):
     from .cases import rollup, reuse_latest
     cte, values = rollup(seed, status, user_id, q)
     where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id)'
     shape_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id AND selected.shape_index=s.shape_index)'
     stage_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=a.group_id AND (m.shape_index=-1 OR selected.shape_index=m.shape_index))'
-    with reading(database, timeout=_timeout) as conn:
-        conn.execute('BEGIN')
+    with (nullcontext(_conn) if _conn is not None else reading(database, timeout=_timeout)) as conn:
+        if _conn is None:
+            conn.execute('BEGIN')
         # Materialize the narrow rollup once per read snapshot, not once per
         # chart. Main database is opened mode=ro; only connection-local temp
         # tables are writable. No persistent derived cache can become stale.
         conn.execute('PRAGMA query_only=OFF')
+        for table in ('selected_latest', 'selected_cases', 'selected_attempts'):
+            conn.execute('DROP TABLE IF EXISTS temp.' + table)
+        if _group is not None:
+            # Scope before ranking/materialization; never scan unrelated groups.
+            cte = cte.replace('GROUP BY f.group_id,a.backend',
+                              'WHERE f.group_id=? GROUP BY f.group_id,a.backend')
+            values = [_group, *values]
         conn.execute('CREATE TEMP TABLE selected_latest AS '+cte+'SELECT * FROM latest',values)
         conn.execute('CREATE TEMP TABLE selected_cases AS '+reuse_latest(cte)+'SELECT * FROM cases',values)
         conn.execute('CREATE INDEX selected_case_keys ON selected_cases(group_id,shape_index)')
@@ -23,16 +33,17 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
         conn.execute("""CREATE TEMP TABLE selected_attempts AS
             SELECT a.id,a.backend,a.error_stage,f.group_id,
                    CASE WHEN json_extract(f.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END AS mode
-            FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id
-            JOIN case_facts c ON c.workload_id=a.workload_id
-            WHERE EXISTS (SELECT 1 FROM selected_cases s WHERE s.group_id=f.group_id)""")
+            FROM (SELECT DISTINCT group_id FROM selected_cases) g
+            CROSS JOIN attempt_facts f ON f.group_id=g.group_id
+            JOIN attempts a ON a.id=f.attempt_id
+            JOIN case_facts c ON c.workload_id=a.workload_id""")
         conn.execute('PRAGMA query_only=ON')
         cte='WITH cases AS (SELECT * FROM selected_cases), latest AS (SELECT * FROM selected_latest) '
         values=[]
         base = ' FROM selected_attempts a'
         result = {}
-        result['stages']=[dict(r) for r in conn.execute(cte+'SELECT a.backend,m.stage,count(*) AS samples,sum(m.duration_ns) AS total_ns,avg(m.duration_ns) AS mean_ns,max(m.duration_ns) AS max_ns'+base+' JOIN stage_metrics m ON m.attempt_id=a.id'+stage_where+' GROUP BY a.backend,m.stage',values)]
-        result['performance']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.mode,s.correctness,s.performance,s.metric,count(*) AS samples,avg(s.mean_wall_ns) AS mean_ns,min(s.mean_wall_ns) AS min_ns,max(s.mean_wall_ns) AS max_ns"+base+' JOIN shapes s ON s.attempt_id=a.id'+shape_where+' GROUP BY a.backend,mode,s.correctness,s.performance,s.metric',values)]
+        result['stages']=[dict(r) for r in conn.execute(cte+'SELECT a.backend,m.stage,count(*) AS samples,sum(m.duration_ns) AS total_ns,avg(m.duration_ns) AS mean_ns,max(m.duration_ns) AS max_ns'+base+' CROSS JOIN stage_metrics m ON m.attempt_id=a.id'+stage_where+' GROUP BY a.backend,m.stage',values)]
+        result['performance']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.mode,s.correctness,s.performance,s.metric,count(*) AS samples,avg(s.mean_wall_ns) AS mean_ns,sum(s.mean_wall_ns) AS _sum_ns,count(s.mean_wall_ns) AS _measured,min(s.mean_wall_ns) AS min_ns,max(s.mean_wall_ns) AS max_ns"+base+' CROSS JOIN shapes s ON s.attempt_id=a.id'+shape_where+' GROUP BY a.backend,mode,s.correctness,s.performance,s.metric',values)]
         result['tool_efficiency'] = {'version': 1, 'scope': 'attempt_shape_processing',
             'processing': [r for r in result['stages'] if r['stage']=='shape_processing'],
             'success_shapes_per_min': None, 'completed_shapes_per_min': None,
@@ -40,7 +51,7 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
             'note': ''}
         from .efficiency import statistics as efficiency
         selected_ids={r[0] for r in conn.execute(cte+'SELECT a.id'+base+where,values)} if any((seed,status,user_id,q)) else None
-        result['tool_efficiency']['windows']=efficiency(conn,selected_ids,use_cached=True)
+        result['tool_efficiency']['windows']=efficiency(conn,selected_ids,use_cached=True) if _group is None else []
         result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
         result['errors']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.error_stage,count(*) AS count"+base+where+' GROUP BY a.backend,a.error_stage',values) if r['error_stage']]
         result['case_groups']=conn.execute(cte+'SELECT count(DISTINCT a.group_id)'+base+where,values).fetchone()[0]
@@ -54,7 +65,8 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
                 joins+' GROUP BY label,a.status', case_values)]
         result['overall']=case_grouped("'全部'")
         result['backend']=[dict(r) for r in conn.execute(cte+"SELECT backend AS label,status,count(*) AS count FROM latest l WHERE EXISTS (SELECT 1 FROM cases c WHERE c.group_id=l.group_id AND c.shape_index=l.shape_index) AND backend NOT IN ('cpu','cpu-eager') GROUP BY backend,status",case_values)]
-        for row in result['backend']:row['label']=display_backend(row['label'])
+        if _group is None:
+            for row in result['backend']:row['label']=display_backend(row['label'])
         for name in ('category','dtype','op'):
             result[name]=case_grouped('d.value'," JOIN case_dimensions d ON d.workload_id=a.workload_id AND d.dimension='"+name+"'")
         for name, column, bounds in [('dimension','max_dim',[(8,'≤8'),(64,'≤64'),(512,'≤512'),(4096,'≤4096'),(16384,'≤16384'),(65536,'≤65536'),(131072,'≤131072')]),('elements','max_elements',[(1000,'≤1K'),(16000,'≤16K'),(64000,'≤64K'),(256000,'≤256K'),(1000000,'≤1M'),(16000000,'≤16M'),(64000000,'≤64M')])]:
@@ -66,4 +78,7 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
         # Kernel profiler isn't enabled by the executor. Null is intentional,
         # not a count of zero kernels or a zero-time measurement.
         result['kernel_profiler']={'collected':False,'kernel_count':None,'ascendc_kernel_count':None,'triton_kernel_count':None,'kernel_time_ns':None}
+        if _group is None:
+            for row in result['performance']:
+                row.pop('_sum_ns'); row.pop('_measured')
         return result
