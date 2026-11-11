@@ -360,3 +360,7 @@ oracle1 已切换到新环境，服务 active；公开 app.js SHA256 `fd8108a52b
 最终空闲环境全量回归：**307 passed / 5 skipped**（旧 Node），日志 `continuous-1110/final-idle-tests.log`。并跑校准时两个短超时测试失败，停止基准后完整回归通过；未通过放宽生产超时或删除断言隐藏失败。本地页面/DAG 单独 **30 passed**。细分每个输入/rank/轴后多数分组样本很少，不据此声称每个轴都通过统计拟合；唯一达到 20 样本的无 Transpose C 分组 input0/rank1/axis0 共 29 个值，89.7% 为 1，进一步说明约束引入明显偏置。
 
 无限任务 run_id `b84668f0-0219-41b2-8fcb-f3f8de47d152`，home 为 mlir `round64-home`，remaining=NULL、stopped=0、排除 transpose，实际预算 4 worker/1 compile thread。首轮观察新增图无 Transpose，两卡均有进程，CPU 期望结果与 NPU 阶段有实际重叠。上线联调另修复 facts 请求缺少与结果上传相同的 User-Agent 导致网关 HTTP 403/1010；补充请求头断言，真实 `/api/facts` 已返回 ACK（每批 25 条），并重启独立上传器。未改动运行中的测试任务。
+
+### 9.14 长跑数据规模下查询修复
+
+生产新增约 9600 attempt 后，summary/cases/statistics 触发旧 3 秒读查询期限，HTTP 503 使网站看似无数据，实际原始记录仍在。修复：rollup 不携带完整 diagnostics/telemetry 参与排序，只保留当前聚合需要的列；无搜索时不构造关联搜索投影；统计页在同一只读快照中物化窄临时表复用，优先使用已完成窗口聚合；统计请求使用有界 16 项/30 秒合并缓存。列表/汇总/统计的读预算为 10 秒，其余保持 3 秒，主库仍 mode=ro。缓存可能延迟最多 30 秒，不会修改结果。约 9638 条生产副本验证列表/汇总约 0.6–1.8 秒、统计冷请求约 3–7 秒，公开统计热请求约 0.15 秒；不声称解决无限数据规模问题。

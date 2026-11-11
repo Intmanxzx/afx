@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 import threading
+import time
 from urllib.parse import urlsplit, parse_qs
 
 from .repository import initialize, ingest
@@ -36,6 +37,23 @@ class Server(HTTPServer):
 
 def create_server(database,port=8090):
     database=Path(database).resolve();initialize(database);queries=ResultQueries(database)
+    statistics_lock = threading.Lock()
+    statistics_cache = {}
+
+    def cached_statistics(params):
+        from ..reporting.statistics import statistics
+        key=tuple(sorted(params.items()))
+        # One chart calculation per key/30s instead of four simultaneous full
+        # rollups competing with uploads on a small server. Bounded cache.
+        with statistics_lock:
+            now=time.monotonic()
+            entry=statistics_cache.get(key)
+            if entry and now-entry[0]<30:return entry[1]
+            value=statistics(database, **params)
+            if len(statistics_cache)>=16:statistics_cache.pop(next(iter(statistics_cache)))
+            statistics_cache[key]=(time.monotonic(),value)
+            return value
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):
             pass
@@ -79,7 +97,7 @@ def create_server(database,port=8090):
                 params={k:v[0] for k,v in raw.items()}
                 if route == '/api/statistics' and not set(params)-{'seed','status','user_id','q'}:
                     from ..reporting.statistics import statistics
-                    self.send(200, statistics(database, **params))
+                    self.send(200, cached_statistics(params))
                     return
                 if route == '/api/cases':
                     if set(params)-{'seed','status','user_id','q','limit','after'}:

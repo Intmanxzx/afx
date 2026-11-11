@@ -219,3 +219,5 @@ autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --de
 分布分析工具：`python tools/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 C/D，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前协议轴范围 1–8、最多 4096 元素；D 变体按固定顺序选合法尺寸，不是新的均匀抽样。若要扩大范围/改变分布，必须另立可编码生成协议，不修改 C/D 重放语义。
 
 当前 oracle1 环境为 `/home/ubuntu/af-fuzz/venv-continuous-1110`，旧版本/旧备份/旧结果已按要求清除；systemd 主服务直接引用新环境，不再叠加历史 override。身份与 ACK、防旧数据回流的 tombstone 保留。后续自动备份只备份新数据，不再使用已经删除的旧环境。客户端新安装为 `/mnt/workspace/af-fuzz/continuous-1110/installed`。
+
+长跑查询修复环境：oracle1 `venv-query-fix-1110`。页面统计最多缓存 30 秒，列表/汇总/统计查询保留 10 秒上限。出现 `database unavailable` 不等于数据为空，需分别检查接口状态和数据库记录，不能通过清空结果“修复”。

@@ -18,7 +18,7 @@ def union(intervals):
     return total
 
 
-def statistics(conn,selected_ids=None):
+def statistics(conn,selected_ids=None, *, use_cached=False):
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='stage_windows_v1'").fetchone():return []
     output=[]
     for window_id,raw in conn.execute('SELECT window_id,payload FROM stage_windows_v1 ORDER BY rowid DESC LIMIT 100'):
@@ -26,6 +26,10 @@ def statistics(conn,selected_ids=None):
         if not end or end['domain']!=start['domain']:continue
         elapsed_ns=end['monotonic_ns']-start['monotonic_ns']
         if elapsed_ns<=0:continue
+        if use_cached and selected_ids is None:
+            cached=conn.execute('SELECT payload FROM stage_window_aggregates_v1 WHERE window_id=?',(window_id,)).fetchone()
+            if cached:
+                output.extend(json.loads(cached[0]));continue
         if not conn.execute('SELECT 1 FROM stage_facts_v1 WHERE window_id=?',(window_id,)).fetchone():
             cached=conn.execute('SELECT payload FROM stage_window_aggregates_v1 WHERE window_id=?',(window_id,)).fetchone()
             if cached and selected_ids is None:output.extend(json.loads(cached[0]))

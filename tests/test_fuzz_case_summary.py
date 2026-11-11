@@ -37,3 +37,14 @@ def test_cpu_only_unknown_and_cpu_match_filter_keeps_mlir_failure(tmp_path):
     save(repo,'2','cpu','ok',user='bob')
     save(repo,'2','af-mlir','fail',user='bob')
     assert q.case_summary()['by_status']=={'error':1,'fail':1}
+
+
+def test_unfiltered_rollup_does_not_sort_full_diagnostics():
+    from autofusedebugger.fuzz.reporting.cases import rollup
+    sql, values = rollup()
+    assert 'SELECT a.*' not in sql
+    assert 'cases AS (SELECT c.* FROM unfiltered_cases c WHERE 1=1)' in sql
+    assert not values
+    filtered, values = rollup(q='relu')
+    assert 'SELECT 1 FROM projection p' in filtered
+    assert values

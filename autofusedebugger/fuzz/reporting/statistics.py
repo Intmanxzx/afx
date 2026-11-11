@@ -9,8 +9,18 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None):
     where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=f.group_id)'
     shape_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=f.group_id AND selected.shape_index=s.shape_index)'
     stage_where = ' WHERE EXISTS (SELECT 1 FROM cases selected WHERE selected.group_id=f.group_id AND (m.shape_index=-1 OR selected.shape_index=m.shape_index))'
-    with reading(database) as conn:
+    with reading(database, timeout=10) as conn:
         conn.execute('BEGIN')
+        # Materialize the narrow rollup once per read snapshot, not once per
+        # chart. Main database is opened mode=ro; only connection-local temp
+        # tables are writable. No persistent derived cache can become stale.
+        conn.execute('PRAGMA query_only=OFF')
+        conn.execute('CREATE TEMP TABLE selected_cases AS '+cte+'SELECT * FROM cases',values)
+        conn.execute('CREATE INDEX selected_case_keys ON selected_cases(group_id,shape_index)')
+        conn.execute('CREATE TEMP TABLE selected_latest AS '+cte+'SELECT * FROM latest',values)
+        conn.execute('PRAGMA query_only=ON')
+        cte='WITH cases AS (SELECT * FROM selected_cases), latest AS (SELECT * FROM selected_latest) '
+        values=[]
         base = ' FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id JOIN case_facts c ON c.workload_id=a.workload_id'
         result = {}
         result['stages']=[dict(r) for r in conn.execute(cte+'SELECT a.backend,m.stage,count(*) AS samples,sum(m.duration_ns) AS total_ns,avg(m.duration_ns) AS mean_ns,max(m.duration_ns) AS max_ns'+base+' JOIN stage_metrics m ON m.attempt_id=a.id'+stage_where+' GROUP BY a.backend,m.stage',values)]
@@ -21,8 +31,8 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None):
             'cpu_pool_utilization': None, 'npu_slot_utilization': None,
             'note': ''}
         from .efficiency import statistics as efficiency
-        selected_ids={r[0] for r in conn.execute(cte+'SELECT a.id'+base+where,values)}
-        result['tool_efficiency']['windows']=efficiency(conn,selected_ids if any((seed,status,user_id,q)) else None)
+        selected_ids={r[0] for r in conn.execute(cte+'SELECT a.id'+base+where,values)} if any((seed,status,user_id,q)) else None
+        result['tool_efficiency']['windows']=efficiency(conn,selected_ids,use_cached=True)
         result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
         result['errors']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.error_stage,count(*) AS count"+base+where+' GROUP BY a.backend,a.error_stage',values) if r['error_stage']]
         result['case_groups']=conn.execute(cte+'SELECT count(DISTINCT f.group_id)'+base+where,values).fetchone()[0]

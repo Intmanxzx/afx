@@ -14,7 +14,8 @@ def rollup(seed=None, status=None, user_id=None, q=None):
         SELECT DISTINCT f.group_id FROM attempts a
         JOIN attempt_facts f ON f.attempt_id=a.id""" + where + """
     ), ranked AS (
-        SELECT a.*, a.rowid AS attempt_cursor, f.group_id, f.execution,
+        SELECT a.id,a.workload_id,a.backend,a.seed,a.created_at,a.status, a.rowid AS attempt_cursor, f.group_id,
+        json_object('static_only',json_extract(f.execution,'$.static_only')) AS execution,
         row_number() OVER (PARTITION BY f.group_id,a.backend ORDER BY a.rowid DESC) AS rank
         FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id
         JOIN selected g ON g.group_id=f.group_id
@@ -70,7 +71,10 @@ def rollup(seed=None, status=None, user_id=None, q=None):
         SELECT 1 FROM projection p WHERE p.group_id=c.group_id AND p.shape_index=c.shape_index AND ("""
     from .search import condition
     predicate, query_values = condition(q)
-    sql += predicate + '))'
+    if not q:
+        sql = sql[:sql.index('    ), cases AS (')] + '    ), cases AS (SELECT c.* FROM unfiltered_cases c WHERE 1=1'
+    else:
+        sql += predicate + '))'
     values.extend(query_values)
     if status:
         if status not in {'ok','fail','error','unsupported','unknown'}:
@@ -84,7 +88,7 @@ def rollup(seed=None, status=None, user_id=None, q=None):
 def summary(database, **params):
     from ..storage.queries import reading
     sql, values = rollup(**params)
-    with reading(database) as conn:
+    with reading(database, timeout=10) as conn:
         counts = {r['status']:r['count'] for r in conn.execute(
             sql + 'SELECT status,count(*) AS count FROM cases GROUP BY status', values)}
     return {'total':sum(counts.values()), 'by_status':counts, 'unit':'shape_case'}

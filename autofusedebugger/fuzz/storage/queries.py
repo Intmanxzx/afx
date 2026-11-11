@@ -9,10 +9,10 @@ from .repository import _connect
 
 
 @contextmanager
-def reading(path):
+def reading(path, *, timeout=3):
     conn = _connect(path)
     try:
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + timeout
         conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
         conn.row_factory = sqlite3.Row
         yield conn
@@ -156,7 +156,7 @@ class ResultQueries:
         """
         if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
             raise ValueError('invalid pagination')
-        with reading(self.path) as conn:
+        with reading(self.path, timeout=10) as conn:
             conn.execute('BEGIN')
             from ..reporting.cases import rollup
             cte, values = rollup(seed, status, user_id, q)
