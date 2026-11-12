@@ -142,3 +142,48 @@ def test_explicit_million_axis_reaches_final_inputs(mode):
     spec = plan(config.seed(3))
     assert 1000000 in {d for t in spec.inputs for d in t.shape}
     assert all(math.prod(t.shape) <= config.max_elem_per_tensor for t in spec.inputs)
+
+
+def test_all_dtype_mode_restores_pre_refactor_dtype_surface():
+    from autofusedebugger.fuzz.generation.sampling import DTYPE_MODES
+    from autofusedebugger.fuzz.generation.nnsmith_sampled import _canonical_storage
+    from autofusedebugger.fuzz.tensors import decode_storage
+
+    assert DTYPE_MODES[:3] == ('float32', 'float16', 'mixed')
+    assert 'all' in DTYPE_MODES
+    config = SamplingConfig(dtype_mode='all')
+    assert decode(config.seed(17))[0] == config
+    for dtype, value in {
+        'bool': 1, 'uint8': 255, 'uint16': 65535, 'uint32': 2**32 - 1,
+        'int8': -1, 'int16': -1, 'int32': -1, 'int64': -1,
+        'float16': 1.5, 'bfloat16': 1.5, 'float32': 1.5, 'float64': 1.5,
+        'complex64': 1 + 2j, 'complex128': 1 + 2j,
+    }.items():
+        raw = _canonical_storage(dtype, [value])
+        assert decode_storage(raw, dtype)[0] == value
+
+
+@pytest.mark.parametrize('mode', ('uniform', 'log_scale', 'llm', 'recommendation'))
+def test_legacy_numeric_stream_is_unchanged(mode):
+    import hashlib
+    import random
+    from autofusedebugger.fuzz.generation.nnsmith_sampled import materialize_spec
+    for dtype, fmt in [('float16', 'e'), ('float32', 'f')]:
+        seed = SamplingConfig(dtype_mode='mixed', value_dist_mode=mode).seed(42)
+        tensor = TensorSpec('input', dtype, (100,), (1,))
+        spec = CaseSpec(seed, canonical_json({'nodes': []}), (tensor,), ())
+        rng = random.Random(int.from_bytes(hashlib.sha256(
+            f'nnsmith-sampled/5/{seed}/input'.encode()).digest(), 'little'))
+        def old_value():
+            if mode == 'uniform': return 3 + 4 * rng.random()
+            if mode == 'log_scale':
+                sign = -1 if rng.random() < .5 else 1
+                return sign * 10 ** (8 * rng.random() - 4)
+            if mode == 'llm':
+                base = rng.gauss(0, .2)
+                outlier = rng.random() < .05
+                amplification = 100 + 9900 * rng.random()
+                return base * (amplification if outlier else 1)
+            return rng.random()
+        expected = b''.join(struct.pack('<' + fmt, old_value()) for _ in range(100))
+        assert materialize_spec(spec).storages[0] == expected

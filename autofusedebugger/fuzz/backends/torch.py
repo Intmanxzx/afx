@@ -117,8 +117,7 @@ class TorchAdapter:
             self.torch.npu.synchronize(self.device)
 
     def compare(self, output, expected):
-        import struct
-        from ..tensors import DTYPES
+        from ..tensors import decode_storage
         if not isinstance(output, tuple) or len(output) != len(expected):
             return False
         if expected and isinstance(expected[0], self.torch.Tensor):
@@ -126,8 +125,7 @@ class TorchAdapter:
         for actual, (spec, raw) in zip(output, expected):
             if not isinstance(actual, self.torch.Tensor) or tuple(actual.shape) != spec.shape or str(actual.dtype) != "torch." + spec.dtype:
                 return False
-            fmt, width = DTYPES[spec.dtype]
-            values = struct.unpack("<" + fmt * (len(raw) // width), raw)
+            values = decode_storage(raw, spec.dtype)
             reference_tensor = self.torch.tensor(values, dtype=getattr(self.torch, spec.dtype)).reshape(spec.shape)
             if not self.torch.equal(actual.detach().cpu(), reference_tensor):
                 return False
@@ -147,8 +145,7 @@ class TorchAdapter:
             a.shape==b.shape and a.dtype==b.dtype and self.torch.equal(a,b) for a,b in zip(left,right))
 
     def diagnose_accuracy(self, output, expected):
-        import struct
-        from ..tensors import DTYPES
+        from ..tensors import decode_storage
         total=mismatches=nonfinite=0
         max_abs=max_rel=absolute_sum=0.0
         for actual, reference_value in zip(output,expected):
@@ -156,8 +153,7 @@ class TorchAdapter:
                 reference = reference_value.detach().cpu().to(self.torch.float64)
             else:
                 spec, raw = reference_value
-                fmt,width=DTYPES[spec.dtype]
-                values=struct.unpack('<'+fmt*(len(raw)//width),raw)
+                values = decode_storage(raw, spec.dtype)
                 reference=self.torch.tensor(values,dtype=self.torch.float64).reshape(spec.shape)
             actual=actual.detach().cpu().to(self.torch.float64)
             if actual.shape!=reference.shape:

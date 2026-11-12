@@ -388,7 +388,7 @@ autofusedbg fuzz run --dim-range 1 1000000 --max-elem-per-tensor 10000000 --dim-
 | rank | `random.choice(rank_choices)`，默认初始 rank 0–5 | 同固定源码；不是正态抽样，最终 rank 可能经反向插图超过初始范围 |
 | 轴位置 | 首尾轴权重 3，中间 1；多轴无放回加权抽样 | 保留；Transpose 第二轴仍在其余轴中均匀抽样 |
 | Reduce 轴数 | 固定源码 MultiAxisReduceBase 的均匀轴数抽样 | 保留，不退化为单轴 |
-| dtype | 旧硬件探测后可用 dtype 池，浮点候选有额外权重 | 恢复 float16/float32 候选（默认 mixed），可指定单一精度；不使用机器相关探测改变 seed |
+| dtype | 旧硬件探测后可用 dtype 池，浮点候选有额外权重 | 默认恢复 NNSmith `DTYPE_GEN_ALL`（`all`），再与算子 dtype 签名取交集；保留 `mixed` 兼容模式和单一 dtype 模式，不把生成链路锁死在 fp16/fp32；seed 编码保持前 3 个模式兼容 |
 | 数值 | uniform、log_scale、llm、recommendation，区分 input/weight | 恢复公式与角色区分；独立 seed-local RNG，不再固定为 C/D 的 65 个离散值 |
 | 动态候选 | 小尺寸、原尺寸附近、半尺寸候选，seeded shuffle；不改常量 | F 恢复该候选范围与随机顺序，并验证中间张量预算；D 不变 |
 
@@ -399,7 +399,7 @@ autofusedbg fuzz run --dim-range 1 1000000 --max-elem-per-tensor 10000000 --dim-
 - E/F 编码支持轴上下界至 16,777,215、元素预算至 33,554,431、节点上限 255、solver timeout 至 511 秒。原始 32-bit 随机种子和配置共同决定身份。
 - `--generation-timeout` 是写入 seed 的求解上限；`--timeout` 是外部 worker/stage 墙钟安全上限（默认 120 秒），大预算实验需同时调高后者。
 - 实际输入分布受符号约束、broadcast、Reduce、元素预算挤压影响，不能宣称最终轴长严格服从初始分布。预算挤压可产生 1，即使请求范围下界大于 1。
-- 不扩展当前九种 op 的执行词汇，不声称恢复旧探测池的所有算子/整数 dtype；当前存储协议支持 float16/float32。bf16 在历史实现也未完成。
+- 不扩展当前九种 op 的执行词汇；dtype 生成与 canonical storage 已恢复 NNSmith 生成集合（含 float16/float32/float64/bfloat16、整数、bool、complex），生成时只与固定算子签名取交集，不以本机硬件探测改变 seed；后端不支持的 dtype 必须记录真实执行失败，不能声称所有类型均已上板验证。
 - rank 环境覆盖不属于 E/F 配置；非默认 `NNSMITH_MAX_RANK` 明确拒绝，避免环境改变重放。
 - Case/output artifact 仍有独立 64 MiB 安全上限，多张量大图可能明确拒绝，不会降低 shape 伪装成功。
 - F 无法找到三组合法输入时明确失败。采样失败必须纳入统计，不能只报告接受样本。

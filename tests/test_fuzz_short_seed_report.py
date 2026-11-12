@@ -31,12 +31,16 @@ def test_report_short_query_detail_and_no_heavy_import(tmp_path):
 
 def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
     pytest.importorskip("torch")
+    pytest.importorskip("nnsmith")
+    # This exercises an execution gate, not the query-only captured fixture.
+    # Use the pinned generator so its source fingerprint passes seed validation.
+    from autofusedebugger.fuzz.generation import materialize as generate
     from autofusedebugger.fuzz.backends import create_backend
     from autofusedebugger.fuzz.execution import execute
     from autofusedebugger.fuzz.backends.base import UnsupportedBackend
     def unavailable(): raise UnsupportedBackend('af-mlir runtime verification failed: test missing runtime')
     monkeypatch.setattr('autofusedebugger.fuzz.backends.mlir_capability.verify_runtime',unavailable)
-    result=execute(materialize('C16'),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
+    result=execute(generate('C16'),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
     assert result['status']=='unsupported'
     assert 'runtime verification failed' in result['error_summary']
 

@@ -7,7 +7,11 @@ from dataclasses import dataclass, asdict
 from ..contracts import Seed
 
 DIM_MODES = ('uniform', 'half_normal', 'log_normal')
-DTYPE_MODES = ('float32', 'float16', 'mixed')
+# Keep the first three values stable: they are already encoded in v5/v6 seeds.
+# `mixed` is the historical fp16/fp32 compatibility mode; `all` restores the
+# pre-refactor behavior (NNSmith's complete generation dtype set intersected
+# with the selected operator signatures).
+DTYPE_MODES = ('float32', 'float16', 'mixed', 'all')
 VALUE_MODES = ('uniform', 'log_scale', 'llm', 'recommendation')
 # Historical GenerationConfig profiles, copied rather than importing torch/nnsmith.
 PROFILES = {
@@ -31,7 +35,7 @@ class SamplingConfig:
     max_elem_per_tensor: int = 524288
     dim_dist_mode: str = 'half_normal'
     value_dist_mode: str = 'uniform'
-    dtype_mode: str = 'mixed'
+    dtype_mode: str = 'all'
     max_nodes: int = 5
     timeout_seconds: int = 300
 

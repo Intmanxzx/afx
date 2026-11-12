@@ -9,8 +9,16 @@ MAX_BYTES = 64 * 1024 * 1024
 
 def write_arrays(path, samples):
     import numpy as np
-    arrays = {f's{i}_{j}': t.detach().cpu().contiguous().numpy()
-              for i, tensors in enumerate(samples) for j, t in enumerate(tensors)}
+    import torch
+    arrays, logical_dtypes = {}, {}
+    for i, tensors in enumerate(samples):
+        for j, t in enumerate(tensors):
+            key = f's{i}_{j}'
+            t = t.detach().cpu().resolve_conj().contiguous()
+            if t.dtype == torch.bfloat16:
+                logical_dtypes[key] = 'bfloat16'
+                t = t.view(torch.int16)
+            arrays[key] = t.numpy()
     if sum(a.nbytes for a in arrays.values()) > MAX_BYTES:
         raise ValueError('output buffer budget exceeded')
     path = Path(path)
@@ -22,7 +30,8 @@ def write_arrays(path, samples):
         raise ValueError('artifact budget exceeded')
     os.replace(tmp, path)
     return {'version': 1, 'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-            'counts': [len(s) for s in samples], 'bytes': path.stat().st_size}
+            'counts': [len(s) for s in samples], 'bytes': path.stat().st_size,
+            'logical_dtypes': logical_dtypes}
 
 
 def read_arrays(directory, ref):
@@ -44,7 +53,15 @@ def read_arrays(directory, ref):
     with np.load(path, allow_pickle=False) as data:
         if sum(data[k].nbytes for k in data.files) > MAX_BYTES:
             raise ValueError('unpacked artifact budget exceeded')
-        return [tuple(torch.from_numpy(data[f's{i}_{j}'].copy()) for j in range(n))
+        def tensor(key):
+            value = torch.from_numpy(data[key].copy())
+            logical = ref.get('logical_dtypes', {}).get(key)
+            if logical is not None:
+                if logical != 'bfloat16' or value.dtype != torch.int16:
+                    raise ValueError('invalid logical storage dtype')
+                value = value.view(torch.bfloat16)
+            return value
+        return [tuple(tensor(f's{i}_{j}') for j in range(n))
                 for i, n in enumerate(ref['counts'])]
 
 
