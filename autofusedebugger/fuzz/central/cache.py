@@ -65,7 +65,9 @@ class PublicCache:
             self._statistics = IncrementalStatistics(self.database, stopped=self._stop.is_set)
         charts = self._statistics.refresh()
         counts = {row['status']:row['count'] for row in charts['overall']}
-        values = {'summary': {'total':sum(counts.values()), 'by_status':counts, 'unit':'shape_case'},
+        mlir_failed=counts.pop('mlir_failed',0)
+        if mlir_failed:counts['error']=counts.get('error',0)+mlir_failed
+        values = {'summary': {'total':sum(counts.values()), 'by_status':counts, 'mlir_failed':mlir_failed, 'unit':'shape_case'},
                   'statistics': charts}
         for size in PAGE_SIZES:
             more = len(page['items']) > size

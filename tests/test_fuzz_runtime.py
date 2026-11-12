@@ -180,3 +180,50 @@ def test_existing_hosts_get_stable_machine_names_on_upgrade(central):
     assert {m['machine_id']:m['display_name'] for m in data['machines']}=={
         'host-a':'Alice-npu0','host-z':'Alice-npu1'}
     assert len(data['machine_options'])==2
+
+
+def test_terminal_runs_keep_known_end_state_after_observations_expire(central):
+    db,a,b=central
+    for state in ['running','idle','error']:
+        p=sample();p['runs'][0]['state']=state
+        ingest(db,a['token'],p,now=100)
+    data=snapshot(db,now=1000)
+    assert {r['state'] for r in data['machines'][0]['runs']}=={'unknown','idle','error'}
+    assert all(not r['stages'] for r in data['machines'][0]['runs'])
+    assert data['summary']['busy_cards']==0
+    assert data['summary']['active_cases']==0
+    assert data['machines'][0]['cards'][0]['status']=='unknown'
+
+
+def test_stale_old_run_does_not_add_live_work_to_new_session(central):
+    db,a,b=central
+    old=sample();ingest(db,a['token'],old,now=100)
+    new=sample();ingest(db,a['token'],new,now=1000)
+    data=snapshot(db,now=1001)
+    assert data['summary']['busy_cards']==1
+    assert data['summary']['active_cases']==1
+    assert data['summary']['queued']==2
+    assert {r['state'] for r in data['machines'][0]['runs']}=={'unknown','running'}
+
+
+def test_user_summary_counts_people_not_machines(central):
+    db,a,b=central
+    def counts(**filters):
+        s=snapshot(db,now=110,**filters)['summary']
+        return s['total_users'],s['online_users'],s['active_users']
+    assert counts()==(2,0,0)  # Registered accounts without a heartbeat still count.
+    ingest(db,a['token'],sample(machine='host-a'),now=100)
+    ingest(db,a['token'],sample(machine='host-b'),now=100)
+    idle=sample(machine='host-a');idle['runs'][0]['state']='idle'
+    ingest(db,b['token'],idle,now=100)
+    assert counts()==(2,2,1)
+    assert counts(user_id=a['user_id'])==(1,1,1)
+    assert counts(user_id=b['user_id'])==(1,1,0)
+    assert counts(machine_id='host-b')==(1,1,1)
+    assert counts(backend='missing')==(0,0,0)
+    assert counts(user_id='missing')==(0,0,0)
+    stale=snapshot(db,now=200)['summary']
+    assert (stale['total_users'],stale['online_users'],stale['active_users'])==(2,0,0)
+    with closing(_connect(db,writable=True)) as conn,conn:
+        conn.execute('UPDATE users SET active=0 WHERE id=?',(b['user_id'],))
+    assert counts()==(1,1,1)

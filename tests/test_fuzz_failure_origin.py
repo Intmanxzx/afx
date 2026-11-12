@@ -76,7 +76,7 @@ def test_old_cached_classification_is_invalidated(tmp_path):
     inc = IncrementalStatistics(tmp_path/'db')
     row = record('af-mlir', [])
     ResultRepository(inc.database).save(row)
-    assert json.loads(inc._identity())[:2] == [2, VERSION]
+    assert json.loads(inc._identity())[:2] == [3, VERSION]
 
 
 def test_stale_incremental_totals_rebuild_with_new_classification(tmp_path):
@@ -165,8 +165,17 @@ def test_mlir_failure_path_consistent_across_surfaces(tmp_path):
         assert queries.detail(identity, shape_index=i)['mlir_failure']['path'] == path
     expected = [{'label': 'mlir_failed', 'status': 'error', 'count': 1},
                 {'label': 'unconfirmed', 'status': 'error', 'count': 1}]
+    assert queries.case_summary()['mlir_failed'] == 1
+    chart=statistics(repo.path)
+    assert {r['status']:r['count'] for r in chart['overall']}=={'mlir_failed':1,'error':1,'gen_failed':1}
+    for dimension in ['backend','category','dtype','dimension','elements']:
+        assert any(r['status']=='mlir_failed' for r in chart[dimension]),dimension
     assert statistics(repo.path)['failure_path'] == expected
     assert IncrementalStatistics(repo.path).refresh()['failure_path'] == expected
+    from autofusedebugger.fuzz.central.cache import PublicCache
+    from autofusedebugger.fuzz.central.repository import initialize
+    initialize(repo.path)
+    assert json.loads(PublicCache(repo.path).build()['summary'].body)==queries.case_summary()
     for path in paths:
         query = f"WHERE failure_path = '{path}'"
         assert queries.case_summary(q=query)['total'] == 1
