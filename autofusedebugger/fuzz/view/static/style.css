@@ -14,6 +14,7 @@
   --danger:#b23a30;
   --danger-soft:#fdecea;
   --alert:#d97706;
+  --viz-graph-error:#4b5563;
   --radius:14px;
   --shadow:0 1px 2px rgba(16,46,41,.04),0 10px 28px -20px rgba(16,46,41,.36);
   --viz-pass:#147d68;
@@ -102,7 +103,7 @@ main{max-width:1560px;margin:0 auto;padding:24px 30px 56px;min-width:0}
 }
 .cards>div::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:var(--line-strong)}
 .cards .kpi-total::before{background:#7d968e}
-.cards .kpi-graph::before{background:var(--alert)}
+.cards .kpi-graph::before{background:var(--viz-graph-error)}
 .cards .kpi-fail::before{background:var(--viz-function-error)}
 .cards .kpi-mlir::before{background:var(--viz-mlir-error)}
 .cards .kpi-accuracy::before{background:var(--viz-fail)}
@@ -112,7 +113,7 @@ main{max-width:1560px;margin:0 auto;padding:24px 30px 56px;min-width:0}
 .cards span{display:block;color:var(--muted);font-size:12px;font-weight:500;letter-spacing:.2px}
 .cards strong{display:block;margin-top:5px;font-size:30px;line-height:1.15;font-weight:650;letter-spacing:-.8px;font-variant-numeric:tabular-nums}
 #total{color:var(--ink)}
-#gen-errors{color:var(--alert)}
+#gen-errors{color:var(--viz-graph-error)}
 #errors{color:var(--viz-function-error)}
 #fail{color:var(--viz-fail)}
 #ok{color:var(--viz-pass)}
@@ -253,7 +254,7 @@ td:first-child{font-family:inherit}
 .outcome-button:hover{text-decoration:none;background:#e9efec;color:var(--ink-soft)}
 .outcome-button.pass{background:#e7f5ef;border-color:#c9e7dc;color:#0f6b58}
 .outcome-button.failed{background:var(--danger-soft);border-color:#f5d2cc;color:#b23a30}
-.outcome-button.graph-failed{background:#fdf1e0;border-color:#f2ddc0;color:#a65b09}
+.outcome-button.graph-failed{background:#f3f4f6;border-color:#d1d5db;color:var(--viz-graph-error)}
 .outcome-button.accuracy-failed{background:#fdf7e3;border-color:#efe2b8;color:#8f6400}
 .outcome-button.unknown{background:#f1f4f2;border-color:#e3e9e5;color:#81918c}
 .case-table .outcome-button.error-preview,
@@ -458,3 +459,5 @@ pre{
   .command{flex-basis:100%}
   .page,#detail,#comparison{scroll-margin-top:112px}
 }
+
+.cards .kpi-graph span,.cards .kpi-graph strong{color:var(--viz-graph-error)}

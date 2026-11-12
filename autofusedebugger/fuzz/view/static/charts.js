@@ -6,7 +6,7 @@ const STATUS_COLORS = {
   pass: _rootStyle.getPropertyValue('--viz-pass').trim(),
   fail: _rootStyle.getPropertyValue('--viz-fail').trim(),
   error: _rootStyle.getPropertyValue('--viz-gen-error').trim(),
-  gen_failed: '#d97706',
+  gen_failed: _rootStyle.getPropertyValue('--viz-graph-error').trim(),
   mlir_failed: _rootStyle.getPropertyValue('--viz-mlir-error').trim(),
   gen_error: _rootStyle.getPropertyValue('--viz-function-error').trim(),
 };
