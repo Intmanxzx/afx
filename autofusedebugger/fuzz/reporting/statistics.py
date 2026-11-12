@@ -70,11 +70,20 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
         result['backend']=[dict(r) for r in conn.execute(cte+"SELECT backend AS label,CASE WHEN status IN ('error','unsupported') AND failure_path='mlir_failed' THEN 'mlir_failed' ELSE status END AS status,count(*) AS count FROM latest l WHERE EXISTS (SELECT 1 FROM cases c WHERE c.group_id=l.group_id AND c.shape_index=l.shape_index) AND backend NOT IN ('cpu','cpu-eager') GROUP BY backend,2",case_values)]
         if _group is None:
             for row in result['backend']:row['label']=display_backend(row['label'])
-        for name in ('category','dtype','op'):
-            result[name]=case_grouped('d.value'," JOIN case_dimensions d ON d.workload_id=a.workload_id AND d.dimension='"+name+"'")
-        for name, column, bounds in [('dimension','max_dim',[(8,'≤8'),(64,'≤64'),(512,'≤512'),(4096,'≤4096'),(16384,'≤16384'),(65536,'≤65536'),(131072,'≤131072')]),('elements','max_elements',[(1000,'≤1K'),(16000,'≤16K'),(64000,'≤64K'),(256000,'≤256K'),(1000000,'≤1M'),(16000000,'≤16M'),(64000000,'≤64M')])]:
+        result['op']=case_grouped('d.value'," JOIN case_dimensions d ON d.workload_id=a.workload_id AND d.dimension='op'")
+        result['category']=case_grouped("coalesce(d.value,'未采集')"," LEFT JOIN case_dimensions d ON d.workload_id=a.workload_id AND d.dimension='category'")
+        # A dtype is coverage of a case, not a tensor occurrence. Use the
+        # selected shape's input/output types, deduplicating their union.
+        dtype_metadata = "CASE WHEN a.shape_index<0 THEN c.metadata ELSE coalesce(json_extract(c.metadata,'$.shape_variants[' || a.shape_index || ']'),c.metadata) END"
+        result['dtype'] = case_grouped("coalesce(d.value,'未采集')",
+            " LEFT JOIN json_each((SELECT json_group_array(value) FROM ("
+            "SELECT value FROM json_each(json_extract("+dtype_metadata+",'$.input_dtypes')) UNION "
+            "SELECT value FROM json_each(json_extract("+dtype_metadata+",'$.output_dtypes'))))) d")
+        for name, column, bounds in [
+            ('dimension','max_dim',[(8,'0–8'),(64,'9–64'),(512,'65–512'),(4096,'513–4096'),(16384,'4097–16384'),(65536,'16385–65536'),(131072,'65537–131072')]),
+            ('elements','max_elements',[(1000,'0–1K'),(16000,'(1K,16K]'),(64000,'(16K,64K]'),(256000,'(64K,256K]'),(1000000,'(256K,1M]'),(16000000,'(1M,16M]'),(64000000,'(16M,64M]')])]:
             value="CASE WHEN a.shape_index<0 THEN NULL ELSE json_extract(c.metadata,'$.shape_variants[' || a.shape_index || ']."+column+"') END"
-            expression='CASE WHEN '+value+" IS NULL THEN '未采集' "+' '.join(f"WHEN {value}<={bound} THEN '{label}'" for bound,label in bounds)+f" ELSE '>{bounds[-1][1][1:]}' END"
+            expression='CASE WHEN '+value+" IS NULL THEN '未采集' "+' '.join(f"WHEN {value}<={bound} THEN '{label}'" for bound,label in bounds)+f" ELSE '{'>131072' if name == 'dimension' else '>64M'}' END"
             result[name]=case_grouped(expression)
         result['mode']=case_grouped("CASE WHEN json_extract(a.execution,'$.static_only') THEN 'static' ELSE 'dynamic' END")
         result['unit']='shape_case'

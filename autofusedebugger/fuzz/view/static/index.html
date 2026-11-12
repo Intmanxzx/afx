@@ -49,14 +49,15 @@
 <p id="message" role="status" aria-live="polite"></p>
 <section id="overview-page" class="page">
   <div class="section-heading"><h2>用例统计分布</h2><span class="muted">按当前筛选统计</span></div>
+  <p class="muted">默认隐藏构图Failed、功能Failed 和 Unknown，可点击图例显示。缺少元数据计入“未采集”；算子类别与 dtype 可多选计数，其柱总和可能大于用例数。区间 (a,b] 表示大于 a 且小于等于 b。</p>
   <p id="chart-message" role="status"></p>
   <div class="chart-grid">
     <article class="chart-card"><h3>正确性分布</h3><p>按测试用例统计</p><svg id="chartOverall" viewBox="0 0 380 260" role="img" aria-label="正确性分布"></svg><div class="legend" id="legendOverall"></div></article>
     <article class="chart-card"><h3>后端分布</h3><p>对比各执行后端的结果</p><svg id="chartBackend" viewBox="0 0 380 260" role="img" aria-label="后端分布"></svg><div class="legend" id="legendBackend"></div></article>
-    <article class="chart-card"><h3>算子覆盖</h3><p>一条记录可包含多个算子类别</p><svg id="chartCategory" viewBox="0 0 380 260" role="img" aria-label="算子覆盖"></svg><div class="legend" id="legendCategory"></div></article>
-    <article class="chart-card"><h3>数据类型</h3><p>输入和输出的 dtype 分布</p><svg id="chartDtype" viewBox="0 0 380 260" role="img" aria-label="数据类型"></svg><div class="legend" id="legendDtype"></div></article>
-    <article class="chart-card"><h3>最大维度</h3><p>按张量最大单维度分组</p><svg id="chartShapeDim" viewBox="0 0 380 260" role="img" aria-label="最大维度"></svg><div class="legend" id="legendShapeDim"></div></article>
-    <article class="chart-card"><h3>张量规模</h3><p>按张量最大元素数分组</p><svg id="chartShapeElem" viewBox="0 0 380 260" role="img" aria-label="张量规模"></svg><div class="legend" id="legendShapeElem"></div></article>
+    <article class="chart-card"><h3>算子覆盖</h3><p>每个 Shape 用例在每类中计一次，可跨类</p><svg id="chartCategory" viewBox="0 0 380 260" role="img" aria-label="算子覆盖"></svg><div class="legend" id="legendCategory"></div></article>
+    <article class="chart-card"><h3>数据类型</h3><p>每个 Shape 的输入/输出 dtype 去重，可跨类型</p><svg id="chartDtype" viewBox="0 0 380 260" role="img" aria-label="数据类型"></svg><div class="legend" id="legendDtype"></div></article>
+    <article class="chart-card"><h3>最大维度</h3><p>输入/输出最大单轴长度；独立区间，K=1024</p><svg id="chartShapeDim" viewBox="0 0 380 260" role="img" aria-label="最大维度"></svg><div class="legend" id="legendShapeDim"></div></article>
+    <article class="chart-card"><h3>张量规模</h3><p>输入/输出单张量最大元素数；独立区间，K=1000，M=100万</p><svg id="chartShapeElem" viewBox="0 0 380 260" role="img" aria-label="张量规模"></svg><div class="legend" id="legendShapeElem"></div></article>
   </div>
 </section>
 <section id="records-page" class="page" hidden>

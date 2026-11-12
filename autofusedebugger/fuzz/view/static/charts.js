@@ -199,9 +199,11 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
     }
     // 柱顶总数（深色加粗）。
     parts.push(`<text x="${x + barW / 2}" y="${topY - 6}" text-anchor="middle" fill="${VIZ.textPrimary}" font-family="${FONT}" font-size="12.5" font-weight="600" pointer-events="none">${total}</text>`);
-    // x 轴分类标签（超 9 字符截断）。
-    const label = r.key.length > 9 ? r.key.slice(0, 8) + '\u2026' : r.key;
-    parts.push(`<text x="${x + barW / 2}" y="${topPad + chartH + 20}" text-anchor="middle" fill="${VIZ.textSecondary}" font-family="${FONT}" font-size="12" pointer-events="none">${escapeChart(label)}</text>`);
+    // 区间标签分两行完整显示端点；其他长标签截断。
+    const range = r.key.match(/^(\d+–)(\d+)$/) || r.key.match(/^(\([^,]+,)([^,]+\])$/);
+    const label = range ? range[1] : r.key.length > 9 ? r.key.slice(0, 8) + '\u2026' : r.key;
+    const suffix = range ? `<tspan x="${x + barW / 2}" dy="13">${escapeChart(range[2])}</tspan>` : '';
+    parts.push(`<text x="${x + barW / 2}" y="${topPad + chartH + 20}" text-anchor="middle" fill="${VIZ.textSecondary}" font-family="${FONT}" font-size="12" pointer-events="none">${escapeChart(label)}${suffix}</text>`);
   });
   svg.innerHTML = gridLines + parts.join('');
   // 每段挂 tooltip：分类名做标题，pass/fail/gen_failed/gen_error 计数 + 总数。
@@ -216,13 +218,30 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
   });
 }
 
+// Numeric buckets must not inherit SQLite's lexicographic GROUP BY order.
+const SHAPE_BUCKET_ORDER = {
+ ShapeDim: ['0–8','9–64','65–512','513–4096','4097–16384','16385–65536','65537–131072','>131072','未采集'],
+ ShapeElem: ['0–1K','(1K,16K]','(16K,64K]','(64K,256K]','(256K,1M]','(1M,16M]','(16M,64M]','>64M','未采集'],
+};
+// Display-only abbreviations: keep API buckets, counts and boundaries unchanged.
+const DIMENSION_LABELS = {
+ '513–4096':'(512,4K]', '4097–16384':'(4K,16K]',
+ '16385–65536':'(16K,64K]', '65537–131072':'(64K,128K]', '>131072':'>128K',
+};
+function displayChartRows(rows,id) {
+ return id==='ShapeDim' ? rows.map(row=>({...row,key:DIMENSION_LABELS[row.key]||row.key})) : rows;
+}
+function orderChartRows(rows,id) {
+ const order=SHAPE_BUCKET_ORDER[id];
+ return order ? rows.sort((a,b)=>order.indexOf(a.key)-order.indexOf(b.key)) : rows;
+}
 const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['gen_failed','gen_error','unknown'])]));let latestStatistics=null;
 window.updateStatistics = result => {
  latestStatistics=result;
- const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_failed:0,gen_error:0,mlir_failed:0,unknown:0});const key=r.status==='mlir_failed'?'mlir_failed':r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='gen_failed'?'gen_failed':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};
+ const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_failed:0,gen_error:0,mlir_failed:0,unknown:0});const key=r.status==='mlir_failed'?'mlir_failed':r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='gen_failed'?'gen_failed':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return orderChartRows([...groups.values()],id);};
  const overall=convert(result.overall,'Overall')[0]||{};
  drawDonut('chartOverall','legendOverall',STATUS_KEYS.map(s=>({label:s,value:overall[s]||0,color:STATUS_COLORS[s]})));
- for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,convert(result[key],id));
+ for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,displayChartRows(convert(result[key],id),id));
  for(const [key,id] of [['overall','Overall'],['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']]){
   const legend=document.getElementById('legend'+id);legend.replaceChildren();const hidden=legendHidden.get(id)||new Set();const raw=convert(result[key],'__raw');const counts=Object.fromEntries(STATUS_KEYS.map(s=>[s,raw.reduce((n,r)=>n+r[s],0)]));const total=STATUS_KEYS.filter(s=>!hidden.has(s)).reduce((n,s)=>n+counts[s],0);
   for(const status of STATUS_KEYS){const button=document.createElement('button');button.type='button';button.dataset.status=status;button.setAttribute('aria-pressed',String(!hidden.has(status)));const swatch=document.createElement('i');swatch.style.background=STATUS_COLORS[status];button.append(swatch,document.createTextNode(STATUS_LABELS[status]));button.addEventListener('click',()=>{if(hidden.has(status))hidden.delete(status);else hidden.add(status);legendHidden.set(id,hidden);updateStatistics(latestStatistics);});legend.append(button);}
