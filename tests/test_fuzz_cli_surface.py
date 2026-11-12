@@ -156,7 +156,7 @@ def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypat
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
     assert main(['run']) == 0
     result = json.loads(capsys.readouterr().out)
-    assert result['resource_plan']['selected'] == {'cpu_workers':4,'compile_threads':6}
+    assert result['resource_plan']['selected'] == {'cpu_workers':4,'compile_threads':8}
     cores[0] = 8
     assert main(['run']) == 0
     assert json.loads(capsys.readouterr().out)['resource_plan']['selected'] == {'cpu_workers':4,'compile_threads':2}
@@ -192,7 +192,7 @@ def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys)
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     def launch(*args, **kwargs):
         plan = json.loads(capsys.readouterr().err)['resource_plan']
-        assert plan['version'] == 2
+        assert plan['version'] == 3
         assert plan['selected']['cpu_workers'] == kwargs['budget'].cpu_workers
         assert all(c.compile_threads == kwargs['budget'].compile_threads for c in kwargs['campaign'][0])
         return {'state': 'test'}
