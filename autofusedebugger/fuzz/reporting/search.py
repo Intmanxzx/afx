@@ -11,7 +11,7 @@ FIELDS = ('failure_path', 'seed', 'shape_index', 'status', 'backend', 'function_
 TOKEN = re.compile(r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>-?\d+)|(?P<op><=|>=|!=|<>|=|<|>|\(|\))|(?P<word>[A-Za-z_][A-Za-z_0-9]*))")
 
 
-def compile_where(text):
+def compile_where(text, *, columns=None):
     if len(text) > 2048:
         raise ValueError('SQL condition is too long')
     text = re.sub(r'^\s*where\s+', '', text, flags=re.I).strip()
@@ -59,7 +59,8 @@ def compile_where(text):
             value = str(Seed.parse(value))
         values.append(value)
         index += 3
-        return 'p."' + field.lower() + '" ' + op + ' ? COLLATE NOCASE'
+        column = ('p."' + field.lower() + '"') if columns is None else columns[field.lower()]
+        return column + ' ' + op + ' ? COLLATE NOCASE'
 
     def conjunction(depth):
         nonlocal index
@@ -103,3 +104,25 @@ def condition(q):
         from ..contracts import Seed
         return 'p.seed=?', [str(Seed.parse(q))]
     return 'instr(lower(p.search),lower(?))>0', [q]
+
+
+def case_condition(q):
+    """Compile case-only WHERE filters without the backend/metadata projection.
+
+    Validate with the same bounded parser first; mixed backend predicates retain
+    their same-row existential semantics in the normal projection path.
+    """
+    if not q or not re.match(r'^where\s', q.strip(), re.I):
+        return None
+    compile_where(q)
+    columns = {
+        'status': """(CASE c.status WHEN 'ok' THEN 'Pass' WHEN 'fail' THEN 'accuracy_failed'
+            WHEN 'gen_failed' THEN 'gen_failed' WHEN 'error' THEN 'function_failed'
+            WHEN 'unsupported' THEN 'function_failed' ELSE 'Unknown' END)""",
+        'failure_path': 'c.failure_path',
+        'shape_index': 'c.shape_index',
+    }
+    try:
+        return compile_where(q, columns=columns)
+    except KeyError:
+        return None

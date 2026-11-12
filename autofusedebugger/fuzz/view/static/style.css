@@ -11,6 +11,8 @@
   --accent:#147d68;
   --accent-strong:#0f6655;
   --accent-soft:#e7f4ef;
+  --hover-blue:#eaf4ff;
+  --hover-blue-border:#b8d8f5;
   --danger:#b23a30;
   --danger-soft:#fdecea;
   --alert:#d97706;
@@ -95,13 +97,13 @@ main{max-width:1560px;margin:0 auto;padding:24px 30px 56px;min-width:0}
 
 /* ---------- KPI cards ---------- */
 .cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;margin-bottom:18px}
-.cards>div{
+.cards>.kpi{
   position:relative;overflow:hidden;
   padding:16px 18px 14px;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
   box-shadow:var(--shadow);
 }
-.cards>div::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:var(--line-strong)}
+.cards>.kpi::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:var(--line-strong)}
 .cards .kpi-total::before{background:#7d968e}
 .cards .kpi-graph::before{background:var(--viz-graph-error)}
 .cards .kpi-fail::before{background:var(--viz-function-error)}
@@ -251,7 +253,7 @@ td:first-child{font-family:inherit}
   font-size:11px;font-weight:600;line-height:1.6;white-space:nowrap;text-align:center;
   background:#f0f4f2;color:#4c625b;
 }
-.outcome-button:hover{text-decoration:none;background:#e9efec;color:var(--ink-soft)}
+.outcome-button:hover{text-decoration:none}
 .outcome-button.pass{background:#e7f5ef;border-color:#c9e7dc;color:#0f6b58}
 .outcome-button.failed{background:var(--danger-soft);border-color:#f5d2cc;color:#b23a30}
 .outcome-button.graph-failed{background:#f3f4f6;border-color:#d1d5db;color:var(--viz-graph-error)}
@@ -437,7 +439,7 @@ pre{
   .topbar nav a svg{width:14px;height:14px}
   main{padding:14px 14px 40px}
   .cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-  .cards>div{padding:13px 14px 12px;border-radius:12px}
+  .cards>.kpi{padding:13px 14px 12px;border-radius:12px}
   .cards .kpi-total{grid-column:1/-1}
   .cards strong{font-size:26px}
   .chart-grid{grid-template-columns:1fr}
@@ -461,3 +463,14 @@ pre{
 }
 
 .cards .kpi-graph span,.cards .kpi-graph strong{color:var(--viz-graph-error)}
+
+.cards>button.kpi{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}
+.cards>button.kpi:hover{transform:translateY(-1px)}
+.cards>button.kpi:focus-visible{outline:2px solid var(--viz-pass);outline-offset:3px}
+
+/* Override the primary-button hover without replacing status text colors. */
+.cards>button.kpi:hover:not(:disabled),
+.case-table button:hover:not(:disabled){
+  background:var(--hover-blue);
+  border-color:var(--hover-blue-border);
+}
