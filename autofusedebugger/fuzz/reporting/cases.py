@@ -112,7 +112,7 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
     ), cases AS (
         SELECT c.* FROM unfiltered_cases c WHERE (c.group_id,c.shape_index) IN (
         SELECT p.group_id,p.shape_index FROM projection p WHERE ("""
-    from .search import condition
+    from .search import condition, case_condition
     predicate, query_values = condition(q)
     state_queries = {
         'pass': "c.status='ok'",
@@ -126,7 +126,11 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         'unknown': "c.status='unknown'",
     }
     state_predicate = state_queries.get(q.strip().lower()) if q else None
-    if not q or state_predicate:
+    case_filter = case_condition(q)
+    if case_filter:
+        sql = sql[:sql.index('    ), cases AS (')] + '    ), cases AS (SELECT c.* FROM unfiltered_cases c WHERE (' + case_filter[0] + ')'
+        query_values = case_filter[1]
+    elif not q or state_predicate:
         sql = sql[:sql.index('    ), cases AS (')] + '    ), cases AS (SELECT c.* FROM unfiltered_cases c WHERE ' + (state_predicate or '1=1')
         query_values = []
     else:
@@ -153,27 +157,26 @@ def summary(database, **params):
 
 
 def page_keys(conn, *, limit, after=0, seed=None, status=None, user_id=None, q=None):
-    """Bound unfiltered pages by rowid, without truncating backend history.
+    """Bound filtered and unfiltered pages by rowid, without truncating backend history.
 
     A case cursor's integer quotient by 2048 is its newest contributing
     attempt rowid (shape indices are -1..1023). Selecting groups with any
     attempt in this window therefore includes every case in the cursor range.
     Expand for retries, sparse/deleted rows, and partial backend shape sets.
     """
-    upper = (after // 2048 if after else
-             conn.execute('SELECT coalesce(max(rowid),0) FROM attempts').fetchone()[0])
+    newest = conn.execute('SELECT coalesce(max(rowid),0) FROM attempts').fetchone()[0]
+    upper = min(after // 2048, newest) if after else newest
     width = max(128, limit * 4)
     while True:
         lower = max(0, upper - width)
-        bounded = not any((seed, status, user_id, q))
         cte, values = rollup(seed, status, user_id, q,
-                            rowid_window=(lower, upper) if bounded else None)
+                            rowid_window=(lower, upper))
         rows = conn.execute(cte +
             'SELECT * FROM cases WHERE cursor<? ORDER BY cursor DESC LIMIT ?',
             (*values, after or 2**63-1, limit+1)).fetchall()
         # Cases below this range can come from older peers of a selected group.
         # They are not yet safe to return: an unselected group may precede them.
-        if not bounded or lower == 0:
+        if lower == 0:
             return rows
         rows = [row for row in rows if row['cursor'] >= lower * 2048]
         if len(rows) > limit:

@@ -155,7 +155,7 @@ async function load(silent=false,includeList=true){
  // A whole-dataset count must not hold the first page hostage. Keep failures
  // visible without replacing a valid list with an empty state.
  if(!silent)for(const id of ['total','ok','fail','errors','gen-errors','mlir-errors'])$(id).textContent='…';
- const summaryTask=api('api/summary?'+applied).then(summary=>{
+ const summaryTask=api('api/summary').then(summary=>{
   if(request!==generation)return;
   $('mlir-errors').textContent=(summary.mlir_failed||0).toLocaleString();$('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('gen-errors').textContent=(summary.by_status.gen_failed||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)-(summary.mlir_failed||0)).toLocaleString();
   return null;
@@ -168,7 +168,19 @@ async function load(silent=false,includeList=true){
  const summaryError=await summaryTask;
  if(summaryError&&summaryError.name!=='AbortError'&&request===generation)$('message').textContent+=' 汇总加载失败：'+summaryError.message;
 }
-form.addEventListener('submit',event=>{event.preventDefault();applied=parameters();history.replaceState(null,'',location.pathname+(applied.size?'?'+applied:'')+location.hash);page=0;cursors=[0];detailGeneration++;$('detail').hidden=true;refreshVisible();});
+function applyFilters(route=location.hash){
+ applied=parameters();history.replaceState(null,'',location.pathname+(applied.size?'?'+applied:'')+route);
+ page=0;cursors=[0];next=null;generation++;detailGeneration++;$('detail').hidden=true;
+ $('next').disabled=true;$('previous').disabled=true;$('page-label').textContent='';
+ lastData=null;lastRows=[];$('rows').replaceChildren();
+ // A chart request from the previous page must not outlive this selection.
+ for(const request of pendingRequests.values())request.controller.abort();
+ pendingRequests.clear();navigate();refreshVisible();
+}
+form.addEventListener('submit',event=>{event.preventDefault();applyFilters();});
+document.querySelectorAll('[data-case-query]').forEach(card=>{
+ card.addEventListener('click',()=>{form.elements.q.value=card.dataset.caseQuery;hideFieldTooltip();applyFilters('#records');});
+});
 $('reset-filters').addEventListener('click',()=>{form.reset();form.requestSubmit();});
 $('page-size').addEventListener('change',()=>{pageSize=Number($('page-size').value);try{localStorage.setItem('af-fuzz.page-size',String(pageSize));}catch{}page=0;cursors=[0];load();});
 $('next').addEventListener('click',()=>{if(next!==null){cursors[++page]=next;load();}});$('previous').addEventListener('click',()=>{if(page>0){page--;load();}});

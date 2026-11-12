@@ -118,16 +118,16 @@ def test_platform_path_selection_without_host_execution(monkeypatch, platform, e
 
 
 @pytest.mark.parametrize('cores,devices,memory_gib,expected', [
-    (40, 2, 200, (4, 6)),
-    (36, 2, 105, (4, 6)),
+    (40, 2, 200, (4, 8)),
+    (36, 2, 105, (4, 8)),
     (16, 2, 64, (4, 4)),
     (3, 2, 64, (3, 1)),
     (1, 1, 2, (1, 1)),
     (36, 2, 4, (2, 1)),
     (36, 2, 16, (4, 1)),
-    (64, 4, 200, (6, 6)),
+    (64, 4, 200, (6, 8)),
     (None, 2, None, (1, 1)),
-    (24, 1, 64, (3, 6)),
+    (24, 1, 64, (3, 8)),
     (64, 8, 200, (12, 5)),
     (8, 0, 32, (4, 1)),
 ])
@@ -190,8 +190,8 @@ def test_auto_plan_explains_unused_cpu_capacity(monkeypatch):
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'host_cpu_count': 40, 'cpu_worker_ceiling': 36, 'effective_memory_bytes': 200*1024**3})
     plan = resources.npu_resource_plan('.', 2, SimpleNamespace(memory_budget_bytes=105*1024**3))
-    assert plan['selected'] == {'cpu_workers': 4, 'compile_threads': 6}
-    assert plan['version'] == 2 and plan['reasons'] and plan['inventory']['host_cpu_count'] == 40
+    assert plan['selected'] == {'cpu_workers': 4, 'compile_threads': 8}
+    assert plan['version'] == 3 and plan['reasons'] and plan['inventory']['host_cpu_count'] == 40
 
 
 def test_auto_plan_clamps_stale_machine_budgets(monkeypatch):
@@ -243,3 +243,20 @@ def test_plan_reports_budget_corrections(monkeypatch):
         memory_budget_bytes=100*1024**3, cache_budget_bytes=20*1024**3))
     assert plan['budget_corrections']['cache_budget_bytes'] == {
         'configured': 20*1024**3, 'selected': 2*1024**3}
+
+
+@pytest.mark.parametrize('cores,memory_gib,expected', [
+    (36, 105, (4, 8)), (32, 72, (4, 8)),
+    (31, 72, (4, 7)), (36, 64, (4, 7)), (36, 16, (4, 1)),
+])
+def test_eight_thread_policy_keeps_cpu_and_memory_bounds(monkeypatch, cores, memory_gib, expected):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    memory = memory_gib * 1024**3
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'cpu_worker_ceiling': cores, 'effective_memory_bytes': memory*2})
+    plan = resources.npu_resource_plan('.', 2, SimpleNamespace(memory_budget_bytes=memory))
+    assert plan['version'] == 3
+    assert (plan['selected']['cpu_workers'], plan['selected']['compile_threads']) == expected
+    assert expected[0]*expected[1] <= cores
+    assert expected[0]*(expected[1]+1)*2*1024**3 <= memory

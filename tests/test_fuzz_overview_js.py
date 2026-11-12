@@ -68,3 +68,67 @@ def test_graph_failure_uses_shared_dark_gray_token():
     assert '#gen-errors{color:var(--viz-graph-error)}' in css
     assert '.cards .kpi-graph span,.cards .kpi-graph strong{color:var(--viz-graph-error)}' in css
     assert '.outcome-button.graph-failed{background:#f3f4f6;border-color:#d1d5db;color:var(--viz-graph-error)}' in css
+
+
+def test_kpi_navigation_applies_visible_filter_and_resets_pagination():
+    import re
+    import json
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable')
+    source = Path('autofusedebugger/fuzz/view/static/app.js').read_text()
+    html = Path('autofusedebugger/fuzz/view/static/index.html').read_text()
+    queries = re.findall(r'<button type="button" class="kpi [^"]+" data-case-query="([^"]*)">', html)
+    assert len(queries) == 6
+    assert queries == ['', "WHERE status = 'gen_failed'",
+        "WHERE status = 'function_failed' AND failure_path != 'mlir_failed'",
+        "WHERE status = 'function_failed' AND failure_path = 'mlir_failed'",
+        "WHERE status = 'accuracy_failed'", "WHERE status = 'Pass'"]
+    start = source.index('function applyFilters(')
+    end = source.index("$('reset-filters')", start)
+    script = r'''const assert=require('node:assert/strict');
+const queries=''' + json.dumps(queries) + r''';
+const cards=queries.map(q=>({dataset:{caseQuery:q},addEventListener(k,f){this[k]=f}}));
+const document={querySelectorAll:()=>cards};
+const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,{replaceChildren(){this.cleared=true}});return nodes.get(id)};
+const form={elements:{q:{value:'old filter'}},addEventListener(){}};
+const location={pathname:'/',hash:'#overview'};
+const history={replaceState(a,b,url){this.url=url;location.hash=url.slice(url.indexOf('#'))}};
+const parameters=()=>new URLSearchParams(form.elements.q.value?{q:form.elements.q.value}:{});
+let applied, page=5,cursors=[0,123],next=123,generation=0,detailGeneration=0,lastData='old',lastRows=[{}];
+const pendingRequests=new Map();let aborted=0,navigations=0,refreshes=0;
+const hideFieldTooltip=()=>{};const navigate=()=>{navigations++};const refreshVisible=()=>{refreshes++};
+''' + source[start:end] + r'''
+for(const [i,card] of cards.entries()){
+ page=5;cursors=[0,123];next=123;
+ pendingRequests.set('old',{controller:{abort(){aborted++}}});
+ card.click();assert.equal(form.elements.q.value,queries[i]);
+ assert.equal(location.hash,'#records');assert.equal(page,0);assert.deepEqual(cursors,[0]);assert.equal(next,null);
+ assert.equal(applied.get('q')||'',queries[i]);assert.equal($('rows').cleared,true);
+ assert.equal($('next').disabled,true);assert.equal($('previous').disabled,true);
+ assert.equal(new URL(history.url,'https://example.test').searchParams.get('q')||'',queries[i]);
+}
+assert.equal(aborted,6);assert.equal(navigations,6);assert.equal(refreshes,6);
+'''
+    subprocess.run([node, '-e', script], check=True, capture_output=True, text=True)
+    assert "const summaryTask=api('api/summary')" in source
+
+
+def test_metric_and_record_hover_use_light_blue_without_overriding_status_colors():
+    css = Path('autofusedebugger/fuzz/view/static/style.css').read_text()
+    selector = '.cards>button.kpi:hover:not(:disabled),\n.case-table button:hover:not(:disabled)'
+    rule = css.split(selector + '{', 1)[1].split('}', 1)[0]
+    assert '--hover-blue:#eaf4ff;' in css
+    assert 'background:var(--hover-blue)' in rule
+    assert 'border-color:var(--hover-blue-border)' in rule
+    assert '\n  color:' not in rule
+    assert '.outcome-button:hover{text-decoration:none}' in css
+
+
+def test_clickable_metric_cards_keep_original_stacked_left_aligned_layout():
+    css = Path('autofusedebugger/fuzz/view/static/style.css').read_text()
+    rule = css.split('.cards>button.kpi{', 1)[1].split('}', 1)[0]
+    assert 'display:block;' in rule  # Do not inherit the shared inline-flex button layout.
+    assert 'text-align:left;' in rule
+    assert '.cards span{display:block;' in css
+    assert '.cards strong{display:block;margin-top:5px;' in css

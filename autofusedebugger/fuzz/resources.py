@@ -158,8 +158,8 @@ def npu_resource_plan(home, devices, budget):
     """Explainable startup heuristic, not an online optimizer or hard isolation.
 
     Preserve device runtimes and CPU pipeline slots before adding compilation
-    parallelism. Six is a conservative starting ceiling: our dual-910 probes
-    found no throughput benefit from nine, not a universal saturation claim.
+    parallelism. Eight is a throughput-oriented starting ceiling: dual-910
+    probes found a modest benefit at nine over six, not a universal optimum.
     """
     if type(devices) is not int or devices < 0:
         raise ValueError('device count must be a nonnegative integer')
@@ -183,9 +183,9 @@ def npu_resource_plan(home, devices, budget):
     # Conservatively charge every slot, including potential compiler children.
     # RSS estimates are a startup guard, never a guarantee for arbitrary graphs.
     memory_threads = max(1, planning_memory//(workers*2*gib)-1)
-    threads = max(1, min(6 if devices else 1, cores//workers, memory_threads))
+    threads = max(1, min(8 if devices else 1, cores//workers, memory_threads))
     reasons = ['preserve NPU runtimes and shared CPU pipeline slots',
-               'cap compile fan-out at a conservative six; do not fill cores with idle workers',
+               'cap compile fan-out at eight; retain CPU/RAM admission and bounded worker reuse',
                'bound workers × compile_threads by effective CPU and estimated RSS budget']
     if not inventory.get('cpu_worker_ceiling') or available_memory is None:
         reasons.append('unknown resources: conservative fallback; admission still validates limits')
@@ -201,11 +201,11 @@ def npu_resource_plan(home, devices, budget):
     effective_cores = inventory.get('effective_cpu_cores')
     if effective_cores is not None and effective_cores < 1:
         reasons.append('sub-core CPU quota: one single-thread process remains subject to cgroup throttling')
-    if threads < (6 if devices else 1):
+    if threads < (8 if devices else 1):
         reasons.append('compile fan-out reduced by CPU capacity or the conservative RAM estimate')
     corrections = {key: {'configured': getattr(budget, key, None), 'selected': value}
                    for key, value in budget_limits.items() if getattr(budget, key, None) != value}
-    return {'version': 2, 'mode': 'auto', 'inventory': inventory,
+    return {'version': 3, 'mode': 'auto', 'inventory': inventory,
             'budget_corrections': corrections,
             'budget_limits': budget_limits,
             'devices': devices, 'memory_budget_bytes': memory,

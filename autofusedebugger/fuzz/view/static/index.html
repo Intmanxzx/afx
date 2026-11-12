@@ -27,12 +27,12 @@
 <h1 id="page-title" class="sr-only">总览</h1>
 <main>
 <section class="cards" aria-label="结果概览">
-  <div class="kpi kpi-total"><span>测试记录</span><strong id="total">—</strong></div>
-  <div class="kpi kpi-graph"><span>构图Failed</span><strong id="gen-errors">—</strong></div>
-  <div class="kpi kpi-fail"><span>功能Failed</span><strong id="errors">—</strong></div>
-  <div class="kpi kpi-mlir"><span>MLIR Failed</span><strong id="mlir-errors">—</strong></div>
-  <div class="kpi kpi-accuracy"><span>精度Failed</span><strong id="fail">—</strong></div>
-  <div class="kpi kpi-pass"><span>Pass</span><strong id="ok">—</strong></div>
+  <button type="button" class="kpi kpi-total" data-case-query=""><span>测试记录</span><strong id="total">—</strong></button>
+  <button type="button" class="kpi kpi-graph" data-case-query="WHERE status = 'gen_failed'"><span>构图Failed</span><strong id="gen-errors">—</strong></button>
+  <button type="button" class="kpi kpi-fail" data-case-query="WHERE status = 'function_failed' AND failure_path != 'mlir_failed'"><span>功能Failed</span><strong id="errors">—</strong></button>
+  <button type="button" class="kpi kpi-mlir" data-case-query="WHERE status = 'function_failed' AND failure_path = 'mlir_failed'"><span>MLIR Failed</span><strong id="mlir-errors">—</strong></button>
+  <button type="button" class="kpi kpi-accuracy" data-case-query="WHERE status = 'accuracy_failed'"><span>精度Failed</span><strong id="fail">—</strong></button>
+  <button type="button" class="kpi kpi-pass" data-case-query="WHERE status = 'Pass'"><span>Pass</span><strong id="ok">—</strong></button>
 </section>
 <form id="filters" class="filter-bar">
   <label class="search-label"><input name="q" aria-label="搜索所有列" placeholder="任意项模糊搜索" autocomplete="off"></label>
