@@ -17,12 +17,19 @@ const document={createElement:t=>new E(t)};
 const all=(e,t)=>[...(e.tag===t?[e]:[]),...e.children.flatMap(x=>all(x,t))];
 ''' + source + r'''
 const machine=i=>({user_name:'user-'+i,user_id:'id-'+i,machine_id:'machine-'+i,name:'host-'+i,status:'online',cards:[{logical:'npu:0',model:'910',uuid:'uuid-'+i,status:'busy'}],runs:[{backend:['af-mlir'],state:'running',stages:{first_call_combined:1},age_seconds:1}],case_errors:0,record_failed:0,completed_per_min:3,success_per_min:2,active_cases:1,queued:2,age_seconds:1});
-const data={users:[{id:'a',name:'Alice'},{id:'b',name:'Bob'}],machine_options:[],models:['910'],backends:['af-mlir'],versions:['v1'],summary:{active_users:2,online_machines:23,registered_machines:23,busy_cards:23,online_cards:46,completed_per_min:69,success_per_min:46,active_cases:23,queued:46},machines:Array.from({length:23},(_,i)=>machine(i)),trend:[{time:100,completed:4,success:2}]};
+const data={users:[{id:'a',name:'Alice'},{id:'b',name:'Bob'}],machine_options:[],models:['910'],backends:['af-mlir'],versions:['v1'],summary:{total_users:5,online_users:3,active_users:2,online_machines:23,registered_machines:23,busy_cards:23,online_cards:46,known_cards:46,completed_per_min:69,success_per_min:46,active_cases:23,queued:46},machines:Array.from({length:23},(_,i)=>machine(i)),trend:[{time:100,completed:4,success:2}]};
 const host=new E('div');renderFleet(host,data);
+assert.ok(all(host,'th').some(e=>e.textContent==='完成数/成功数 / min'));
+assert.ok(all(host,'span').some(e=>e.textContent==='完成数 / min'));
+assert.ok(all(host,'span').some(e=>e.textContent==='成功数 / min'));
+const userCard=all(host,'span').find(e=>e.textContent==='总用户数 / 在线用户数 / 活跃用户数');
+assert.ok(userCard);assert.ok(all(host,'strong').some(e=>e.textContent==='5 / 3 / 2'));
+assert.ok(!all(host,'span').some(e=>['活跃用户','在线 / 已登记机器'].includes(e.textContent)));
 const named={...machine(0),display_name:'NiuYH-npu0'};
 renderFleet(host,{...data,machines:[named],machine_options:[{id:named.machine_id,name:named.display_name}]});
-assert.equal(all(host,'summary')[0].textContent,'NiuYH-npu0');
-assert.ok(all(host,'p').some(p=>p.textContent==='机器 ID：machine-0'));
+assert.equal(all(host,'summary')[0].textContent,'user-0');
+assert.equal(all(host,'h4')[0].textContent,'NiuYH-npu0');
+assert.ok(!all(host,'p').some(p=>p.title==='machine-0'));
 const choice=all(host,'select')[1].children[1];
 assert.equal(choice.textContent,'NiuYH-npu0');assert.equal(choice.value,'machine-0');
 renderFleet(host,data);
@@ -61,6 +68,30 @@ rememberFleetDisclosures(host);host.replaceChildren();renderFleet(host,shared);
 assert.equal(all(host,'details')[0].open,true);assert.equal(all(host,'details').at(-1).open,true);
 all(host,'details').at(-1).open=false;renderFleet(host,shared);
 assert.equal(all(host,'details').at(-1).open,false);
+// One user row aggregates multiple machines; distinct user IDs never merge.
+const one=machine(0),two={...machine(1),user_id:one.user_id,user_name:one.user_name};
+two.cards=[...two.cards,{logical:'npu:1',uuid:'second-card',status:'unknown'}];
+two.runs=[{backend:['af-mlir'],state:'unknown',age_seconds:40000,stages:{}},
+ {backend:['af-mlir'],state:'idle',age_seconds:200,stages:{}},...two.runs];
+const grouped={...data,machines:[one,two]};
+renderFleet(host,grouped);
+const table=all(host,'table')[0];assert.equal(table.children.length,2);
+assert.equal(table.children[1].children[1].textContent,'2 / 2');
+assert.equal(table.children[1].children[2].textContent,3);
+assert.equal(table.children[1].children[3].textContent,'6.00 / 4.00');
+assert.equal(table.children[1].children[4].textContent,'2 / 4');
+assert.equal(all(host,'h4').length,2);
+const texts=e=>[e.textContent,e.title||'',...e.children.flatMap(texts)].join(' ');
+for(const hidden of ['主机名','机器 ID','host-0','machine-0','uuid-0','second-card','执行槽','历史 / 过期会话','已结束','结束状态未确认','写库失败累计'])assert.ok(!texts(host).includes(hidden),hidden);
+assert.ok(texts(host).includes('npu:0 · 910'));
+assert.ok(texts(host).includes('编译与首次执行'));
+assert.ok(texts(host).includes('本时间段 Case 错误'));
+renderFleet(host,{...data,machines:[{...one,runs:[{backend:['af-mlir'],state:'unknown',age_seconds:40000,stages:{}}]}]});
+assert.ok(texts(host).includes('暂无最近的运行信息。'));
+assert.ok(!texts(host).includes('结束状态未确认'));
+assert.equal(fleetUsers([one,{...two,user_id:'other',user_name:one.user_name}]).length,2);
+assert.equal(fleetAge(40000),'11 小时 6 分前');
+
 
 '''
     subprocess.run([node,'-e',script],check=True,capture_output=True,text=True)

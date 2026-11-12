@@ -160,7 +160,7 @@ def snapshot(database, *, user_id='', machine_id='', model='', backend='', versi
         run_map[identity]=(user,machine)
         m=machines.setdefault((user,machine),dict(user_id=user,user_name=users[user],machine_id=machine,name=machine[:12],seen=0,cards={},runs=[],queued=0,active_cases=0,completed=0,success=0,case_errors=0,record_failed=0))
         age=max(0,now-seen);fresh=age<=30;live=fresh and r['state']=='running'
-        m['runs'].append(dict(run_id=identity,age_seconds=round(age),state=r['state'] if fresh else 'unknown',stages=r['stages'] if live else {},backend=r['backend'],versions=r['versions']))
+        m['runs'].append(dict(run_id=identity,age_seconds=round(age),state=r['state'] if fresh or r['state'] in {'idle','error'} else 'unknown',stages=r['stages'] if live else {},backend=r['backend'],versions=r['versions']))
         if live:m['queued']+=r['queued'];m['active_cases']+=r['active_cases']
         m['record_failed']+=r['record_failed']
         for d in r['devices']:
@@ -187,18 +187,24 @@ def snapshot(database, *, user_id='', machine_id='', model='', backend='', versi
             m['completed']+=completed;m['success']+=success;m['case_errors']+=errors
         bucket=int(t//60)*60
         if bucket in trend:trend[bucket]['completed']+=completed;trend[bucket]['success']+=success
-    physical={};online_machines=set();active_users=set()
+    physical={};online_machines=set();online_users=set();active_users=set()
     for m in machines.values():
         m['display_name']=f"{m['user_name']}-npu{ordinals[(m['user_id'],m['machine_id'])]}"
         m['age_seconds']=round(max(0,now-m.pop('seen')));m['status']='online' if m['age_seconds']<=30 else 'delayed' if m['age_seconds']<=60 else 'offline'
         m['cards']=list(m['cards'].values())
-        if m['status']=='online':online_machines.add(m['machine_id'])
+        if m['status']=='online':
+            online_machines.add(m['machine_id']);online_users.add(m['user_id'])
         for d in m['cards']:
             d['status']='busy' if d['busy'] else 'idle' if now-d['observed']<=30 else 'unknown';d.pop('observed')
             key=(m['machine_id'],d['uuid']);physical[key]=max(physical.get(key,0),2 if d['busy'] else 1 if d['status']=='idle' else 0)
         if m['active_cases']:active_users.add(m['user_id'])
         m['completed_per_min']=m['completed']/minutes;m['success_per_min']=m['success']/minutes
     values=list(machines.values())
+    # Include registered users without heartbeats unless a machine/session
+    # filter requires a matching machine. Disabled accounts are excluded.
+    total_users={u for u in users if not user_id or u==user_id}
+    if machine_id or model or backend or version:
+        total_users.intersection_update(m['user_id'] for m in values)
     # A physical machine can belong to multiple users. Keep one filter value
     # per machine ID and include all applicable aliases instead of hostnames.
     options={}
@@ -206,4 +212,4 @@ def snapshot(database, *, user_id='', machine_id='', model='', backend='', versi
         if user in users and (not user_id or user==user_id):
             options.setdefault(machine,[]).append(f'{users[user]}-npu{ordinal}')
     return dict(generated_at=now,minutes=minutes,unit='backend_shape_execution',users=[dict(id=k,name=v) for k,v in users.items()],models=sorted(all_models),backends=sorted(all_backends),versions=sorted(all_versions),machines=values,trend=sorted(trend.values(),key=lambda t:t['time']),
-                machine_options=[dict(id=m,name=' / '.join(names)) for m,names in options.items()],summary=dict(active_users=len(active_users),registered_machines=len({m['machine_id'] for m in values}),online_machines=len(online_machines),known_cards=len(physical),online_cards=sum(v>0 for v in physical.values()),busy_cards=sum(v==2 for v in physical.values()),active_cases=sum(m['active_cases'] for m in values),queued=sum(m['queued'] for m in values),completed_per_min=sum(m['completed_per_min'] for m in values),success_per_min=sum(m['success_per_min'] for m in values)))
+                machine_options=[dict(id=m,name=' / '.join(names)) for m,names in options.items()],summary=dict(total_users=len(total_users),online_users=len(online_users),active_users=len(active_users),registered_machines=len({m['machine_id'] for m in values}),online_machines=len(online_machines),known_cards=len(physical),online_cards=sum(v>0 for v in physical.values()),busy_cards=sum(v==2 for v in physical.values()),active_cases=sum(m['active_cases'] for m in values),queued=sum(m['queued'] for m in values),completed_per_min=sum(m['completed_per_min'] for m in values),success_per_min=sum(m['success_per_min'] for m in values)))

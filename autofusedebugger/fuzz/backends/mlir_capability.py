@@ -10,6 +10,28 @@ import subprocess
 from .base import UnsupportedBackend
 
 
+def verify_compile_adapter():
+    """Fail before device setup when a partial autofuse package shadows its helpers."""
+    import importlib
+    import importlib.util
+    origin = 'unresolved'
+    try:
+        spec = importlib.util.find_spec('autofuse')
+        origin = spec.origin if spec else 'not installed'
+        adapter = importlib.import_module('autofuse.compile_adapter')
+        required = ('build_tiling_obj', 'build_kernel_obj', 'build_kernel_so')
+        missing = [name for name in required if not callable(getattr(adapter, name, None))]
+        if missing:
+            raise ValueError('missing compile APIs: ' + ', '.join(missing))
+        return adapter.__file__
+    except Exception as exc:
+        raise UnsupportedBackend(
+            'Autofuse compile runtime is incomplete (selected package: '
+            + str(origin) + '). Install a complete '
+            'matching autofuse package; a pyautofuse.so-only overlay shadows '
+            'later PYTHONPATH packages. Cause: ' + str(exc)) from exc
+
+
 def verify_runtime():
     try:
         import autofuse.pyautofuse  # noqa: F401; resolve the actual runtime first

@@ -35,7 +35,7 @@ function fleetControls(host,data){
 }
 function fleetCards(host,s){
  const cards=fleetElement('div',undefined,'efficiency-cards');
- const entries=[['活跃用户',s.active_users],['在线 / 已登记机器',s.online_machines+' / '+s.registered_machines],['占用 / 新鲜观测 NPU',s.busy_cards+' / '+s.online_cards],['完成 Shape 执行/min',s.completed_per_min.toFixed(2)],['成功 Shape 执行/min',s.success_per_min.toFixed(2)],['运行中 Case / 排队任务',s.active_cases+' / '+s.queued]];
+ const entries=[['总用户数 / 在线用户数 / 活跃用户数',s.total_users+' / '+s.online_users+' / '+s.active_users],['已登记 NPU',s.known_cards],['完成数 / min',s.completed_per_min.toFixed(2)],['成功数 / min',s.success_per_min.toFixed(2)],['运行中 Case / 排队任务',s.active_cases+' / '+s.queued]];
  for(const [label,value] of entries){const c=fleetElement('div');c.append(fleetElement('span',label),fleetElement('strong',value));cards.append(c);}host.append(cards);
 }
 function fleetTrend(host,data){
@@ -43,25 +43,61 @@ function fleetTrend(host,data){
  const bars=fleetElement('div',undefined,'fleet-trend');const maximum=Math.max(1,...data.trend.map(b=>b.completed));
  for(const bucket of data.trend){const bar=fleetElement('div');const time=new Date(bucket.time*1000).toLocaleTimeString();bar.title=time+' · 完成 '+bucket.completed+' / 成功 '+bucket.success;bar.setAttribute('aria-label',bar.title);const total=fleetElement('span',undefined,'fleet-total'),success=fleetElement('span',undefined,'fleet-success');total.style.height=(100*bucket.completed/maximum)+'%';success.style.height=(100*bucket.success/maximum)+'%';bar.append(total,success);bars.append(bar);}box.append(bars,fleetElement('p','浅绿：完成；深绿：成功。只包含连续收到的心跳计数增量；断网区间不补记为实时产出。','muted'));host.append(box);
 }
+function fleetUsers(machines){
+ const groups=new Map();
+ for(const m of machines){
+  if(!groups.has(m.user_id))groups.set(m.user_id,{user_id:m.user_id,user_name:m.user_name,machines:[],cards:new Map(),completed_per_min:0,success_per_min:0,active_cases:0,queued:0,age_seconds:Infinity,online:0,delayed:0});
+  const u=groups.get(m.user_id);u.machines.push(m);
+  for(const key of ['completed_per_min','success_per_min','active_cases','queued'])u[key]+=Number(m[key]||0);
+  u.age_seconds=Math.min(u.age_seconds,m.age_seconds);
+  if(m.status==='online')u.online++;else if(m.status==='delayed')u.delayed++;
+  for(const d of m.cards){
+   const key=JSON.stringify([m.machine_id,d.uuid]),old=u.cards.get(key),rank={unknown:0,idle:1,busy:2};
+   if(!old||rank[d.status]>rank[old.status])u.cards.set(key,d);
+  }
+ }
+ return [...groups.values()].map(u=>({...u,cards:[...u.cards.values()]}));
+}
+function fleetAge(seconds){
+ const n=Math.max(0,Math.floor(seconds));
+ if(n<60)return n+' 秒前';
+ if(n<3600)return Math.floor(n/60)+' 分 '+n%60+' 秒前';
+ if(n<86400)return Math.floor(n/3600)+' 小时 '+Math.floor(n%3600/60)+' 分前';
+ return Math.floor(n/86400)+' 天 '+Math.floor(n%86400/3600)+' 小时前';
+}
+function fleetRun(run){
+ const stageNames={generate:'构图',reference:'CPU 参考',first_call_combined:'编译与首次执行',compare:'精度比较',record:'结果写库'};
+ const state={running:'运行中',idle:'已结束',error:'异常结束',unknown:'观测已过期（结束状态未确认）'}[run.state]||'状态未知';
+ const stages=Object.entries(run.stages).map(([k,v])=>(stageNames[k]||k)+': '+v).join(' / ');
+ return fleetElement('p',`${run.backend.join(', ')||'后端未采集'} · ${state}${stages?' · 阶段 '+stages:''} · 最后观测 ${fleetAge(run.age_seconds)}`);
+}
+function fleetMachine(host,parent,m){
+ const box=fleetElement('section');box.append(fleetElement('h4',m.display_name||'机器'));
+ box.append(fleetElement('p',`${{online:'在线',delayed:'心跳延迟',offline:'失联'}[m.status]} · 最后心跳 ${fleetAge(m.age_seconds)}`,'muted'));
+ for(const d of m.cards)box.append(fleetElement('p',`${d.logical} · ${d.model}`));
+ const runs=[...m.runs].sort((a,b)=>a.age_seconds-b.age_seconds);
+ const current=runs.filter(r=>r.state==='running'&&r.age_seconds<=30);
+ box.append(fleetElement('p',current.length?'当前运行会话：'+current.length:'暂无最近的运行信息。','muted'));
+ for(const run of current)box.append(fleetRun(run));
+ box.append(fleetElement('p','本时间段 Case 错误：'+m.case_errors));parent.append(box);
+}
 function renderFleet(host,data,efficiency=false){
  rememberFleetDisclosures(host);
  host.replaceChildren();host.append(fleetElement('h2',efficiency?'工具效率 · 多用户运行概览':'实时运行状态'));
  fleetControls(host,data);fleetCards(host,data.summary);
- host.append(fleetElement('p','每 10 秒心跳；超过 30 秒延迟，60 秒失联。卡占用是调度执行槽，不是 AICore 使用率。完成量按后端 Shape 执行计数，含重试，不等于去重用例覆盖数。','muted'));
- host.append(fleetElement('p','机器在线由上传器心跳判断；卡状态由执行器新鲜观测判断。后端、卡型号、版本筛选匹配运行会话，吞吐为匹配会话整体产出，不是单卡基准。旧客户端和失联执行器不推断为在线执行。','muted'));
- const n=data.machines.length,pages=Math.max(1,Math.ceil(n/10));fleetState.page=Math.min(fleetState.page,pages-1);
- const t=fleetTable(['用户 / 机器','在线状态','占用 / 观测 / 已知卡','完成 / 成功 Shape执行/min','运行 Case / 排队任务','最后心跳']);
- for(const m of data.machines.slice(fleetState.page*10,(fleetState.page+1)*10)){
-  const tr=fleetElement('tr'),name=fleetElement('td'),details=fleetDisclosure(host,JSON.stringify(['machine',m.user_id,m.machine_id]));details.append(fleetElement('summary',m.display_name||m.user_name+' / '+m.name));
-  details.append(fleetElement('p','用户：'+m.user_name+' · 主机名：'+m.name,'muted'));
-  details.append(fleetElement('p','机器 ID：'+m.machine_id,'muted'));
-  for(const d of m.cards)details.append(fleetElement('p',`${d.logical} · ${d.model} · ${{busy:'执行槽占用',idle:'执行槽空闲',unknown:'状态未知'}[d.status]} · ${d.uuid}`));
-  for(const run of m.runs)details.append(fleetElement('p',`${run.backend.join(', ')} · ${{running:'运行中',idle:'已结束',error:'异常结束',unknown:'执行器状态未知'}[run.state]} · 阶段 ${Object.entries(run.stages).map(([k,v])=>k+': '+v).join(' / ')||'—'} · 观测 ${run.age_seconds}s 前`));
-  details.append(fleetElement('p','本时间段 Case 错误：'+m.case_errors+'；保留运行会话写库失败累计：'+m.record_failed));name.append(details);tr.append(name);
-  for(const v of [{online:'在线',delayed:'心跳延迟',offline:'失联'}[m.status],m.cards.filter(c=>c.status==='busy').length+' / '+m.cards.filter(c=>c.status!=='unknown').length+' / '+m.cards.length,m.completed_per_min.toFixed(2)+' / '+m.success_per_min.toFixed(2),m.active_cases+' / '+m.queued,m.age_seconds+' s 前'])fleetCell(tr,v);t.append(tr);
+ host.append(fleetElement('p','每 10 秒心跳；超过 30 秒延迟，60 秒失联。完成量按后端 Shape 执行计数，含重试，不等于去重用例覆盖数。','muted'));
+ host.append(fleetElement('p','机器在线不代表测试正在运行；运行状态以最近上报为准。后端、卡型号、版本筛选匹配运行会话，吞吐为匹配会话整体产出，不是单卡基准。旧客户端和失联执行器不推断为在线执行。','muted'));
+ const users=fleetUsers(data.machines),n=users.length,pages=Math.max(1,Math.ceil(n/10));fleetState.page=Math.min(fleetState.page,pages-1);
+ const t=fleetTable(['用户','在线 / 已登记机器','NPU 数量','完成数/成功数 / min','运行 Case / 排队任务','最近心跳']);
+ for(const u of users.slice(fleetState.page*10,(fleetState.page+1)*10)){
+  const tr=fleetElement('tr'),name=fleetElement('td'),details=fleetDisclosure(host,JSON.stringify(['user',u.user_id]));details.append(fleetElement('summary',u.user_name));
+  for(const m of u.machines)fleetMachine(host,details,m);
+  name.append(details);tr.append(name);
+  const presence=u.online+' / '+u.machines.length+(u.delayed?' · '+u.delayed+' 台心跳延迟':'');
+  for(const v of [presence,u.cards.length,u.completed_per_min.toFixed(2)+' / '+u.success_per_min.toFixed(2),u.active_cases+' / '+u.queued,fleetAge(u.age_seconds)])fleetCell(tr,v);t.append(tr);
  }
  host.append(fleetWrap(t));if(!n)host.append(fleetElement('p','暂无符合条件的机器心跳。旧结果不会被当成在线设备。','muted'));
- const pager=fleetElement('div',undefined,'efficiency-toolbar'),prev=fleetElement('button','上一页'),next=fleetElement('button','下一页');prev.disabled=fleetState.page===0;next.disabled=fleetState.page>=pages-1;prev.onclick=()=>{fleetState.page--;renderFleet(host,data,efficiency);};next.onclick=()=>{fleetState.page++;renderFleet(host,data,efficiency);};pager.append(fleetElement('span',n+' 个用户/机器条目 · 第 '+(fleetState.page+1)+' / '+pages+' 页'),prev,next);host.append(pager);fleetTrend(host,data);
+ const pager=fleetElement('div',undefined,'efficiency-toolbar'),prev=fleetElement('button','上一页'),next=fleetElement('button','下一页');prev.disabled=fleetState.page===0;next.disabled=fleetState.page>=pages-1;prev.onclick=()=>{fleetState.page--;renderFleet(host,data,efficiency);};next.onclick=()=>{fleetState.page++;renderFleet(host,data,efficiency);};pager.append(fleetElement('span',n+' 个用户 · 第 '+(fleetState.page+1)+' / '+pages+' 页'),prev,next);host.append(pager);fleetTrend(host,data);
  if(efficiency)host.append(fleetElement('p','实时卡/机器筛选作用于心跳观测。下方历史分位数是独立的结果统计范围，不与实时吞吐混算。','muted'));
 }
 async function refreshFleet(force=false){

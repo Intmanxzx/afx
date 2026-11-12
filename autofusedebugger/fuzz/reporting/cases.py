@@ -128,9 +128,11 @@ def summary(database, **params):
     from ..storage.queries import reading
     sql, values = rollup(**params)
     with reading(database, timeout=10) as conn:
-        counts = {r['status']:r['count'] for r in conn.execute(
-            sql + 'SELECT status,count(*) AS count FROM cases GROUP BY status', values)}
-    return {'total':sum(counts.values()), 'by_status':counts, 'unit':'shape_case'}
+        rows = conn.execute(sql + "SELECT status,count(*) AS count,"
+            "sum(CASE WHEN status IN ('error','unsupported') AND failure_path='mlir_failed' THEN 1 ELSE 0 END) AS mlir "
+            "FROM cases GROUP BY status", values).fetchall()
+        counts = {r['status']:r['count'] for r in rows}
+    return {'total':sum(counts.values()), 'by_status':counts, 'mlir_failed':sum(r['mlir'] for r in rows), 'unit':'shape_case'}
 
 
 def page_keys(conn, *, limit, after=0, seed=None, status=None, user_id=None, q=None):

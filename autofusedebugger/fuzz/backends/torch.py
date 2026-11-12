@@ -35,6 +35,9 @@ class TorchAdapter:
         os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(self.config.compile_threads)
         import torch
         self.torch = torch
+        if self.name in {'af-legacy', 'af-mlir'}:
+            from .mlir_capability import verify_compile_adapter
+            verify_compile_adapter()
         if self.name == 'af-mlir':
             from .mlir_capability import verify_runtime
             verify_runtime()

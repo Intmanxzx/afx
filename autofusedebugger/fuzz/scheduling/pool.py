@@ -100,7 +100,7 @@ class Pool:
         try:
             worker['socket'].close()
             _terminate_group(worker['child'])
-            worker['tail'].finish()
+            return worker['tail'].finish()
         finally:
             worker['scratch'].cleanup()
 
@@ -172,15 +172,20 @@ class Pool:
                 else:
                     worker['busy'] = False
             return response
-        except BaseException:
+        except BaseException as exc:
+            log = ''
             if worker is not None:
                 with self.lock:
                     if worker in self.workers:
-                        self._retire(worker); self.workers.remove(worker)
+                        log = self._retire(worker); self.workers.remove(worker)
             if job['kind']=='record' and job.get('save'):
                 from .supervisor import _has_result
                 if _has_result(Path(job['database']),job['task']):
                     return {'ok':True,'value':{'saved':True,'status':job['result']['status']},'finished':time.monotonic_ns()}
+            if log and isinstance(exc, Exception):
+                from ..failure_details import redact
+                message = redact(f'{type(exc).__name__}: {exc}')[:300]
+                raise RuntimeError(message + '\nWorker log:\n' + log[:1200]) from None
             raise
 
     def cancel(self, identity):
