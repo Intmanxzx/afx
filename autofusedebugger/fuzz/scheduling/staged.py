@@ -80,6 +80,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 'error_stage':kind if bundle else 'generation','error_summary':str(error)[-500:],'shape_results':[]}
 
         def make_record(case,session,result,dependencies):
+            result['execution']['expected_backends']=json.dumps(sorted({json.loads(t['execution'])['backend'] for t in case.tasks}))
             s=stage(Kind.RECORD,case,dependencies,session)
             s.output={'result':result}
             s.facts['retry_index']=max(0,int(session.task.get('try_count',1))-1)

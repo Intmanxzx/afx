@@ -31,7 +31,8 @@ def test_cpu_only_unknown_and_cpu_match_filter_keeps_mlir_failure(tmp_path):
     repo=ResultRepository(tmp_path/'results')
     save(repo,'1','cpu','ok')
     q=ResultQueries(repo.path)
-    assert q.case_summary()['by_status']=={'unknown':1}
+    assert q.case_summary()['by_status']=={}
+    assert q.case_page()['items']==[]
     save(repo,'1','af-mlir','error')
     assert q.case_summary(q='cpu')['by_status']=={'error':1}
     save(repo,'2','cpu','ok',user='bob')

@@ -27,7 +27,7 @@ def test_group_backend_retries_and_separate_provenance(tmp_path):
     assert item['backends']['cpu'][0]['total_ns']==15
     assert item['versions']['cann'] is None
     for e,b in [(dict(env,installation_id='device-b'),'run1'),(dict(env,torch_npu='2.11'),'run1'),(env,'run2')]:
-        repo.save(record(batch=b),environment=e)
+        repo.save(record('af-mlir',batch=b),environment=e)
     assert len(q.case_page()['items'])==4
     first=q.case_page(limit=2); second=q.case_page(limit=2,after=first['next_cursor'])
     assert len({i['case_id'] for i in first['items']+second['items']})==4
@@ -91,6 +91,7 @@ def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
     from autofusedebugger.fuzz.sync.outbox import pending
     central=tmp_path/'central';key=tmp_path/'key';create_user(central,'管理员命名的设备',key)
     repo=ResultRepository(tmp_path/'local');repo.save(record(),environment={'device_name':'untrusted','torch_npu':'2.10'})
+    repo.save(record('af-mlir'),environment={'device_name':'untrusted','torch_npu':'2.10'})
     payload=pending(repo.path);ingest(central,key.read_text().strip(),payload)
     first=ResultQueries(central).case_page()['items'][0]
     assert first['device_name']=='管理员命名的设备'
@@ -109,7 +110,7 @@ def test_historical_cann_spelling_rebuild_preserves_records(tmp_path, monkeypatc
         patch.setattr(index, 'canonical_cann_version', lambda value: value)
         repo.save(record('cpu'), environment=env)
         repo.save(record('af-mlir'), environment=dict(env, cann='9.3.0.beta1'))
-    assert len(ResultQueries(repo.path).case_page()['items']) == 2
+    assert len(ResultQueries(repo.path).case_page()['items']) == 1
     def immutable():
         with sqlite3.connect(repo.path) as conn:
             return {table: conn.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall()
@@ -117,7 +118,7 @@ def test_historical_cann_spelling_rebuild_preserves_records(tmp_path, monkeypatc
     before = immutable()
     from autofusedebugger.fuzz.reporting.incremental import IncrementalStatistics
     incremental = IncrementalStatistics(repo.path)
-    assert incremental.refresh()['case_groups'] == 2
+    assert incremental.refresh()['case_groups'] == 1
     for expected in (1, 0):
         assert index.migrate_cann_versions(repo.path) == {'reindexed': expected}
         items = ResultQueries(repo.path).case_page()['items']

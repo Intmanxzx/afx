@@ -27,18 +27,29 @@ def statistics(conn,selected_ids=None, *, use_cached=False, window_id=None):
         if not end or end['domain']!=start['domain']:continue
         elapsed_ns=end['monotonic_ns']-start['monotonic_ns']
         if elapsed_ns<=0:continue
-        if use_cached and selected_ids is None:
+        # A finished local window can arrive before all of its result uploads.
+        incomplete = {r[0] for r in conn.execute("""
+            SELECT f.attempt_id FROM stage_attempts_v1 x
+            JOIN attempt_facts f ON f.attempt_id=x.attempt_id
+            WHERE x.window_id=? AND EXISTS (
+                SELECT 1 FROM attempt_facts peer,
+                     json_each(json_extract(peer.execution,'$.expected_backends')) expected
+                WHERE peer.group_id=f.group_id AND NOT EXISTS (
+                    SELECT 1 FROM attempt_facts done JOIN attempts a ON a.id=done.attempt_id
+                    WHERE done.group_id=f.group_id AND a.backend=expected.value))
+            """, (window_id,))}
+        if use_cached and selected_ids is None and not incomplete:
             cached=conn.execute('SELECT payload FROM stage_window_aggregates_v1 WHERE window_id=?',(window_id,)).fetchone()
             if cached:
                 output.extend(json.loads(cached[0]));continue
         if not conn.execute('SELECT 1 FROM stage_facts_v1 WHERE window_id=?',(window_id,)).fetchone():
             cached=conn.execute('SELECT payload FROM stage_window_aggregates_v1 WHERE window_id=?',(window_id,)).fetchone()
-            if cached and selected_ids is None:output.extend(json.loads(cached[0]))
+            if cached and selected_ids is None and not incomplete:output.extend(json.loads(cached[0]))
             continue
         attempts=conn.execute('SELECT a.id,a.backend,a.status,a.workload_id,a.evaluation_id,a.environment_id,a.execution_id FROM stage_attempts_v1 x JOIN attempts a ON a.id=x.attempt_id WHERE x.window_id=?',(window_id,)).fetchall()
         by_backend={}
         for identity,backend,status,workload,ev_id,env_id,ex_id in attempts:
-            if backend in {'cpu','cpu-eager'}:continue
+            if backend in {'cpu','cpu-eager'} or identity in incomplete:continue
             if selected_ids is not None and identity not in selected_ids:continue
             ev=json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?',(ev_id,)).fetchone()[0])
             ex=json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?',(ex_id,)).fetchone()[0])
