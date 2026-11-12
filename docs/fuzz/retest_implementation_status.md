@@ -31,7 +31,7 @@
 - 正式库迁移前私有一致备份已完成，目录 `/home/ubuntu/af-fuzz/private/model-deploy-1112/`，保存 25,992 attempts、39,170 shapes、5 users、7 sources、42,758 receipts；正式迁移约 99.68 秒，原始表数量及所有状态计数不变，外键检查通过，白名单未解除。正式库直接查询 summary 0.50 秒、page10 0.81 秒、Fail 列表 0.69 秒（非公共响应缓存）。
 - 迁移后真实 HTTPS → mlir → 上传 → 当前索引更新闭环完成：批次 `48d998ba-7158-4eb1-8731-892e4895429a`，attempt `d5ef2859-5189-45a8-912c-64689bce36fc`；3 Shape 全 Pass，历史数均为 3，dirty 队列为 0。报告 `/mnt/workspace/af-fuzz/retest-1112/production-validation/model-completed-report.json`。独立验证进程完成后停止；正式客户端现已按用户批准恢复，见当前受限部署状态。
 - 正式服务浏览器历史验收通过（通过 SSH 隧道访问 oracle1，公网 Chromium 导航重试遇到网络超时）：3 个当前 Shape，可展开 2 条历史，无 JS 错误；截图 `/tmp/af-model-production-history.png`。mlir 到公网 HTTPS 的提交、查询、上报闭环通过。
-- **未解决的容量问题**：副本统计 19 秒不能作为生产 SLA；生产完整统计一次在 90 秒截止时间中断，单连接 32 MiB 缓存和内存临时表诊断测试约 96 秒。该 PRAGMA 仅用于诊断，未作为默认配置部署。结构化读取/增量写入已交付，但全量统计扫描阶段指标等仍需继续优化，不解除白名单。
+- **未解决的容量问题**：副本统计 19 秒不能作为生产 SLA；生产完整统计一次在 90 秒截止时间中断，单连接 32 MiB 缓存和内存临时表诊断测试约 96 秒。该 PRAGMA 仅用于诊断，未作为默认配置部署。结构化读取/增量写入已交付，但全量统计扫描阶段指标等仍需继续优化；不能把缓存接口响应时间当成全量计算时间。白名单已按用户后续授权及 10 分钟观察结果关闭。
 
 ## 验证记录
 
@@ -67,23 +67,23 @@
 
 - 白名单同组回归：mlir **41 passed**，日志 `/mnt/workspace/af-fuzz/retest-1112/write-allowlist-tests.log`。该组隔离回归期间未启用生产白名单、未停止现有客户端；后续受限部署状态见下文。
 
-## 当前受限部署状态
+## 当前部署与恢复状态
 
-用户已批准恢复自己的正式 mlir 客户端；现已恢复原 campaign 和上报，服务端继续以白名单运行，不是全量放开服务。
+已按用户批准恢复正式 mlir 原 campaign 和上报；随后连续观察 10 分钟，关闭验证期白名单并重启服务，所有有效身份现可正常写入。正常鉴权与资源保护保留。
 
 - oracle1 备份目录：`/home/ubuntu/af-fuzz/private/retest-validation-1112/`；备份原库 25,988 attempts、5 users、6 sources、42,754 receipts，数据库完整性通过。
 - 发布目录：`/home/ubuntu/af-fuzz/releases/retest-validation-1112/`，override：`zz-retest-validation-1112.conf`。原 venv 和配置保留。
-- 白名单允许 NiuYH 用户、独立验证客户端及正式客户端。正式上传/复测 source_id 为 `7ddb931b-1b06-4763-a80c-b31aff42a585`；现有心跳使用 config.json 中的安装身份 `314d5de1-2a64-40c1-99cc-8a7edf1e2307`，已同时放行。其他身份继续受限。HTTPS 注册/登录 200，非白名单来源上传 503 已实测。Token 不存入文档。
+- 白名单允许 NiuYH 用户、独立验证客户端及正式客户端。正式上传/复测 source_id 为 `7ddb931b-1b06-4763-a80c-b31aff42a585`；现有心跳使用 config.json 中的安装身份 `314d5de1-2a64-40c1-99cc-8a7edf1e2307`，已同时放行。这些是受限阶段的允许项；目前 enabled=false，不再按该列表限制其他身份。HTTPS 注册/登录 200，限制启用时非白名单来源上传 503 已实测。Token 不存入文档。
 - mlir 正式目录 `/mnt/workspace/af-fuzz/niuyh-home` 已恢复原 campaign，未重新初始化 payload、next_device、任务或 ACK。恢复前一致备份位于 `/mnt/workspace/af-fuzz/retest-1112/formal-resume/`。沿用持久预算：4 workers、每编译 8 threads，双卡 npu:0 / npu:1，加载 `~/autofuse/build`。验收时 completed 从 7,222 增至 7,260，4 running、6 pending；两张物理卡 12/13 均观察到工作进程。上传 ACK 从 7,221 增至 7,260，pending=0；同步、复测轮询、运行心跳均 ok。恢复日志 `/mnt/workspace/af-fuzz/retest-1112/resume-formal.log`。
 - 独立客户端：`/mnt/workspace/af-fuzz/retest-1112/production-validation/client`；CPU + AF-MLIR D16 基线完成，3 Shape Pass。真实 HTTPS 控制面批量提交 3 个 Shape，合并为 1 项任务并在第一代租约完成；CPU/AF-MLIR 结果均已上报。独立验证消费进程在完成后停止，不与正式客户端重复运行。
 - 用户新构建位于 `~/autofuse/build`，解析为 `/mnt/workspace/gitCode/niuyuhu/graph-autofusion/build`。实际加载 codegen 文件与该目录一致，SHA256 为 `71352eeaaa5509975caab307fc1755cccd736542bcede5afa8c1834d15cf9508`。Python 辅助包仍来自完整 package-closure 运行时。
 - 上线检查发现生产规模查询慢，并多次观察到 87%–96% CPU steal。进一步移除中间结果中的宽执行日志、复用同轮 Shape 成员读取，将统计双次全站聚合合并为单次，精确短 Seed 搜索前推至入口；全站重查询采用单并发预算，避免挤占上传/续租。主机独立全量统计测得约 165 秒，后台回退预算调整为 300 秒，交互查询预算不变。最终重启后约 90 秒缓存就绪；线上 summary/statistics/cases 三接口均 200、cache=ready，HTTPS 响应分别约 0.45/0.52/0.24 秒。浏览器首页正确显示总数 20,676、Pass 13,551，无 JS 错误（截图 `/tmp/af-production-ready.png`）。仍需持续验证全量服务容量，不据此恢复一般上传。
 - 线上目标列表/历史 API 与真实 Chromium 验收通过：3 个 Shape 均 Pass，当前标记“复测”，history_count 均为 2，默认折叠并能展开原记录，无 JavaScript 错误。批次 `7aaf1009-f083-4c3a-870e-faf95db00a42`，新 AF-MLIR attempt `45c3772d-ecab-4691-88b6-74fb78ce5da5`；报告 `/mnt/workspace/af-fuzz/retest-1112/production-validation/completed-report.json`，截图 `/tmp/af-production-retest-history.png`。summary_id 三个均为空，预留正常。
 - 性能改动回归：mlir 控制面/缓存/聚合 **55 passed**（`query-gate-tests.log`），精确 Seed/缓存 **15 passed**（`query-seed-tests.log`），预热预算 **8 passed**（`query-bootstrap-tests.log`）；Docker 对应统计组 **37 passed**、控制面/缓存组 **25 passed**、精确 Seed/缓存 **15 passed**、预热 **8 passed**。组间有重叠，不合计。覆盖/Shape/失败归因补充回归：mlir Node 20 **74 passed**（`query-coverage-final.log`），Docker **73 passed、1 个 Node 测试跳过**（`/tmp/af-query-coverage-final.log`）；该 Node 项已在 mlir 通过。补充修正旧测试对缓存版本 4 的硬编码，当前版本为 6。
-- API 以白名单模式运行，正式客户端已恢复；service active、healthz 正常，继续上传后结构化 dirty 队列为 0。已完成上述真实复测闭环，但不等同于全量服务容量验收。
+- 2026-11-12 15:27–15:37 UTC 连续观察 10 分钟、11 次采样：完成任务 7,305→7,439，服务端 ACK 7,298→7,436；四个公共接口全部 200、缓存 ready、dirty=0、服务无自动重启。期间一次上传超时自动恢复，未形成持续积压。随后设置 enabled=false 并重启，缓存恢复 ready、ACK 继续推进至 7,462。非白名单随机 source 的无效上传探针返回 400 而非维护 503，未写入测试数据。日志 `/home/ubuntu/af-fuzz/private/retest-validation-1112/recovery-observation-10min.jsonl`。其他来源尚未主动续传，不据此声称多客户端满负载容量已验收。
 
 ## 交付边界
 
-功能代码已提交为 `9f2d526` 并推送 `origin/refactor`。当前仅恢复用户自己的 mlir 客户端；全量解除写入白名单仍须用户另行确认。
+功能代码已提交为 `9f2d526` 并推送 `origin/refactor`。正式客户端恢复状态更新已提交为 `02ae095`。用户进一步授权观察 10 分钟后全量恢复，目前验证期写入限制已解除。
 
 历史数据没有显式 round_id 时无法无损推断所有乱序缺失场景；新客户端通过显式 round_id 消除该歧义。总结服务与主后端切换不属于本期。
