@@ -5,6 +5,7 @@ are derived from frozen case protocol or recorded execution data, never today's
 machine versions. Rebuild only on explicit migration or insertion, not on reads.
 """
 import json
+import re
 from contextlib import closing
 from ..storage.records import canonical, digest
 
@@ -42,6 +43,13 @@ def initialize(conn):
     elif row[0]!=1: raise ValueError('unsupported reporting index version')
 
 
+def canonical_cann_version(value):
+    """Compatibility for old runtime spellings; never rewrite stored contexts."""
+    if not isinstance(value, str):
+        return value
+    return re.sub(r'^(\d+\.\d+\.\d+)\.beta(\d+)$', r'\1-beta.\2', value)
+
+
 def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None):
     initialize(conn)
     columns=[r[1] for r in conn.execute('PRAGMA table_info(attempts)')]
@@ -49,6 +57,9 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     contexts={k:json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?',(row[k+'_id'],)).fetchone()[0])
               for k in ('environment','execution','evaluation')}
     env,ex,ev=(contexts[k] for k in ('environment','execution','evaluation'))
+    # Normalize both occurrences in the grouping key, not just versions.
+    if 'cann' in env:
+        env = dict(env, cann=canonical_cann_version(env['cann']))
     existing=conn.execute('SELECT source_id,device_name,user_id FROM attempt_facts WHERE attempt_id=?',(identity,)).fetchone()
     source_id=source_id or (existing[0] if existing else None) or env.get('installation_id') or 'unrecorded'
     device_name=device_name or (existing[1] if existing else None) or env.get('device_name') or '设备未记录'
@@ -136,3 +147,17 @@ def rebuild(path):
                 source=sources[0][0] if len(sources)==1 else 'historical-user:'+str(user)
             index_attempt(conn,identity,source,name,user)
         return {'indexed':conn.execute('SELECT count(*) FROM attempt_facts').fetchone()[0],'report_schema':1}
+
+
+def migrate_cann_versions(path):
+    """Explicit, atomic repair of legacy derived facts; back up before calling."""
+    from ..storage.repository import _connect
+    with closing(_connect(path, writable=True)) as conn, conn:
+        conn.execute('BEGIN IMMEDIATE')
+        initialize(conn)
+        identities = [identity for identity, versions in conn.execute(
+            'SELECT attempt_id,versions FROM attempt_facts').fetchall()
+            if (value := json.loads(versions).get('cann')) != canonical_cann_version(value)]
+        for identity in identities:
+            index_attempt(conn, identity)
+        return {'reindexed': len(identities)}
