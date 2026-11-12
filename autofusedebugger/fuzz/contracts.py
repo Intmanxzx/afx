@@ -125,7 +125,15 @@ class CaseBundle:
     def __post_init__(self):
         if not isinstance(self.spec, CaseSpec) or not isinstance(self.storages, tuple) or not all(type(v) is bytes for v in self.storages):
             raise TypeError("CaseBundle requires immutable spec and byte storages")
-        widths = {"float16": 2, "float32": 4}
+        # Canonical storage mirrors the dtype coverage of the pre-refactor
+        # NNSmith generator.  Complex values use their native byte widths;
+        # bfloat16 is stored as its 16-bit IEEE high half.
+        widths = {
+            "bool": 1, "uint8": 1, "int8": 1,
+            "uint16": 2, "uint32": 4, "int16": 2, "int32": 4, "int64": 8,
+            "float16": 2, "bfloat16": 2, "float32": 4, "float64": 8,
+            "complex64": 8, "complex128": 16,
+        }
         for tensor in (*self.spec.weights, *self.spec.inputs, *(t for s in self.spec.shape_samples for t in s)):
             if tensor.dtype not in widths:
                 raise ValueError("unsupported canonical storage dtype")

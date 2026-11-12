@@ -97,3 +97,49 @@ def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
     assert first['backends']['cpu'][0]['total_ns']==15
     rebuild(central)
     assert ResultQueries(central).case_page()['items'][0]==first
+
+
+def test_historical_cann_spelling_rebuild_preserves_records(tmp_path, monkeypatch):
+    from autofusedebugger.fuzz.reporting import index
+    from autofusedebugger.fuzz.reporting.statistics import statistics
+    repo = ResultRepository(tmp_path/'db')
+    env = {'installation_id': 'device-a', 'cann': '9.3.0-beta.1'}
+    # Reproduce the old index with distinct runtime/file spellings.
+    with monkeypatch.context() as patch:
+        patch.setattr(index, 'canonical_cann_version', lambda value: value)
+        repo.save(record('cpu'), environment=env)
+        repo.save(record('af-mlir'), environment=dict(env, cann='9.3.0.beta1'))
+    assert len(ResultQueries(repo.path).case_page()['items']) == 2
+    def immutable():
+        with sqlite3.connect(repo.path) as conn:
+            return {table: conn.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall()
+                    for table in ('attempts', 'contexts', 'shapes')}
+    before = immutable()
+    from autofusedebugger.fuzz.reporting.incremental import IncrementalStatistics
+    incremental = IncrementalStatistics(repo.path)
+    assert incremental.refresh()['case_groups'] == 2
+    for expected in (1, 0):
+        assert index.migrate_cann_versions(repo.path) == {'reindexed': expected}
+        items = ResultQueries(repo.path).case_page()['items']
+        assert len(items) == 1
+        assert set(items[0]['backends']) == {'cpu', 'af-mlir'}
+        assert items[0]['versions']['cann'] == '9.3.0-beta.1'
+        stats = statistics(repo.path)
+        assert stats['case_groups'] == 1
+        assert [(row['status'], row['count']) for row in stats['overall']] == [('ok', 1)]
+        assert stats['performance'][0]['performance'] == 'not_requested'
+        assert immutable() == before
+        assert incremental.refresh() == stats
+    rebuild(repo.path)
+    assert len(ResultQueries(repo.path).case_page()['items']) == 1
+    repo.save(record('af-mlir'), environment=dict(env, cann='9.3.0-beta.2'))
+    assert len(ResultQueries(repo.path).case_page()['items']) == 2
+
+
+@pytest.mark.parametrize('value,expected', [
+    ('9.3.0.beta1', '9.3.0-beta.1'), ('9.3.0-beta.1', '9.3.0-beta.1'),
+    ('9.3.0', '9.3.0'), ('9.3.0.beta1-custom', '9.3.0.beta1-custom'), (None, None),
+])
+def test_cann_legacy_spelling_is_narrow(value, expected):
+    from autofusedebugger.fuzz.reporting.index import canonical_cann_version
+    assert canonical_cann_version(value) == expected

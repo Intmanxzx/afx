@@ -116,6 +116,7 @@ def test_concurrent_heartbeats_and_server_names(central):
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda p:ingest(db,a['token'],p,now=100),payloads))
     result=snapshot(db,now=100)
+    assert {m['display_name'] for m in result['machines']}=={f'Alice-npu{i}' for i in range(16)}
     assert result['summary']['online_machines']==16
     assert result['summary']['busy_cards']==16
     assert {m['user_name'] for m in result['machines']}=={'Alice'}
@@ -143,3 +144,39 @@ def test_sampled_case_metadata_roundtrip():
     assert decode(encode(spec))==spec
     graph['sampling']['dim_max']=2
     with pytest.raises(ValueError):decode(encode(replace(spec,graph_json=json.dumps(graph,sort_keys=True,separators=(',',':')))))
+
+
+def test_machine_display_names_are_persistent_and_options_deduplicated(central):
+    db,a,b=central
+    first=sample(machine='host-z');ingest(db,a['token'],first,now=100)
+    second=sample(machine='host-a');ingest(db,a['token'],second,now=110)
+    # Same host, new installation and hostname: not a new machine number.
+    replacement=sample(machine='host-z');replacement['machine_name']='new-container'
+    ingest(db,a['token'],replacement,now=120)
+    ingest(db,b['token'],sample(machine='host-z'),now=125)
+    expected={'host-z':'Alice-npu0','host-a':'Alice-npu1'}
+    def names(**filters):
+        return {m['machine_id']:m['display_name'] for m in snapshot(db,now=130,**filters)['machines']}
+    assert names(user_id=a['user_id'])==expected
+    assert names(user_id=a['user_id'],machine_id='host-a',backend='af-mlir')=={'host-a':'Alice-npu1'}
+    assert names(user_id=b['user_id'])=={'host-z':'Bob-npu0'}
+    options=snapshot(db,now=130)['machine_options']
+    assert len(options)==2
+    assert {o['id']:o['name'] for o in options}=={'host-z':'Alice-npu0 / Bob-npu0','host-a':'Alice-npu1'}
+    with closing(connect(db)) as conn,conn:init_runtime(conn)
+    assert names(user_id=a['user_id'])==expected
+    ingest(db,a['token'],sample(machine='host-0'),now=140)
+    assert names(user_id=a['user_id'])==dict(expected,**{'host-0':'Alice-npu2'})
+
+
+def test_existing_hosts_get_stable_machine_names_on_upgrade(central):
+    db,a,b=central
+    for machine in ['host-z','host-a','host-z']:
+        ingest(db,a['token'],sample(machine=machine),now=100)
+    with closing(connect(db)) as conn,conn:
+        conn.execute('DROP TABLE runtime_machine_names_v1')
+        init_runtime(conn)
+    data=snapshot(db,now=100)
+    assert {m['machine_id']:m['display_name'] for m in data['machines']}=={
+        'host-a':'Alice-npu0','host-z':'Alice-npu1'}
+    assert len(data['machine_options'])==2

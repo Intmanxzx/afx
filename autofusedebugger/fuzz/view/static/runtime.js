@@ -52,7 +52,8 @@ function renderFleet(host,data,efficiency=false){
  const n=data.machines.length,pages=Math.max(1,Math.ceil(n/10));fleetState.page=Math.min(fleetState.page,pages-1);
  const t=fleetTable(['用户 / 机器','在线状态','占用 / 观测 / 已知卡','完成 / 成功 Shape执行/min','运行 Case / 排队任务','最后心跳']);
  for(const m of data.machines.slice(fleetState.page*10,(fleetState.page+1)*10)){
-  const tr=fleetElement('tr'),name=fleetElement('td'),details=fleetDisclosure(host,JSON.stringify(['machine',m.user_id,m.machine_id]));details.append(fleetElement('summary',m.user_name+' / '+m.name));
+  const tr=fleetElement('tr'),name=fleetElement('td'),details=fleetDisclosure(host,JSON.stringify(['machine',m.user_id,m.machine_id]));details.append(fleetElement('summary',m.display_name||m.user_name+' / '+m.name));
+  details.append(fleetElement('p','用户：'+m.user_name+' · 主机名：'+m.name,'muted'));
   details.append(fleetElement('p','机器 ID：'+m.machine_id,'muted'));
   for(const d of m.cards)details.append(fleetElement('p',`${d.logical} · ${d.model} · ${{busy:'执行槽占用',idle:'执行槽空闲',unknown:'状态未知'}[d.status]} · ${d.uuid}`));
   for(const run of m.runs)details.append(fleetElement('p',`${run.backend.join(', ')} · ${{running:'运行中',idle:'已结束',error:'异常结束',unknown:'执行器状态未知'}[run.state]} · 阶段 ${Object.entries(run.stages).map(([k,v])=>k+': '+v).join(' / ')||'—'} · 观测 ${run.age_seconds}s 前`));

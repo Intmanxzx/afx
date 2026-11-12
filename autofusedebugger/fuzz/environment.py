@@ -18,23 +18,20 @@ def collect(home=None):
     for package, key in [('torch','torch'),('torch-npu','torch_npu'),('triton-ascend','triton'),('autofusedebugger','package_version')]:
         try: result[key] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError: result[key] = None
-    # CANN runtime accessor, only when already imported for execution.
-    try:
-        if 'torch_npu' in sys.modules:
-            from torch_npu.npu.utils import get_cann_version
-            result['cann'] = get_cann_version()
-    except (RuntimeError, ImportError, AttributeError):
-        result['cann'] = None
-    # CPU peers record the installed CANN version without importing torch_npu.
-    # Runtime accessor above remains authoritative when available.
-    if not result.get('cann'):
-        root = os.environ.get('ASCEND_HOME_PATH')
-        if root:
-            try:
-                lines = (Path(root)/'compiler/version.info').read_text().splitlines()
-                result['cann'] = next((line.split('=',1)[1] for line in lines if line.startswith('Version=')), None)
-            except OSError:
-                pass
+    # All backends use the selected toolkit's version.info. Import state must
+    # not change provenance (the runtime uses a different version spelling).
+    result['cann'] = None
+    root = os.environ.get('ASCEND_HOME_PATH')
+    if root:
+        try:
+            lines = (Path(root)/'compiler/version.info').read_text().splitlines()
+            for line in lines:
+                key, separator, value = line.partition('=')
+                if separator and key.strip() == 'Version' and value.strip():
+                    result['cann'] = value.strip()
+                    break
+        except (OSError, UnicodeError):
+            pass
     # Fingerprint the actually selected binary, NOT an unrelated source checkout.
     try:
         spec = importlib.util.find_spec('autofuse')

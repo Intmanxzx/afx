@@ -20,6 +20,9 @@ def initialize(conn):
     CREATE TABLE IF NOT EXISTS runtime_hosts_v1 (
       user_id TEXT, machine_id TEXT, source_id TEXT, name TEXT, seen REAL,
       PRIMARY KEY(user_id,machine_id,source_id));
+    CREATE TABLE IF NOT EXISTS runtime_machine_names_v1 (
+      user_id TEXT NOT NULL, machine_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+      PRIMARY KEY(user_id,machine_id), UNIQUE(user_id,ordinal));
     CREATE TABLE IF NOT EXISTS runtime_runs_v1 (
       run_id TEXT PRIMARY KEY, user_id TEXT, machine_id TEXT, source_id TEXT,
       sequence INTEGER, seen REAL, payload TEXT);
@@ -31,6 +34,22 @@ def initialize(conn):
       success INTEGER, case_errors INTEGER, PRIMARY KEY(run_id,sequence));
     CREATE INDEX IF NOT EXISTS runtime_rates_time ON runtime_rates_v1(time);
     ''')
+    # Backfill old hosts once, deterministically. Heartbeat names/timestamps can
+    # change; the persisted ordinal must never be recomputed or reused.
+    conn.execute('BEGIN IMMEDIATE')
+    for user, machine in conn.execute(
+            'SELECT user_id,machine_id FROM runtime_hosts_v1 '
+            'GROUP BY user_id,machine_id ORDER BY user_id,machine_id').fetchall():
+        ensure_machine_name(conn, user, machine)
+
+
+def ensure_machine_name(conn, user, machine):
+    # Called inside the writer transaction, serializing concurrent registration.
+    conn.execute(
+        'INSERT INTO runtime_machine_names_v1(user_id,machine_id,ordinal) '
+        'SELECT ?,?,coalesce(max(ordinal)+1,0) FROM runtime_machine_names_v1 '
+        'WHERE user_id=? ON CONFLICT(user_id,machine_id) DO NOTHING',
+        (user, machine, user))
 
 
 def connect(database):
@@ -96,6 +115,7 @@ def ingest(database, key, payload, *, now=None):
         source=payload['source_id'];machine=payload['machine_id']
         owner=conn.execute('SELECT user_id FROM runtime_hosts_v1 WHERE source_id=?',(source,)).fetchone()
         if owner and owner[0]!=user:raise PermissionError('source ownership mismatch')
+        ensure_machine_name(conn,user,machine)
         conn.execute('INSERT OR REPLACE INTO runtime_hosts_v1 VALUES (?,?,?,?,?)',(user,machine,source,payload['machine_name'],now))
         for r in payload['runs']:
             old=conn.execute('SELECT user_id,machine_id,source_id,sequence,seen,payload FROM runtime_runs_v1 WHERE run_id=?',(r['run_id'],)).fetchone()
@@ -124,6 +144,8 @@ def snapshot(database, *, user_id='', machine_id='', model='', backend='', versi
     with closing(_connect(database)) as conn:
         users=dict(conn.execute('SELECT id,display_name FROM users WHERE active=1'))
     with closing(connect(database)) as conn:
+        conn.execute('BEGIN')  # Names and hosts must come from the same read snapshot.
+        ordinals={(u,m):n for u,m,n in conn.execute('SELECT user_id,machine_id,ordinal FROM runtime_machine_names_v1')}
         hosts=conn.execute('SELECT user_id,machine_id,source_id,name,seen FROM runtime_hosts_v1').fetchall()
         runs=conn.execute('SELECT run_id,user_id,machine_id,source_id,seen,payload FROM runtime_runs_v1').fetchall()
         inventory=conn.execute('SELECT user_id,machine_id,uuid,model,logical,seen FROM runtime_cards_v1').fetchall()
@@ -167,6 +189,7 @@ def snapshot(database, *, user_id='', machine_id='', model='', backend='', versi
         if bucket in trend:trend[bucket]['completed']+=completed;trend[bucket]['success']+=success
     physical={};online_machines=set();active_users=set()
     for m in machines.values():
+        m['display_name']=f"{m['user_name']}-npu{ordinals[(m['user_id'],m['machine_id'])]}"
         m['age_seconds']=round(max(0,now-m.pop('seen')));m['status']='online' if m['age_seconds']<=30 else 'delayed' if m['age_seconds']<=60 else 'offline'
         m['cards']=list(m['cards'].values())
         if m['status']=='online':online_machines.add(m['machine_id'])
@@ -176,5 +199,11 @@ def snapshot(database, *, user_id='', machine_id='', model='', backend='', versi
         if m['active_cases']:active_users.add(m['user_id'])
         m['completed_per_min']=m['completed']/minutes;m['success_per_min']=m['success']/minutes
     values=list(machines.values())
+    # A physical machine can belong to multiple users. Keep one filter value
+    # per machine ID and include all applicable aliases instead of hostnames.
+    options={}
+    for (user,machine),ordinal in sorted(ordinals.items(),key=lambda item:(users.get(item[0][0],''),item[1],item[0])):
+        if user in users and (not user_id or user==user_id):
+            options.setdefault(machine,[]).append(f'{users[user]}-npu{ordinal}')
     return dict(generated_at=now,minutes=minutes,unit='backend_shape_execution',users=[dict(id=k,name=v) for k,v in users.items()],models=sorted(all_models),backends=sorted(all_backends),versions=sorted(all_versions),machines=values,trend=sorted(trend.values(),key=lambda t:t['time']),
-                machine_options=[dict(id=m,name=n) for m,n in sorted({(m,n) for u,m,s,n,t in hosts if u in users and (not user_id or u==user_id)})],summary=dict(active_users=len(active_users),registered_machines=len({m['machine_id'] for m in values}),online_machines=len(online_machines),known_cards=len(physical),online_cards=sum(v>0 for v in physical.values()),busy_cards=sum(v==2 for v in physical.values()),active_cases=sum(m['active_cases'] for m in values),queued=sum(m['queued'] for m in values),completed_per_min=sum(m['completed_per_min'] for m in values),success_per_min=sum(m['success_per_min'] for m in values)))
+                machine_options=[dict(id=m,name=' / '.join(names)) for m,names in options.items()],summary=dict(active_users=len(active_users),registered_machines=len({m['machine_id'] for m in values}),online_machines=len(online_machines),known_cards=len(physical),online_cards=sum(v>0 for v in physical.values()),busy_cards=sum(v==2 for v in physical.values()),active_cases=sum(m['active_cases'] for m in values),queued=sum(m['queued'] for m in values),completed_per_min=sum(m['completed_per_min'] for m in values),success_per_min=sum(m['success_per_min'] for m in values)))

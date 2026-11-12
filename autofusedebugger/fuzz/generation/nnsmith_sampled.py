@@ -52,14 +52,37 @@ def plan(token):
         impl._main_ctx = z3.Context()
         random.seed(random_seed)
         node_count = random.randint(2, config.max_nodes) if config.max_nodes >= 2 else 1
+        # Before the protocol refactor dtype selection was not restricted to
+        # fp16/fp32.  NNSmith's DTYPE_GEN_ALL is the source of truth and the
+        # pinned operator signatures provide the final intersection, not a
+        # machine-dependent hardware probe (which would change seed replay).
+        if config.dtype_mode == 'mixed':
+            allowed = {DType.float16, DType.float32}
+        elif config.dtype_mode == 'all':
+            from nnsmith.abstract.dtype import DTYPE_GEN_ALL
+            allowed = set(DTYPE_GEN_ALL)
+        else:
+            dtype = getattr(DType, config.dtype_mode, None)
+            if dtype is None:
+                raise ValueError(f'unknown NNSmith dtype: {config.dtype_mode}')
+            allowed = {dtype}
+        eligible_ops = []
         for op in ops:
-            pairs = [(a,b) for a,b in zip(op.in_dtypes,op.out_dtypes)
-                     if all(t in ({DType.float16, DType.float32} if config.dtype_mode == 'mixed'
-                                  else {getattr(DType, config.dtype_mode)}) for t in (*a,*b))]
-            op.in_dtypes, op.out_dtypes = [a for a,b in pairs], [b for a,b in pairs]
+            pairs = [(a, b) for a, b in zip(op.in_dtypes, op.out_dtypes)
+                     if all(t in allowed for t in (*a, *b))]
+            # Do not leave an operator with an empty signature list: remove it
+            # from this mode's candidate catalog instead. This is important for
+            # explicit integer/complex modes where many floating-point-only
+            # operators have no legal signature.
+            if pairs:
+                op.in_dtypes, op.out_dtypes = [a for a, b in pairs], [b for a, b in pairs]
+                eligible_ops.append(op)
+        if not eligible_ops:
+            raise ValueError(f'no NNSmith operators support dtype mode {config.dtype_mode!r}')
         from nnsmith.graph_gen import set_z3_state
         set_z3_state(random_seed % (2**31-1))
-        ir = model_gen(ops, method='symbolic-cinit', seed=random_seed % (2**31-1),
+        ir = model_gen(eligible_ops, method='symbolic-cinit', seed=random_seed % (2**31-1),
+                       dtype_choices=sorted(allowed, key=str),
                        init_fp=True, max_nodes=node_count, timeout_ms=config.timeout_seconds*1000,
                        concr_ph_dim_rng=(config.dim_min, config.dim_max),
                        dim_dist_mode=config.dim_dist_mode,
@@ -99,15 +122,50 @@ def materialize(token):
     return materialize_spec(plan(token))
 
 
-def materialize_spec(spec):
-    """Role-aware historical distributions, with seed-local canonical RNG streams.
+def _round_to_bfloat16(value):
+    """Encode a Python float as canonical little-endian bfloat16 bytes."""
+    bits = struct.unpack("<I", struct.pack("<f", float(value)))[0]
+    # Round to nearest-even before dropping the low 16 bits.
+    lower = bits & 0xFFFF
+    upper = bits >> 16
+    if lower > 0x8000 or (lower == 0x8000 and (upper & 1)):
+        upper = (upper + 1) & 0xFFFF
+    return struct.pack("<H", upper)
 
-    Unlike C/D's discrete [-2,2] lattice, uniform is historical [3,7).
-    Gaussian/log-scale formulas match the legacy value-distribution patch.
-    """
+
+def _canonical_storage(dtype, values):
+    """Pack generated scalar values for every NNSmith generation dtype."""
+    if dtype == 'bfloat16':
+        return b''.join(_round_to_bfloat16(v) for v in values)
+    if dtype in {'complex64', 'complex128'}:
+        scalar = 'f' if dtype == 'complex64' else 'd'
+        flat = [component for value in values
+                for component in (complex(value).real, complex(value).imag)]
+        return struct.pack('<' + scalar * len(flat), *flat)
+    formats = {
+        'bool': '?', 'uint8': 'B', 'uint16': 'H', 'uint32': 'I',
+        'int8': 'b', 'int16': 'h', 'int32': 'i', 'int64': 'q', 'float16': 'e',
+        'float32': 'f', 'float64': 'd',
+    }
+    try:
+        fmt = formats[dtype]
+    except KeyError as exc:
+        raise ValueError(f'unsupported canonical storage dtype: {dtype}') from exc
+    if dtype == 'bool':
+        values = [bool(v) for v in values]
+    elif dtype.startswith(('int', 'uint')):
+        bits = int(dtype.removeprefix('uint').removeprefix('int'))
+        if dtype.startswith('uint'):
+            low, high = 0, 2 ** bits - 1
+        else:
+            low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+        values = [max(low, min(high, int(v))) for v in values]
+    return struct.pack('<' + fmt * len(values), *values)
+
+
+def materialize_spec(spec):
+    """Role-aware historical distributions with complete NNSmith dtype coverage."""
     import random
-    from array import array
-    import sys
     config, _ = decode(spec.seed)
     storages = [None] * (len(spec.inputs) + len(spec.weights))
     for tensor in (*spec.inputs, *spec.weights):
@@ -132,16 +190,8 @@ def materialize_spec(spec):
                 amplification = 100 + 9900 * rng.random()
                 return base * (amplification if outlier else 1)
             return rng.gauss(0, 1 / math.sqrt(size)) if weight else rng.random()
-        if tensor.dtype == 'float16':
-            # Rounding may overflow in future value modes; fail, never silently clamp.
-            storages[tensor.alias_group] = b''.join(struct.pack('<e', value()) for _ in range(size))
-            continue
-        data = array('f', (value() for _ in range(size)))
-        if data.itemsize != 4:
-            raise ValueError('canonical float32 storage required')
-        if sys.byteorder != 'little':
-            data.byteswap()
-        storages[tensor.alias_group] = data.tobytes()
+        values = [value() for _ in range(size)]
+        storages[tensor.alias_group] = _canonical_storage(tensor.dtype, values)
     return CaseBundle(spec, tuple(storages))
 
 
