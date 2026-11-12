@@ -55,5 +55,7 @@ def _purge(path, *, expected_count, incomplete, identities=None):
         conn.execute('DELETE FROM case_facts WHERE workload_id NOT IN (SELECT workload_id FROM attempts)')
         conn.execute('DELETE FROM report_devices WHERE source_id NOT IN (SELECT source_id FROM attempt_facts)')
         conn.execute('DELETE FROM contexts WHERE id NOT IN (SELECT environment_id FROM attempts UNION SELECT execution_id FROM attempts UNION SELECT evaluation_id FROM attempts)')
+        from ..reporting.materialized import refresh_if_installed
+        refresh_if_installed(conn)
         if conn.execute('PRAGMA foreign_key_check').fetchone():raise ValueError('cleanup broke foreign keys')
         return {'deleted':len(rows),'remaining':conn.execute('SELECT count(*) FROM attempts').fetchone()[0]}

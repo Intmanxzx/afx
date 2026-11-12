@@ -15,6 +15,16 @@ def reading(path, *, timeout=3):
         deadline = time.monotonic() + timeout
         conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
         conn.row_factory = sqlite3.Row
+        # Old read-only exports have no arrival index. A connection-local view
+        # preserves their order without modifying the snapshot or inventing time.
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
+            conn.execute('PRAGMA query_only=OFF')
+            conn.execute('CREATE TEMP VIEW attempt_arrivals_v2 AS SELECT rowid AS sequence,id AS attempt_id,NULL AS received_at FROM main.attempts')
+            conn.execute('PRAGMA query_only=ON')
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='invalid_replays_v1'").fetchone():
+            conn.execute('PRAGMA query_only=OFF')
+            conn.execute('CREATE TEMP VIEW invalid_replays_v1 AS SELECT id AS attempt_id FROM main.attempts WHERE 0')
+            conn.execute('PRAGMA query_only=ON')
         yield conn
     finally:
         conn.close()
@@ -155,34 +165,39 @@ class ResultQueries:
         result['diagnostic_view'] = diagnostic_view(diagnostics, shape_index, result.get('error_summary', ''))
         return result
 
-    def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None, _include_cursors=False):
-        """Group comparable runs, retaining every attempt in backend history.
-
-        Filters select current shape cases, retaining passing CPU peers and backend
-        history in each row. Cursor combines the group high-water mark and shape.
-        """
+    def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None, _include_cursors=False, _history=False, shape=None, snapshot=None, _timeout=30):
+        """Latest whole round per global seed/Shape, or bounded unfiltered history."""
         if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
             raise ValueError('invalid pagination')
-        with reading(self.path, timeout=10) as conn:
+        with reading(self.path, timeout=_timeout) as conn:
             conn.execute('BEGIN')
             from ..reporting.cases import page_keys
             groups = page_keys(conn, limit=limit, after=after, seed=seed,
-                               status=status, user_id=user_id, q=q)
+                               status=status, user_id=user_id, q=q, history=_history, shape=shape, snapshot=snapshot)
             items = []
             from ..contracts import Seed
             from ..backend_names import display_backend
+            from ..reporting.materialized import ready as model_ready
+            structured = model_ready(conn)
             group_rows = {}
             for group in groups[:limit]:
-                rows = group_rows.get(group['group_id'])
+                key = (group['group_id'], group['round_no'])
+                rows = group_rows.get(key)
                 if rows is None:
-                    rows = conn.execute('SELECT a.*,f.*,a.rowid AS cursor FROM attempt_facts f '
-                    'JOIN attempts a ON a.id=f.attempt_id WHERE group_id=? ORDER BY a.rowid DESC LIMIT 1001', (group['group_id'],)).fetchall()
-                    group_rows[group['group_id']] = rows
-                if len(rows)>1000: raise ValueError('case history exceeds query limit')
-                first = rows[0]
+                    members_sql = """WITH ranked AS (
+                    SELECT a.id,row_number() OVER (PARTITION BY f.group_id,a.backend ORDER BY v.sequence) AS round_no
+                    FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id JOIN attempt_arrivals_v2 v ON v.attempt_id=a.id WHERE f.group_id=?)
+                    SELECT a.*,f.*,a.rowid AS cursor FROM ranked r JOIN attempts a ON a.id=r.id
+                    JOIN attempt_facts f ON f.attempt_id=a.id WHERE r.round_no=? ORDER BY a.rowid DESC"""
+                    if structured:
+                        members_sql=members_sql.replace('a.*,f.*,a.rowid', 'a.*,f.attempt_id,f.group_id,f.source_id,f.device_name,f.user_id,f.batch_id,f.versions,flat.execution_preview AS execution,f.evaluation,f.total_ns,f.duration_scope,flat.has_diagnostics,a.rowid')
+                        members_sql=members_sql.replace('WHERE r.round_no=?', 'JOIN case_attempt_flat_v1 flat ON flat.attempt_id=a.id WHERE r.round_no=?')
+                    rows = conn.execute(members_sql, key).fetchall()
+                    group_rows[key] = rows
+                first = next(r for r in rows if r['backend']=='af-mlir')
                 meta = conn.execute('SELECT metadata FROM case_facts WHERE workload_id=?',(first['workload_id'],)).fetchone()
                 item = {key:first[key] for key in ('seed','workload_id','source_id','device_name','user_id','batch_id','created_at')}
-                item.update(user_name=first['device_name'], case_id=group['group_id'], status=group['status'], seed_short=Seed.parse(item['seed']).short,
+                item.update(user_name=first['device_name'], case_id=group['seed'], status=group['status'], seed_short=Seed.parse(item['seed']).short,
                             execution=json.loads(first['execution']), evaluation=json.loads(first['evaluation']),
                             versions=json.loads(first['versions']), metadata=json.loads(meta[0]) if meta else {}, backends={})
                 # List pages carry only previews. Full logs/timing payloads are
@@ -195,10 +210,29 @@ class ResultQueries:
                 variants = item['metadata'].get('shape_variants', [])
                 item['sample'] = variants[index] if 0 <= index < len(variants) else {}
                 item['shape_mode'] = 'static' if item['execution'].get('static_only') else 'dynamic'
-                for row in rows:
+                item['record_id']=group['record_id']
+                item['history_count']=group['history_count']
+                item['cursor']=group['cursor']
+                item['arrival_sequence']=group['attempt_cursor']
+                item['historical']=_history
+                item['source_label']=''
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='retest_lease_history_v1'").fetchone():
+                    if conn.execute('SELECT 1 FROM retest_lease_history_v1 WHERE lease_id=?',(first['batch_id'],)).fetchone():
+                        item['source_label']='复测'
+                item['client_created_at']=item['created_at']
+                item['time_basis']='client_legacy'
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
+                    received=conn.execute('SELECT received_at FROM attempt_arrivals_v2 WHERE sequence=?',(group['attempt_cursor'],)).fetchone()
+                    if received and received[0]:
+                        item['created_at']=received[0];item['time_basis']='server_received'
+                current_rows=rows
+                for row in current_rows:
                     backend = display_backend(row['backend'])
                     member = {key:row[key] for key in ('id','status','created_at','total_ns','duration_scope','error_stage','error_summary')}
-                    member['has_diagnostics'] = bool(json.loads(row['execution']).get('diagnostics'))
+                    member['original_attempt_id'] = row['id']
+                    member['executor'] = row['device_name']
+                    member['versions'] = json.loads(row['versions'])
+                    member['has_diagnostics'] = bool(row['has_diagnostics']) if structured else bool(json.loads(row['execution']).get('diagnostics'))
                     member['device'] = json.loads(row['execution']).get('device')
                     member['stages'] = [dict(r) for r in conn.execute('SELECT shape_index,stage,duration_ns FROM stage_metrics WHERE attempt_id=? ORDER BY shape_index,stage',(row['id'],))]
                     member['shapes'] = [dict(r) for r in conn.execute('SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index',(row['id'],))]
@@ -220,16 +254,23 @@ class ResultQueries:
                         member['status'] = {'pass':'ok','fail':'fail','error':'error'}.get(shape['correctness'], 'unknown')
                         member['error_stage'] = shape['error_stage']
                         member['error_summary'] = shape['error_summary']
-                    from ..failure_details import core_error
-                    diagnostics = json.loads(json.loads(row['execution']).get('diagnostics', '{}'))
-                    from ..reporting.failure_origin import classify, mlir_failure_evidence
-                    member['function_status'] = classify(row['backend'], member['status'],
-                        member['error_stage'], member['error_summary'], diagnostics, index)
-                    member['mlir_failure'] = mlir_failure_evidence(row['backend'], member['status'],
-                        member['error_stage'], member['error_summary'], diagnostics, index, member['shape_count'])
-                    member['core_error'] = core_error(diagnostics, index, member['error_summary'])
-                    from ..failure_details import redact
-                    member['run_log'] = redact(diagnostics.get('error', ''))
+                    cached = conn.execute('SELECT * FROM case_display_v1 WHERE attempt_id=? AND shape_index=?', (row['id'],index)).fetchone() if structured else None
+                    if cached:
+                        member['function_status']=cached['function_status']
+                        member['mlir_failure']={'path':cached['failure_path'],'scope':cached['evidence_scope'],'evidence':cached['evidence']}
+                        member['core_error']=cached['core_error']
+                        member['run_log']=cached['run_log']
+                    else:
+                        from ..failure_details import core_error
+                        diagnostics = json.loads(json.loads(row['execution']).get('diagnostics', '{}'))
+                        from ..reporting.failure_origin import classify, mlir_failure_evidence
+                        member['function_status'] = classify(row['backend'], member['status'],
+                            member['error_stage'], member['error_summary'], diagnostics, index)
+                        member['mlir_failure'] = mlir_failure_evidence(row['backend'], member['status'],
+                            member['error_stage'], member['error_summary'], diagnostics, index, member['shape_count'])
+                        member['core_error'] = core_error(diagnostics, index, member['error_summary'])
+                        from ..failure_details import redact
+                        member['run_log'] = redact(diagnostics.get('error', ''))
                     member['compile_ns'] = next((m['duration_ns'] for m in member['stages'] if m['stage']=='compile' and m['shape_index']==-1),None)
                     member['kernel_ns'] = [{'shape_index':m['shape_index'],'duration_ns':m['duration_ns']} for m in member['stages'] if m['stage']=='kernel_mean'] if backend!='cpu' else []
                     from ..reporting.outcomes import outcomes

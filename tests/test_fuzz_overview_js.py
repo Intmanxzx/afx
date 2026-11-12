@@ -132,3 +132,38 @@ def test_clickable_metric_cards_keep_original_stacked_left_aligned_layout():
     assert 'text-align:left;' in rule
     assert '.cards span{display:block;' in css
     assert '.cards strong{display:block;margin-top:5px;' in css
+
+
+def test_record_row_opens_detail_without_filtering_or_overriding_history():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable')
+    source = Path('autofusedebugger/fuzz/view/static/app.js').read_text()
+    helpers = source[source.index('function recordAttempt('):source.index('function renderRecords(')]
+    script = r'''const assert=require('node:assert/strict');
+const location={hash:''};let selection='';const window={getSelection:()=>({toString:()=>selection})};
+let hidden=0;const hideFieldTooltip=()=>hidden++;
+''' + helpers + r'''
+const item={shape_index:2,backends:{cpu:[{id:'cpu'}],'af-mlir':[{id:'mlir/new'},{id:'mlir-old'}],'eager-npu':[{id:'eager'}]}};
+const row={classList:{add(){}},addEventListener(name,fn){this[name]=fn}};
+bindRecordRow(row,item);
+function click(column,interactive=false){row.click({target:{closest(selector){return selector==='td'?{dataset:{column}}:interactive?{}:null}}})}
+for(const column of ['seed','ops','inputs','mode','user_name','time','cann','af-mlir:function','af-mlir:accuracy']){
+ location.hash='';click(column);assert.equal(location.hash,'attempt=mlir%2Fnew&shape=2');
+}
+click('eager-npu:function');assert.equal(location.hash,'attempt=eager&shape=2');
+location.hash='attempt=mlir-old&shape=2';click('af-mlir:total',true);assert.equal(location.hash,'attempt=mlir-old&shape=2');
+selection='copy text';click('seed');assert.equal(location.hash,'attempt=mlir-old&shape=2');selection='';
+assert.equal(recordAttempt({backends:{cpu:[{id:'cpu'}],'eager-npu':[{id:'eager'}]}}).id,'eager');
+assert.equal(recordAttempt({backends:{}}),undefined);
+openRecord({...item,shape_index:-1});assert.equal(location.hash,'attempt=mlir%2Fnew&shape=-1');
+'''
+    subprocess.run([node, '-e', script], check=True, capture_output=True, text=True)
+    render = source[source.index('function renderRecords('):source.index('async function load(')]
+    assert 'form.requestSubmit' not in render
+    assert 'form.elements.q.value' not in render
+    assert 'bindRecordRow(tr,item)' in render
+    assert "strong.addEventListener('click',()=>openRecord(item))" in render
+    assert "button.addEventListener('click',()=>openRecord(item))" in render
+    assert "encodeURIComponent(latest.id)+'&shape='+item.shape_index" in render
+    assert "encodeURIComponent(attempt.id)+'&shape='+item.shape_index" in render

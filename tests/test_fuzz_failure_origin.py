@@ -76,7 +76,9 @@ def test_old_cached_classification_is_invalidated(tmp_path):
     inc = IncrementalStatistics(tmp_path/'db')
     row = record('af-mlir', [])
     ResultRepository(inc.database).save(row)
-    assert json.loads(inc._identity())[:2] == [4, VERSION]
+    from autofusedebugger.fuzz.reporting.incremental import VERSION as CACHE_VERSION
+    assert CACHE_VERSION >= 6  # Global seed contributions supersede provenance groups.
+    assert json.loads(inc._identity())[:2] == [CACHE_VERSION, VERSION]
 
 
 def test_stale_incremental_totals_rebuild_with_new_classification(tmp_path):

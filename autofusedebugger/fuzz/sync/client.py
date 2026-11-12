@@ -77,6 +77,8 @@ def run(home,database, _fd=None):
         except BlockingIOError:raise ValueError('sync daemon already running') from None
         from ..runtime import start_heartbeat
         start_heartbeat(home)
+        from .retests import start as start_retests
+        start_retests(home,database)
         while True:
             interval=30
             try:

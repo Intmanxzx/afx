@@ -18,7 +18,7 @@ from .efficiency import statistics as efficiency
 
 from .failure_origin import VERSION as CLASSIFICATION_VERSION
 
-VERSION = 4
+VERSION = 6
 BATCH = 64
 COUNT_FIELDS = ('overall', 'backend', 'category', 'dtype', 'op', 'dimension', 'elements', 'mode', 'errors', 'failure_path')
 
@@ -35,10 +35,13 @@ def initialize(database):
         conn.execute('CREATE INDEX IF NOT EXISTS public_stage_attempt ON stage_facts_v1(attempt_id)')
         conn.execute('CREATE INDEX IF NOT EXISTS public_window_attempt ON stage_attempts_v1(window_id,attempt_id)')
         conn.execute('CREATE INDEX IF NOT EXISTS public_attempt_workload ON attempts(workload_id,id)')
+        # v6 changes contribution ownership from provenance group to global seed.
+        for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'public_%'").fetchall():
+            conn.execute('DROP TRIGGER "'+name+'"')
         def emit(kind, select):
             return "INSERT INTO public_changes_v1(kind,identity) SELECT '"+kind+"',identity FROM ("+select+");"
         def groups(attempt):
-            return emit('group', 'SELECT group_id AS identity FROM attempt_facts WHERE attempt_id='+attempt)
+            return emit('group', 'SELECT seed AS identity FROM attempts WHERE id='+attempt)
         def windows(attempt):
             return emit('window', 'SELECT window_id AS identity FROM stage_attempts_v1 WHERE attempt_id='+attempt)
         specs = {}
@@ -49,17 +52,17 @@ def initialize(database):
         for table in ('stage_facts_v1', 'stage_attempts_v1', 'stage_windows_v1', 'stage_window_aggregates_v1'):
             specs[table] = lambda row: emit('window', 'SELECT '+row+'.window_id AS identity')
         for table in ('case_facts', 'case_dimensions'):
-            specs[table] = lambda row: emit('group', 'SELECT DISTINCT f.group_id AS identity FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id WHERE a.workload_id='+row+'.workload_id')
+            specs[table] = lambda row: emit('group', 'SELECT DISTINCT a.seed AS identity FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id WHERE a.workload_id='+row+'.workload_id')
         for table, body in specs.items():
             for event, rows, timing in [('INSERT', ('NEW',), 'AFTER'), ('UPDATE', ('OLD','NEW'), 'AFTER'), ('DELETE', ('OLD',), 'BEFORE')]:
                 sql = ''.join(body(row) for row in rows)
                 # REPLACE may not fire DELETE triggers: capture previous group
                 # before replacement, as well as the new group after insertion.
                 if table == 'attempt_facts' and event != 'DELETE':
-                    sql += ''.join(emit('group', 'SELECT '+row+'.group_id AS identity') for row in rows)
+                    sql += ''.join(emit('group', 'SELECT seed AS identity FROM attempts WHERE id='+row+'.attempt_id') for row in rows)
                 conn.execute(f'CREATE TRIGGER IF NOT EXISTS public_{table}_{event.lower()}_v1 {timing} {event} ON {table} BEGIN {sql} END')
         conn.execute('''CREATE TRIGGER IF NOT EXISTS public_facts_replace_v1 BEFORE INSERT ON attempt_facts BEGIN
-            INSERT INTO public_changes_v1(kind,identity) SELECT 'group',group_id FROM attempt_facts WHERE attempt_id=NEW.attempt_id;
+            INSERT INTO public_changes_v1(kind,identity) SELECT 'group',seed FROM attempts WHERE id=NEW.attempt_id;
         END''')
         conn.execute('''CREATE TRIGGER IF NOT EXISTS public_attempt_window_replace_v1 BEFORE INSERT ON stage_attempts_v1 BEGIN
             INSERT INTO public_changes_v1(kind,identity) SELECT 'window',window_id FROM stage_attempts_v1 WHERE attempt_id=NEW.attempt_id;
@@ -75,7 +78,7 @@ def initialize(database):
         # silently leave derived mode/window metrics stale.
         for event, row in [('UPDATE','NEW'), ('DELETE','OLD')]:
             conn.execute(f'''CREATE TRIGGER IF NOT EXISTS public_contexts_{event.lower()}_v1 BEFORE {event} ON contexts BEGIN
-                INSERT INTO public_changes_v1(kind,identity) SELECT 'group',f.group_id FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id WHERE {row}.id IN (a.execution_id,a.environment_id,a.evaluation_id);
+                INSERT INTO public_changes_v1(kind,identity) SELECT 'group',a.seed FROM attempts a JOIN attempt_facts f ON f.attempt_id=a.id WHERE {row}.id IN (a.execution_id,a.environment_id,a.evaluation_id);
                 INSERT INTO public_changes_v1(kind,identity) SELECT 'window',s.window_id FROM attempts a JOIN stage_attempts_v1 s ON s.attempt_id=a.id WHERE {row}.id IN (a.execution_id,a.environment_id,a.evaluation_id);
             END''')
 
@@ -166,7 +169,7 @@ class IncrementalStatistics:
                                 cache.execute('DELETE FROM '+table)
                             # One bootstrap pass. Pending work is durable and bounded
                             # per batch, so restart/failure does not restart bootstrap.
-                            cache.executemany("INSERT OR IGNORE INTO pending VALUES ('group',?)", source.execute('SELECT DISTINCT group_id FROM attempt_facts'))
+                            cache.executemany("INSERT OR IGNORE INTO pending VALUES ('group',?)", source.execute('SELECT DISTINCT seed FROM attempts'))
                             cache.executemany("INSERT OR IGNORE INTO pending VALUES ('window',?)", source.execute('SELECT window_id FROM stage_windows_v1 ORDER BY rowid DESC LIMIT 100'))
                             empty = statistics(self.database, _conn=source, _group='')
                             cache.execute('INSERT INTO template VALUES (?)',(json.dumps(empty),))

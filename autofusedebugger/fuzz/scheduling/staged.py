@@ -80,6 +80,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 'error_stage':kind if bundle else 'generation','error_summary':str(error)[-500:],'shape_results':[]}
 
         def make_record(case,session,result,dependencies):
+            result['execution']['round_id']=case.identity
             result['execution']['expected_backends']=json.dumps(sorted({json.loads(t['execution'])['backend'] for t in case.tasks}))
             s=stage(Kind.RECORD,case,dependencies,session)
             s.output={'result':result}
@@ -91,7 +92,11 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             config=json.loads(session.task['execution']) if session else asdict(ExecutionConfig('cpu','cpu',budget.compile_threads,scheduling='staged'))
             ev=json.loads(session.task['evaluation']) if session else json.loads(case.tasks[0]['evaluation'])
             job={'kind':s.kind.value,'directory':case.directory,'bundle':case.bundle,'config':config,'evaluation':ev}
-            if s.kind==Kind.GENERATE:job.update(seed=case.seed,exclude_ops=exclude_ops)
+            if s.kind==Kind.GENERATE:
+                from ..sync.retests import expected_workload
+                expected=expected_workload(ledger,case.tasks)
+                job.update(seed=case.seed,exclude_ops=[] if expected else exclude_ops)
+                if expected:job['expected_workload_id']=expected
             elif s.kind==Kind.REFERENCE:
                 job['output_file']='reference.npz'
                 job['config']['static_only']=all(json.loads(t['execution'])['static_only'] for t in case.tasks)
@@ -105,6 +110,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     changed=conn.execute("UPDATE tasks SET execution=? WHERE id=? AND claim=? AND state='running'",(session.task['execution'],session.task['id'],session.task['claim'])).rowcount
                     if not changed:raise ValueError('task cancelled before dispatch')
                 job['output_file']=session.identity+'.npz'
+                from ..sync.retests import expected_workload
+                if expected_workload(ledger,case.tasks):job['device_lease_wait']=min(60,timeout/2)
                 job['device_budget_bytes']=next((d.capacity for d in pool.devices if d.uuid==session.uuid),None)
             elif s.kind==Kind.COMPARE:
                 combined=stages[s.dependencies[0]].output

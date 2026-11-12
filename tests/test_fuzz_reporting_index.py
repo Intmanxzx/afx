@@ -20,19 +20,20 @@ def record(backend='cpu', batch='run1'):
 def test_group_backend_retries_and_separate_provenance(tmp_path):
     repo=ResultRepository(tmp_path/'db')
     env={'installation_id':'device-a','device_name':'测试机','torch_npu':'2.10'}
-    ids=[repo.save(record(b),environment=env) for b in ('cpu','af-legacy','cpu')]
+    ids=[repo.save(record(b),environment=env) for b in ('cpu','af-mlir','cpu')]
     q=ResultQueries(repo.path)
     item=q.case_page()['items'][0]
-    assert len(item['backends'])==2 and len(item['backends']['cpu'])==2
+    assert len(item['backends'])==2 and len(item['backends']['cpu'])==1
     assert item['backends']['cpu'][0]['total_ns']==15
     assert item['versions']['cann'] is None
     for e,b in [(dict(env,installation_id='device-b'),'run1'),(dict(env,torch_npu='2.11'),'run1'),(env,'run2')]:
         repo.save(record('af-mlir',batch=b),environment=e)
-    assert len(q.case_page()['items'])==4
-    first=q.case_page(limit=2); second=q.case_page(limit=2,after=first['next_cursor'])
-    assert len({i['case_id'] for i in first['items']+second['items']})==4
+    assert len(q.case_page()['items'])==1
+    first=q.case_page()['items'][0]
+    second=q.case_page(seed=first['seed'],shape=0,after=first['cursor'],_history=True)
+    assert len(second['items'])==3 and first['history_count']==4
     rebuild(repo.path);rebuild(repo.path)
-    assert len(q.case_page()['items'])==4
+    assert len(q.case_page()['items'])==1
     snapshot=tmp_path/'snapshot';repo.snapshot(snapshot)
     restore(snapshot,tmp_path/'restored')
     assert ResultQueries(tmp_path/'restored').case_page()==q.case_page()
@@ -54,19 +55,19 @@ def test_environment_is_lightweight_and_never_reads_key(tmp_path):
 
 def test_failed_filter_keeps_peer_backend(tmp_path):
     repo=ResultRepository(tmp_path/'db'); repo.save(record())
-    failed=record('af-legacy');failed['status']='fail';failed['shape_results'][0]['correctness']='fail';repo.save(failed)
+    failed=record('af-mlir');failed['status']='fail';failed['shape_results'][0]['correctness']='fail';repo.save(failed)
     page=ResultQueries(repo.path).case_page(status='fail')
-    assert set(page['items'][0]['backends'])=={'cpu','af-legacy'}
+    assert set(page['items'][0]['backends'])=={'cpu','af-mlir'}
 
 
 def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
     from autofusedebugger.fuzz.reporting.statistics import statistics
     from autofusedebugger.fuzz.reporting import report
-    repo=ResultRepository(tmp_path/'db');repo.save(record());repo.save(record('af-legacy'))
+    repo=ResultRepository(tmp_path/'db');repo.save(record());repo.save(record('af-mlir'))
     monkeypatch.setattr(report,'spec_metadata',lambda *args:pytest.fail('must not regenerate during query'))
     result=statistics(repo.path)
     assert result['attempts']==2 and result['case_groups']==1
-    assert {r['label'] for r in result['backend']}=={'af-legacy'}
+    assert {r['label'] for r in result['backend']}=={'af-mlir'}
     assert sum(r['count'] for r in result['overall'])==1
     assert len(result['stages'])==6
     assert result['kernel_profiler']['kernel_count'] is None
@@ -134,7 +135,7 @@ def test_historical_cann_spelling_rebuild_preserves_records(tmp_path, monkeypatc
     rebuild(repo.path)
     assert len(ResultQueries(repo.path).case_page()['items']) == 1
     repo.save(record('af-mlir'), environment=dict(env, cann='9.3.0-beta.2'))
-    assert len(ResultQueries(repo.path).case_page()['items']) == 2
+    assert len(ResultQueries(repo.path).case_page()['items']) == 1
 
 
 @pytest.mark.parametrize('value,expected', [

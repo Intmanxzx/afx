@@ -97,6 +97,8 @@ class ResultRepository:
         with closing(_connect(self.path, writable=True)) as conn, conn:
             # IMMEDIATE prevents same-ID concurrent writers racing the idempotency check.
             conn.execute('BEGIN IMMEDIATE')
+            from ..reporting.index import initialize as initialize_reporting
+            initialize_reporting(conn)
             existing = conn.execute('SELECT result_hash FROM attempts WHERE id=?', (attempt_id,)).fetchone()
             if existing:
                 if existing[0] != result_hash:
@@ -117,6 +119,8 @@ class ResultRepository:
                 conn.execute(f"INSERT INTO shapes VALUES ({','.join('?' for _ in columns)})", tuple(row[c] for c in columns))
             from ..reporting.index import index_attempt
             index_attempt(conn, attempt_id)
+            from ..reporting.materialized import refresh_if_installed
+            refresh_if_installed(conn)
             from ..sync.outbox import enqueue
             enqueue(conn, attempt_id)
         from .lifecycle import append, stamp
@@ -169,6 +173,15 @@ class ResultRepository:
                         rows=source.execute('SELECT * FROM '+table)
                         for values in rows:
                             target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in values)+')',tuple(values))
+                # Snapshot is a copy, not a new report arrival. Preserve ordering
+                # and unknown historical timestamps rather than stamping export time.
+                target.execute('DELETE FROM attempt_arrivals_v2')
+                if source.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
+                    target.executemany('INSERT INTO attempt_arrivals_v2 VALUES (?,?,?)',source.execute('SELECT * FROM attempt_arrivals_v2 ORDER BY sequence'))
+                else:
+                    target.execute('INSERT INTO attempt_arrivals_v2(attempt_id) SELECT id FROM attempts ORDER BY rowid')
+                if source.execute("SELECT 1 FROM sqlite_master WHERE name='invalid_replays_v1'").fetchone():
+                    target.executemany('INSERT INTO invalid_replays_v1 VALUES (?,?)',source.execute('SELECT * FROM invalid_replays_v1'))
                 from .stage_facts import copy_public
                 copy_public(source,target)
                 target.commit()

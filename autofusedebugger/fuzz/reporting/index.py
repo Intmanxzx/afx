@@ -34,10 +34,26 @@ CREATE TABLE IF NOT EXISTS report_devices(
 '''
 
 
+ARRIVAL_TRIGGER = """CREATE TRIGGER attempt_first_arrival_v2 AFTER INSERT ON attempts BEGIN
+        INSERT OR IGNORE INTO attempt_arrivals_v2(attempt_id,received_at) VALUES (NEW.id,strftime('%Y-%m-%dT%H:%M:%f+00:00','now')); END"""
+
+
 def initialize(conn):
     # execute individually: executescript would commit caller's ingestion transaction.
     for statement in DDL.split(';'):
         if statement.strip(): conn.execute(statement)
+    # A separate AUTOINCREMENT sequence cannot be reused after deleting the last
+    # attempt. Existing timestamps are unknown; preserve their original order.
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
+        conn.execute('CREATE TABLE attempt_arrivals_v2 (sequence INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(id) ON DELETE CASCADE, received_at TEXT)')
+        legacy = conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v1'").fetchone()
+        if legacy:
+            conn.execute('INSERT INTO attempt_arrivals_v2(attempt_id,received_at) SELECT a.id,r.received_at FROM attempts a LEFT JOIN attempt_arrivals_v1 r ON r.attempt_id=a.id ORDER BY a.rowid')
+        else:
+            conn.execute('INSERT INTO attempt_arrivals_v2(attempt_id) SELECT id FROM attempts ORDER BY rowid')
+    conn.execute('DROP TRIGGER IF EXISTS attempt_first_arrival_v1')
+    conn.execute(ARRIVAL_TRIGGER.replace('CREATE TRIGGER ', 'CREATE TRIGGER IF NOT EXISTS ',1))
+    conn.execute('CREATE TABLE IF NOT EXISTS invalid_replays_v1 (attempt_id TEXT PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE, reason TEXT NOT NULL)')
     row=conn.execute('SELECT version FROM report_schema').fetchone()
     if row is None: conn.execute('INSERT INTO report_schema VALUES (1)')
     elif row[0]!=1: raise ValueError('unsupported reporting index version')
@@ -146,6 +162,8 @@ def rebuild(path):
                 sources=conn.execute('SELECT id FROM sources WHERE user_id=?',(user,)).fetchall() if user else []
                 source=sources[0][0] if len(sources)==1 else 'historical-user:'+str(user)
             index_attempt(conn,identity,source,name,user)
+        from .materialized import refresh_if_installed
+        refresh_if_installed(conn)
         return {'indexed':conn.execute('SELECT count(*) FROM attempt_facts').fetchone()[0],'report_schema':1}
 
 
@@ -160,4 +178,6 @@ def migrate_cann_versions(path):
             if (value := json.loads(versions).get('cann')) != canonical_cann_version(value)]
         for identity in identities:
             index_attempt(conn, identity)
+        from .materialized import refresh_if_installed
+        refresh_if_installed(conn)
         return {'reindexed': len(identities)}

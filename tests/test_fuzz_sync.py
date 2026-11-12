@@ -53,7 +53,11 @@ def test_ingest_idempotence_conflict_identity_and_atomicity(tmp_path):
 
 def test_http_sync_lost_ack_retry_and_public_query(tmp_path):
     serverdb=tmp_path/'server';key=tmp_path/'key';create_user(serverdb,'Tester',key)
-    home=tmp_path/'home';home.mkdir();repo=ResultRepository(home/'results');repo.save(result())
+    home=tmp_path/'home';home.mkdir();repo=ResultRepository(home/'results')
+    # Public cases exclude CPU-only references. Exercise lost ACK recovery with
+    # an actual tested backend rather than expecting a hidden reference row.
+    tested=result();tested['backend']='af-mlir';tested['execution']={'backend':'af-mlir','device':'npu:0'}
+    repo.save(tested)
     server=create_server(serverdb,0,cache_interval=.1)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:

@@ -19,8 +19,8 @@ from autofusedebugger.fuzz.view.server import create_server
 def record(seed='680564733841876926926749214863536422954', status='ok'):
     import hashlib
     return {'seed': seed, 'workload_id': hashlib.sha256(seed.encode()).hexdigest(), 'oracle_id': 'ref/1',
-            'backend': 'test', 'status': status,
-            'execution': {'backend': 'test', 'device': 'cpu'},
+            'backend': 'af-mlir', 'status': status,
+            'execution': {'backend': 'af-mlir', 'device': 'cpu'},
             'evaluation': {'correctness': True, 'performance': False},
             'shape_results': [{'shape_index': 0, 'correctness': {'ok':'pass','fail':'fail','error':'error'}[status],
                                'performance': 'not_requested'}]}

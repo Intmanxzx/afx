@@ -133,6 +133,12 @@ def test_refresh_rest_backoff_cap_and_recovery(tmp_path, monkeypatch):
                 with sqlite3.connect(db) as conn:
                     conn.execute('CREATE TABLE changed(value)')
 
+    class Wake:
+        def wait(self, delay):cache._stop.wait(delay)
+        def clear(self):pass
+
+    monkeypatch.setattr(cache, '_wake', Wake())
+
     def build():
         builds.append(1)
         if len(builds) <= 6 or len(builds) == 8:
@@ -164,3 +170,37 @@ def test_close_interrupts_long_refresh_wait(tmp_path):
         closer.join(2)
     assert not closer.is_alive()
     assert not cache._thread.is_alive()
+
+
+def test_incremental_bootstrap_falls_back_to_exact_snapshot(tmp_path,monkeypatch):
+    from autofusedebugger.fuzz.reporting.incremental import IncrementalStatistics
+    from autofusedebugger.fuzz.reporting.statistics import statistics
+    db=tmp_path/'db';initialize(db);save(ResultRepository(db),'one','af-mlir','ok')
+    def backlog(self):raise TimeoutError('checkpoint saved')
+    monkeypatch.setattr(IncrementalStatistics,'refresh',backlog)
+    result=PublicCache(db).build()
+    assert json.loads(result['summary'].body)==ResultQueries(db).case_summary()
+    assert json.loads(result['statistics'].body)==statistics(db)
+
+
+def test_busy_rollup_does_not_block_health_or_cached_reads(tmp_path):
+    server = create_server(tmp_path/'db', 0)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        assert server.public_cache.ready.wait(5)
+        with server.public_cache.query_lock:
+            for path, expected in [('/api/cases?after=1',503),
+                                   ('/api/summary?q=failed',503),
+                                   ('/api/statistics?q=failed',503),
+                                   ('/healthz',200),('/api/cases?limit=10',200)]:
+                conn = http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=2)
+                try:
+                    conn.request('GET',path)
+                    reply=conn.getresponse()
+                    assert reply.status==expected
+                    if expected==503:assert reply.getheader('Retry-After')=='5'
+                    reply.read()
+                finally:conn.close()
+    finally:
+        server.shutdown();server.server_close();thread.join()

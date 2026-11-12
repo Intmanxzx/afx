@@ -47,6 +47,8 @@ def perform(job):
         from ..generation import materialize, workload_id
         from ..case_spec import encode
         bundle = materialize(job['seed'])
+        if job.get('expected_workload_id') and workload_id(bundle)!=job['expected_workload_id']:
+            raise ValueError('retest reproduction fingerprint mismatch')
         if set(job.get('exclude_ops',[])) & {n['op'] for n in json.loads(bundle.spec.graph_json)['nodes']}:
             return {'excluded': True}
         return write_bundle(job['directory'],bundle)
@@ -65,6 +67,7 @@ def perform(job):
     torch.set_num_threads(config.compile_threads)
     evaluation = EvaluationConfig(**job['evaluation'])
     adapter = create_backend(config)
+    adapter.device_lease_wait=job.get('device_lease_wait',0)
     adapter.validated_shared_case = True
     if kind == 'compare':
         import torch

@@ -12,6 +12,8 @@ from ..storage.schema import TABLE_COLUMNS
 
 def initialize(path):
     with closing(_connect(path,writable=True)) as conn,conn:
+        from ..reporting.index import initialize as initialize_reporting
+        initialize_reporting(conn)
         conn.execute('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, key_hash TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1)')
         conn.execute('CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ack INTEGER NOT NULL DEFAULT 0)')
         conn.execute('CREATE TABLE IF NOT EXISTS receipts (source_id TEXT NOT NULL, revision INTEGER NOT NULL, payload_hash TEXT NOT NULL, PRIMARY KEY(source_id,revision))')
@@ -114,11 +116,25 @@ def ingest(path, key, payload):
                     row=dict(shape,attempt_id=identity)
                     conn.execute('INSERT INTO shapes VALUES ('+','.join('?' for _ in TABLE_COLUMNS['shapes'])+')',tuple(row[k] for k in TABLE_COLUMNS['shapes']))
                 conn.execute('INSERT INTO owners VALUES (?,?)',(identity,user))
+            # Store evidence and ACK even an invalid replay, but do not let a
+            # known fingerprint/config mismatch become a current test result.
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='retest_lease_history_v1'").fetchone():
+                import json
+                lease=contexts['execution'].get('batch_id')
+                bound=conn.execute('SELECT t.spec FROM retest_lease_history_v1 h JOIN retest_tasks_v1 t ON t.id=h.task_id WHERE h.lease_id=?',(lease,)).fetchone()
+                if bound:
+                    spec=json.loads(bound[0]);a=record['attempt'];ex=contexts['execution']
+                    if (a['seed']!=spec['seed'] or a['workload_id']!=spec['workload_id'] or
+                        a['oracle_id']!=spec['oracle_id'] or a['backend'] not in {'cpu',spec['backend']} or
+                        ex.get('static_only')!=spec['execution']['static_only'] or contexts['evaluation']!=spec['evaluation']):
+                        conn.execute('INSERT OR IGNORE INTO invalid_replays_v1 VALUES (?,?)',(identity,'reproduction_mismatch'))
             from ..reporting.index import index_attempt
             display=conn.execute('SELECT display_name FROM users WHERE id=?',(user,)).fetchone()[0]
             index_attempt(conn,identity,source,display,user)
             conn.execute('INSERT INTO receipts VALUES (?,?,?)',(source,revision,receipt))
             ack=revision
+        from ..reporting.materialized import refresh_if_installed
+        refresh_if_installed(conn)
         conn.execute('UPDATE sources SET ack=? WHERE id=?',(ack,source))
         return {'source_id':source,'ack':ack,'accepted':len(items)}
 

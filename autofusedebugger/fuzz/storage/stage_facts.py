@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS stage_facts_v1 (
  stage_id TEXT PRIMARY KEY, window_id TEXT NOT NULL, case_id TEXT NOT NULL,
  session_id TEXT, attempt_id TEXT, payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS stage_window_v1 ON stage_facts_v1(window_id);
+CREATE INDEX IF NOT EXISTS stage_case_attempt_v1 ON stage_facts_v1(case_id,attempt_id);
 CREATE TABLE IF NOT EXISTS stage_windows_v1 (window_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS stage_attempts_v1 (attempt_id TEXT PRIMARY KEY,case_id TEXT NOT NULL,window_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fact_outbox_v1 (revision INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,identity TEXT NOT NULL,payload TEXT NOT NULL);

@@ -13,6 +13,8 @@ INTERVAL = 30
 MAX_RETRY_INTERVAL = 300
 PAGE_SIZES = (10, 20, 25, 50, 100, 200)
 MAX_BODY = 2 * 1024 * 1024
+# Background-only bootstrap budget; HTTP reads retain their short deadlines.
+BOOTSTRAP_TIMEOUT = 300
 
 
 @dataclass(frozen=True)
@@ -38,9 +40,11 @@ class PublicCache:
         self._statistics = None
         self.interval = interval
         self._lock = threading.Lock()
+        self.query_lock = threading.Lock()
         self._entries = {}
         self._failed = False
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self.ready = threading.Event()
         self._thread = threading.Thread(target=self._run, name='public-cache', daemon=True)
 
@@ -49,7 +53,12 @@ class PublicCache:
 
     def close(self):
         self._stop.set()
+        self._wake.set()
         self._thread.join()
+
+    def invalidate(self):
+        """Wake one producer after a committed control-plane publication."""
+        self._wake.set()
 
     def get(self, key):
         with self._lock:
@@ -59,11 +68,18 @@ class PublicCache:
         from ..reporting.incremental import IncrementalStatistics
         queries = ResultQueries(self.database)
         # One bounded list read; derive page sizes using the original SQL cursors.
-        page = queries.case_page(limit=200, _include_cursors=True)
+        page = queries.case_page(limit=200, _include_cursors=True, _timeout=120)
         cursors = page.pop('_cursors')
+        from ..reporting.statistics import statistics
         if self._statistics is None:
             self._statistics = IncrementalStatistics(self.database, stopped=self._stop.is_set)
-        charts = self._statistics.refresh()
+        try:
+            charts = self._statistics.refresh()
+        except TimeoutError:
+            # A schema change may invalidate thousands of seed contributions.
+            # Keep durable bootstrap progress, but serve a correct bounded full
+            # snapshot rather than leaving every public endpoint warming.
+            charts = statistics(self.database, _timeout=BOOTSTRAP_TIMEOUT)
         counts = {row['status']:row['count'] for row in charts['overall']}
         mlir_failed=counts.pop('mlir_failed',0)
         if mlir_failed:counts['error']=counts.get('error',0)+mlir_failed
@@ -102,7 +118,8 @@ class PublicCache:
                     # writer, including facts uploads and offline maintenance.
                     current = conn.execute('PRAGMA data_version').fetchone()[0]
                     if current != version:
-                        entries = self.build()
+                        with self.query_lock:
+                            entries = self.build()
                         with self._lock:
                             self._entries = entries
                             self._failed = False
@@ -115,6 +132,8 @@ class PublicCache:
                             self._failed = False
                     retry_delay = self.interval
                 except Exception:
+                    if self._stop.is_set():
+                        break  # Normal shutdown may interrupt a checkpointed refresh.
                     with self._lock:
                         self._failed = True
                     delay = retry_delay
@@ -123,7 +142,8 @@ class PublicCache:
                         'Public cache refresh failed; keeping last snapshot; retry in %.1fs', delay)
                 # Rest AFTER work, including slow/failed builds. Never catch up
                 # by immediately rescanning a busy database. Shutdown wakes this wait.
-                self._stop.wait(delay)
+                self._wake.wait(delay)
+                self._wake.clear()
         finally:
             if conn is not None:
                 conn.close()
