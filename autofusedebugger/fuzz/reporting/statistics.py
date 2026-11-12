@@ -61,13 +61,13 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
         case_values = values
         def case_grouped(expression, joins=''):
             return [dict(r) for r in conn.execute(cte+'SELECT '+expression+
-                ' AS label,a.status,count(*) AS count FROM cases a JOIN case_facts c ON c.workload_id=a.workload_id'+
-                joins+' GROUP BY label,a.status', case_values)]
+                " AS label,CASE WHEN a.status IN ('error','unsupported') AND a.failure_path='mlir_failed' THEN 'mlir_failed' ELSE a.status END AS status,count(*) AS count FROM cases a JOIN case_facts c ON c.workload_id=a.workload_id"+
+                joins+' GROUP BY label,2', case_values)]
         result['overall']=case_grouped("'全部'")
         result['failure_path'] = [dict(r) for r in conn.execute(cte +
             "SELECT failure_path AS label,status,count(*) AS count FROM cases "
             "WHERE status IN ('error','unsupported') GROUP BY failure_path,status", values)]
-        result['backend']=[dict(r) for r in conn.execute(cte+"SELECT backend AS label,status,count(*) AS count FROM latest l WHERE EXISTS (SELECT 1 FROM cases c WHERE c.group_id=l.group_id AND c.shape_index=l.shape_index) AND backend NOT IN ('cpu','cpu-eager') GROUP BY backend,status",case_values)]
+        result['backend']=[dict(r) for r in conn.execute(cte+"SELECT backend AS label,CASE WHEN status IN ('error','unsupported') AND failure_path='mlir_failed' THEN 'mlir_failed' ELSE status END AS status,count(*) AS count FROM latest l WHERE EXISTS (SELECT 1 FROM cases c WHERE c.group_id=l.group_id AND c.shape_index=l.shape_index) AND backend NOT IN ('cpu','cpu-eager') GROUP BY backend,2",case_values)]
         if _group is None:
             for row in result['backend']:row['label']=display_backend(row['label'])
         for name in ('category','dtype','op'):

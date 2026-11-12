@@ -154,12 +154,12 @@ async function load(silent=false,includeList=true){
  if(!silent)$('message').textContent='加载中…';
  // A whole-dataset count must not hold the first page hostage. Keep failures
  // visible without replacing a valid list with an empty state.
- if(!silent)for(const id of ['total','ok','fail','errors','gen-errors'])$(id).textContent='…';
+ if(!silent)for(const id of ['total','ok','fail','errors','gen-errors','mlir-errors'])$(id).textContent='…';
  const summaryTask=api('api/summary?'+applied).then(summary=>{
   if(request!==generation)return;
-  $('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('gen-errors').textContent=(summary.by_status.gen_failed||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)).toLocaleString();
+  $('mlir-errors').textContent=(summary.mlir_failed||0).toLocaleString();$('total').textContent=summary.total.toLocaleString();$('ok').textContent=(summary.by_status.ok||0).toLocaleString();$('fail').textContent=(summary.by_status.fail||0).toLocaleString();$('gen-errors').textContent=(summary.by_status.gen_failed||0).toLocaleString();$('errors').textContent=((summary.by_status.error||0)+(summary.by_status.unsupported||0)-(summary.mlir_failed||0)).toLocaleString();
   return null;
- }).catch(error=>{if(request===generation)for(const id of ['total','ok','fail','errors','gen-errors'])$(id).textContent='—';return error;});
+ }).catch(error=>{if(request===generation)for(const id of ['total','ok','fail','errors','gen-errors','mlir-errors'])$(id).textContent='—';return error;});
  try{if(includeList){const result=await api('api/cases?'+list);if(request!==generation)return;
  const signature=JSON.stringify(result.items);if(signature!==lastData){if(silent&&($('column-picker').open||$('rows').querySelector('details[open]')))return;lastData=signature;lastRows=result.items;renderRecords(result.items);}
  next=result.next_cursor;$('next').disabled=next===null;$('previous').disabled=page===0;$('page-label').textContent=`第 ${page+1} 页 · ${result.items.length} 条`;$('message').textContent=result.items.length?'':'没有符合条件的结果。';

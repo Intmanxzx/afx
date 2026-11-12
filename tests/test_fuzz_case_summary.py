@@ -16,7 +16,7 @@ def test_case_summary_excludes_cpu_and_backend_retries(tmp_path):
         save(repo,str(i),'af-mlir','ok' if i<9 else 'error')
     q=ResultQueries(repo.path)
     assert q.summary()['total']==200  # internal attempt count remains explicit
-    assert q.case_summary()=={'total':100,'by_status':{'ok':9,'error':91},'unit':'shape_case'}
+    assert q.case_summary()=={'total':100,'by_status':{'ok':9,'error':91},'mlir_failed':0,'unit':'shape_case'}
     stats=statistics(repo.path)
     assert sum(r['count'] for r in stats['overall'])==100
     assert stats['backend']==[{'label':'af-mlir','status':'error','count':91},{'label':'af-mlir','status':'ok','count':9}]

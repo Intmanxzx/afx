@@ -20,7 +20,7 @@ def test_shape_rows_pagination_summary_and_details(tmp_path):
     repo.save(record('cpu',['pass']*3))
     identity=repo.save(record('af-mlir',['pass','error','pass']))
     q=ResultQueries(repo.path)
-    assert q.case_summary()=={'total':3,'by_status':{'ok':2,'error':1},'unit':'shape_case'}
+    assert q.case_summary()=={'total':3,'by_status':{'ok':2,'error':1},'unit':'shape_case','mlir_failed':0}
     rows=[];after=0
     while True:
         page=q.case_page(limit=1,after=after);rows+=page['items']
@@ -152,7 +152,7 @@ def test_generation_failure_is_gen_failed_not_function_failed(tmp_path):
     # scheduler, rather than an AF compile/execute error.
     identity = repo.save(row)
     q = ResultQueries(repo.path)
-    assert q.case_summary() == {'total': 1, 'by_status': {'gen_failed': 1}, 'unit': 'shape_case'}
+    assert q.case_summary() == {'total': 1, 'by_status': {'gen_failed': 1}, 'unit': 'shape_case', 'mlir_failed': 0}
     item = q.case_page()['items'][0]
     backend = item['backends']['af-mlir'][0]
     assert item['status'] == 'gen_failed'

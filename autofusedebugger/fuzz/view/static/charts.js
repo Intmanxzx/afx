@@ -7,7 +7,8 @@ const STATUS_COLORS = {
   fail: _rootStyle.getPropertyValue('--viz-fail').trim(),
   error: _rootStyle.getPropertyValue('--viz-gen-error').trim(),
   gen_failed: '#d97706',
-  gen_error: _rootStyle.getPropertyValue('--viz-gen-error').trim(),
+  mlir_failed: _rootStyle.getPropertyValue('--viz-mlir-error').trim(),
+  gen_error: _rootStyle.getPropertyValue('--viz-function-error').trim(),
 };
 const VIZ = {
   surfaceGap: _rootStyle.getPropertyValue('--viz-surface-gap').trim(),
@@ -18,8 +19,8 @@ const VIZ = {
   textMuted: _rootStyle.getPropertyValue('--viz-text-muted').trim(),
 };
 const FONT = 'system-ui, -apple-system, sans-serif';
-const STATUS_KEYS = ['pass', 'fail', 'gen_failed', 'gen_error', 'unknown'];
-const STATUS_LABELS = {pass:'Pass',fail:'精度Failed',gen_failed:'构图Failed',gen_error:'功能Failed',unknown:'Unknown'};
+const STATUS_KEYS = ['gen_failed', 'gen_error', 'mlir_failed', 'fail', 'pass', 'unknown'];
+const STATUS_LABELS = {pass:'Pass',fail:'精度Failed',gen_failed:'构图Failed',gen_error:'功能Failed',mlir_failed:'MLIR Failed',unknown:'Unknown'};
 
 // ---- 悬停浮层（替代原生 <title>）：跟随鼠标，内容用 textContent 写入，
 // 系列名/分类名来自用户数据，不能走 innerHTML 拼接。 ----
@@ -215,22 +216,15 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
   });
 }
 
-const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['unknown'])]));let latestStatistics=null;
+const legendHidden=new Map(['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem'].map(id=>[id,new Set(['gen_failed','gen_error','unknown'])]));let latestStatistics=null;
 window.updateStatistics = result => {
  latestStatistics=result;
- const failureBox=document.getElementById('failure-path-breakdown');
- if(failureBox){failureBox.replaceChildren();const rows=result.failure_path||[];const total=rows.reduce((n,r)=>n+r.count,0);
-  for(const [key,label] of [['mlir_failed','MLIR 路径失败'],['unconfirmed','未确认 MLIR 路径']]){
-   const count=rows.filter(r=>r.label===key).reduce((n,r)=>n+r.count,0),text=document.createElement('span');
-   text.textContent=label+'：'+count.toLocaleString()+' / '+total.toLocaleString();failureBox.append(text);
-  }
- }
- const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_failed:0,gen_error:0,unknown:0});const key=r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='gen_failed'?'gen_failed':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};
+ const convert=(rows,id)=>{const hidden=legendHidden.get(id)||new Set(),groups=new Map();for(const r of rows){if(!groups.has(r.label))groups.set(r.label,{key:r.label,pass:0,fail:0,gen_failed:0,gen_error:0,mlir_failed:0,unknown:0});const key=r.status==='mlir_failed'?'mlir_failed':r.status==='ok'?'pass':r.status==='fail'?'fail':r.status==='gen_failed'?'gen_failed':r.status==='unknown'?'unknown':'gen_error';if(!hidden.has(key))groups.get(r.label)[key]+=r.count;}return [...groups.values()];};
  const overall=convert(result.overall,'Overall')[0]||{};
  drawDonut('chartOverall','legendOverall',STATUS_KEYS.map(s=>({label:s,value:overall[s]||0,color:STATUS_COLORS[s]})));
  for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']])drawStackedBars('chart'+id,'legend'+id,convert(result[key],id));
  for(const [key,id] of [['overall','Overall'],['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']]){
   const legend=document.getElementById('legend'+id);legend.replaceChildren();const hidden=legendHidden.get(id)||new Set();const raw=convert(result[key],'__raw');const counts=Object.fromEntries(STATUS_KEYS.map(s=>[s,raw.reduce((n,r)=>n+r[s],0)]));const total=STATUS_KEYS.filter(s=>!hidden.has(s)).reduce((n,s)=>n+counts[s],0);
-  for(const status of STATUS_KEYS){if(status==='unknown'&&!counts[status])continue;const button=document.createElement('button');button.type='button';button.dataset.status=status;button.setAttribute('aria-pressed',String(!hidden.has(status)));const swatch=document.createElement('i');swatch.style.background=STATUS_COLORS[status];button.append(swatch,document.createTextNode(STATUS_LABELS[status]));button.addEventListener('click',()=>{if(hidden.has(status))hidden.delete(status);else hidden.add(status);legendHidden.set(id,hidden);updateStatistics(latestStatistics);});legend.append(button);}
+  for(const status of STATUS_KEYS){const button=document.createElement('button');button.type='button';button.dataset.status=status;button.setAttribute('aria-pressed',String(!hidden.has(status)));const swatch=document.createElement('i');swatch.style.background=STATUS_COLORS[status];button.append(swatch,document.createTextNode(STATUS_LABELS[status]));button.addEventListener('click',()=>{if(hidden.has(status))hidden.delete(status);else hidden.add(status);legendHidden.set(id,hidden);updateStatistics(latestStatistics);});legend.append(button);}
  }
 };
