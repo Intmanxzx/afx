@@ -127,7 +127,7 @@ class TorchAdapter:
                 return False
             values = decode_storage(raw, spec.dtype)
             reference_tensor = self.torch.tensor(values, dtype=getattr(self.torch, spec.dtype)).reshape(spec.shape)
-            if not self.torch.equal(actual.detach().cpu(), reference_tensor):
+            if not bool(self._close(actual, reference_tensor).all()):
                 return False
         return True
 
@@ -140,9 +140,19 @@ class TorchAdapter:
         finally:
             self.name, self.device = original_name, original_device
 
+    def _close(self, actual, reference):
+        from autofusedebugger.compare import resolve_tolerances
+        actual, reference = actual.detach().cpu(), reference.detach().cpu()
+        if not actual.is_floating_point():
+            return actual == reference
+        rtol, atol, _ = resolve_tolerances(reference.dtype, actual.dtype)
+        # Evaluate tolerance arithmetic without rounding it to the output dtype.
+        return self.torch.isclose(actual.to(self.torch.float64), reference.to(self.torch.float64),
+                                  rtol=rtol, atol=atol, equal_nan=False)
+
     def outputs_equal(self, left, right):
         return isinstance(left,tuple) and isinstance(right,tuple) and len(left)==len(right) and all(
-            a.shape==b.shape and a.dtype==b.dtype and self.torch.equal(a,b) for a,b in zip(left,right))
+            a.shape==b.shape and a.dtype==b.dtype and bool(self._close(a,b).all()) for a,b in zip(left,right))
 
     def diagnose_accuracy(self, output, expected):
         from ..tensors import decode_storage
@@ -150,17 +160,19 @@ class TorchAdapter:
         max_abs=max_rel=absolute_sum=0.0
         for actual, reference_value in zip(output,expected):
             if isinstance(reference_value, self.torch.Tensor):
-                reference = reference_value.detach().cpu().to(self.torch.float64)
+                reference = reference_value.detach().cpu()
             else:
                 spec, raw = reference_value
                 values = decode_storage(raw, spec.dtype)
-                reference=self.torch.tensor(values,dtype=self.torch.float64).reshape(spec.shape)
-            actual=actual.detach().cpu().to(self.torch.float64)
+                reference=self.torch.tensor(values,dtype=getattr(self.torch, spec.dtype)).reshape(spec.shape)
             if actual.shape!=reference.shape:
                 return {'error':'output shape mismatch','basis':'cpu'}
+            mismatches += int((~self._close(actual, reference)).sum())
+            actual=actual.detach().cpu().to(self.torch.float64)
+            reference=reference.to(self.torch.float64)
             finite=self.torch.isfinite(actual)&self.torch.isfinite(reference)
             diff=(actual-reference).abs()
-            total+=actual.numel();mismatches+=int((actual!=reference).sum());nonfinite+=int((~finite).sum())
+            total+=actual.numel();nonfinite+=int((~finite).sum())
             if bool(finite.any()):
                 absolute=diff[finite];relative=absolute/reference[finite].abs().clamp_min(1e-30)
                 max_abs=max(max_abs,float(absolute.max()));max_rel=max(max_rel,float(relative.max()));absolute_sum+=float(absolute.sum())

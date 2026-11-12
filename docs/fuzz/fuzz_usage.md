@@ -39,6 +39,7 @@ autofusedbg fuzz replay C000000016 --save      # 保存结果并加入自动上�
 ```
 
 - 默认 CPU 为对照、AF-MLIR 为被测后端；对 CPU 精度不一致即失败，不自动复核或改判。需要人工复核时执行 `autofusedbg fuzz replay <seed> --backend eager-npu --save`，生成独立记录，不覆盖原结果。
+- 浮点输出复用 `autofusedebugger/compare.py` 的 dtype 默认容差：FP64 为 `rtol=atol=1e-7`，FP32 为 `1e-5`，FP16 为 `1e-3`，BF16 为 `1e-2`。逐元素要求 `abs(actual - CPU) <= atol + rtol * abs(CPU)`，诊断中的 `mismatches` 统计不满足该条件的元素。整数和布尔输出仍精确比较，shape/dtype 必须一致；同符号 Inf 通过，NaN 不通过。历史结果需要重新比较或重跑才会更新。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
 - C seed 保留单个静态 Shape；新增 D seed 在同一 NNSmith 图和固定权重上生成 3 个不同的合法 Shape，使用动态编译。新随机批跑按 seed 奇偶约 1:1 选择静态/动态；`--static-only` 可只产生静态用例。无法生成 3 个合法样本的 D seed 显式失败，不偷换成静态用例。旧 C seed 的重放内容不变。
 - 默认探测所有可见 NPU，随机 campaign 派发时选择空闲兼容卡，不提前固定到忙卡；显式队列/replay 仍遵守设备约束。同一逻辑卡同一时刻只运行一个任务，跨进程仍由物理 UUID 锁保护。CPU 与不同 NPU 卡可并发；总并发受 `cpu_workers`（`--workers`）约束，workers × compile_threads 不得超过有效 CPU 核数，内存和缓存预算按整个活动池合计。
