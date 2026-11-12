@@ -228,8 +228,18 @@ const DIMENSION_LABELS = {
  '513–4096':'(512,4K]', '4097–16384':'(4K,16K]',
  '16385–65536':'(16K,64K]', '65537–131072':'(64K,128K]', '>131072':'>128K',
 };
+// Display-only dtype abbreviations; API labels and coverage counts stay unchanged.
+const DTYPE_LABELS = {
+ float16:'FP16', bfloat16:'BF16', float32:'FP32', float64:'FP64',
+ uint8:'U8', uint16:'U16', uint32:'U32', uint64:'U64',
+ int8:'I8', int16:'I16', int32:'I32', int64:'I64',
+ bool:'BOOL', complex64:'C64', complex128:'C128',
+};
 function displayChartRows(rows,id) {
- return id==='ShapeDim' ? rows.map(row=>({...row,key:DIMENSION_LABELS[row.key]||row.key})) : rows;
+ // Missing metadata needs no slot when all currently visible series are zero.
+ rows=rows.filter(row=>row.key!=='未采集'||STATUS_KEYS.some(status=>(row[status]||0)>0));
+ const labels=id==='ShapeDim'?DIMENSION_LABELS:id==='Dtype'?DTYPE_LABELS:null;
+ return labels ? rows.map(row=>({...row,key:labels[row.key]||row.key})) : rows;
 }
 function orderChartRows(rows,id) {
  const order=SHAPE_BUCKET_ORDER[id];

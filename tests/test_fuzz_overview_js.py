@@ -33,11 +33,50 @@ nodes.get('legendOverall').children[1].events.click();
 assert.deepEqual(plots.get('chartOverall').map(s=>s.value),[0,2,3,4,5,0]);
 updateStatistics(data);assert.equal(nodes.get('legendOverall').children[1]['aria-pressed'],'true');
 assert.equal(nodes.get('legendBackend').children[1]['aria-pressed'],'false');
+// A zero missing-metadata bucket must not reserve space, but can reappear
+// when its hidden status is enabled. Ordinary zero buckets stay in place.
+for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','Dtype'],['dimension','ShapeDim'],['elements','ShapeElem']]){
+ const testData={...data,[key]:[{label:'未采集',status:'gen_failed',count:7},
+                              {label:'未采集',status:'ok',count:0},
+                              {label:'known',status:'ok',count:0}]};
+ updateStatistics(testData);
+ assert.deepEqual(plots.get('chart'+id).map(r=>r.key),['known']);
+ nodes.get('legend'+id).children[0].events.click();
+ assert.equal(plots.get('chart'+id).find(r=>r.key==='未采集').gen_failed,7);
+ nodes.get('legend'+id).children[0].events.click();
+ assert.deepEqual(plots.get('chart'+id).map(r=>r.key),['known']);
+ assert.equal(testData[key][0].count,7);
+}
+
 '''
     subprocess.run([node,'-e',script],check=True,capture_output=True,text=True)
     html=Path('autofusedebugger/fuzz/view/static/index.html').read_text()
     assert 'failure-path-breakdown' not in html
     assert html.index('id="errors"') < html.index('id="mlir-errors"') < html.index('id="fail"') < html.index('id="ok"')
+
+
+def test_dtype_chart_uses_short_labels_without_changing_source_data():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable')
+    source = Path('autofusedebugger/fuzz/view/static/charts.js').read_text()
+    helpers = source[source.index('const SHAPE_BUCKET_ORDER'):source.index('const legendHidden')]
+    script = "const assert=require('node:assert/strict');\n" + helpers + r"""
+const STATUS_KEYS=['gen_failed','gen_error','mlir_failed','fail','pass','unknown'];
+const labels=['float16','bfloat16','float32','float64','uint8','uint16','uint32','uint64',
+              'int8','int16','int32','int64','bool','complex64','complex128','未采集','custom_dtype'];
+const expected=['FP16','BF16','FP32','FP64','U8','U16','U32','U64',
+                'I8','I16','I32','I64','BOOL','C64','C128','未采集','custom_dtype'];
+const rows=labels.map((key,i)=>Object.freeze({key,pass:i+1,fail:2,mlir_failed:3}));
+const displayed=displayChartRows(rows,'Dtype');
+assert.deepEqual(displayed.map(r=>r.key),expected);
+assert.deepEqual(rows.map(r=>r.key),labels);
+assert.deepEqual(displayed.map(({key,...counts})=>counts),rows.map(({key,...counts})=>counts));
+assert.deepEqual(displayChartRows(rows,'Category'),rows);
+assert.deepEqual(displayChartRows(rows,'Backend'),rows);
+assert.deepEqual(displayChartRows([],'Dtype'),[]);
+"""
+    subprocess.run([node, '-e', script], check=True, capture_output=True, text=True)
 
 
 def test_summary_cards_split_function_and_mlir_counts():
@@ -95,6 +134,7 @@ const form={elements:{q:{value:'old filter'}},addEventListener(){}};
 const location={pathname:'/',hash:'#overview'};
 const history={replaceState(a,b,url){this.url=url;location.hash=url.slice(url.indexOf('#'))}};
 const parameters=()=>new URLSearchParams(form.elements.q.value?{q:form.elements.q.value}:{});
+const expandedCases=new Set();let currentCaseItems=[];
 let applied, page=5,cursors=[0,123],next=123,generation=0,detailGeneration=0,lastData='old',lastRows=[{}];
 const pendingRequests=new Map();let aborted=0,navigations=0,refreshes=0;
 const hideFieldTooltip=()=>{};const navigate=()=>{navigations++};const refreshVisible=()=>{refreshes++};
