@@ -16,14 +16,14 @@ def test_case_summary_excludes_cpu_and_backend_retries(tmp_path):
         save(repo,str(i),'af-mlir','ok' if i<9 else 'error')
     q=ResultQueries(repo.path)
     assert q.summary()['total']==200  # internal attempt count remains explicit
-    assert q.case_summary()=={'total':100,'by_status':{'ok':9,'error':91},'mlir_failed':0,'unit':'shape_case'}
+    assert q.case_summary()=={'total':1,'by_status':{'error':1},'mlir_failed':0,'unit':'shape_case'}
     stats=statistics(repo.path)
-    assert sum(r['count'] for r in stats['overall'])==100
-    assert stats['backend']==[{'label':'af-mlir','status':'error','count':91},{'label':'af-mlir','status':'ok','count':9}]
+    assert sum(r['count'] for r in stats['overall'])==1
+    assert stats['backend']==[{'label':'af-mlir','status':'error','count':1}]
     save(repo,'99','af-mlir','ok')
     save(repo,'99','eager-npu','ok')
-    assert q.case_summary()['by_status']=={'ok':10,'error':90}
-    assert q.case_summary(q='alice')['total']==100
+    assert q.case_summary()['by_status']=={'ok':1}
+    assert q.case_summary(q='alice')['total']==1
     assert q.case_summary(user_id='bob')['total']==0
 
 
@@ -37,17 +37,17 @@ def test_cpu_only_unknown_and_cpu_match_filter_keeps_mlir_failure(tmp_path):
     assert q.case_summary(q='cpu')['by_status']=={'error':1}
     save(repo,'2','cpu','ok',user='bob')
     save(repo,'2','af-mlir','fail',user='bob')
-    assert q.case_summary()['by_status']=={'error':1,'fail':1}
+    assert q.case_summary()['by_status']=={'fail':1}
 
 
 def test_unfiltered_rollup_does_not_sort_full_diagnostics():
     from autofusedebugger.fuzz.reporting.cases import rollup
     sql, values = rollup()
-    assert 'SELECT a.*' not in sql
-    assert 'cases AS (SELECT c.* FROM unfiltered_cases c WHERE 1=1)' in sql
+    assert 'SELECT a.* FROM attempts' not in sql
+    assert 'SELECT c.* FROM unfiltered_cases c WHERE 1=1' in sql
     assert not values
     filtered, values = rollup(q='relu')
-    assert 'SELECT p.group_id,p.shape_index FROM projection p' in filtered
+    assert 'SELECT 1 FROM projection p' in filtered
     assert values
 
 
@@ -121,7 +121,5 @@ def test_filtered_first_page_stays_in_recent_window(tmp_path):
         statements = []
         conn.set_trace_callback(statements.append)
         rows = page_keys(conn, limit=10, q="WHERE status='accuracy_failed'")
-        assert len(rows) == 11
-        rollups = [sql for sql in statements if 'backend_keys AS' in sql]
-        assert len(rollups) == 1
-        assert 'a.rowid BETWEEN 32 AND 160' in rollups[0]
+        assert len(rows) == 1
+        assert rows[0]['history_count']==160

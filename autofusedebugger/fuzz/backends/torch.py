@@ -52,7 +52,7 @@ class TorchAdapter:
         if npu:
             from .device_lease import DeviceLease
             identity = str(torch.npu.get_device_properties(self.device).uuid)
-            self.lease = DeviceLease(identity).acquire()
+            self.lease = DeviceLease(identity).acquire(timeout=getattr(self,'device_lease_wait',0))
             # Inductor/runtime helpers also consult the current device; explicit
             # tensor .to(npu:1) alone does not bind generated launches to card 1.
             self.old_device = torch.npu.current_device()

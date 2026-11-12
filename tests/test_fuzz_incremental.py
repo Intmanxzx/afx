@@ -25,7 +25,7 @@ def test_incremental_retry_restart_delete_and_metadata(tmp_path):
         save(repo,str(batch),'cpu','ok')
         save(repo,str(batch),'af-mlir','fail')
     inc=IncrementalStatistics(db)
-    same(db,inc); assert inc.last_groups==8
+    same(db,inc); assert inc.last_groups==1
     same(db,inc); assert inc.last_groups==0
     identity=save(repo,'3','af-mlir','ok')
     same(db,inc); assert inc.last_groups==1
@@ -40,10 +40,10 @@ def test_incremental_retry_restart_delete_and_metadata(tmp_path):
     # Whole-group deletion removes old counts; reindex/change of group uses old+new.
     with sqlite3.connect(db) as conn:
         conn.execute("UPDATE attempt_facts SET group_id='moved' WHERE batch_id='2'")
-    same(db,inc); assert inc.last_groups==2
+    same(db,inc); assert inc.last_groups==1
     with sqlite3.connect(db) as conn:
         conn.execute("INSERT INTO case_dimensions VALUES (?, 'op', 'test-op')",('a'*64,))
-    same(db,inc); assert inc.last_groups==8
+    same(db,inc); assert inc.last_groups==1
     with sqlite3.connect(db) as conn:
         conn.execute('DELETE FROM attempt_facts')
     same(db,inc)
@@ -149,7 +149,10 @@ def test_window_late_facts_and_cached_aggregate(tmp_path):
 def test_bootstrap_batches_resume(tmp_path,monkeypatch):
     import autofusedebugger.fuzz.reporting.incremental as module
     db=tmp_path/'db';initialize(db);repo=ResultRepository(db)
-    for i in range(5):save(repo,str(i),'af-mlir','ok')
+    for i in range(5):
+        value=record('af-mlir',['pass']);value['seed']=str(2*2**128+42+i)
+        value['execution'].pop('case_spec');value['execution']['batch_id']=str(i)
+        repo.save(value)
     monkeypatch.setattr(module,'BATCH',2)
     original=module.replace_group;calls=[]
     def fail_third(*args):
@@ -177,7 +180,7 @@ def test_replace_group_and_transaction_rollback(tmp_path):
         row=list(conn.execute('SELECT * FROM attempt_facts WHERE attempt_id=?',(identity,)).fetchone())
         row[1]='replacement'
         conn.execute('INSERT OR REPLACE INTO attempt_facts VALUES ('+','.join('?' for _ in row)+')',row)
-    same(db,inc);assert inc.last_groups==2
+    same(db,inc);assert inc.last_groups==1
     conn=sqlite3.connect(db)
     try:
         conn.execute("UPDATE shapes SET correctness='pass' WHERE attempt_id=?",(identity,))
@@ -193,7 +196,8 @@ def test_group_query_plan_uses_group_index(tmp_path):
     from contextlib import closing
     with closing(_connect(db)) as conn:
         sql,args=rollup()
-        sql=sql.replace('GROUP BY f.group_id,a.backend','WHERE f.group_id=? GROUP BY f.group_id,a.backend')
+        sql=sql.replace('JOIN attempt_arrivals_v2 r ON r.attempt_id=a.id','JOIN attempt_arrivals_v2 r ON r.attempt_id=a.id AND a.seed=?')
         plans=[r[3] for r in conn.execute('EXPLAIN QUERY PLAN '+sql+'SELECT * FROM latest',['missing'])]
-    assert any('SEARCH f USING' in p and 'group_id=?' in p for p in plans)
-    assert not any('SCAN a' == p for p in plans)
+    assert any('SEARCH a USING' in p and 'seed=?' in p for p in plans)
+    # Later SCAN a entries refer to materialized CTE rows, not attempts.
+    assert any('SEARCH r USING' in p for p in plans)

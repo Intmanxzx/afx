@@ -71,8 +71,9 @@ button,a,input,select,summary{outline-offset:2px}
 }
 .brand-text{display:flex;flex-direction:column;line-height:1.12;font-size:18px;font-weight:650;letter-spacing:.1px}
 .brand-text small{margin-top:4px;font-size:9px;font-weight:600;letter-spacing:2.2px;color:#8fb3a7}
+.topbar-actions{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:16px;min-width:0}
 .status-group{
-  margin-left:auto;display:flex;align-items:center;gap:6px;
+  margin-left:0;display:flex;align-items:center;gap:6px;
   min-width:0;overflow:hidden;white-space:nowrap;
   font-size:12px;color:#9fbab0;
 }
@@ -420,7 +421,7 @@ pre{
 @media(max-width:900px){
   .cards{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
-@media(max-width:700px){
+@media(max-width:1180px){
   .topbar{
     display:grid;grid-template-columns:minmax(0,1fr) auto;
     grid-template-areas:"brand status" "nav nav";
@@ -429,7 +430,8 @@ pre{
   .topbar .brand{grid-area:brand}
   .brand-text{font-size:16px}
   .brand-text small{display:none}
-  .status-group{grid-area:status;justify-self:end;max-width:48vw;margin-left:0;font-size:11px}
+  .topbar-actions{grid-area:status;justify-self:end;max-width:48vw;margin-left:0;gap:10px}
+  .status-group{font-size:11px}
   .topbar nav{
     grid-area:nav;width:100%;
     display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;
@@ -437,6 +439,11 @@ pre{
   }
   .topbar nav a{justify-content:center;gap:4px;padding:7px 2px;font-size:11.5px}
   .topbar nav a svg{width:14px;height:14px}
+}
+@media(max-width:700px){
+  .topbar{grid-template-areas:"brand brand" "nav nav" "status status"}
+  .topbar-actions{max-width:100%;width:100%}
+  .brand-text{font-size:16px}
   main{padding:14px 14px 40px}
   .cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   .cards>.kpi{padding:13px 14px 12px;border-radius:12px}
@@ -477,3 +484,9 @@ pre{
 
 .case-table .record-row{cursor:pointer}
 .case-table .case-seed{font-weight:600}
+
+/* Complete round history: identical columns, background only, no indentation. */
+.case-table tr.case-history-row{background:var(--history-row-bg,#edf2f7)}
+.case-table tr.case-history-row:hover{background:var(--history-hover-bg,#e2eaf4)}
+.history-toggle{white-space:nowrap}
+.history-footer td{padding:10px}

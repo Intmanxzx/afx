@@ -126,3 +126,11 @@ def case_condition(q):
         return compile_where(q, columns=columns)
     except KeyError:
         return None
+
+
+def exact_seed(q):
+    """Recognize the existing exact short-seed search, not fuzzy numeric text."""
+    if isinstance(q, str) and re.fullmatch(r'[CDEF][0-9A-Z]{9,25}', q.strip()):
+        from ..contracts import Seed
+        return str(Seed.parse(q.strip()))
+    return None

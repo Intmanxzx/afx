@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autofuse Fuzz</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
 <script src="charts.js" defer></script>
 <script src="app.js" defer></script>
@@ -12,16 +13,19 @@
 <body>
 <header class="topbar">
   <a class="brand" href="#overview">
-    <span class="brand-icon" aria-hidden="true">AF</span>
+    <img class="brand-icon" src="favicon.svg" width="34" height="34" alt="">
     <span class="brand-text">Autofuse<small>FUZZ WORKSPACE</small></span>
   </a>
-  <span class="status-group"><span id="refresh-time" class="muted">正在加载</span></span>
   <nav aria-label="主导航">
     <a href="#overview" data-page="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg><span>总览</span></a>
     <a href="#records" data-page="records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5"/><path d="m3.5 12 1.5 1.5L7.5 11"/><path d="m3.5 18 1.5 1.5L7.5 17"/></svg><span>功能&amp;精度</span></a>
     <a href="#efficiency" data-page="efficiency"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>工具效率</span></a>
     <a href="#kernel" data-page="kernel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></svg><span>Kernel性能</span></a>
   </nav>
+  <div class="topbar-actions">
+    <span class="status-group"><span id="refresh-time" class="muted">正在加载</span></span>
+    <!-- session-controls -->
+  </div>
 </header>
 <div class="workspace">
 <h1 id="page-title" class="sr-only">总览</h1>

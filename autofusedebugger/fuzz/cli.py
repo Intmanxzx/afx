@@ -82,6 +82,8 @@ def main(argv=None):
     central.add_argument("--port", type=int, default=8090)
     indexing = maintenance.add_parser('index-results', help='build additive SQLite reporting index after backup')
     indexing.add_argument('database')
+    model = maintenance.add_parser('index-cases', help='rebuild structured case indexes after private backup')
+    model.add_argument('database')
     backup = administration.add_parser("backup", help="private complete central backup including identities and ACKs")
     backup.add_argument("database")
     backup.add_argument("destination")
@@ -98,7 +100,7 @@ def main(argv=None):
     sync.add_argument("--endpoint")
     sync.add_argument("--key-file")
     sync.add_argument("--interval", type=float, default=30)
-    for child, command in [(seed,'seed'),(compare,'diagnose'),(pair,'compare'),(snapshot,'snapshot'),(check,'check-db'),(results,'results'),(indexing,'index-results'),(sync,'sync'),(central,'serve'),(backup,'server-backup'),(admin,'admin-user'),(rotate,'admin-rotate-key')]:
+    for child, command in [(seed,'seed'),(compare,'diagnose'),(pair,'compare'),(snapshot,'snapshot'),(check,'check-db'),(results,'results'),(indexing,'index-results'),(model,'index-cases'),(sync,'sync'),(central,'serve'),(backup,'server-backup'),(admin,'admin-user'),(rotate,'admin-rotate-key')]:
         child.set_defaults(command=command)
     from .scheduling.cli import register
     register(sub, maintenance)
@@ -107,6 +109,9 @@ def main(argv=None):
         if args.command == 'index-results':
             from .reporting.index import rebuild
             result = rebuild(args.database)
+        elif args.command == 'index-cases':
+            from .reporting.materialized import migrate
+            result = migrate(args.database)
         elif args.command == "serve":
             from .central.server import serve
             return serve(args.database, args.port)

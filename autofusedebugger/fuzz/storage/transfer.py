@@ -85,6 +85,12 @@ def _copy(source, target):
             columns = TABLE_COLUMNS[table]
             target.executemany(f"INSERT INTO {table} VALUES ({','.join('?' for _ in columns)})",
                                (tuple(record[key] for key in columns) for record in records))
+        if source.execute("SELECT 1 FROM sqlite_master WHERE name='invalid_replays_v1'").fetchone():
+            invalid=source.execute('SELECT reason FROM invalid_replays_v1 WHERE attempt_id=?',(row['id'],)).fetchone()
+            if invalid:
+                from ..reporting.index import initialize
+                initialize(target)
+                target.execute('INSERT OR IGNORE INTO invalid_replays_v1 VALUES (?,?)',(row['id'],invalid[0]))
         from ..reporting.index import index_attempt
         provenance = None
         if source.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_facts'").fetchone():
@@ -124,7 +130,11 @@ def merge(source, destination):
         dst.execute('PRAGMA foreign_keys=ON')
         _check(dst)
         # No triggers in owned tables: do not execute extra destination code.
-        if dst.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('contexts','attempts','shapes')").fetchone():
+        from ..reporting.index import ARRIVAL_TRIGGER
+        triggers=dst.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('contexts','attempts','shapes')").fetchall()
+        from ..reporting.materialized import trigger_sql
+        allowed_triggers = {ARRIVAL_TRIGGER, *trigger_sql()}
+        if any(sql not in allowed_triggers for (sql,) in triggers):
             raise ValueError('result-table triggers are not supported')
         src.row_factory = dst.row_factory = sqlite3.Row
         src.execute('BEGIN')
@@ -132,6 +142,11 @@ def merge(source, destination):
         with dst:
             dst.execute('BEGIN IMMEDIATE')
             result = _copy(src, dst)
+            from ..reporting.failure_origin import sql_status, failure_path
+            dst.create_function('failure_status',5,sql_status,deterministic=True)
+            dst.create_function('failure_path',7,failure_path,deterministic=True)
+            from ..reporting.materialized import refresh_if_installed
+            refresh_if_installed(dst)
             _integrity(dst)
         return result
 
@@ -149,6 +164,12 @@ def restore(source, destination):
         with closing(sqlite3.connect(temporary)) as conn:
             _initialize(conn)
         result = merge(source, temporary)
+        with closing(_connect(source)) as src, closing(_connect(temporary,writable=True)) as dst, dst:
+            dst.execute('DELETE FROM attempt_arrivals_v2')
+            if src.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
+                dst.executemany('INSERT INTO attempt_arrivals_v2 VALUES (?,?,?)',src.execute('SELECT * FROM attempt_arrivals_v2 ORDER BY sequence'))
+            else:
+                dst.execute('INSERT INTO attempt_arrivals_v2(attempt_id) SELECT id FROM attempts ORDER BY rowid')
         with temporary.open('rb') as stream:
             os.fsync(stream.fileno())
         os.link(temporary, destination)
