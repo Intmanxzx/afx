@@ -66,6 +66,8 @@ function cell(row, value, tag="td") {
 async function details(identity, shapeIndex=null) {
   hideFieldTooltip();
   const request = ++detailGeneration;
+  document.querySelectorAll('.page').forEach(el=>el.hidden=true);
+  $('comparison').hidden=true;$('page-title').textContent='用例详情';
   $('detail').hidden = false; $('detail-message').textContent = '加载中…';
   $('detail-content').textContent = ''; $('command').value = ''; $('copy').disabled = true;
   for(const id of ['case-meta','ascir-detail','failure-details','timing-detail','provenance'])$(id).replaceChildren();
@@ -116,6 +118,25 @@ $('no-columns').addEventListener('click',()=>{for(const c of currentColumns)colu
 $('reset-columns').addEventListener('click',()=>{columnPreferences={order:[],visibility:{}};saveColumns();});
 function unknown(){const span=document.createElement('span');span.className='unknown';span.textContent='Unknown';return span;}
 function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
+function recordAttempt(item, column=''){
+ const backend=column.includes(':')?column.split(':')[0]:null;
+ return (backend&&item.backends[backend]?.[0])||item.backends['af-mlir']?.[0]||
+  Object.entries(item.backends).find(([name,attempts])=>!['cpu','cpu-eager'].includes(name)&&attempts.length)?.[1][0]||
+  Object.values(item.backends).find(attempts=>attempts.length)?.[0];
+}
+function openRecord(item, column=''){
+ const attempt=recordAttempt(item,column);
+ if(attempt){hideFieldTooltip();location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;}
+}
+function bindRecordRow(row,item){
+ row.classList.add('record-row');
+ row.addEventListener('click',event=>{
+  // Backend buttons and history entries keep their specific attempt targets.
+  if(event.target.closest('button,a,input,select,textarea,summary,details'))return;
+  if(window.getSelection()?.toString())return;
+  openRecord(item,event.target.closest('td')?.dataset.column||'');
+ });
+}
 function renderRecords(items){
  const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
  const definitions=[{key:'seed',label:'Seed / Shape',width:190,defaultVisible:true},{key:'ops',label:'关键 OP',width:220,defaultVisible:true},{key:'inputs',label:'输入 Shape / Dtype',width:230,defaultVisible:true},{key:'mode',label:'静态 / 动态',width:100,defaultVisible:true},{key:'user_name',label:'用户',width:120,defaultVisible:true}];
@@ -125,13 +146,13 @@ function renderRecords(items){
  for(const b of backends){if(b!=='cpu')definitions.push({key:b+':function',label:b+' 功能',width:130,defaultVisible:true},{key:b+':accuracy',label:b+' 精度',width:130,defaultVisible:true},{key:b+':kernel',label:b+' 性能',width:150,defaultVisible:false});definitions.push({key:b+':total',label:b+' 处理耗时（s）',width:150,defaultVisible:b==='af-mlir'},{key:b+':e2e',label:b+' 端到端延迟（s）',width:150,defaultVisible:false},{key:b+':logs',label:b+' 运行日志摘要',width:300,defaultVisible:true});}
  definitions.push({key:'time',label:'时间',width:180,defaultVisible:true},...extraColumns.map(([key,label])=>({key,label,width:210,defaultVisible:false})));
  const fragment=document.createDocumentFragment();
- for(const item of items){const tr=document.createElement('tr');
+ for(const item of items){const tr=document.createElement('tr');bindRecordRow(tr,item);
  for(const c of definitions){const td=cell(tr,'');td.dataset.column=c.key;let populated=false;
- if(c.key==='seed'){const strong=document.createElement('strong');strong.className='case-seed';strong.textContent=item.seed_short;td.append(strong);if(item.shape_mode==='dynamic'&&item.shape_index>=0){const tag=document.createElement('small');tag.className='shape-tag';tag.textContent='S'+item.shape_index;td.append(tag);}populated=true;}
+ if(c.key==='seed'){const strong=document.createElement('button');strong.type='button';strong.className='text-link case-seed';strong.textContent=item.seed_short;strong.setAttribute('aria-label','查看用例 '+item.seed_short+' Shape '+item.shape_index+' 详情');strong.addEventListener('click',()=>openRecord(item));td.append(strong);if(item.shape_mode==='dynamic'&&item.shape_index>=0){const tag=document.createElement('small');tag.className='shape-tag';tag.textContent='S'+item.shape_index;td.append(tag);}populated=true;}
  else if(c.key==='ops'){const ops=graphText(item.metadata);if(ops){const text=document.createElement('span');text.className='case-ops';text.textContent=ops;text.title=ops;td.append(text);populated=true;}}
  else if(c.key==='inputs'){td.textContent=tensorText(item.sample?.input_shapes,item.metadata.weights,item.sample?.input_dtypes||item.metadata.input_dtypes);populated=!!td.textContent;}
  else if(c.key==='mode'){td.textContent=item.shape_mode==='static'?'静态':'动态';populated=true;}
- else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.className='text-link user-filter';button.textContent=item.user_name;button.addEventListener('click',()=>{form.elements.q.value=item.user_name;form.requestSubmit();});td.append(button);populated=true;}}
+ else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.type='button';button.className='text-link record-user';button.textContent=item.user_name;button.addEventListener('click',()=>openRecord(item));td.append(button);populated=true;}}
  else if(c.key==='time'){td.textContent=beijing(item.created_at);populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
  if(latest){let text=null,state='';const log=b==='af-mlir'?(latest.run_log||''):latest.core_error;if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}

@@ -243,7 +243,7 @@ td:first-child{font-family:inherit}
   color:var(--accent);font:inherit;text-align:left;cursor:pointer;
 }
 .text-link:hover{color:var(--accent-strong);background:none;text-decoration:underline}
-.user-filter{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
+.record-user{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
 .history{margin-top:6px;font-size:11px}
 .history summary{cursor:pointer;color:var(--muted)}
 .history .text-link{display:block;margin-top:4px;font-size:11px;color:var(--accent)}
@@ -474,3 +474,6 @@ pre{
   background:var(--hover-blue);
   border-color:var(--hover-blue-border);
 }
+
+.case-table .record-row{cursor:pointer}
+.case-table .case-seed{font-weight:600}
