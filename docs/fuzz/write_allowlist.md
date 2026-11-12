@@ -24,7 +24,7 @@ Environment=AF_FUZZ_WRITE_ALLOWLIST=/home/ubuntu/af-fuzz/write-allowlist.json
 
 建议文件权限 0600，服务运行用户可读。与已有 systemd override 合并，不覆盖其他配置。启动时读取；缺失、错误、超限的文件会让服务拒绝启动。`enabled: true` 且两个列表为空表示拒绝全部业务写入。
 
-账号 ID 来自鉴权后的用户信息；client_id 是目标客户端结果库 `sync_identity.source_id`，也用于注册与复测请求，不是 machine_id。使用隔离验证目录时必须填写该目录自己的 source_id。白名单允许注册尚未登记的指定来源。
+账号 ID 来自鉴权后的用户信息；client_id 是目标客户端结果库 `sync_identity.source_id`，也用于注册与复测请求，不是 machine_id。使用隔离验证目录时必须填写该目录自己的 source_id。白名单允许注册尚未登记的指定来源。现有运行心跳仍使用 config.json 的 source_id（安装身份）；如果与结果库 source_id 不同，恢复同一客户端时须同时允许这个已确认归属的身份，不要重写身份或 ACK。
 
 ## 范围
 
@@ -45,4 +45,4 @@ Environment=AF_FUZZ_WRITE_ALLOWLIST=/home/ubuntu/af-fuzz/write-allowlist.json
 
 配置修改不会热更新。白名单也不会冻结租约或停止远端执行。不要通过删除用户、旋转 Token、重置 ACK 或返回伪成功来阻断上传。
 
-当前已按用户批准部署白名单。2026-11-12 用户进一步批准恢复 NiuYH 正式 mlir 客户端，其他身份继续受限。
+当前已按用户批准部署白名单。2026-11-12 已按用户批准恢复 NiuYH 正式 mlir 客户端，上传、复测轮询和运行心跳均正常，其他身份继续受限。
