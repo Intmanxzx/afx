@@ -86,6 +86,10 @@ def test_processing_span_is_not_sum_or_kernel(tmp_path):
     metrics=json.loads(result['execution']['telemetry'])['shapes']['0']
     assert metrics['shape_processing']>=sum(v for k,v in metrics.items() if k!='shape_processing')
     repo=ResultRepository(tmp_path/'db');repo.save(result)
+    assert ResultQueries(repo.path).case_page()['items']==[]
+    from copy import deepcopy
+    target=deepcopy(result);target['backend']='af-mlir';target['execution']['backend']='af-mlir'
+    repo.save(target)
     member=ResultQueries(repo.path).case_page()['items'][0]['backends']['cpu'][0]
     assert member['processing_ns']==metrics['shape_processing']
     assert member['total_ns']!=member['processing_ns']+sum(v for k,v in metrics.items() if k!='shape_processing')

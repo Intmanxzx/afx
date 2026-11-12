@@ -29,7 +29,7 @@ function response(status,etag='v1'){
 (async()=>{
  refreshVisible(true);assert.deepEqual(calls,[['load',true,false],['charts']]);
  calls=[];location.hash='#records';refreshVisible(true);assert.deepEqual(calls,[['load',true,true]]);
- calls=[];page=1;refreshVisible(true);assert.deepEqual(calls,[]);
+ calls=[];page=1;refreshVisible(true);assert.deepEqual(calls,[['load',true,true]]);calls=[];
  page=0;location.hash='#attempt=abc';refreshVisible(true);assert.deepEqual(calls,[]);
  const first=api('api/summary?'),second=api('api/summary?');
  assert.equal(http.length,1);resolve(response(200));

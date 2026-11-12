@@ -52,6 +52,13 @@ def normalize(result, environment):
         'evaluation': _context(result.get('evaluation', {}), ('correctness','performance','warmup_steps','measured_steps')),
         'environment': _context(environment, ('python','platform','machine','torch','torch_npu','triton','package_version','cann','autofuse_commit','autofuse_binary','device_name','user_id','installation_id','device_uuid','device_model')),
     }
+    expected = result.get('execution', {}).get('expected_backends')
+    if expected is not None:
+        backends = json.loads(expected) if isinstance(expected, str) else None
+        if (not isinstance(backends, list) or not backends or len(backends) > 16 or
+                any(not isinstance(b, str) or not re.fullmatch(r'[a-z0-9-]{1,64}', b) for b in backends)):
+            raise ValueError('invalid expected backends')
+        contexts['execution']['expected_backends'] = canonical(sorted(set(backends)))
     case_spec = result.get('execution', {}).get('case_spec')
     if case_spec is not None:
         from ..case_spec import decode, encode

@@ -76,7 +76,7 @@ def test_old_cached_classification_is_invalidated(tmp_path):
     inc = IncrementalStatistics(tmp_path/'db')
     row = record('af-mlir', [])
     ResultRepository(inc.database).save(row)
-    assert json.loads(inc._identity())[:2] == [3, VERSION]
+    assert json.loads(inc._identity())[:2] == [4, VERSION]
 
 
 def test_stale_incremental_totals_rebuild_with_new_classification(tmp_path):

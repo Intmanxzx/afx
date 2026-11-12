@@ -56,7 +56,7 @@ async function api(path) {
 function activePage(){return location.hash.startsWith('#attempt=')?'detail':(location.hash.slice(1)||'overview');}
 function refreshVisible(silent=false){
  const name=activePage();
- if(name==='detail'||(silent&&name==='records'&&page>0))return;
+ if(name==='detail')return;
  load(silent,name==='records');
  if(name!=='records')loadCharts();
 }

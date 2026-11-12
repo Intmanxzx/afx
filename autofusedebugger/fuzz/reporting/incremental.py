@@ -18,7 +18,7 @@ from .efficiency import statistics as efficiency
 
 from .failure_origin import VERSION as CLASSIFICATION_VERSION
 
-VERSION = 3
+VERSION = 4
 BATCH = 64
 COUNT_FIELDS = ('overall', 'backend', 'category', 'dtype', 'op', 'dimension', 'elements', 'mode', 'errors', 'failure_path')
 
@@ -64,6 +64,13 @@ def initialize(database):
         conn.execute('''CREATE TRIGGER IF NOT EXISTS public_attempt_window_replace_v1 BEFORE INSERT ON stage_attempts_v1 BEGIN
             INSERT INTO public_changes_v1(kind,identity) SELECT 'window',window_id FROM stage_attempts_v1 WHERE attempt_id=NEW.attempt_id;
         END''')
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS public_completion_windows_v1
+            AFTER INSERT ON attempt_facts BEGIN
+            INSERT INTO public_changes_v1(kind,identity)
+            SELECT DISTINCT 'window',s.window_id FROM attempt_facts f
+            JOIN stage_attempts_v1 s ON s.attempt_id=f.attempt_id
+            WHERE f.group_id=NEW.group_id;
+        END""")
         # Contexts normally immutable, but explicit administrative edits must not
         # silently leave derived mode/window metrics stale.
         for event, row in [('UPDATE','NEW'), ('DELETE','OLD')]:

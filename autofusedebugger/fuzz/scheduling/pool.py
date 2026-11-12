@@ -133,7 +133,8 @@ class Pool:
         # Runs in an I/O thread: startup, socket IO, termination, log cleanup
         # cannot block the supervisor's timeout/cancellation loop.
         lease = self.leases[stage.identity]
-        key = (job.get('config',{}).get('backend','cpu') if job['kind']=='first_call_combined' else 'cpu', lease['device'])
+        key = (job.get('config',{}).get('backend','cpu') if job['kind']=='first_call_combined' else 'cpu',
+               lease['device'], job.get('config',{}).get('compile_threads', self.budget.compile_threads))
         return self.executor.submit(self._run, stage.identity, key, job, timeout)
 
     def _run(self, identity, key, job, timeout):
@@ -162,8 +163,11 @@ class Pool:
             response['rss_bytes'] = rss
             worker['rss_floor'] = worker['rss_floor'] or rss
             device_resident = response.get('value',{}).get('device_memory_bytes') or 0
-            compiled_session = job['kind']=='first_call_combined' and job.get('config',{}).get('backend') not in {'cpu','cpu-eager','eager-npu','npu-eager'}
-            recycle = (compiled_session or not response['ok'] or response.get('value',{}).get('result',{}).get('status') in {'error','unsupported'} or worker['count']>=self.max_tasks or
+            # Only a successfully cleaned adapter may opt into runtime reuse.
+            # Missing capability reports retain the conservative isolation policy.
+            isolated_session = (job['kind']=='first_call_combined' and
+                                not response.get('value',{}).get('persistent_runtime', False))
+            recycle = (isolated_session or not response['ok'] or response.get('value',{}).get('result',{}).get('status') in {'error','unsupported'} or worker['count']>=self.max_tasks or
                        rss > worker['rss_floor']+256*1024**2 or device_resident > 16*1024**2 or
                        scratch_size(worker['scratch'].name) > self.cache_capacity//max(1,self.budget.cpu_workers))
             with self.lock:

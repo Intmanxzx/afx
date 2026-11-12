@@ -2,7 +2,7 @@
 
 Use the same provenance/batch groups as the records table. A retry replaces the
 backend's current outcome, but its immutable attempt remains available in history.
-AF-MLIR is authoritative when present; CPU-only/incomplete cases are unknown.
+Only completed backend groups are public; CPU-only/incomplete groups are hidden.
 """
 from ..storage.queries import filters
 
@@ -31,6 +31,22 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
         FROM backend_keys k JOIN attempts a ON a.rowid=k.attempt_cursor
         JOIN attempt_facts f ON f.attempt_id=a.id
     ),
+    required_backends AS (
+        SELECT DISTINCT b.group_id,expected.value AS backend
+        FROM backend_latest b JOIN attempt_facts f ON f.attempt_id=b.id,
+             json_each(json_extract(f.execution,'$.expected_backends')) expected
+    ),
+    incomplete_groups AS (
+        SELECT DISTINCT required.group_id FROM required_backends required
+        LEFT JOIN backend_keys done ON done.group_id=required.group_id AND done.backend=required.backend
+        WHERE done.attempt_cursor IS NULL
+    ),
+    ready_groups AS (
+        SELECT b.group_id FROM backend_keys b
+        WHERE b.backend NOT IN ('cpu','cpu-eager')
+        AND b.group_id NOT IN (SELECT group_id FROM incomplete_groups)
+        GROUP BY b.group_id
+    ),
     latest AS MATERIALIZED (
         SELECT b.id,b.group_id,b.workload_id,b.execution,b.backend,b.attempt_cursor,
         coalesce(s.shape_index,-1) AS shape_index,
@@ -46,7 +62,8 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None):
                   (SELECT json_extract(f.execution,'$.diagnostics') FROM attempt_facts f WHERE f.attempt_id=b.id),
                   coalesce(s.shape_index,-1),
                   (SELECT count(*) FROM shapes all_shapes WHERE all_shapes.attempt_id=b.id)) ELSE 'not_applicable' END AS failure_path
-        FROM backend_latest b LEFT JOIN shapes s ON s.attempt_id=b.id
+        FROM backend_latest b JOIN ready_groups ready ON ready.group_id=b.group_id
+        LEFT JOIN shapes s ON s.attempt_id=b.id
     ),
     unfiltered_cases AS (
         SELECT group_id, shape_index, max(attempt_cursor)*2048+1024-shape_index AS cursor, min(workload_id) AS workload_id,

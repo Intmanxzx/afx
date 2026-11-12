@@ -119,6 +119,7 @@ def test_sync_uses_remembered_home(tmp_path, monkeypatch, capsys):
 
 
 def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
     monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     observed = []
@@ -135,3 +136,99 @@ def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeyp
     assert main(['run', '--count', '3', '--save']) == 0
     configs, _, count, devices, excluded, sampling = observed[-1]['campaign']
     assert count == 3 and all(c.save_results for c in configs)
+
+
+def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypatch, capsys):
+    from autofusedebugger.fuzz.config import setup, load_config
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0','npu:1'])
+    cores = [36]
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'cpu_worker_ceiling': cores[0], 'effective_memory_bytes': 200*1024**3})
+    setup(tmp_path, cpu_workers=6, compile_threads=6, resource_policy='auto')
+    original = load_config(tmp_path)
+    observed = []
+    def launch(ledger, database, specifications, **kwargs):
+        observed.append(kwargs['budget'])
+        return {'state': 'test'}
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
+    assert main(['run']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['resource_plan']['selected'] == {'cpu_workers':4,'compile_threads':6}
+    cores[0] = 8
+    assert main(['run']) == 0
+    assert json.loads(capsys.readouterr().out)['resource_plan']['selected'] == {'cpu_workers':4,'compile_threads':2}
+    assert main(['run','--fixed-resources']) == 0
+    assert 'resource_plan' not in json.loads(capsys.readouterr().out)
+    assert (observed[-1].cpu_workers, observed[-1].compile_threads) == (6, 6)
+    assert main(['run','--workers','2','--compile-threads','3']) == 0
+    capsys.readouterr()
+    assert (observed[-1].cpu_workers, observed[-1].compile_threads) == (2,3)
+    assert load_config(tmp_path) == original  # Launch never rewrites explicit saved values.
+
+
+def test_setup_enables_auto_only_for_new_homes(tmp_path):
+    from autofusedebugger.fuzz.config import setup, load_config
+    identity = {'user_id': str(uuid.uuid4()), 'display_name': 'test'}
+    def opener(*args, **kwargs):
+        return io.BytesIO(json.dumps(identity).encode())
+    token = 'test-token-not-a-real-secret-12345'
+    new = tmp_path/'new'
+    initialize_user(new, token, opener=opener, start_sync=False)
+    assert load_config(new)['resource_policy'] == 'auto'
+    old = tmp_path/'old'
+    setup(old, cpu_workers=2, compile_threads=3)
+    initialize_user(old, token, opener=opener, start_sync=False)
+    saved = load_config(old)
+    assert saved['resource_policy'] == 'manual'
+    assert (saved['cpu_workers'], saved['compile_threads']) == (2, 3)
+
+
+def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
+    def launch(*args, **kwargs):
+        plan = json.loads(capsys.readouterr().err)['resource_plan']
+        assert plan['version'] == 2
+        assert plan['selected']['cpu_workers'] == kwargs['budget'].cpu_workers
+        assert all(c.compile_threads == kwargs['budget'].compile_threads for c in kwargs['campaign'][0])
+        return {'state': 'test'}
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
+    assert main(['run', '--fg']) == 0
+    assert 'resource_plan' in json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize('flags', [
+    ['--auto-resources', '--workers', '2'],
+    ['--auto-resources', '--compile-threads', '2'],
+])
+def test_auto_explicit_override_conflicts_never_launch(tmp_path, monkeypatch, capsys, flags):
+    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', lambda *a, **kw: pytest.fail('launched'))
+    assert main(['run', *flags]) == 2
+    assert 'cannot be combined' in capsys.readouterr().err
+
+
+def test_auto_fixed_flags_are_mutually_exclusive():
+    with pytest.raises(SystemExit) as exc:
+        main(['run', '--auto-resources', '--fixed-resources'])
+    assert exc.value.code == 2
+
+
+def test_setup_does_not_import_torch_or_discover_devices(tmp_path, monkeypatch):
+    import builtins
+    original_import = builtins.__import__
+    def guarded_import(name, *args, **kwargs):
+        assert name.split('.')[0] not in {'torch', 'torch_npu'}
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', guarded_import)
+    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices',
+                        lambda *a: pytest.fail('setup must not discover devices'))
+    identity = {'user_id': str(uuid.uuid4()), 'display_name': 'test'}
+    initialize_user(tmp_path, 'test-token-not-a-real-secret-12345',
+                    opener=lambda *a, **kw: io.BytesIO(json.dumps(identity).encode()), start_sync=False)

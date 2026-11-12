@@ -20,6 +20,7 @@ const rows=['gen_failed','error','mlir_failed','fail','ok','unknown'].map((statu
 const data=Object.fromEntries(['overall','backend','category','dtype','dimension','elements'].map(k=>[k,rows]));
 const updateStatistics=window.updateStatistics;
 updateStatistics(data);
+assert.equal(STATUS_COLORS.gen_failed,'--viz-graph-error');
 assert.deepEqual(STATUS_KEYS,['gen_failed','gen_error','mlir_failed','fail','pass','unknown']);
 for(const id of ['Overall','Backend','Category','Dtype','ShapeDim','ShapeElem']){
  const buttons=nodes.get('legend'+id).children;
@@ -59,3 +60,11 @@ assert.equal($('total').textContent,(5000).toLocaleString());
     assert '.cards .kpi-mlir span,.cards .kpi-mlir strong{color:var(--viz-mlir-error)}' in css
     assert '#errors{color:var(--viz-function-error)}' in css
     assert '.cards .kpi-fail span,.cards .kpi-fail strong{color:var(--viz-function-error)}' in css
+
+
+def test_graph_failure_uses_shared_dark_gray_token():
+    css = Path('autofusedebugger/fuzz/view/static/style.css').read_text()
+    assert '--viz-graph-error:#4b5563;' in css
+    assert '#gen-errors{color:var(--viz-graph-error)}' in css
+    assert '.cards .kpi-graph span,.cards .kpi-graph strong{color:var(--viz-graph-error)}' in css
+    assert '.outcome-button.graph-failed{background:#f3f4f6;border-color:#d1d5db;color:var(--viz-graph-error)}' in css
