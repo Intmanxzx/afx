@@ -7,6 +7,8 @@
 
 总览仅展示结果统计和用例分布，不展示实时运行面板，也不轮询心跳。实时运行面板仅保留在工具效率页，默认全部用户，支持用户、机器、卡型号、后端、版本及 1/5/15/60 分钟范围筛选。每个用户/机器一行，每页 10 行，展开看物理卡和执行器阶段。同一机器/卡跨用户和进程在全局资源计数中去重。后端、型号、版本目前是**运行会话筛选**，吞吐是匹配会话整体产出，不是细分到单卡或单后端的基准。
 
+机器显示名采用 `用户名-npu序号`（如 `NiuYH-npu0`、`NiuYH-npu1`），序号代表机器，不是机器内的卡号。中心 runtime 侧库按用户与机器 ID 持久保存编号，从 0 开始；重启、筛选、主机名或来源变更不会重排。存量机器升级时按机器 ID 排序补号，新机器按登记顺序追加。列表与机器筛选使用显示名，展开详情仍可核对原主机名及完整机器 ID；筛选参数仍使用原机器 ID。同一物理机器跨用户时各自编号，全局机器筛选合并别名且仅保留一个 ID 选项；资源去重不变。备份 runtime 侧库可保留编号。
+
 用例结果分类：NNSmith 生成、CPU 参考执行以及 Torch/Dynamo/Inductor/torch_npu 编译问题统一记为“构图Failed”（`gen_failed`）；只有明确 Autofuse 错误证据（例如 strict gate `shortfall=yes`、AF codegen 失败）才记为“功能Failed”（`function_failed`）。`InductorError` 包装、生成代码中的 AF import、`shortfall=no` 均不是 AF 错误证据。当前 Shape 的明确 Torch 错误优先于其他 Shape 的共享 AF 日志；不能确认归属、设备占用、超时等显示 Unknown，不计为功能失败。执行成功但数值不一致仍单独记为“精度Failed”。
 
 功能Failed 下仅细分日志可确认的 `mlir_failed`（MLIR 路径失败）与 `unconfirmed`（路径未确认）。优先匹配 `MLIR Codegen Result：kFailed/kSucceeded/kNotSupported`（也支持英文冒号、DEBUG 前缀及枚举整数 1/2/0）。只有 `kFailed` 确认 MLIR 失败；出现新结果标记后不再使用旧规则覆盖成功或 NotSupported。无新标记时，暂时保留下述旧日志规则，待所有生产者更新后再清理。后端名、AF import、通用 `Codegen generate kernel failed` 不足以确认 MLIR 失败。`AF_MLIR_STRICT` 的失败 gate 可作证据，`shortfall=yes/no/unknown` 只说明能力不足与否；`gate=none` 为成功，`gate=cube-fusion` 为范围外，不归为 MLIR 失败。详情保留证据原文和 Shape/运行级作用域。共享日志仅在确认只有一个 Shape 或尚无 Shape 时参与路径判断，不能根据缺少其他 Shape 日志推断是单 Shape。图校验报错不因共享日志变成 MLIR 失败。列表、统计及 SQL 筛选 `WHERE failure_path = 'mlir_failed'` 使用同一规则；“未确认”不等于“非 MLIR”。
@@ -43,3 +45,11 @@ NPU 安装 `/mnt/workspace/af-fuzz/fleet-runtime-1110/installed`；私有队列/
 ### MLIR 返回值日志采集
 
 `MLIR Codegen Result` 已由 GELOGI 输出。采集器不按日志等级过滤，并给该标记保留有界空间，避免后续错误日志挤掉返回值。但采集器只能读取 worker 的 stdout/stderr，不能恢复被运行库日志级别过滤或只写到 slog 文件的 INFO 日志。需要采集新标记时，在启动 NPU worker 前配置 `ASCEND_GLOBAL_LOG_LEVEL=1 ASCEND_SLOG_PRINT_TO_STDOUT=1`；既有持久 worker 需重启才能可靠应用。这里不自动修改全局日志等级，也不扫描其他进程的日志文件。未采集到标记时沿用旧逻辑，不把缺失当成成功。
+
+### 2026-11-11 机器显示名
+
+仅更新 oracle1 当前 `venv-35fe47c` 中的 `central/runtime.py` 和 `view/static/runtime.js`，未携带工作区其他改动。新增 runtime 侧库映射表，服务重启时补齐存量机器编号；客户端协议和原机器 ID 不变。
+
+部署前私有一致性备份位于 `/home/ubuntu/af-fuzz/private/machine-names-1111-1794446740/`，包含结果库、runtime 库、原文件和 service 配置。回滚须先检查后续部署，再恢复这两个源码文件并重启服务；保留新增映射表，不覆盖生产数据库。
+
+验证：运行状态/前端/刷新测试 13 passed，sync/view/cache 测试 45 passed。额外 hosting 测试 3 passed / 1 skipped / 6 failed，失败涉及本机 ledger 锁和缺少 nnsmith，不宣称全量通过。线上 API 和浏览器均显示 `XiangWF-npu0`、`NiuYH-npu0`，机器选项无重复，公开 runtime.js 哈希与本地一致；service active，runtime integrity_check=ok。原用户、来源 ID、receipts、owners、attempt ID 无丢失；来源 ACK 随持续上传更新。
