@@ -10,7 +10,7 @@ class TorchAdapter:
     def __init__(self, config):
         self.config = config
         self.name = config.backend
-        self.capabilities = self.Capabilities(persistent_runtime=self.name in {'cpu','cpu-eager','eager-npu','npu-eager'})
+        self.capabilities = self.Capabilities(persistent_runtime=self.name in {'cpu','cpu-eager','eager-npu','npu-eager','af-mlir'})
 
     def check(self, bundle, evaluation):
         from ..generation import plan
@@ -57,6 +57,8 @@ class TorchAdapter:
             # tensor .to(npu:1) alone does not bind generated launches to card 1.
             self.old_device = torch.npu.current_device()
             torch.npu.set_device(self.device)
+            # Per-session peak: a reused runtime must not inherit the prior case.
+            torch.npu.reset_peak_memory_stats(self.device)
 
     def close(self):
         if hasattr(self, 'old_device'):

@@ -352,5 +352,75 @@ def test_npu_first_resource_budget_respects_limits(monkeypatch):
     from autofusedebugger.fuzz import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling':40,'effective_memory_bytes':200*1024**3})
-    assert resources.npu_first_defaults('.',2,Budget()) == {'cpu_workers':4,'compile_threads':1}
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    assert resources.npu_first_defaults('.',2,Budget()) == {'cpu_workers':4,'compile_threads':6}
     assert resources.npu_first_defaults('.',2,Budget(memory_budget_bytes=4*1024**3))['cpu_workers']==2
+
+
+def test_mlir_runtime_reuse_is_explicit_and_not_compile_split():
+    from autofusedebugger.fuzz.backends.torch import TorchAdapter
+    for backend, reusable in [('cpu', True), ('eager-npu', True), ('af-mlir', True),
+                              ('af-legacy', False), ('triton-npu', False)]:
+        adapter = TorchAdapter(ExecutionConfig(backend, 'cpu' if backend == 'cpu' else 'npu:0', 1))
+        assert adapter.capabilities.persistent_runtime is reusable
+        assert not adapter.capabilities.independent_compile
+        assert not adapter.capabilities.transferable_compilation
+
+
+@pytest.mark.parametrize('reusable,status,count,rss,device_bytes,cache_bytes,retired', [
+    (True, 'ok', 0, 1024, 0, 0, False),
+    (False, 'ok', 0, 1024, 0, 0, True),
+    (None, 'ok', 0, 1024, 0, 0, True),
+    (True, 'error', 0, 1024, 0, 0, True),
+    (True, 'unsupported', 0, 1024, 0, 0, True),
+    (True, 'ok', 15, 1024, 0, 0, True),
+    (True, 'ok', 0, 300*1024**2, 0, 0, True),
+    (True, 'ok', 0, 1024, 17*1024**2, 0, True),
+    (True, 'ok', 0, 1024, 0, 3*1024**3, True),
+])
+def test_compiled_runtime_reuse_preserves_recycling_guards(tmp_path, monkeypatch,
+        reusable, status, count, rss, device_bytes, cache_bytes, retired):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz.scheduling import pool as module, budgets
+    pool = Pool(Budget(cpu_workers=1), tmp_path, 0, [])
+    worker = dict(socket=SimpleNamespace(settimeout=lambda _: None), identity='worker',
+                  child=SimpleNamespace(pid=123), count=count, rss_floor=1024,
+                  scratch=SimpleNamespace(name=str(tmp_path)), busy=False)
+    pool.workers.append(worker)
+    monkeypatch.setattr(pool, '_worker', lambda key: worker)
+    removed = []
+    monkeypatch.setattr(pool, '_retire', lambda w: removed.append(w))
+    monkeypatch.setattr(module, 'send', lambda *a: None)
+    value = dict(result={'status': status}, device_memory_bytes=device_bytes)
+    if reusable is not None:
+        value['persistent_runtime'] = reusable
+    monkeypatch.setattr(module, 'receive', lambda *a: dict(ok=True, value=value))
+    monkeypatch.setattr(budgets, 'group_rss', lambda pid: rss)
+    monkeypatch.setattr(budgets, 'scratch_size', lambda path: cache_bytes)
+    try:
+        result = pool._run('stage', ('af-mlir', 'npu:0', 1),
+                           {'kind': 'first_call_combined', 'config': {'backend': 'af-mlir'}}, 30)
+        assert result['ok']
+        assert bool(removed) is retired
+        assert (worker in pool.workers) is not retired
+        if not retired:
+            assert not worker['busy']
+    finally:
+        pool.close()
+
+
+def test_worker_key_includes_compile_threads(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    pool = Pool(Budget(cpu_workers=1), tmp_path, 0, [])
+    keys = []
+    monkeypatch.setattr(pool.executor, 'submit', lambda fn, identity, key, job, timeout: keys.append(key))
+    stage = SimpleNamespace(identity='stage')
+    pool.leases['stage'] = {'device': 'npu:1'}
+    try:
+        for threads in (1, 2):
+            pool.submit(stage, {'kind': 'first_call_combined',
+                'config': {'backend': 'af-mlir', 'compile_threads': threads}}, 30)
+        assert keys == [('af-mlir', 'npu:1', 1), ('af-mlir', 'npu:1', 2)]
+    finally:
+        pool.leases.clear()
+        pool.close()

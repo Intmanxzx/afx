@@ -158,6 +158,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     monkeypatch.setattr(hosting, 'launch', launch)
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0
     value = json.loads(capsys.readouterr().out)
+    assert value.pop('resource_plan')['mode'] == 'auto'
     assert value == {'count': 4, 'backends': ['cpu', 'af-mlir']}
     assert main(['run', 'C16', '--save', '--data-dir', str(tmp_path), '--count', '4']) == 2
 

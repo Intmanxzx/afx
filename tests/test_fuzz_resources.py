@@ -115,3 +115,131 @@ def test_platform_path_selection_without_host_execution(monkeypatch, platform, e
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     assert str(config.data_home()) == expected
+
+
+@pytest.mark.parametrize('cores,devices,memory_gib,expected', [
+    (40, 2, 200, (4, 6)),
+    (36, 2, 105, (4, 6)),
+    (16, 2, 64, (4, 4)),
+    (3, 2, 64, (3, 1)),
+    (1, 1, 2, (1, 1)),
+    (36, 2, 4, (2, 1)),
+    (36, 2, 16, (4, 1)),
+    (64, 4, 200, (6, 6)),
+    (None, 2, None, (1, 1)),
+    (24, 1, 64, (3, 6)),
+    (64, 8, 200, (12, 5)),
+    (8, 0, 32, (4, 1)),
+])
+def test_npu_auto_budget_distributes_effective_cores(monkeypatch, cores, devices, memory_gib, expected):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    memory = memory_gib * 1024**3 if memory_gib else None
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'host_cpu_count': 128, 'cpu_worker_ceiling': cores,
+        'effective_memory_bytes': memory*2 if memory else None})
+    actual = resources.npu_first_defaults('.', devices, SimpleNamespace(memory_budget_bytes=memory))
+    assert (actual['cpu_workers'], actual['compile_threads']) == expected
+    assert actual['cpu_workers'] * actual['compile_threads'] <= (cores or 1)
+
+
+def test_npu_auto_budget_respects_smaller_configured_memory(monkeypatch):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'cpu_worker_ceiling': 36, 'effective_memory_bytes': 200*1024**3})
+    assert resources.npu_first_defaults('.', 2, SimpleNamespace(memory_budget_bytes=8*1024**3)) == {
+        'cpu_workers': 4, 'compile_threads': 1}
+
+
+@pytest.mark.parametrize('config,requested,workers,threads,expected', [
+    (None, None, None, None, True),
+    ({'resource_policy': 'auto'}, None, None, None, True),
+    ({'cpu_workers': 6}, None, None, None, False),
+    ({'resource_policy': 'manual'}, None, None, None, False),
+    ({'resource_policy': 'auto'}, None, 2, None, False),
+    ({'resource_policy': 'auto'}, None, None, 2, False),
+    ({'resource_policy': 'auto'}, False, None, None, False),
+    ({'cpu_workers': 6}, True, None, None, True),
+])
+def test_auto_policy_preserves_explicit_and_legacy_settings(config, requested, workers, threads, expected):
+    from autofusedebugger.fuzz.resources import use_auto_resources
+    assert use_auto_resources(config, requested, workers, threads) is expected
+
+
+def test_auto_policy_rejects_conflicting_overrides():
+    from autofusedebugger.fuzz.resources import use_auto_resources
+    with pytest.raises(ValueError, match='cannot be combined'):
+        use_auto_resources(None, True, 4, None)
+
+
+def test_auto_policy_persisted_without_identity_changes(tmp_path):
+    setup(tmp_path, cpu_workers=6, compile_threads=6)
+    before = load_config(tmp_path)
+    setup(tmp_path, resource_policy='auto')
+    assert load_config(tmp_path) == dict(before, resource_policy='auto')
+    original = (tmp_path/'config.json').read_bytes()
+    with pytest.raises(ValueError, match='resource_policy'):
+        setup(tmp_path, resource_policy='unknown')
+    assert (tmp_path/'config.json').read_bytes() == original
+
+
+def test_auto_plan_explains_unused_cpu_capacity(monkeypatch):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'host_cpu_count': 40, 'cpu_worker_ceiling': 36, 'effective_memory_bytes': 200*1024**3})
+    plan = resources.npu_resource_plan('.', 2, SimpleNamespace(memory_budget_bytes=105*1024**3))
+    assert plan['selected'] == {'cpu_workers': 4, 'compile_threads': 6}
+    assert plan['version'] == 2 and plan['reasons'] and plan['inventory']['host_cpu_count'] == 40
+
+
+def test_auto_plan_clamps_stale_machine_budgets(monkeypatch):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setattr(resources.os, 'name', 'posix')
+    monkeypatch.setattr(resources.Path, 'exists', lambda _: True)
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'cpu_worker_ceiling': 8, 'effective_memory_bytes': 16*1024**3,
+        'disk_free_bytes': 10*1024**3})
+    plan = resources.npu_resource_plan('.', 2, SimpleNamespace(
+        memory_budget_bytes=100*1024**3, cache_budget_bytes=20*1024**3))
+    assert plan['budget_limits'] == {
+        'memory_budget_bytes': 8*1024**3, 'cache_budget_bytes': 2*1024**3}
+    assert plan['selected'] == {'cpu_workers':4,'compile_threads':1}
+
+
+@pytest.mark.parametrize('configured', [None, 100*1024**3])
+def test_unknown_ram_never_uses_saved_capacity(monkeypatch, configured):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'cpu_worker_ceiling': 64, 'effective_memory_bytes': None})
+    plan = resources.npu_resource_plan('.', 8, SimpleNamespace(memory_budget_bytes=configured))
+    assert plan['selected'] == {'cpu_workers': 1, 'compile_threads': 1}
+    assert plan['memory_budget_bytes'] is None
+    assert 'memory_budget_bytes' not in plan['budget_limits']
+    assert any('unknown' in reason for reason in plan['reasons'])
+
+
+def test_subcore_quota_is_reported_not_hidden(monkeypatch):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'effective_cpu_cores': .5, 'cpu_worker_ceiling': 1,
+        'effective_memory_bytes': 32*1024**3})
+    plan = resources.npu_resource_plan('.', 2, SimpleNamespace(memory_budget_bytes=None))
+    assert plan['selected'] == {'cpu_workers': 1, 'compile_threads': 1}
+    assert any('throttling' in reason for reason in plan['reasons'])
+
+
+def test_plan_reports_budget_corrections(monkeypatch):
+    from types import SimpleNamespace
+    from autofusedebugger.fuzz import resources
+    monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
+        'cpu_worker_ceiling': 8, 'effective_memory_bytes': 16*1024**3,
+        'disk_free_bytes': 10*1024**3})
+    plan = resources.npu_resource_plan('.', 2, SimpleNamespace(
+        memory_budget_bytes=100*1024**3, cache_budget_bytes=20*1024**3))
+    assert plan['budget_corrections']['cache_budget_bytes'] == {
+        'configured': 20*1024**3, 'selected': 2*1024**3}

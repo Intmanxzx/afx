@@ -94,6 +94,7 @@ def perform(job):
         return {'result': result}
     bundle = bundle_from(job['bundle'],job['directory'])
     outputs, starts = [], {}
+    persistent_runtime = adapter.capabilities.persistent_runtime
     from ..core_logs import capture_tail
     # The reference is evaluated exactly once. Its CPU row is not_checked:
     # executing the same eager graph twice is not independent validation.
@@ -114,12 +115,15 @@ def perform(job):
     device_memory = None
     if config.device != 'cpu' and torch.npu.is_initialized():
         torch.npu.synchronize(config.device)
-        torch.npu.empty_cache()
+        # execute() restores the caller's device; clear the leased card's cache.
+        with torch.npu.device(config.device):
+            torch.npu.empty_cache()
         device_memory = int(torch.npu.memory_allocated(config.device))
         peak=int(torch.npu.max_memory_allocated(config.device))
         if job.get('device_budget_bytes') and peak>job['device_budget_bytes']:
             raise ValueError('device memory budget exceeded')
-    return {'result': result, 'outputs': artifact, 'shape_starts': starts, 'device_memory_bytes': device_memory}
+    return {'result': result, 'outputs': artifact, 'shape_starts': starts, 'device_memory_bytes': device_memory,
+            'persistent_runtime': persistent_runtime}
 
 
 def main(fd):

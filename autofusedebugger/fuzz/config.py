@@ -58,6 +58,8 @@ def validate_config(config):
     for name in ("cpu_workers", "compile_threads", "memory_budget_bytes", "cache_budget_bytes"):
         if name in config and (type(config[name]) is not int or config[name] < 1):
             raise ValueError(f"{name} must be a positive integer")
+    if config.get("resource_policy", "manual") not in ("auto", "manual"):
+        raise ValueError("resource_policy must be auto or manual")
     identity = config.get("identity", {})
     if not isinstance(identity, dict) or not isinstance(config.get("sync", {}), dict):
         raise ValueError("identity and sync configuration must be objects")
@@ -114,7 +116,7 @@ def _sync_directory(directory):
 
 
 def setup(home, *, display_name=None, user_id=None, key_file=None, cpu_workers=None,
-          compile_threads=None, memory_budget_bytes=None, cache_budget_bytes=None):
+          compile_threads=None, memory_budget_bytes=None, cache_budget_bytes=None, resource_policy=None):
     home = data_home(home)
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = home / ".setup.lock"
@@ -134,6 +136,8 @@ def setup(home, *, display_name=None, user_id=None, key_file=None, cpu_workers=N
                             ("memory_budget_bytes", memory_budget_bytes), ("cache_budget_bytes", cache_budget_bytes)):
             if value is not None:
                 config[name] = value
+        if resource_policy is not None:
+            config["resource_policy"] = resource_policy
         identity = config.setdefault("identity", {})
         for name, value in (("display_name", display_name), ("user_id", user_id)):
             if value is not None:

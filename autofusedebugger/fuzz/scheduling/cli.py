@@ -26,7 +26,9 @@ def register(sub, maintenance):
             parser.add_argument('--max-nodes', type=int)
             parser.add_argument('--generation-timeout', type=int, help='solver timeout in seconds; recorded in E/F seed')
             parser.add_argument('--exclude-op', action='append', choices=('transpose',), help='skip random candidates containing this op; seed semantics are unchanged')
-            parser.add_argument('--auto-resources', action='store_true', help='derive NPU-first stage worker budget from current resource limits')
+            resources = parser.add_mutually_exclusive_group()
+            resources.add_argument('--auto-resources', action='store_true', default=None, help='recompute resource budget at startup (default for new setups)')
+            resources.add_argument('--fixed-resources', dest='auto_resources', action='store_false', help='use saved fixed resource budget')
             parser.add_argument('--count', type=int, help='number of cases; omitted means continuous until fuzz stop')
             parser.add_argument('--fg', dest='foreground', action='store_true',
                                 help='wait and supervise in this terminal instead of detaching')
@@ -108,18 +110,19 @@ def dispatch(args):
     evaluation = EvaluationConfig(performance=args.performance)
     from .budgets import Budget
     from ..resources import adaptive_defaults
-    budget = Budget.configured(load_config(home) or adaptive_defaults(home), args.compile_threads)
+    config = load_config(home)
+    budget = Budget.configured(config or adaptive_defaults(home), args.compile_threads)
     from dataclasses import replace
     if args.workers is not None: budget=replace(budget,cpu_workers=args.workers)
     budget=replace(budget,worker_max_tasks=getattr(args,'worker_max_tasks',16))
     if getattr(args,'device_memory_bytes',None) is not None:budget=replace(budget,device_budget_bytes=args.device_memory_bytes)
     from .devices import select_devices
     devices=select_devices(args.device)
-    if getattr(args,'auto_resources',False):
-        if args.workers is not None or args.compile_threads is not None:
-            raise ValueError('--auto-resources cannot be combined with explicit worker/thread overrides')
-        from ..resources import npu_first_defaults
-        budget=replace(budget,**npu_first_defaults(home,len(devices),budget))
+    from ..resources import npu_resource_plan, use_auto_resources
+    resource_plan = None
+    if use_auto_resources(config, getattr(args, 'auto_resources', None), args.workers, args.compile_threads):
+        resource_plan = npu_resource_plan(home, len(devices), budget)
+        budget = replace(budget, **resource_plan['selected'], **resource_plan['budget_limits'])
     import uuid
     batch_id = str(uuid.uuid4())
     configs = [ExecutionConfig(backend, devices[0] if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, scheduling=getattr(args,'scheduling','staged'), static_only=args.static_only, batch_id=batch_id, save_results=args.save)
@@ -127,6 +130,16 @@ def dispatch(args):
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
     from .hosting import launch
-    return launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version in {3,5},device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
+    if resource_plan is not None and args.foreground:
+        # Continuous foreground runs may never return. Explain the plan before
+        # entering launch, on stderr so stdout retains its final JSON contract.
+        import json
+        import sys
+        print(json.dumps({'resource_plan': resource_plan}), file=sys.stderr, flush=True)
+    result = launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version in {3,5},device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
                   timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
                   campaign=(configs,evaluation,count,devices,getattr(args,'exclude_op',None),asdict(sampling)) if not seeds else None)
+
+    if resource_plan is not None:
+        result["resource_plan"] = resource_plan
+    return result

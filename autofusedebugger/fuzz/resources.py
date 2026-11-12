@@ -154,18 +154,76 @@ def adaptive_defaults(home):
     return result
 
 
-def npu_first_defaults(home, devices, budget):
-    """Reserve CPU pipeline capacity around each device, bounded by RAM/cores.
+def npu_resource_plan(home, devices, budget):
+    """Explainable startup heuristic, not an online optimizer or hard isolation.
 
-    A starting policy, not a claim of a global optimum. Real utilization and
-    backend successes must be measured; failed compilation is not useful load.
+    Preserve device runtimes and CPU pipeline slots before adding compilation
+    parallelism. Six is a conservative starting ceiling: our dual-910 probes
+    found no throughput benefit from nine, not a universal saturation claim.
     """
+    if type(devices) is not int or devices < 0:
+        raise ValueError('device count must be a nonnegative integer')
     inventory = resource_inventory(home)
     cores = inventory.get('cpu_worker_ceiling') or 1
-    memory = min(v for v in (inventory.get('effective_memory_bytes'),
-                            budget.memory_budget_bytes) if v) if any(
-                                (inventory.get('effective_memory_bytes'), budget.memory_budget_bytes)) else 2*1024**3
-    # Dual-910 calibration: 8 workers did not improve slot use over 4;
-    # avoid doubling idle runtime memory without measured benefit.
-    workers = max(1, min(cores, memory//(2*1024**3), max(4, 2*devices)))
-    return {'cpu_workers': workers, 'compile_threads': 1}
+    available_memory = inventory.get('effective_memory_bytes')
+    # A setup made on a larger machine must not carry an impossible RAM/disk
+    # budget into a new container. Keep half of detected RAM as headroom.
+    gib = 1024**3
+    configured_memory = budget.memory_budget_bytes
+    memory = max(1, available_memory//2) if available_memory else None
+    if memory is not None and configured_memory is not None:
+        memory = min(memory, configured_memory)
+    # A saved cap is not evidence of current capacity. Unknown RAM permits
+    # only one worker/thread; keep it unknown in diagnostics and admission.
+    planning_memory = memory if memory is not None else min(configured_memory or 2*gib, 2*gib)
+    # CPU-only callers need no compiler subprocess pool. For NPUs leave at
+    # least two shared CPU slots when resources permit, not two workers/card.
+    target = devices + max(2, math.ceil(devices/2)) if devices else min(4, cores)
+    workers = max(1, min(cores, planning_memory//(2*gib), target))
+    # Conservatively charge every slot, including potential compiler children.
+    # RSS estimates are a startup guard, never a guarantee for arbitrary graphs.
+    memory_threads = max(1, planning_memory//(workers*2*gib)-1)
+    threads = max(1, min(6 if devices else 1, cores//workers, memory_threads))
+    reasons = ['preserve NPU runtimes and shared CPU pipeline slots',
+               'cap compile fan-out at a conservative six; do not fill cores with idle workers',
+               'bound workers × compile_threads by effective CPU and estimated RSS budget']
+    if not inventory.get('cpu_worker_ceiling') or available_memory is None:
+        reasons.append('unknown resources: conservative fallback; admission still validates limits')
+    if workers < target:
+        reasons.append('CPU/RAM constrained: some devices or pipeline stages must run serially')
+    budget_limits = {}
+    if available_memory and os.name == 'posix' and Path('/proc').exists():
+        budget_limits['memory_budget_bytes'] = memory
+    disk = inventory.get('disk_free_bytes')
+    if disk:
+        cache = min(20*gib, max(1, disk//5))
+        budget_limits['cache_budget_bytes'] = min(getattr(budget, 'cache_budget_bytes', None) or cache, cache)
+    effective_cores = inventory.get('effective_cpu_cores')
+    if effective_cores is not None and effective_cores < 1:
+        reasons.append('sub-core CPU quota: one single-thread process remains subject to cgroup throttling')
+    if threads < (6 if devices else 1):
+        reasons.append('compile fan-out reduced by CPU capacity or the conservative RAM estimate')
+    corrections = {key: {'configured': getattr(budget, key, None), 'selected': value}
+                   for key, value in budget_limits.items() if getattr(budget, key, None) != value}
+    return {'version': 2, 'mode': 'auto', 'inventory': inventory,
+            'budget_corrections': corrections,
+            'budget_limits': budget_limits,
+            'devices': devices, 'memory_budget_bytes': memory,
+            'target_workers': target,
+            'selected': {'cpu_workers': workers, 'compile_threads': threads},
+            'reasons': reasons,
+            'limitations': 'startup heuristic; no runtime retuning, no independent compile/device pipeline'}
+
+
+def npu_first_defaults(home, devices, budget):
+    return npu_resource_plan(home, devices, budget)['selected']
+
+
+def use_auto_resources(config, requested, workers, threads):
+    """Explicit overrides win; legacy configured budgets remain manual."""
+    explicit = workers is not None or threads is not None
+    if requested is True and explicit:
+        raise ValueError('--auto-resources cannot be combined with explicit worker/thread overrides')
+    if requested is not None:
+        return requested
+    return not explicit and (not config or config.get('resource_policy') == 'auto')
