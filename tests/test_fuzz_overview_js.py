@@ -123,3 +123,12 @@ def test_metric_and_record_hover_use_light_blue_without_overriding_status_colors
     assert 'border-color:var(--hover-blue-border)' in rule
     assert '\n  color:' not in rule
     assert '.outcome-button:hover{text-decoration:none}' in css
+
+
+def test_clickable_metric_cards_keep_original_stacked_left_aligned_layout():
+    css = Path('autofusedebugger/fuzz/view/static/style.css').read_text()
+    rule = css.split('.cards>button.kpi{', 1)[1].split('}', 1)[0]
+    assert 'display:block;' in rule  # Do not inherit the shared inline-flex button layout.
+    assert 'text-align:left;' in rule
+    assert '.cards span{display:block;' in css
+    assert '.cards strong{display:block;margin-top:5px;' in css

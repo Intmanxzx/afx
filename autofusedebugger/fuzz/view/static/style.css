@@ -464,7 +464,7 @@ pre{
 
 .cards .kpi-graph span,.cards .kpi-graph strong{color:var(--viz-graph-error)}
 
-.cards>button.kpi{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}
+.cards>button.kpi{display:block;text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}
 .cards>button.kpi:hover{transform:translateY(-1px)}
 .cards>button.kpi:focus-visible{outline:2px solid var(--viz-pass);outline-offset:3px}
 
