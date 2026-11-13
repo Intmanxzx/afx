@@ -99,7 +99,7 @@ def test_numeric_chart_order_not_lexicographic():
         pytest.skip('node unavailable')
     source = Path('autofusedebugger/fuzz/view/static/charts.js').read_text()
     helpers = source[source.index('const SHAPE_BUCKET_ORDER'):source.index('const legendHidden')]
-    subprocess.run([node, '-e', "const assert=require('assert');\n"+helpers+"""
+    subprocess.run([node, '-e', "const assert=require('assert'); const STATUS_KEYS=['gen_failed','gen_error','mlir_failed','fail','pass','unknown'];\n"+helpers+"""
 for (const id of ['ShapeDim','ShapeElem']) {
  const rows=SHAPE_BUCKET_ORDER[id].map(key=>({key,pass:1})).reverse();
  assert.deepStrictEqual(orderChartRows(rows,id).map(r=>r.key),SHAPE_BUCKET_ORDER[id]);
