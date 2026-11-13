@@ -17,15 +17,16 @@ class NoAutofuseCoverage(RuntimeError):
 @dataclass
 class Coverage:
     candidates: int = 0
-    schedule_entered: int = 0
-    schedule_succeeded: int = 0
+    scheduler_codegen_entered: int = 0
+    scheduler_codegen_succeeded: int = 0
     codegen_succeeded: int = 0
     installed: bool = False
     no_coverage: bool = False
     events: list = field(default_factory=list)
 
     def event(self, name):
-        self.events.append(name)
+        if len(self.events) < 64:
+            self.events.append(name)
 
 
 @contextmanager
@@ -69,15 +70,15 @@ def observe_autofuse():
         outermost = depth == 0
         before = state.candidates
         depth += 1
-        state.schedule_entered += 1
-        state.event('AF_SCHEDULE_ENTER')
+        state.scheduler_codegen_entered += 1
+        state.event('SCHEDULER_CODEGEN_ENTER')
         try:
             result = original_scheduler(self, *args, **kwargs)
         except Exception:
             raise
         else:
-            state.schedule_succeeded += 1
-            state.event('AF_SCHEDULE_OK')
+            state.scheduler_codegen_succeeded += 1
+            state.event('SCHEDULER_CODEGEN_OK')
             # This check is intentionally after the real scheduler returns,
             # not on the first fallback node.  A graph may mix AF and fallback
             # kernels, and a normal scheduler exception is not a skip.
@@ -90,6 +91,7 @@ def observe_autofuse():
         finally:
             depth -= 1
 
-    with patch.object(af_codegen, 'codegen_kernel_def', traced_af), \
+    import torch._dynamo.config
+    with torch._dynamo.config.patch(suppress_errors=False), patch.object(af_codegen, 'codegen_kernel_def', traced_af), \
          patch.object(Scheduler, 'codegen', traced_scheduler):
         yield state

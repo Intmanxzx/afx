@@ -18,8 +18,21 @@ def excerpt(exc):
 def validate(raw):
     if not isinstance(raw,str) or len(raw)>8000:raise ValueError('diagnostics size exceeded')
     data=json.loads(raw)
-    if not isinstance(data,dict) or set(data)-{'version','error','shapes'} or data.get('version')!=1:raise ValueError('invalid diagnostics')
+    if not isinstance(data,dict) or set(data)-{'version','error','shapes','autofuse_coverage'} or data.get('version')!=1:raise ValueError('invalid diagnostics')
     if 'error' in data and (not isinstance(data['error'],str) or len(data['error'])>1600):raise ValueError('invalid core log')
+    coverage = data.get('autofuse_coverage')
+    if coverage is not None:
+        counters = {'candidates', 'scheduler_codegen_entered', 'scheduler_codegen_succeeded', 'codegen_succeeded'}
+        if not isinstance(coverage, dict) or set(coverage) != counters | {'events', 'installed', 'no_coverage'}:
+            raise ValueError('invalid Autofuse coverage')
+        if any(type(coverage[k]) is not int or not 0 <= coverage[k] < 2**31 for k in counters):
+            raise ValueError('invalid Autofuse coverage counter')
+        if any(type(coverage[k]) is not bool for k in ('installed', 'no_coverage')):
+            raise ValueError('invalid Autofuse coverage flag')
+        events = coverage['events']
+        allowed = {'AF_CANDIDATE', 'AF_CODEGEN_OK', 'SCHEDULER_CODEGEN_ENTER', 'SCHEDULER_CODEGEN_OK', 'NO_AF_COVERAGE'}
+        if not isinstance(events, list) or len(events) > 64 or any(not isinstance(e, str) or e not in allowed for e in events):
+            raise ValueError('invalid Autofuse coverage events')
     shapes=data.get('shapes',{})
     if not isinstance(shapes,dict) or len(shapes)>16:raise ValueError('diagnostic shape limit')
     for index,value in shapes.items():

@@ -61,7 +61,7 @@ class SamplingConfig:
         values.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**values)
 
-    def seed(self, random_seed, dynamic=False, full_range=False):
+    def seed(self, random_seed, dynamic=False, full_range=False, aten=False):
         if type(random_seed) is not int or not 0 <= random_seed < 2**32:
             raise ValueError('random_seed must be uint32')
         values = dict(asdict(self), random_seed=random_seed,
@@ -72,12 +72,12 @@ class SamplingConfig:
         for name, bits in FIELDS:
             entropy |= values[name] << offset
             offset += bits
-        return Seed(((7 if dynamic else 6) if full_range else (5 if dynamic else 4))*2**128 + entropy)
+        return Seed(((9 if dynamic else 8) if aten else (7 if dynamic else 6) if full_range else (5 if dynamic else 4))*2**128 + entropy)
 
 
 def decode(seed):
     seed = Seed.parse(seed)
-    if seed.version not in {5, 6, 7, 8}:
+    if seed.version not in {5, 6, 7, 8, 9, 10}:
         raise ValueError('E/F seed required')
     remaining = seed.entropy
     values = {}

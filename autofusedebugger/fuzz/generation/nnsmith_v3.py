@@ -124,11 +124,6 @@ def execute_graph(torch, graph, weights, names):
         for node in graph['nodes']:
             xs = [values[name] for name in node['inputs']]
             op, attrs = node['op'], node.get('attrs', {})
-            # E/F full-dialect names are canonical snake_case; C/D retains
-            # its historical spellings.
-            op = {'expand_last1':'expandLast1', 'expand_last2':'expandLast2',
-                  'expand_last3':'expandLast3', 'expand_last4':'expandLast4',
-                  'reduce_prod':'prod', 'arg_max':'argmax', 'arg_min':'argmin'}.get(op, op)
             if op == 'add': out = xs[0] + xs[1]
             elif op == 'sub': out = xs[0] - xs[1]
             elif op == 'mul': out = xs[0] * xs[1]
@@ -136,7 +131,7 @@ def execute_graph(torch, graph, weights, names):
             elif op == 'pow': out = torch.pow(xs[0], xs[1])
             elif op == 'max': out = torch.maximum(xs[0], xs[1])
             elif op == 'min': out = torch.minimum(xs[0], xs[1])
-            elif op in {'neg', 'abs', 'sigmoid', 'sqrt', 'ceil', 'floor', 'round', 'sin', 'cos', 'tan', 'atan', 'asin', 'acos', 'log2'}:
+            elif op in {'neg', 'abs', 'sigmoid', 'sqrt', 'ceil', 'floor', 'round', 'sin', 'cos', 'tan', 'atan', 'asin', 'acos'}:
                 out = getattr(torch, op)(xs[0])
             elif op == 'relu': out = torch.relu(xs[0])
             elif op == 'gelu': out = torch.nn.functional.gelu(xs[0])
@@ -146,14 +141,11 @@ def execute_graph(torch, graph, weights, names):
                 if op == 'reshape': out = xs[0].reshape(tuple(attrs.get('shape', xs[0].shape)))
                 elif op == 'squeeze': out = xs[0].squeeze(attrs.get('dim'))
                 else: out = xs[0]
-            elif op in {'sum', 'mean', 'amin', 'amax', 'prod'}:
-                fn = {'sum': torch.sum, 'mean': torch.mean, 'amin': torch.amin, 'amax': torch.amax, 'prod': torch.prod}[op]
+            elif op in {'sum', 'mean', 'amin', 'amax'}:
+                fn = {'sum': torch.sum, 'mean': torch.mean, 'amin': torch.amin, 'amax': torch.amax}[op]
                 dims = attrs.get('reduce_dim')
                 out = fn(xs[0], dim=tuple(dims) if isinstance(dims, list) else dims)
-            elif op == 'cast':
-                dtype = attrs.get('dtype', attrs.get('to'))
-                if isinstance(dtype, str): dtype = getattr(torch, dtype.removeprefix('torch.'), None)
-                out = xs[0].to(dtype)
+            elif op == 'cast': out = xs[0].to(getattr(torch, attrs['dtype']))
             elif op in {'equal', 'greater', 'less'}: out = {'equal': torch.eq, 'greater': torch.gt, 'less': torch.lt}[op](xs[0], xs[1])
             elif op in {'and', 'or'}: out = torch.logical_and(xs[0], xs[1]) if op == 'and' else torch.logical_or(xs[0], xs[1])
             elif op == 'where': out = torch.where(xs[0], xs[1], xs[2])

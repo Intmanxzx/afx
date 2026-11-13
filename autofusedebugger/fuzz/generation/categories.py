@@ -19,6 +19,14 @@ _OP_CATEGORY = {
     'index_select': 'Gather', 'gather': 'Gather', 'layer_norm': 'Norm',
     'matmul': 'MatMul', 'linear': 'MatMul',
 }
+# Import-light metadata: never consult device/backend support for categories.
+from autofusedebugger.nnsmith_integration.aten_catalog import RULES
+for _rule in RULES:
+    _family = _rule.family
+    _OP_CATEGORY[_rule.target] = ('Transpose' if _rule.mode in {'transpose', 'permute', 'movedim', 't'} else
+        'View' if _family.startswith('view') else
+        'Reduce' if _family.startswith('reduce') or _family in {'scan', 'topk', 'dist'} else 'Elementwise')
+
 OP_CATEGORY = _OP_CATEGORY
 SUPPORTED_CATEGORIES = tuple(sorted(set(_OP_CATEGORY.values())))
 

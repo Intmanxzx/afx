@@ -45,8 +45,14 @@ def perform(job):
     kind = job['kind']
     if kind == 'generate':
         from ..generation import materialize, workload_id
+        from ..generation.nnsmith_v3 import source_evidence
+        # Broken/mismatched runtime is not a property of the generated case.
+        # Fail the stage instead of silently skipping the whole campaign.
+        source_evidence()
         try:
             bundle = materialize(job['seed'])
+        except (ImportError, MemoryError):
+            raise
         except Exception as exc:
             # A full-dialect seed can legitimately be unsatisfiable for a
             # particular NNSmith operator/shape combination.  Return a normal
@@ -58,7 +64,9 @@ def perform(job):
             raise ValueError('retest reproduction fingerprint mismatch')
         graph_ops = {n['op'] for n in json.loads(bundle.spec.graph_json)['nodes']}
         allowed_ops = set(job.get('ops', []))
-        if (allowed_ops and not graph_ops.issubset(allowed_ops)) or (set(job.get('exclude_ops', [])) & graph_ops):
+        from ..generation.operator_catalog import matches_ops
+        excluded = set(job.get('exclude_ops', []))
+        if (allowed_ops and any(not matches_ops(op, allowed_ops) for op in graph_ops)) or any(matches_ops(op, excluded) for op in graph_ops):
             return {'excluded': True}
         return write_bundle(job['directory'],bundle)
     if kind == 'record':
@@ -145,9 +153,11 @@ def perform(job):
     no_coverage = bool(coverage and coverage.no_coverage)
     if coverage:
         diagnostic = json.loads(result['execution']['diagnostics'])
-        diagnostic['autofuse_coverage'] = {'candidates': coverage.candidates,
-                                           'schedule_entered': coverage.schedule_entered,
-                                           'schedule_succeeded': coverage.schedule_succeeded,
+        diagnostic['autofuse_coverage'] = {'installed': coverage.installed,
+                                           'no_coverage': coverage.no_coverage,
+                                           'candidates': coverage.candidates,
+                                           'scheduler_codegen_entered': coverage.scheduler_codegen_entered,
+                                           'scheduler_codegen_succeeded': coverage.scheduler_codegen_succeeded,
                                            'codegen_succeeded': coverage.codegen_succeeded,
                                            'events': coverage.events}
         result['execution']['diagnostics'] = json.dumps(diagnostic)

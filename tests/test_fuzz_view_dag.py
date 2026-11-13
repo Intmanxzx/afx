@@ -85,3 +85,14 @@ def test_compact_lifecycle_and_stage_labels():
     assert out==['12:42:30.803','CPU 期望结果','CPU 结果校验','NPU首调(惰性编译/执行/同步)']
     assert '(value/1e9).toFixed(3)' not in source
     assert 'result.tool_efficiency?.note' not in source
+
+
+def test_dag_keeps_every_aten_tuple_output(dag):
+    graph = dag({'metadata': {'input_shapes': {'x':[2,3]}, 'graph': {
+        'nodes': [{'op':'aten.max.dim','inputs':['x'],'output':'v0','outputs':['v0','v1']},
+                  {'op':'aten.add.Tensor','inputs':['v0','v0'],'output':'v2','outputs':['v2']}],
+        'outputs':['v1','v2']}}})
+    nodes = {n['name']:n for n in graph['nodes']}
+    assert set(nodes)=={'x','v0','v1','v2'}
+    assert nodes['v1']['kind']=='op' and nodes['v1']['isOutput']
+    assert nodes['v2']['level'] > nodes['v0']['level']

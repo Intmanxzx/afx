@@ -46,7 +46,7 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
         tasks=ledger.page()['items']
         assert len(tasks)==2
         for task in tasks:
-            seed=Seed.parse(task['seed']);assert seed.short.startswith(('G','H')) and Seed.parse(seed.short)==seed
+            seed=Seed.parse(task['seed']);assert seed.short.startswith(('I','J')) and Seed.parse(seed.short)==seed
             assert json.loads(materialize(seed).spec.graph_json)['generator']=='nnsmith.graph_gen.model_gen'
         return {'verified':True}
     monkeypatch.setattr(hosting,'launch',launch)
@@ -56,7 +56,8 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
     result=json.loads(capsys.readouterr().out)
     assert result['status']=='ok'
     assert json.loads(json.loads(result['execution']['case_spec'])['graph_json'])['generator']=='nnsmith.graph_gen.model_gen'
-    assert ResultQueries(tmp_path/'results/results.sqlite').case_page()['items']
+    # CPU-only attempts are saved but intentionally absent from AF case summaries.
+    assert ResultQueries(tmp_path/'results/results.sqlite').page()['items']
 
 
 def test_real_supervisor_worker_uses_nnsmith(tmp_path):

@@ -33,6 +33,8 @@ def _broadcast_shape(shapes):
 
 
 def output_shapes(graph, inputs, weights, max_elements=4096):
+    if graph.get('dialect') == 'nnsmith-sampled/9':
+        return _aten_output_shapes(graph, inputs, weights, max_elements)
     values = {t.name: t.shape for t in (*inputs, *weights)}
     elementwise = {'add', 'sub', 'mul', 'max', 'min', 'div', 'pow', 'equal',
                    'and', 'or', 'greater', 'less'}
@@ -76,6 +78,32 @@ def output_shapes(graph, inputs, weights, max_elements=4096):
             raise ValueError('dynamic intermediate exceeds element budget')
         values[node['output']] = tuple(shape)
     return [values[name] for name in graph['outputs']]
+
+
+def _aten_output_shapes(graph, inputs, weights, max_elements):
+    """Reuse the new NNSmith model, including tuple outputs, for variants."""
+    from .torch_dialect import classes, key, decode
+    from nnsmith.abstract.tensor import AbsTensor
+    from nnsmith.abstract.dtype import DType
+    import z3
+    registry = {key(cls): cls for cls in classes(9)}
+    values = {t.name: AbsTensor(list(t.shape), DType.from_str(t.dtype)) for t in (*inputs, *weights)}
+    for node in graph['nodes']:
+        data = node['materializer']
+        cls = registry[data['class']]
+        op = cls.__new__(cls)
+        op.__dict__.update(decode(data['state']))
+        tensors = [values[n] for n in node['inputs']]
+        solver = z3.Solver()
+        solver.add(*op.checked_requires(tensors))
+        if solver.check() != z3.sat:
+            raise ValueError('dynamic ATen constraints unsatisfied')
+        outputs = op.checked_type_transfer(tensors)
+        for name, tensor in zip(node['outputs'], outputs):
+            if any(type(d) is not int or d < 0 for d in tensor.shape) or math.prod(tensor.shape) > max_elements:
+                raise ValueError('dynamic ATen output exceeds bounds')
+            values[name] = tensor
+    return [tuple(values[name].shape) for name in graph['outputs']]
 
 
 def variants(spec, max_elements=4096, dim_range=None, rng=None):

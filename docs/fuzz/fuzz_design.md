@@ -475,3 +475,33 @@ HTTPS 从 oracle1 访问域名验证 200、缓存响应头及线上 JS 与本地
 E/F 之后的新采样协议使用 G/H seed（静态/动态），在固定的 NNSmith 源码、Z3、采样配置和算子目录下按稳定排序选择完整 Torch dialect；不会按 Autofuse 白名单改变生成流。`--ops` 只在图已经物化后过滤，因此同一个 seed 不会因为命令行筛选或后端不同而生成另一张图。
 
 生成异常、CPU eager 标杆无法执行的图属于 `skipped`，不写入 attempts，也不进入有效用例分母；这允许后续逐步修补 NNSmith。CPU 成功后，目标后端的 lowering、Autofuse schedule/codegen 异常以及与 CPU 的不一致仍保留为有效失败。AF-MLIR 运行时探针在 worker 内临时 patch 实际 `codegen_kernel_def` 和 Scheduler codegen：正常完成且没有 AF candidate 才记 `no_autofuse_coverage` 并跳过；已经进入 AF candidate 后失败不降级成无覆盖。
+
+#### 跳过语义与复现边界（2026-11-13）
+
+- G/H 从固定源码中的 `nnsmith.materialize.torch.forward.ALL_TORCH_OPS` 取全部已注册算子，按模块名和类名排序，不再用设备支持白名单。当前隔离环境共 79 个可生成算子类，包含 Torch dialect 的 Flatten、Linear、PTMatMul、TorchReduceSum。这不是声称 NNSmith 已支持任意 `torch.*` API；未建模的 API 仍需逐步补充生成规则。
+- 新图保存构造参数、extra attrs、输入输出抽象签名，经 NNSmith 的真实 `forward_fn` 物化，不用 identity 等替代实现。模块初始化使用独立确定性 CPU RNG；CPU/NPU 使用相同参数。输出签名不一致也视为执行失败，CPU 标杆失败则跳过。
+- 生成失败、CPU 执行失败、确认零 AF 覆盖均不写 attempts；本地 `skipped_cases_v1` 保存最近 2048 个 case 的原因和有界错误摘要，不混入有效用例分母。worker 崩溃、IPC 超时、依赖或源码版本不匹配属于运行中断，不伪装为不支持的随机输入。
+- 多后端的结果在整个 case 的 CPU/覆盖/比较判定后统一进入 record 阶段，避免后到的 skip 留下已入库的 CPU 或目标结果。普通 skip 不杀掉健康 worker；已经派发的并行工作清理后返回池，未派发阶段取消。
+- 探针记录的是 `AF_CANDIDATE`、`AF_CODEGEN_OK` 和 `SCHEDULER_CODEGEN_*`，后者不是 Autofuser.schedule 的精确事件。没有任何回调（例如缓存命中）时不能断言零覆盖；只在 Scheduler 正常完成且候选为零时主动中断。普通前向 fullgraph 是当前验证范围，复杂多区域控制流和 backward 尚未验收。
+- 同 seed 的保证以固定生成协议、NNSmith 源码摘要、Z3 版本及配置为边界；失败不得换 seed 重试后冒充原用例，不接受因机器速度差异生成的部分图。修改生成规则/算子目录需新协议，旧协议失败也不能静默删算子继续抽样。长期重放应同时保存 CaseSpec、输入数据摘要和 workload_id。
+
+本轮仅在 mlir 环境测试：专项回归 79 passed；12 候选四 worker CPU 调度得到 7 有效、4 生成跳过、1 CPU 跳过，attempts 仅有 7 条且均成功，skip audit 单独记录 5 条。四 worker 双卡 AF-MLIR 小样本 4 case、CPU/AF 共 8 条均通过并入库。两张卡真实外部调用图均触发 NO_AF_COVERAGE，之后同进程 Add 正常编译执行。两个不同 PYTHONHASHSEED 的独立进程对 4 个固定 seed 生成相同 workload_id。
+
+探针开关交替微基准：每卡预热后各 9 次，npu:0 中位 125.20ms/125.96ms（关闭/开启），npu:1 为 122.36ms/122.76ms；这是简单 Add 的热环境编译与调用小样本，不代表完整随机图吞吐、冷启动成本或零性能回退。扩展指标组存在一项既有 `test_metric_hooks_and_search` 失败，已在改动前的 202cf14 同环境复现，不通过修改断言掩盖。
+
+真实 scheduler 零覆盖闭环补充：一个 PTMatMul-only G seed 触发跳过，另一个 Add-chain G seed 正常通过；同一四 worker 调度窗口完成后，数据库只有有效 case 的 CPU/AF 两条 `ok` attempts，无覆盖 case 的两条任务取消、只有一条 case skip audit，没有残留 CPU attempt。最终重跑曾出现取消测试的计时竞态（78 passed / 1 failed），该项独立复跑 1 passed；此前同组 79 passed，不将这次重跑描述为全绿。
+
+最终相同代码、相同远端环境再次完整运行上述专项组：**79 passed，95.47 秒**（只有 pygraphviz 可选可视化依赖警告）。未修改取消测试断言；保留此前一次计时竞态的记录。未推送或部署到 oracle1。
+
+
+### I/J：NNSmith ATen 四类扩展
+
+新 campaign 从 G/H 切换为 I/J，旧 campaign 与旧 seed 语义不变。以项目内 NNSmith
+插件补充 368 个精确 ATen overload（逐元素/比较 256、reduce 及相关 58、view 54），
+不包含矩阵和卷积。新图保留多输出及 dtype promotion，实际调用 torch.ops.aten。
+目录、未建模边界、固定依赖、筛选规则及 mlir 验证见 [ATen 扩展说明](aten_dialect.md)。
+
+I/J 最终远端专项及集成回归 **510 passed / 6 skipped，198.05 秒**；跳过项均因
+远端 Node.js 10 不满足 DAG 测试的 Node.js 16+ 要求。四 worker 双卡实测：
+ReLU、ge.Tensor 有效通过；transpose、prod 本次图无 AF 覆盖跳过，无单边 CPU
+attempt 残留。未提交、推送或部署到生产，未把本次小样本当作吞吐无回退证明。

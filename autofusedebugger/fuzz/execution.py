@@ -34,7 +34,7 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
               "_timings": {}, "_diagnostics": {"version":1,"shapes":{}}, "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}
     if hasattr(adapter, "config"):
         result["execution"] = asdict(adapter.config)
-    if bundle.spec.seed.version in {3,4,5,6,7,8}:
+    if bundle.spec.seed.version in {3,4,5,6,7,8,9,10}:
         from .case_spec import encode
         result.setdefault('execution', {})['case_spec'] = encode(bundle.spec)
     if hasattr(adapter, 'cpu_reference'):
@@ -129,6 +129,18 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
                 row["correctness"] = "error"
                 if evaluation.performance:
                     row["performance"] = "skipped"
+            # Dynamo wraps our sentinel. Stop all remaining shape samples
+            # without assuming the top-level exception preserves its type.
+            from .backends.autofuse_coverage import NoAutofuseCoverage
+            current = exc
+            seen = set()
+            while current is not None and id(current) not in seen:
+                seen.add(id(current))
+                if isinstance(current, NoAutofuseCoverage):
+                    break
+                current = current.__cause__ or current.__context__
+            if isinstance(current, NoAutofuseCoverage):
+                break
         finally:
             row["_timings"]["shape_processing"] = time.perf_counter_ns() - processing_started
     result["status"] = "error" if any("error_stage" in r for r in result["shape_results"]) else (

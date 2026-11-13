@@ -6,6 +6,9 @@ from .repository import _connect
 from .lifecycle import stamp, read, elapsed
 
 DDL = '''
+CREATE TABLE IF NOT EXISTS skipped_cases_v1 (
+ case_id TEXT PRIMARY KEY, window_id TEXT NOT NULL, seed TEXT NOT NULL,
+ reason TEXT NOT NULL, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS stage_facts_v1 (
  stage_id TEXT PRIMARY KEY, window_id TEXT NOT NULL, case_id TEXT NOT NULL,
  session_id TEXT, attempt_id TEXT, payload TEXT NOT NULL);
@@ -38,6 +41,17 @@ def save_case(database,case,sessions,window_id,start,pool):
     with closing(_connect(database,writable=True)) as conn,conn:
         initialize(conn)
         committed={t['attempt_id'] for t in saved if conn.execute('SELECT 1 FROM attempts WHERE id=?',(t['attempt_id'],)).fetchone()}
+        if case.skip_reason and case.skip_finalized:
+            from ..failure_details import redact
+            payload = {'version': 1, 'admitted': case.admitted,
+                       'stages': [{'kind': s.kind.value, 'state': s.state,
+                                   'started': s.facts.get('started'), 'finished': s.facts.get('finished'),
+                                   'error': redact(str(s.facts.get('error', '')))[-1600:]}
+                                  for s in case.stages.values()]}
+            conn.execute('INSERT OR IGNORE INTO skipped_cases_v1 VALUES (?,?,?,?,?)',
+                         (case.identity, window_id, str(case.seed), case.skip_reason, json.dumps(payload)))
+            # Local bounded audit only: no attempts, no upload denominator.
+            conn.execute('DELETE FROM skipped_cases_v1 WHERE case_id IN (SELECT case_id FROM skipped_cases_v1 ORDER BY rowid DESC LIMIT -1 OFFSET 2048)')
         if not committed:return
         for t in saved:
             # Record failures without a committed result cannot be exported yet.

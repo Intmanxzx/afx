@@ -1,7 +1,7 @@
 """Operator names and NNSmith class discovery.
 
 C/D are frozen protocols and retain their historical nine-operation catalog.
-New E/F cases deliberately discover every concrete NNSmith Torch dialect
+New G/H cases deliberately discover every registered NNSmith Torch dialect
 operator at runtime.  The generator is not allowed to use backend support as
 an eligibility filter: an operation that cannot be materialized or executed is
 an ordinary skipped case, while ``--ops`` filters the already materialized
@@ -26,10 +26,10 @@ A5_ONLY_OPS = (
 LEGACY_OPS = ('Add', 'Mul', 'Neg', 'ReLU', 'Transpose', 'ReduceSum',
               'ReduceMean', 'ReduceMin', 'ReduceMax')
 
-HISTORICAL_OPS = A3_OPS + A5_ONLY_OPS
+HISTORICAL_OPS = A3_OPS
 # Compatibility export for reports and old callers.  E/F does not use this
-# tuple to choose operators; see discover_operator_names().
-ALL_OPS = HISTORICAL_OPS
+# tuple to choose G/H operators; see full_operator_classes().
+ALL_OPS = A3_OPS + A5_ONLY_OPS
 
 # Complete concrete core dialect observed in the pinned NNSmith Torch module.
 # This is metadata for --ops validation only; generation discovers the module
@@ -47,6 +47,7 @@ FULL_DIALECT_OPS = (
     'ReflectPad', 'ReplicatePad', 'Reshape', 'Round', 'Sigmoid', 'Sin', 'Slice',
     'Softmax', 'Sqrt', 'Squeeze', 'Sub', 'Tan', 'Transpose', 'Tril',
     'TrilinearInterp', 'Triu', 'Unsqueeze', 'Where', 'Xor',
+    'Flatten', 'Linear', 'PTMatMul', 'TorchReduceSum',
 )
 
 A3_ALLOWLIST = tuple(
@@ -98,6 +99,7 @@ def graph_name(name):
         'ReduceSum': 'sum', 'ReduceMean': 'mean', 'ReduceMin': 'amin',
         'ReduceMax': 'amax', 'ReduceProd': 'reduce_prod', 'ReLU': 'relu',
         'GELU': 'gelu', 'LeakyReLU': 'leaky_relu', 'IndexSelect': 'index_select',
+        'PTMatMul': 'matmul',
     }
     if raw.startswith('Cast') and raw != 'Cast':
         return 'cast_' + raw[4:].lower()
@@ -147,15 +149,18 @@ def discover_operator_names(operators):
 
 def full_operator_classes(operators):
     """Resolve the complete deterministic NNSmith Torch operator catalog."""
-    names = discover_operator_names(operators)
-    result = []
-    for name in names:
-        value = getattr(operators, name)
-        result.append(value)
+    from .torch_dialect import classes
+    result = classes()
     if not result:
-        raise RuntimeError('NNSmith exposes no concrete Torch dialect operators')
+        raise RuntimeError('NNSmith exposes no registered Torch operators')
     return result
 
+
+from autofusedebugger.nnsmith_integration.aten_catalog import RULES as ATEN_RULES
+OP_ALIASES.update({rule.target: rule.target for rule in ATEN_RULES})
+for _rule in ATEN_RULES:
+    _packet = _rule.target.split('.')[1]
+    OP_ALIASES.setdefault(_packet, _packet)
 
 def normalize_ops(values):
     """Canonicalize a post-generation operator whitelist.
@@ -206,13 +211,23 @@ def operator_classes(operators, names=ALL_OPS, *, prefer_torch_reduce=False):
         else:
             op = getattr(operators, name, None)
         if op is None:
-            # Some pinned NNSmith builds omit optional historical classes.  A
-            # missing class is a generation-time skip, not a backend filter;
-            # keep the remaining frozen catalog usable for E/F replay.
-            if name != 'Linear':
-                missing.append(name)
+            # Frozen protocols fail closed: omission changes random selection
+            # and must never silently produce a different graph for an old seed.
+            missing.append(name)
         else:
             result.append(op)
     if missing:
         raise RuntimeError('NNSmith operator catalog is missing: ' + ', '.join(missing))
     return result
+
+
+def matches_ops(op, accepted):
+    """Exact ATen overloads or legacy family names; no generation filtering."""
+    if op in accepted:
+        return True
+    if op.startswith('aten.'):
+        name = op.split('.')[1]
+        aliases = {'maximum':'max', 'minimum':'min', 'reduce_sum':'sum',
+                   'argmax':'arg_max', 'argmin':'arg_min'}
+        return aliases.get(name, name) in accepted
+    return False

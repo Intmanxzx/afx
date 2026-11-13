@@ -128,13 +128,14 @@ def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeyp
         return {'state': 'test'}
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
-    configs, evaluation, count, devices, excluded, sampling = observed[-1]['campaign']
+    configs, evaluation, count, devices, excluded, sampling, ops, full_range = observed[-1]['campaign']
+    assert ops is None and full_range is True
     assert sampling['dim_dist_mode'] == 'half_normal'
     assert sampling['dim_max'] == 131072
     assert count is None and observed[-1]['foreground']
     assert all(not c.save_results for c in configs)
     assert main(['run', '--count', '3', '--save']) == 0
-    configs, _, count, devices, excluded, sampling = observed[-1]['campaign']
+    configs, _, count, devices, excluded, sampling, ops, full_range = observed[-1]['campaign']
     assert count == 3 and all(c.save_results for c in configs)
 
 

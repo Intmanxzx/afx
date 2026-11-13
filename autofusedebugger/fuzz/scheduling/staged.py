@@ -99,10 +99,18 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 case.skip_reason = str(reason)[:500]
             for other in list(case.stages.values()):
                 other.facts.setdefault('skip_reason', case.skip_reason)
-                if other.state == 'running':
-                    pool.cancel(other.identity)
-                elif other.state in {'ready', 'waiting_dependencies'}:
+                if other.state in {'ready', 'waiting_dependencies'}:
                     other.state = 'cancelled'
+
+        def interrupt_case(case, reason):
+            # A broken worker/environment is not evidence of an invalid input.
+            skip_case(case, reason)
+            for task in case.tasks:
+                if not task.get('done'):
+                    ledger.interrupt(task['id'], task['claim'], reason)
+                    task['done'] = True
+                    summary['interrupted'] += 1
+            case.skip_finalized = True
 
         def finalize_case_skip(case):
             if case.skip_reason is None or case.skip_finalized:
@@ -133,13 +141,17 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 if has_record(case, other.session_id):
                     continue
                 session = sessions[other.session_id]
+                compare = next((x for x in compares if x.session_id == other.session_id), None)
                 if other.state == 'failed':
-                    make_record(case, session,
-                                failure(session.task, 'worker',
-                                        other.facts.get('error', 'target execution failed'),
-                                        case.bundle), ())
+                    result = failure(session.task, 'worker',
+                                     other.facts.get('error', 'target execution failed'), case.bundle)
+                elif compare is not None and compare.output is not None:
+                    result = compare.output['result']
                 elif other.state == 'succeeded' and other.output and not other.output['result']['shape_results']:
-                    make_record(case, session, other.output['result'], (other,))
+                    result = other.output['result']
+                else:
+                    continue
+                make_record(case, session, result, ())
             # The CPU reference is shared by all target sessions and is
             # recorded exactly once, after the target verdict is durable in the
             # stage DAG (the record workers may run in parallel afterwards).
@@ -211,9 +223,11 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             s.facts['finished']=response.get('finished',time.monotonic_ns())
             if s.kind==Kind.GENERATE:
                 if not response['ok']:
-                    skip_case(case, 'generation_failed')
+                    s.facts['error'] = response.get('error', '')
+                    interrupt_case(case, 'generation_worker_failed')
                     return
                 if response['value'].get('skipped'):
+                    s.facts['error'] = response['value'].get('error', '')
                     skip_case(case, response['value'].get('reason', 'generation_failed'))
                     return
                 if response['value'].get('excluded'):
@@ -232,7 +246,12 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     combined=stage(Kind.COMBINED,case,(s,),ss)
                     stage(Kind.COMPARE,case,(combined,ref),ss)
             elif s.kind==Kind.REFERENCE:
+                if not response['ok']:
+                    s.facts['error'] = response.get('error', '')
+                    interrupt_case(case, 'reference_worker_failed')
+                    return
                 if response['ok'] and response['value']['result']['status']!='ok':
+                    s.facts['error'] = response['value']['result'].get('error_summary', '') or json.dumps(response['value']['result'].get('shape_results', []))[-1600:]
                     response={'ok':False,'error':response['value']['result'].get('error_summary','CPU reference failed')}
                     s.state='failed'
                 if response['ok']:
@@ -252,18 +271,18 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     if response['value'].get('case_skipped'):
                         skip_case(case, response['value'].get('skip_reason') or 'target_un-evaluable')
                         return
-                    # Target work can finish before the shared CPU oracle;
-                    # hold it in the stage rather than recording prematurely.
-                    if case.reference is not None and not has_record(case, s.session_id) and not s.output['result']['shape_results']:
-                        for other in list(case.stages.values()):
-                            if other.kind==Kind.COMPARE and other.session_id==s.session_id:other.state='cancelled'
-                        make_record(case,session,s.output['result'],(s,))
+                    # Empty results cannot be compared, even when the target
+                    # finishes before the shared reference. The publish barrier
+                    # below still waits for every other target's AF verdict.
+                    if not s.output['result']['shape_results']:
+                        for other in case.stages.values():
+                            if other.kind == Kind.COMPARE and other.session_id == s.session_id:
+                                other.state = 'cancelled'
                 else:
-                    s.facts['error']=response['error']
-                    for other in list(case.stages.values()):
-                        if other.kind==Kind.COMPARE and other.session_id==s.session_id:other.state='cancelled'
-                    if case.reference is not None and not has_record(case, s.session_id):
-                        make_record(case,session,failure(session.task,'worker',response['error'],case.bundle),())
+                    s.facts['error'] = response['error']
+                    for other in case.stages.values():
+                        if other.kind == Kind.COMPARE and other.session_id == s.session_id:
+                            other.state = 'cancelled'
             elif s.kind==Kind.COMPARE:
                 s.output=response.get('value')
                 if response['ok']:
@@ -273,7 +292,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     result['status']='error'
                     for row in result['shape_results']:
                         if not row.get('error_stage'):row.update(correctness='error',error_stage='compare',error_summary=str(response['error'])[-500:])
-                make_record(case,session,result,())
+                s.output = {'result': result}
             elif s.kind==Kind.RECORD:
                 if response['ok']:
                     ledger.complete(session.task['id'],session.task['claim']);summary['completed']+=1
@@ -417,7 +436,7 @@ def replay(args):
         batch=str(uuid.uuid4());seed=Seed.parse(args.seed)
         for backend in ([args.backend] if args.backend else ['cpu','af-mlir']):
             config=ExecutionConfig(backend,'cpu' if backend=='cpu' else args.device or 'npu:0',budget.compile_threads,
-                scheduling='staged',static_only=args.static_only or seed.version in {3,5},batch_id=batch,save_results=args.save)
+                scheduling='staged',static_only=args.static_only or seed.version in {3,5,7,9},batch_id=batch,save_results=args.save)
             ledger.enqueue(seed,config,EvaluationConfig(performance=args.performance,warmup_steps=args.warmup_steps,measured_steps=args.measured_steps))
         result=drain(ledger,database,timeout=120)
         print(json.dumps(result))

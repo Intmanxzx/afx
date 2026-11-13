@@ -151,10 +151,10 @@ def test_staged_worker_timeout_no_shape_and_no_auto_retry(tmp_path,monkeypatch):
         if count==1:args=[sys.executable,'-c','import time;time.sleep(60)']
         return original(args,**kwargs)
     monkeypatch.setattr(module.subprocess,'Popen',once)
-    # Generation failure/timeout is an un-evaluable case and is skipped;
-    # it must not create a synthetic attempt or force a second record worker.
+    # A worker timeout is infrastructure interruption, not a generated-case
+    # rejection. Neither outcome creates a synthetic attempt or auto-retry.
     result=drain(ledger,tmp_path/'db',timeout=10)
-    assert result['completed']==0 and result['skipped']==1
+    assert result['completed']==0 and result['interrupted']==1 and result['skipped']==0
     with sqlite3.connect(tmp_path/'db') as conn:
         assert conn.execute('SELECT count(*) FROM shapes').fetchone()[0]==0
         assert conn.execute('SELECT count(*) FROM attempts').fetchone()[0]==0

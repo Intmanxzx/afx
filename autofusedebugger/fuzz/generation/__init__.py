@@ -5,7 +5,7 @@ from .fingerprint import content_manifest, workload_id
 
 def _protocol(seed):
     seed = Seed.parse(seed)
-    if seed.version in {5, 6, 7, 8}:
+    if seed.version in {5, 6, 7, 8, 9, 10}:
         from . import nnsmith_sampled
         return nnsmith_sampled
     if seed.version == 4:

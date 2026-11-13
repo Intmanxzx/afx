@@ -476,7 +476,10 @@ function caseDag(result){
  const shapes=sample.input_shapes||meta.input_shapes||{},types=sample.input_dtypes||meta.input_dtypes||{};
  for(const [name,shape] of Object.entries(shapes))add(name,'Input',{shape,dtype:types[name]},'input');
  for(const weight of meta.weights||[])add(weight.name,'Weight',weight,'weight');
- for(const node of graph.nodes)add(node.output,node.op,{},'op',node.inputs||[],node.attrs||{});
+ for(const node of graph.nodes){
+  const outputs=node.outputs||[node.output];
+  for(const [i,name] of outputs.entries())add(name,outputs.length>1?`${node.op} [${i}]`:node.op,{},'op',node.inputs||[],node.attrs||{});
+ }
  for(const node of [...nodes])for(const name of node.inputs)if(!byName.has(name))add(name,'未记录输入',{},'input');
  const pending=new Set(nodes),resolved=new Set();
  while(pending.size){

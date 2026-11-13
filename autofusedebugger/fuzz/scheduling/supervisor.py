@@ -59,7 +59,7 @@ def _validate_task(task):
     else:
         raise ValueError('unsupported managed backend')
     from ..contracts import Seed
-    if 'seed' in task and Seed.parse(task['seed']).version not in {3,4,5,6,7,8}:
+    if 'seed' in task and Seed.parse(task['seed']).version not in {3,4,5,6,7,8,9,10}:
         raise ValueError('retired template task; cannot resume with NNSmith')
     if type(config.compile_threads) is not int or not 1 <= config.compile_threads <= (os.cpu_count() or 1):
         raise ValueError('compile thread budget exceeds available CPU count')

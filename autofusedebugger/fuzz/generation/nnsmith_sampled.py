@@ -1,4 +1,4 @@
-"""E/F: restored historical sampling with configuration embedded in the seed.
+"""E/F historical, G/H Torch registry, I/J functional ATen sampling.
 
 C/D generation and storage semantics remain frozen in their existing modules.
 """
@@ -27,24 +27,11 @@ def _tensor(name, abstract, alias=0):
     return TensorSpec(name, str(abstract.dtype), shape, stride, alias_group=alias)
 
 
-def _json_attr(value):
-    """Convert NNSmith constructor metadata into canonical JSON scalars."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (list, tuple)):
-        return [_json_attr(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _json_attr(item) for key, item in value.items()}
-    # DType has a stable string form such as ``float32``; z3 numerals and
-    # concrete scalar wrappers likewise have a deterministic textual value.
-    return str(value)
-
-
 @lru_cache(maxsize=8)
 def plan(token):
     seed = Seed.parse(token)
-    if seed.version not in {5, 6, 7, 8}:
-        raise ValueError('E/F seed required')
+    if seed.version not in {5, 6, 7, 8, 9, 10}:
+        raise ValueError('sampled E/F/G/H/I/J seed required')
     config, random_seed = decode(seed)
     evidence = source_evidence()
     from nnsmith.abstract import op as pinned_ops
@@ -57,7 +44,12 @@ def plan(token):
     import z3
     from z3 import z3 as impl
     # All selection is fixed, not filtered by device/backend capabilities.
-    ops = full_operator_classes(operators) if seed.version in {7, 8} else operator_classes(operators, OPS, prefer_torch_reduce=True)
+    if seed.version in {9, 10}:
+        from autofusedebugger.nnsmith_integration.aten_dialect import classes, validate_runtime
+        validate_runtime()
+        ops = classes()
+    else:
+        ops = full_operator_classes(operators) if seed.version in {7, 8} else operator_classes(operators, OPS, prefer_torch_reduce=True)
     original = [(op, op.in_dtypes, op.out_dtypes) for op in ops]
     state = random.getstate()
     context = z3.main_ctx()
@@ -88,7 +80,7 @@ def plan(token):
             if not op.in_dtypes or not op.out_dtypes:
                 continue
             pairs = [(a, b) for a, b in zip(op.in_dtypes, op.out_dtypes)
-                     if all(t in allowed for t in (*a, *b))]
+                     if all(t in allowed for t in (a if seed.version in {9, 10} else (*a, *b)))]
             # Do not leave an operator with an empty signature list: remove it
             # from this mode's candidate catalog instead. This is important for
             # explicit integer/complex modes where many floating-point-only
@@ -109,23 +101,33 @@ def plan(token):
         nodes, inputs, weights = [], [], []
         for inst in ir.insts:
             op = inst.iexpr.op
-            name = canonical_class_name(type(op).__name__)
+            name = type(op).__name__ if seed.version in {7, 8, 9, 10} else canonical_class_name(type(op).__name__)
             output = inst.retval()
             if name == 'Input':
                 inputs.append(_tensor(output, ir.vars[output], len(inputs)+len(weights)))
             elif name == 'Constant':
                 weights.append(_tensor(output, ir.vars[output], len(inputs)+len(weights)))
             else:
-                nodes.append({'op': graph_name(name), 'inputs': list(inst.iexpr.args), 'output': output,
-                              'attrs': _json_attr(dict(op.extra_attrs))})
+                nodes.append({'op': op.rule.target if seed.version in {9, 10} else graph_name(name) if seed.version in {7, 8} else NAMES[name], 'inputs': list(inst.iexpr.args), 'output': output,
+                              'attrs': dict(op.extra_attrs)})
+                if seed.version in {7, 8, 9, 10}:
+                    from .torch_dialect import capture
+                    nodes[-1]['materializer'] = capture(op, protocol=seed.version)
+                    if seed.version in {9, 10}:
+                        nodes[-1]['outputs'] = list(inst.retvals())
+                    from .torch_dialect import encode
+                    nodes[-1]['attrs'] = encode(dict(op.extra_attrs))
         if len(nodes) != node_count:
             raise ValueError('NNSmith generation ended before its fixed node budget; no partial case accepted')
         outputs = tuple(_tensor(name, ir.vars[name]) for name in ir.leaf_var())
-        graph = {'dialect': 'nnsmith-sampled/7' if seed.version in {7, 8} else 'nnsmith-sampled/5', 'sampling': asdict(config), 'operator_catalog': 'nnsmith-torch-core-v1' if seed.version in {7, 8} else 'historical-50-v1', 'nodes': nodes, 'outputs': [t.name for t in outputs],
+        graph = {'dialect': 'nnsmith-sampled/9' if seed.version in {9, 10} else 'nnsmith-sampled/7' if seed.version in {7, 8} else 'nnsmith-sampled/5', 'sampling': asdict(config), 'nodes': nodes, 'outputs': [t.name for t in outputs],
                  'reduce_axis': None, 'generator': evidence['generator'],
                  'source_sha256': SOURCE_SHA256, 'z3': Z3_VERSION}
+        if seed.version in {9, 10}:
+            graph['aten_rules'] = 'elementwise-comparison-reduce-view/v1'
+            graph['torch'] = '2.10.0+cpu'
         spec = CaseSpec(seed, canonical_json(graph), tuple(inputs), tuple(weights), (tuple(inputs),), (outputs,))
-        if seed.version in {6, 8}:
+        if seed.version in {6, 8, 10}:
             from .nnsmith_dynamic import variants
             spec = variants(spec, max_elements=config.max_elem_per_tensor,
                             dim_range=(config.dim_min, config.dim_max), rng=random.Random(random_seed))
@@ -138,7 +140,7 @@ def plan(token):
 
 
 def oracle_id(bundle):
-    return 'nnsmith-cpu/' + str(bundle.spec.seed.version)
+    return 'nnsmith-cpu/9' if bundle.spec.seed.version in {9, 10} else 'nnsmith-cpu/7' if bundle.spec.seed.version in {7, 8} else ORACLE_ID
 
 def materialize(token):
     return materialize_spec(plan(token))
@@ -195,7 +197,7 @@ def materialize_spec(spec):
                    *(t for sample in spec.shape_samples for t in sample))
                    if t.alias_group == tensor.alias_group)
         rng = random.Random(int.from_bytes(hashlib.sha256(
-            f'nnsmith-sampled/{7 if spec.seed.version in {7, 8} else 5}/{spec.seed}/{tensor.name}'.encode()).digest(), 'little'))
+            f'nnsmith-sampled/{9 if spec.seed.version in {9, 10} else 7 if spec.seed.version in {7, 8} else 5}/{spec.seed}/{tensor.name}'.encode()).digest(), 'little'))
         weight = tensor in spec.weights
         mode = config.value_dist_mode
         def value():

@@ -59,7 +59,7 @@ def test_campaign_config_is_persisted_and_legacy_campaign_kept(tmp_path):
     assert refill(ledger)
     task = ledger.claim()
     assert decode(task['seed'])[0] == config
-    assert Seed.parse(task['seed']).version == 7
+    assert Seed.parse(task['seed']).version == 9
     ledger.complete(task['id'], task['claim'])
     with ledger._connection() as conn:
         payload = json.loads(conn.execute('SELECT payload FROM campaign').fetchone()[0])
@@ -74,28 +74,16 @@ def test_actual_final_shapes_and_replay():
     from autofusedebugger.fuzz.generation import plan, materialize, materialize_spec, workload_id
     from autofusedebugger.fuzz.generation import nnsmith_sampled, nnsmith_v3, nnsmith_dynamic
     old = {s: materialize(s) for s in ('C16', 'D16')}
-    specs = []
-    for i in range(16):
-        try:
-            specs.append(plan(SamplingConfig().seed(i, full_range=True)))
-        except Exception:
-            # Full Torch/NNSmith scope intentionally permits unmaterializable
-            # seeds; the campaign records these as skipped cases.
-            continue
-    assert specs
+    specs = [plan(SamplingConfig().seed(i, full_range=True)) for i in range(8)]
     axes = [d for p in specs for t in p.inputs for d in t.shape]
-    assert max(axes) > 1
+    assert max(axes) > 8192
     assert len({len(json.loads(p.graph_json)['nodes']) for p in specs}) > 1
     assert all(math.prod(t.shape) <= 524288 for p in specs
                for t in (*p.inputs,*p.weights,*p.output_samples[0]))
     seed = SamplingConfig(value_dist_mode='llm').seed(3, full_range=True)
-    try:
-        first = materialize(seed)
-    except Exception:
-        first = None
-    if first is not None:
-        nnsmith_sampled.plan.cache_clear()
-        assert materialize(seed) == first == materialize_spec(first.spec)
+    first = materialize(seed)
+    nnsmith_sampled.plan.cache_clear()
+    assert materialize(seed) == first == materialize_spec(first.spec)
     for s in old:
         nnsmith_v3.plan.cache_clear(); nnsmith_dynamic.plan.cache_clear()
         assert materialize(s) == old[s]
@@ -109,19 +97,14 @@ def test_actual_dtype_modes_dynamic_and_cpu():
     from autofusedebugger.fuzz.backends import create_backend
     from autofusedebugger.fuzz.execution import execute
     from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
-    for dtype in ('float16', 'mixed'):
+    for dtype, entropy in [('float16', 4), ('mixed', 5)]:
         config = SamplingConfig.profile('small', dtype_mode=dtype, value_dist_mode='recommendation')
-        try:
-            bundle = materialize(config.seed(3, dynamic=True, full_range=True))
-        except Exception:
-            continue
-        if len(bundle.spec.shape_samples) != 3:
-            continue
+        bundle = materialize(config.seed(entropy, dynamic=True, full_range=True))
+        assert len(bundle.spec.shape_samples) == 3
         if dtype == 'float16':
             assert {t.dtype for t in (*bundle.spec.inputs,*bundle.spec.weights)} == {'float16'}
-        result = execute(bundle, create_backend(ExecutionConfig('cpu','cpu',1)), EvaluationConfig())
-        if result['status'] != 'ok':
-            continue
+        result = execute(bundle, create_backend(ExecutionConfig('cpu','cpu',1)), EvaluationConfig(correctness=False))
+        assert result['status'] == 'ok', result
         assert result['execution']['case_spec']
 
 
@@ -157,12 +140,8 @@ def test_explicit_million_axis_reaches_final_inputs(mode):
                             max_elem_per_tensor=10000000, dim_dist_mode=mode,
                             dtype_mode='float32')
 
-    try:
-        spec = plan(config.seed(3, full_range=True))
-    except Exception:
-        pytest.skip('full Torch/NNSmith seed was not materializable')
-    if 1000000 not in {d for t in spec.inputs for d in t.shape}:
-        pytest.skip('full dialect generator selected no million-element input')
+    spec = plan(config.seed(0, full_range=True))
+    assert 1000000 in {d for t in spec.inputs for d in t.shape}
     assert all(math.prod(t.shape) <= config.max_elem_per_tensor for t in spec.inputs)
 
 
