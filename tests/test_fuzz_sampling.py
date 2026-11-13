@@ -210,12 +210,12 @@ def test_generation_operator_catalog_matches_pre_refactor_allowlist():
         'Triu', 'IndexSelect', 'Gather', 'LayerNorm', 'MatMul', 'Linear')
 
 
-def test_sampled_protocol_uses_pre_refactor_default_a3_scope():
+def test_sampled_protocol_uses_full_pre_refactor_scope():
     from autofusedebugger.fuzz.generation.nnsmith_sampled import OPS
-    from autofusedebugger.fuzz.generation.operator_catalog import HISTORICAL_OPS
+    from autofusedebugger.fuzz.generation.operator_catalog import ALL_OPS
 
-    assert OPS == HISTORICAL_OPS
-    assert len(OPS) == 30
+    assert OPS == ALL_OPS
+    assert len(OPS) == 50
 
 
 def test_generation_operator_catalog_has_stable_graph_names():
@@ -253,3 +253,12 @@ def test_sampling_factors_match_pre_refactor_generation_ranges():
     assert DTYPE_MODES[:3] == ('float32', 'float16', 'mixed')
     assert 'all' in DTYPE_MODES
     assert GenerationConfig().dynamic_variants == 3
+
+
+def test_ops_whitelist_is_canonical_and_does_not_change_seed():
+    from autofusedebugger.fuzz.generation.operator_catalog import normalize_ops
+    assert normalize_ops('Add,core.ReduceMean,transpose,Add') == ('add', 'mean', 'transpose')
+    with pytest.raises(ValueError, match='unknown op'):
+        normalize_ops('not-an-op')
+    with pytest.raises(ValueError, match='at least one'):
+        normalize_ops(',')

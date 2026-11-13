@@ -49,7 +49,9 @@ def perform(job):
         bundle = materialize(job['seed'])
         if job.get('expected_workload_id') and workload_id(bundle)!=job['expected_workload_id']:
             raise ValueError('retest reproduction fingerprint mismatch')
-        if set(job.get('exclude_ops',[])) & {n['op'] for n in json.loads(bundle.spec.graph_json)['nodes']}:
+        graph_ops = {n['op'] for n in json.loads(bundle.spec.graph_json)['nodes']}
+        allowed_ops = set(job.get('ops', []))
+        if (allowed_ops and not graph_ops.issubset(allowed_ops)) or (set(job.get('exclude_ops', [])) & graph_ops):
             return {'excluded': True}
         return write_bundle(job['directory'],bundle)
     if kind == 'record':

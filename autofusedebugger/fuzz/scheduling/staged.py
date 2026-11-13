@@ -34,6 +34,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
         summary = dict(_reconcile(ledger,database),completed=0,failed=0,cancelled=0,record_failed=0,skipped=0)
         names = set()
         exclude_ops = []
+        ops = []
         for task in _tasks(ledger):
             if task['state']=='pending':
                 _validate_task(task)
@@ -43,7 +44,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 row=conn.execute('SELECT payload FROM campaign WHERE id=1').fetchone()
                 if row:
                     policy=json.loads(row[0]);names.update(policy.get('devices',[]))
-                    exclude_ops=policy.get('exclude_ops',[])
+                    exclude_ops=[] if policy.get('ops') else policy.get('exclude_ops',[])
+                    ops=policy.get('ops',[])
         pool = Pool(budget,scratch,fd,discover(sorted(names)),max_tasks=budget.worker_max_tasks)
         if budget.device_budget_bytes:
             for device in pool.devices: device.capacity=min(device.capacity,budget.device_budget_bytes)
@@ -95,7 +97,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             if s.kind==Kind.GENERATE:
                 from ..sync.retests import expected_workload
                 expected=expected_workload(ledger,case.tasks)
-                job.update(seed=case.seed,exclude_ops=[] if expected else exclude_ops)
+                job.update(seed=case.seed,exclude_ops=[] if expected else exclude_ops,ops=[] if expected else ops)
                 if expected:job['expected_workload_id']=expected
             elif s.kind==Kind.REFERENCE:
                 job['output_file']='reference.npz'

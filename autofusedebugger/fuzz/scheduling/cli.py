@@ -26,6 +26,7 @@ def register(sub, maintenance):
             parser.add_argument('--max-nodes', type=int)
             parser.add_argument('--generation-timeout', type=int, help='solver timeout in seconds; recorded in E/F seed')
             parser.add_argument('--exclude-op', action='append', choices=('transpose',), help='skip random candidates containing this op; seed semantics are unchanged')
+            parser.add_argument('--ops', help='comma-separated OP whitelist; generation remains full-range and filtering happens after seed replay')
             resources = parser.add_mutually_exclusive_group()
             resources.add_argument('--auto-resources', action='store_true', default=None, help='recompute resource budget at startup (default for new setups)')
             resources.add_argument('--fixed-resources', dest='auto_resources', action='store_false', help='use saved fixed resource budget')
@@ -105,6 +106,10 @@ def dispatch(args):
         if seeds or count < 1:
             raise ValueError('--count requires a positive count and no explicit seeds')
 
+    from ..generation.operator_catalog import normalize_ops
+    ops = normalize_ops(getattr(args, 'ops', None))
+    if ops and args.scheduling != 'staged':
+        raise ValueError('--ops requires staged scheduling')
     if getattr(args,'exclude_op',None) and (seeds or args.scheduling!='staged'):
         raise ValueError('--exclude-op requires a random staged campaign')
     evaluation = EvaluationConfig(performance=args.performance)
@@ -138,7 +143,8 @@ def dispatch(args):
         print(json.dumps({'resource_plan': resource_plan}), file=sys.stderr, flush=True)
     result = launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version in {3,5},device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
                   timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
-                  campaign=(configs,evaluation,count,devices,getattr(args,'exclude_op',None),asdict(sampling)) if not seeds else None)
+                  campaign=(configs,evaluation,0 if seeds and ops else count,devices,
+                            getattr(args,'exclude_op',None),asdict(sampling),ops) if (not seeds or ops) else None)
 
     if resource_plan is not None:
         result["resource_plan"] = resource_plan

@@ -12,7 +12,7 @@ from ..contracts import Seed, TensorSpec, CaseSpec, CaseBundle, canonical_json
 ORACLE_ID = 'nnsmith-cpu/5'
 SOURCE_SHA256 = 'c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5'
 Z3_VERSION = '4.12.2'
-from .operator_catalog import HISTORICAL_OPS as OPS, NAMES, operator_classes, canonical_class_name
+from .operator_catalog import ALL_OPS as OPS, NAMES, operator_classes, canonical_class_name
 
 
 from .nnsmith_v3 import source_evidence

@@ -43,6 +43,36 @@ NAMES.update(ReduceSum='sum', ReduceMean='mean', ReduceMin='amin', ReduceMax='am
 NAMES['ReLU'] = 'relu'
 LEGACY_NAMES = {**NAMES, 'ReLU': 'relu'}
 
+# CLI and persisted graph names are accepted interchangeably.  The canonical
+# spelling used in graph JSON and --ops payloads is the lower-case NAMES value.
+OP_ALIASES = {value: value for value in NAMES.values()}
+OP_ALIASES['ReLU'] = OP_ALIASES['relu'] = 'relu'
+OP_ALIASES.update({name: NAMES[name] for name in ALL_OPS})
+OP_ALIASES.update({qualified: NAMES[short] for qualified, short in
+                   zip(ALL_ALLOWLIST, ALL_OPS)})
+
+def normalize_ops(values):
+    """Validate and canonicalize a --ops whitelist."""
+    if values is None:
+        return None
+    if isinstance(values, str):
+        values = values.split(',')
+    result = []
+    for value in values:
+        value = str(value).strip()
+        if not value:
+            continue
+        try:
+            canonical = OP_ALIASES[value]
+        except KeyError:
+            raise ValueError(f"unknown op {value!r}; use graph names from NAMES") from None
+        if canonical not in result:
+            result.append(canonical)
+    if not result:
+        raise ValueError('--ops requires at least one operator')
+    return tuple(result)
+
+
 # Abstract family entries in the old allowlist need one concrete arity/dtype
 # class for symbolic generation.  The serialized factor remains Cast/Concat.
 CONCRETE_ALIASES = {'Cast': 'CastF32', 'Concat': 'Concat2'}

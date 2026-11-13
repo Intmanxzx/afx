@@ -7,15 +7,15 @@ from ..generation.sampling import SamplingConfig
 from ..contracts import canonical_json
 
 
-def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None):
-    if count is not None and (type(count) is not int or count < 1):
-        raise ValueError('campaign count must be positive or unlimited')
+def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None, ops=None):
+    if count is not None and (type(count) is not int or count < 0):
+        raise ValueError('campaign count must be nonnegative or unlimited')
     with ledger._connection() as conn:
         if not configs or len(configs) > conn.execute('SELECT max_active FROM queue_config').fetchone()[0]:
             raise ValueError('campaign backend matrix exceeds task capacity')
         conn.execute('CREATE TABLE IF NOT EXISTS campaign (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, remaining INTEGER, stopped INTEGER NOT NULL)')
         conn.execute('INSERT OR REPLACE INTO campaign VALUES (1,?,?,0)',
-                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig())}),count))
+                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'ops':ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig())}),count))
 
 
 def stop(ledger):

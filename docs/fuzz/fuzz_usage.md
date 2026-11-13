@@ -226,3 +226,21 @@ autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --de
 ### 大 Shape 与分布采样
 
 新建随机 campaign 默认使用可重放 E/F 协议；旧 C/D 和已持久化的旧 campaign 不改含义。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes` 和 `--generation-timeout`。完整历史对照、公式、预算限制和验证方法见 [采样协议](fuzz_design.md#附录-a可重放采样协议-ef)。要使正在运行的旧 campaign 使用新采样，需正常停止后新建，不能原地改旧 seed。
+
+
+### OP 白名单过滤
+
+E/F 生成先使用完整算子目录，seed 决定完整图；`--ops` 只在生成完成后过滤，不参与 seed 编码。因此同一 seed 在不同白名单下仍生成同一个 workload，只是可能被跳过：
+
+```sh
+autofusedbg fuzz run --ops add,mul,mean,transpose --count 100 --scheduling staged
+# 也接受 NNSmith 名称，例如：--ops core.Add,core.ReduceMean
+```
+
+显式 seed 也支持白名单过滤：
+
+```sh
+autofusedbg fuzz run E... --ops add,mul --scheduling staged
+```
+
+不满足白名单的 case 会标记为 `excluded_op`，不会启动 backend。

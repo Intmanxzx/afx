@@ -338,6 +338,18 @@ def test_compressed_artifact_bound_checked_before_loading(tmp_path, monkeypatch)
             sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
 
 
+def test_ops_whitelist_filters_generated_graph_without_changing_seed(tmp_path, monkeypatch):
+    from fuzz_fixtures import bundle
+    from autofusedebugger.fuzz import generation
+    from autofusedebugger.fuzz.scheduling.stage_worker import perform
+    monkeypatch.setattr(generation, 'materialize', lambda _: bundle())
+    # C16 contains relu/amin/add/mul/amax/transpose; an add-only whitelist
+    # must skip it after generation, not alter the generated graph.
+    assert perform({'kind':'generate','seed':'C16','directory':str(tmp_path),
+                    'ops':['add']}) == {'excluded':True}
+    assert not list(tmp_path.iterdir())
+
+
 def test_excluded_graph_never_runs_backend(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
     from autofusedebugger.fuzz import generation
