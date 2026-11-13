@@ -218,11 +218,17 @@ class ControlAPI:
                     result=self.store.exchange(pairing['id'],pairing['secret'])
                 else:
                     result=self.store.pairing(body['name']) if name=='pair' else self.store.exchange(body['id'],body['secret'])
-            elif name in {'poll','ack'} and method=='POST':
+            elif name in {'poll','ack'} and method=='POST' or (name=='revoke' and method=='POST' and handler.headers.get('Authorization','').startswith('Bearer ')):
                 auth=handler.headers.get('Authorization','')
                 if not auth.startswith('Bearer ') or len(auth)>256: raise PermissionError('credential required')
                 device=self.store.authenticate(auth[7:]);self.allowlist.client(device['user_id'],device['id'])
-                result=self.store.poll(device,body['status']) if name=='poll' else self.store.ack(device,body['id'],body['generation'],body['state'],body.get('result'))
+                if name=='poll': result=self.store.poll(device,body['status'])
+                elif name=='ack': result=self.store.ack(device,body['id'],body['generation'],body['state'],body.get('result'))
+                else:
+                    with self.store.connect() as db:
+                        db.execute('UPDATE managed_devices SET active=0 WHERE id=?',(device['id'],))
+                        self.store.audit(db,device['user_id'],device['id'],'revoke',{})
+                    result=dict(revoked=True)
             else:
                 if method=='POST': self.existing._origin(handler)
                 user=sessions.identify(self.path,self.existing._secret(handler),handler.headers.get('X-CSRF-Token','') if method=='POST' else None)['user_id']

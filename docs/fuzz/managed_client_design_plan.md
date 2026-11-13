@@ -613,3 +613,56 @@ Docker 中已验证：
 - 管理测试与既有 sync/retest/runtime/stage/ledger 回归测试均在 Docker 运行。
 
 未做且刻意不做：没有在 `mlir` 环境安装 CANN/NNSmith，没有改动其 Python 环境，也没有执行实际 NPU 用例。真实 CANN RUN 包、真实 torch/torch_npu 版本组合和 NPU 双卡验证需要后续单独的维护窗口；验证前应先检查两张卡的占用。
+
+## 17. Agent CLI 命令契约
+
+`autofusedbg` 的管理命令是稳定的机器接口，不要求 Agent 解析人类日志。命令成功或失败都向 stdout 输出单个 JSON envelope：
+
+```json
+{"schema_version":1,"ok":true,"data":{}}
+{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."}}
+```
+
+stdout 不混入进度文本；长操作只返回 `data.id`（operation ID），使用 `operation wait` 查询最终状态。退出码固定为：`0` 成功/已接受，`1` 操作已进入 failed/needs_attention/cancelled，`2` 参数或校验错误，`3` 本地 daemon 不可用。`--json` 保留为兼容参数，JSON 是默认输出。
+
+### 17.1 完整命令表
+
+| 命令 | 用途 | 输入/输出 |
+| --- | --- | --- |
+| `autofusedbg daemon start [--foreground]` | 启动守护进程 | 返回本地 socket 已就绪 |
+| `autofusedbg daemon status` | 查询守护进程、连接、运行和活动操作 | JSON 状态 |
+| `autofusedbg daemon stop` | 无活动操作时停止守护进程 | 停止结果 |
+| `autofusedbg daemon run` / `supervise` | 前台运行/稳定启动器 | 供 systemd 或测试使用 |
+| `autofusedbg device enroll --token-stdin [--endpoint URL] [--name NAME]` | 从 stdin 读取注册 token | 设备 ID；token 不进入 argv |
+| `autofusedbg device pair [--endpoint URL] [--name NAME]` | 创建浏览器配对 | 配对 ID/码 |
+| `autofusedbg device status` | 查询本机配对和能力 | JSON 状态 |
+| `autofusedbg device revoke` | 撤销当前设备凭据 | 撤销结果 |
+| `autofusedbg environment inspect` / `list` | 检查/列出环境 | 环境列表和平台信息 |
+| `autofusedbg environment plan FILE` | 校验 YAML 并生成不可变安装计划 | plan ID |
+| `autofusedbg environment apply PLAN_ID` 或 `--plan PLAN_ID` | 执行已确认计划 | operation ID |
+| `autofusedbg environment status ENV_ID` | 查询环境 manifest 和状态 | environment ID/name |
+| `autofusedbg build submit FILE` | 提交本地 CANN 构建 | operation ID/build ID |
+| `autofusedbg build inspect OPERATION_ID` | 查询构建操作 | operation 状态 |
+| `autofusedbg task validate FILE` | 解析、补全并校验任务 | 有效任务快照/指纹 |
+| `autofusedbg task submit FILE [--workers N] [--wait]` | 提交执行任务 | operation ID/run ID |
+| `autofusedbg task list` | 列出任务 | run 列表 |
+| `autofusedbg task inspect RUN_ID` / `status` | 查看有效快照和运行状态 | run 状态 |
+| `autofusedbg task pause RUN_ID` | 安全暂停生成和派发 | operation 状态 |
+| `autofusedbg task resume RUN_ID` | 恢复任务 | operation 状态 |
+| `autofusedbg task stop RUN_ID [--graceful]` | 安全停止任务 | operation 状态 |
+| `autofusedbg task force-stop RUN_ID` | 仅终止本工具拥有的进程组 | operation 状态 |
+| `autofusedbg task reconfigure RUN_ID FILE [--wait]` | 连续任务在安全 epoch 应用新 YAML | 新 epoch/config hash |
+| `autofusedbg operation inspect OP_ID` | 查询一次 | 完整操作 envelope |
+| `autofusedbg operation wait OP_ID [--timeout SEC]` | 等待终态 | 终态和 result |
+| `autofusedbg operation logs OP_ID [--after SEQ]` | 读取有界结构化事件 | event 列表 |
+| `autofusedbg operation cancel OP_ID` | 取消排队/请求取消运行操作 | cancel 请求 |
+| `autofusedbg config validate FILE` | 校验客户端策略 | 有效策略 |
+| `autofusedbg config effective` | 查询当前策略 | 配置快照 |
+| `autofusedbg config apply FILE [--wait]` | 应用到后续新任务 | revision/operation |
+| `autofusedbg config export FILE` | 输出规范化 YAML | YAML 字符串 |
+| `autofusedbg tool stage FILE [--wait]` | 校验并预安装签名版本 | release ID |
+| `autofusedbg tool list` / `inspect RELEASE_ID` | 查询托管版本 | staged manifest |
+| `autofusedbg tool activate RELEASE_ID [--wait]` | 空闲时切换工具版本 | launcher 状态 |
+| `autofusedbg management trust FILE` | 设置本机信任/资源授权 | 仅本地 socket 可执行 |
+
+所有会产生副作用的命令都支持 `--request-key KEY`。Agent 重试必须复用同一个 key；同一 key 搭配不同 payload 会返回冲突。输入文件使用安全 YAML 子集；传 `-` 表示 stdin。命令帮助可通过任意层级的 `--help` 获取，不能把帮助文本当作状态协议。

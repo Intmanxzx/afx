@@ -64,6 +64,13 @@ class Manager:
         if action=='operation': return self.store.operation(body['id'])
         if action=='events': return self.store.events(body['id'],int(body.get('after',0)))
         if action=='effective': return self.store.get('effective_policy',{})
+        if action=='query': return self.query(body.get('query'), body.get('value'))
+        if action=='revoke':
+            credential=self.store.get('credential')
+            if not credential: raise ValueError('device is not paired')
+            result=remote(credential['endpoint'],'revoke',{},credential['token'])
+            self.store.put('credential',None)
+            return dict(result,local_credential='removed')
         if action=='pair':
             if not body.get('endpoint','').startswith('https://'):
                 raise ValueError('pair endpoint must use HTTPS')
@@ -81,6 +88,36 @@ class Manager:
             if not isinstance(body['policy'],dict): raise ValueError('local trust object required')
             atomic(self.store.home/'trust.json',body['policy']);return dict(saved=True)
         raise ValueError('unknown local action')
+
+    def query(self, query, value=None):
+        if query == 'environments':
+            with self.store.connect() as db:
+                return {'items': [dict(id=r['id'], name=r['name'], state=r['state']) for r in db.execute('SELECT id,name,state FROM environments ORDER BY name')]}
+        if query == 'environment':
+            with self.store.connect() as db:
+                rows=db.execute('SELECT manifest FROM environments WHERE id=? OR name=?',(value,value)).fetchall()
+            if len(rows)!=1: raise LookupError('environment not found or ambiguous')
+            return json.loads(rows[0][0])
+        if query == 'runs':
+            with self.store.connect() as db:
+                rows=db.execute('SELECT id,state,pid,result FROM runs ORDER BY rowid DESC LIMIT 100').fetchall()
+            return {'items':[dict(id=r['id'],state=r['state'],pid=r['pid'],result=json.loads(r['result']) if r['result'] else None) for r in rows]}
+        if query == 'run':
+            with self.store.connect() as db:
+                row=db.execute('SELECT * FROM runs WHERE id=?',(value,)).fetchone()
+            if not row: raise LookupError('run not found')
+            return dict(id=row['id'],state=row['state'],pid=row['pid'],spec=json.loads(row['spec']),result=json.loads(row['result']) if row['result'] else None)
+        if query == 'tools':
+            requested=value
+            root=self.store.home/'tools'; items=[]
+            if root.exists():
+                for manifest in root.glob('*/ready.json'):
+                    release=json.loads(manifest.read_text())
+                    items.append(dict(id=release.get('id'), path=str(manifest.parent), state='staged'))
+            if requested is not None:
+                items=[item for item in items if item['id']==requested]
+            return {'items':items}
+        raise ValueError('unknown local query')
 
     def snapshot(self):
         with self.store.connect() as db:
