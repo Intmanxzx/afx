@@ -46,7 +46,7 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
         tasks=ledger.page()['items']
         assert len(tasks)==2
         for task in tasks:
-            seed=Seed.parse(task['seed']);assert seed.short.startswith(('E','F')) and Seed.parse(seed.short)==seed
+            seed=Seed.parse(task['seed']);assert seed.short.startswith(('G','H')) and Seed.parse(seed.short)==seed
             assert json.loads(materialize(seed).spec.graph_json)['generator']=='nnsmith.graph_gen.model_gen'
         return {'verified':True}
     monkeypatch.setattr(hosting,'launch',launch)

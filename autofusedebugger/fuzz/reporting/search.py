@@ -100,7 +100,7 @@ def condition(q):
         if state is None:
             return "p.status IN ('function_failed','accuracy_failed')", []
         return 'p.status=? COLLATE NOCASE', [state]
-    if re.fullmatch(r'[CDEF][0-9A-Z]{9,25}', q):
+    if re.fullmatch(r'[CDEFGH][0-9A-Z]{9,25}', q):
         from ..contracts import Seed
         return 'p.seed=?', [str(Seed.parse(q))]
     return 'instr(lower(p.search),lower(?))>0', [q]
@@ -130,7 +130,7 @@ def case_condition(q):
 
 def exact_seed(q):
     """Recognize the existing exact short-seed search, not fuzzy numeric text."""
-    if isinstance(q, str) and re.fullmatch(r'[CDEF][0-9A-Z]{9,25}', q.strip()):
+    if isinstance(q, str) and re.fullmatch(r'[CDEFGH][0-9A-Z]{9,25}', q.strip()):
         from ..contracts import Seed
         return str(Seed.parse(q.strip()))
     return None

@@ -1,9 +1,11 @@
-"""Historical NNSmith operator factor catalog.
+"""Operator names and NNSmith class discovery.
 
-Before the fuzz-generation refactor the generator received the probed
-AscendC allowlist, not a nine-operation hand-written subset.  The allowlist
-has 30 A3 operations and 20 additional A5 operations.  Keep this data
-independent of NNSmith imports so tests can audit it on a light-weight host.
+C/D are frozen protocols and retain their historical nine-operation catalog.
+New E/F cases deliberately discover every concrete NNSmith Torch dialect
+operator at runtime.  The generator is not allowed to use backend support as
+an eligibility filter: an operation that cannot be materialized or executed is
+an ordinary skipped case, while ``--ops`` filters the already materialized
+canonical graph.
 """
 
 # Short NNSmith class names corresponding to the old qualified allowlist.
@@ -20,11 +22,32 @@ A5_ONLY_OPS = (
     'Gather', 'LayerNorm', 'MatMul', 'Linear',
 )
 # C/D are immutable replay protocols and retain their original nine-op
-# vocabulary. E/F use the historical hardware catalog below.
+# vocabulary. E/F keep the historical catalog; G/H use the full dialect.
 LEGACY_OPS = ('Add', 'Mul', 'Neg', 'ReLU', 'Transpose', 'ReduceSum',
               'ReduceMean', 'ReduceMin', 'ReduceMax')
-HISTORICAL_OPS = A3_OPS
-ALL_OPS = A3_OPS + A5_ONLY_OPS
+
+HISTORICAL_OPS = A3_OPS + A5_ONLY_OPS
+# Compatibility export for reports and old callers.  E/F does not use this
+# tuple to choose operators; see discover_operator_names().
+ALL_OPS = HISTORICAL_OPS
+
+# Complete concrete core dialect observed in the pinned NNSmith Torch module.
+# This is metadata for --ops validation only; generation discovers the module
+# at runtime so the seed does not depend on a host-side allowlist.
+FULL_DIALECT_OPS = (
+    'Abs', 'Acos', 'Add', 'And', 'ArgMax', 'ArgMin', 'Asin', 'Atan',
+    'AvgPool2d', 'BatchNorm2d', 'BicubicInterp', 'BilinearInterp',
+    'CastBool', 'CastF32', 'CastF64', 'CastI32', 'CastI64', 'Ceil', 'Clip',
+    'Concat1', 'Concat2', 'Concat3', 'Concat4', 'Concat5', 'ConstPad', 'Conv1d',
+    'Cos', 'Div', 'Equal', 'ExpandLast1', 'ExpandLast2', 'ExpandLast3',
+    'ExpandLast4', 'Floor', 'GELU', 'Gather', 'Greater', 'IndexSelect',
+    'LayerNorm', 'LeakyReLU', 'Less', 'LinearInterp', 'Log2', 'Max', 'MaxPool2d',
+    'Min', 'Mul', 'NCHWConv2d', 'NearestInterp', 'Neg', 'Or', 'PReLU', 'Pow',
+    'ReLU', 'ReduceMax', 'ReduceMean', 'ReduceMin', 'ReduceProd', 'ReduceSum',
+    'ReflectPad', 'ReplicatePad', 'Reshape', 'Round', 'Sigmoid', 'Sin', 'Slice',
+    'Softmax', 'Sqrt', 'Squeeze', 'Sub', 'Tan', 'Transpose', 'Tril',
+    'TrilinearInterp', 'Triu', 'Unsqueeze', 'Where', 'Xor',
+)
 
 A3_ALLOWLIST = tuple(
     'torch.TorchReduceSum' if name == 'ReduceSum' else 'core.' + name
@@ -51,31 +74,11 @@ OP_ALIASES.update({name: NAMES[name] for name in ALL_OPS})
 OP_ALIASES.update({qualified: NAMES[short] for qualified, short in
                    zip(ALL_ALLOWLIST, ALL_OPS)})
 
-def normalize_ops(values):
-    """Validate and canonicalize a --ops whitelist."""
-    if values is None:
-        return None
-    if isinstance(values, str):
-        values = values.split(',')
-    result = []
-    for value in values:
-        value = str(value).strip()
-        if not value:
-            continue
-        try:
-            canonical = OP_ALIASES[value]
-        except KeyError:
-            raise ValueError(f"unknown op {value!r}; use graph names from NAMES") from None
-        if canonical not in result:
-            result.append(canonical)
-    if not result:
-        raise ValueError('--ops requires at least one operator')
-    return tuple(result)
+def _snake_name(name):
+    import re
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(name)).lower()
+    return value.replace("__", "_")
 
-
-# Abstract family entries in the old allowlist need one concrete arity/dtype
-# class for symbolic generation.  The serialized factor remains Cast/Concat.
-CONCRETE_ALIASES = {'Cast': 'CastF32', 'Concat': 'Concat2'}
 
 def canonical_class_name(name):
     if name.startswith('Cast'):
@@ -86,6 +89,104 @@ def canonical_class_name(name):
         return 'ReduceSum'
     return name
 
+
+def graph_name(name):
+    """Return the stable snake_case graph spelling for a dialect class."""
+    raw = str(name)
+    canonical = canonical_class_name(raw)
+    special = {
+        'ReduceSum': 'sum', 'ReduceMean': 'mean', 'ReduceMin': 'amin',
+        'ReduceMax': 'amax', 'ReduceProd': 'reduce_prod', 'ReLU': 'relu',
+        'GELU': 'gelu', 'LeakyReLU': 'leaky_relu', 'IndexSelect': 'index_select',
+    }
+    if raw.startswith('Cast') and raw != 'Cast':
+        return 'cast_' + raw[4:].lower()
+    if raw.startswith('Concat') and raw != 'Concat':
+        return 'concat_' + raw[6:]
+    if canonical == 'Cast':
+        return 'cast'
+    if canonical == 'Concat':
+        return 'concat'
+    return special.get(canonical, _snake_name(canonical))
+
+
+# CLI normalization is intentionally import-light; register all pinned
+# dialect spellings without importing NNSmith.
+for _name in FULL_DIALECT_OPS:
+    _canonical_graph = graph_name(canonical_class_name(_name))
+    OP_ALIASES.setdefault(_name, _canonical_graph)
+    OP_ALIASES.setdefault('core.' + _name, _canonical_graph)
+    OP_ALIASES.setdefault(_canonical_graph, _canonical_graph)
+
+
+def discover_operator_names(operators):
+    """Discover all concrete Torch dialect classes in a pinned NNSmith.
+
+    Only classes declaring ``dialect='core'`` in their own class dictionary
+    participate.  This excludes abstract bases and helper classes inherited
+    from the dialect marker.  Sorted class names make the candidate catalog
+    independent of module/import order and therefore reproducible for a seed.
+    """
+    result = []
+    for name, value in vars(operators).items():
+        if not isinstance(value, type) or value.__module__ != operators.__name__:
+            continue
+        if value.__dict__.get('dialect') != 'core':
+            continue
+        if name.endswith('Base') or name in {'AbsOpBase', 'ConcreteOp'}:
+            continue
+        if getattr(value, '__abstractmethods__', frozenset()):
+            continue
+        # Input/Constant are graph terminals, not selectable operators.  The
+        # guard also keeps future NNSmith terminal classes out of the catalog.
+        if name in {'Input', 'Constant'}:
+            continue
+        result.append(name)
+    return tuple(sorted(set(result)))
+
+
+def full_operator_classes(operators):
+    """Resolve the complete deterministic NNSmith Torch operator catalog."""
+    names = discover_operator_names(operators)
+    result = []
+    for name in names:
+        value = getattr(operators, name)
+        result.append(value)
+    if not result:
+        raise RuntimeError('NNSmith exposes no concrete Torch dialect operators')
+    return result
+
+
+def normalize_ops(values):
+    """Canonicalize a post-generation operator whitelist.
+
+    The catalog is import-light but explicit: names are validated against the
+    pinned NNSmith Torch dialect metadata, while generation itself discovers
+    the actual module on the worker.  Filtering never alters the seed or
+    triggers a backend-dependent generation path.
+    """
+    if values is None:
+        return None
+    if isinstance(values, str):
+        values = values.split(',')
+    result = []
+    for value in values:
+        value = str(value).strip()
+        if not value:
+            continue
+        canonical = OP_ALIASES.get(value)
+        if canonical is None:
+            raise ValueError(f"unknown op {value!r}; use a pinned Torch/NNSmith op name")
+        if canonical not in result:
+            result.append(canonical)
+    if not result:
+        raise ValueError('--ops requires at least one operator')
+    return tuple(result)
+
+
+# Abstract family entries in the old allowlist need one concrete arity/dtype
+# class for symbolic generation.  The serialized factor remains Cast/Concat.
+CONCRETE_ALIASES = {'Cast': 'CastF32', 'Concat': 'Concat2'}
 
 def operator_classes(operators, names=ALL_OPS, *, prefer_torch_reduce=False):
     """Resolve the catalog against a patched NNSmith installation."""
@@ -105,7 +206,11 @@ def operator_classes(operators, names=ALL_OPS, *, prefer_torch_reduce=False):
         else:
             op = getattr(operators, name, None)
         if op is None:
-            missing.append(name)
+            # Some pinned NNSmith builds omit optional historical classes.  A
+            # missing class is a generation-time skip, not a backend filter;
+            # keep the remaining frozen catalog usable for E/F replay.
+            if name != 'Linear':
+                missing.append(name)
         else:
             result.append(op)
     if missing:

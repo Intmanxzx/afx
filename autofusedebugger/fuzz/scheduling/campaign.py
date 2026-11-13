@@ -7,7 +7,7 @@ from ..generation.sampling import SamplingConfig
 from ..contracts import canonical_json
 
 
-def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None, ops=None):
+def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None, ops=None, full_range=True):
     if count is not None and (type(count) is not int or count < 0):
         raise ValueError('campaign count must be nonnegative or unlimited')
     with ledger._connection() as conn:
@@ -15,7 +15,7 @@ def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=Non
             raise ValueError('campaign backend matrix exceeds task capacity')
         conn.execute('CREATE TABLE IF NOT EXISTS campaign (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, remaining INTEGER, stopped INTEGER NOT NULL)')
         conn.execute('INSERT OR REPLACE INTO campaign VALUES (1,?,?,0)',
-                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'ops':ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig())}),count))
+                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'ops':ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig()),'full_range':bool(full_range)}),count))
 
 
 def stop(ledger):
@@ -43,7 +43,7 @@ def refill(ledger, target_pending=1):
         dynamic=not all(c.get('static_only') for c in config['configs']) and bool(entropy & 1)
         if 'sampling' in config:
             from ..generation.sampling import SamplingConfig
-            seed = str(SamplingConfig(**config['sampling']).seed(entropy % 2**32, dynamic))
+            seed = str(SamplingConfig(**config['sampling']).seed(entropy % 2**32, dynamic, config.get('full_range', False)))
         else:
             # An already persisted pre-upgrade campaign retains C/D semantics.
             seed=str((3 if dynamic else 2)*2**128+entropy)

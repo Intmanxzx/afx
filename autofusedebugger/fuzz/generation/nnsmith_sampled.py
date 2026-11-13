@@ -12,7 +12,8 @@ from ..contracts import Seed, TensorSpec, CaseSpec, CaseBundle, canonical_json
 ORACLE_ID = 'nnsmith-cpu/5'
 SOURCE_SHA256 = 'c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5'
 Z3_VERSION = '4.12.2'
-from .operator_catalog import ALL_OPS as OPS, NAMES, operator_classes, canonical_class_name
+from .operator_catalog import (ALL_OPS as OPS, NAMES, full_operator_classes,
+                               graph_name, canonical_class_name, operator_classes)
 
 
 from .nnsmith_v3 import source_evidence
@@ -26,10 +27,23 @@ def _tensor(name, abstract, alias=0):
     return TensorSpec(name, str(abstract.dtype), shape, stride, alias_group=alias)
 
 
+def _json_attr(value):
+    """Convert NNSmith constructor metadata into canonical JSON scalars."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_json_attr(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_attr(item) for key, item in value.items()}
+    # DType has a stable string form such as ``float32``; z3 numerals and
+    # concrete scalar wrappers likewise have a deterministic textual value.
+    return str(value)
+
+
 @lru_cache(maxsize=8)
 def plan(token):
     seed = Seed.parse(token)
-    if seed.version not in {5, 6}:
+    if seed.version not in {5, 6, 7, 8}:
         raise ValueError('E/F seed required')
     config, random_seed = decode(seed)
     evidence = source_evidence()
@@ -43,7 +57,7 @@ def plan(token):
     import z3
     from z3 import z3 as impl
     # All selection is fixed, not filtered by device/backend capabilities.
-    ops = operator_classes(operators, OPS, prefer_torch_reduce=True)
+    ops = full_operator_classes(operators) if seed.version in {7, 8} else operator_classes(operators, OPS, prefer_torch_reduce=True)
     original = [(op, op.in_dtypes, op.out_dtypes) for op in ops]
     state = random.getstate()
     context = z3.main_ctx()
@@ -102,16 +116,16 @@ def plan(token):
             elif name == 'Constant':
                 weights.append(_tensor(output, ir.vars[output], len(inputs)+len(weights)))
             else:
-                nodes.append({'op': NAMES[name], 'inputs': list(inst.iexpr.args), 'output': output,
-                              'attrs': dict(op.extra_attrs)})
+                nodes.append({'op': graph_name(name), 'inputs': list(inst.iexpr.args), 'output': output,
+                              'attrs': _json_attr(dict(op.extra_attrs))})
         if len(nodes) != node_count:
             raise ValueError('NNSmith generation ended before its fixed node budget; no partial case accepted')
         outputs = tuple(_tensor(name, ir.vars[name]) for name in ir.leaf_var())
-        graph = {'dialect': 'nnsmith-sampled/5', 'sampling': asdict(config), 'nodes': nodes, 'outputs': [t.name for t in outputs],
+        graph = {'dialect': 'nnsmith-sampled/7' if seed.version in {7, 8} else 'nnsmith-sampled/5', 'sampling': asdict(config), 'operator_catalog': 'nnsmith-torch-core-v1' if seed.version in {7, 8} else 'historical-50-v1', 'nodes': nodes, 'outputs': [t.name for t in outputs],
                  'reduce_axis': None, 'generator': evidence['generator'],
                  'source_sha256': SOURCE_SHA256, 'z3': Z3_VERSION}
         spec = CaseSpec(seed, canonical_json(graph), tuple(inputs), tuple(weights), (tuple(inputs),), (outputs,))
-        if seed.version == 6:
+        if seed.version in {6, 8}:
             from .nnsmith_dynamic import variants
             spec = variants(spec, max_elements=config.max_elem_per_tensor,
                             dim_range=(config.dim_min, config.dim_max), rng=random.Random(random_seed))
@@ -122,6 +136,9 @@ def plan(token):
         random.setstate(state)
         impl._main_ctx = context
 
+
+def oracle_id(bundle):
+    return 'nnsmith-cpu/' + str(bundle.spec.seed.version)
 
 def materialize(token):
     return materialize_spec(plan(token))
@@ -178,7 +195,7 @@ def materialize_spec(spec):
                    *(t for sample in spec.shape_samples for t in sample))
                    if t.alias_group == tensor.alias_group)
         rng = random.Random(int.from_bytes(hashlib.sha256(
-            f'nnsmith-sampled/5/{spec.seed}/{tensor.name}'.encode()).digest(), 'little'))
+            f'nnsmith-sampled/{7 if spec.seed.version in {7, 8} else 5}/{spec.seed}/{tensor.name}'.encode()).digest(), 'little'))
         weight = tensor in spec.weights
         mode = config.value_dist_mode
         def value():

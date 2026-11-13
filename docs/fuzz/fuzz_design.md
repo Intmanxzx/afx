@@ -469,3 +469,9 @@ autofusedbg fuzz run --dim-range 1 1000000 --max-elem-per-tensor 10000000 --dim-
 部署环境 `/home/ubuntu/af-fuzz/venv-public-cache-1110` 基于原 `venv-dfc65e4`，新增 override 为 `/etc/systemd/system/af-fuzz.service.d/zzz-public-cache-1110.conf`。私有一致性备份和服务配置保存到 `/home/ubuntu/af-fuzz/private/public-cache-1110/`。核对用户、来源及备份中所有 attempt ID 均无丢失。回滚前核对最新服务配置，再将此 override 移出 .conf 后缀，daemon-reload/restart；不覆盖生产数据库。
 
 HTTPS 从 oracle1 访问域名验证 200、缓存响应头及线上 JS 与本地 SHA256 一致。本机浏览器和 curl 当次均遇到 TLS/连接关闭，未完成本次在线视觉验收；不能把服务器侧 HTTPS 成功等同于浏览器验收。
+
+### 全量 Torch/NNSmith 算子与不可评测用例（refactor）
+
+E/F 之后的新采样协议使用 G/H seed（静态/动态），在固定的 NNSmith 源码、Z3、采样配置和算子目录下按稳定排序选择完整 Torch dialect；不会按 Autofuse 白名单改变生成流。`--ops` 只在图已经物化后过滤，因此同一个 seed 不会因为命令行筛选或后端不同而生成另一张图。
+
+生成异常、CPU eager 标杆无法执行的图属于 `skipped`，不写入 attempts，也不进入有效用例分母；这允许后续逐步修补 NNSmith。CPU 成功后，目标后端的 lowering、Autofuse schedule/codegen 异常以及与 CPU 的不一致仍保留为有效失败。AF-MLIR 运行时探针在 worker 内临时 patch 实际 `codegen_kernel_def` 和 Scheduler codegen：正常完成且没有 AF candidate 才记 `no_autofuse_coverage` 并跳过；已经进入 AF candidate 后失败不降级成无覆盖。

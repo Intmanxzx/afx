@@ -5,7 +5,7 @@ from .fingerprint import content_manifest, workload_id
 
 def _protocol(seed):
     seed = Seed.parse(seed)
-    if seed.version in {5, 6}:
+    if seed.version in {5, 6, 7, 8}:
         from . import nnsmith_sampled
         return nnsmith_sampled
     if seed.version == 4:
@@ -26,7 +26,8 @@ def materialize(seed):
 
 
 def oracle_id(bundle):
-    return _protocol(bundle.spec.seed).ORACLE_ID
+    protocol = _protocol(bundle.spec.seed)
+    return protocol.oracle_id(bundle) if hasattr(protocol, 'oracle_id') else protocol.ORACLE_ID
 
 
 def reference(bundle, sample_index):

@@ -82,8 +82,8 @@ def dispatch(args):
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError('timeout must be finite and positive')
     parsed = [Seed.parse(s) for s in args.seeds]
-    if any(seed.version not in {3,4,5,6} for seed in parsed):
-        raise ValueError('only NNSmith C/D/E/F seeds can run; retired template seeds are not regenerated')
+    if any(seed.version not in {3,4,5,6,7,8} for seed in parsed):
+        raise ValueError('only NNSmith C/D/E/F/G/H seeds can run; retired template seeds are not regenerated')
     from ..generation.sampling import SamplingConfig
     sampling_keys = ('tensor_scale', 'dim_range', 'dim_dist_mode', 'value_dist_mode',
                      'max_elem_per_tensor', 'max_nodes', 'generation_timeout', 'dtype_mode')
@@ -141,10 +141,10 @@ def dispatch(args):
         import json
         import sys
         print(json.dumps({'resource_plan': resource_plan}), file=sys.stderr, flush=True)
-    result = launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version in {3,5},device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
+    result = launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version in {3,5,7},device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
                   timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
                   campaign=(configs,evaluation,0 if seeds and ops else count,devices,
-                            getattr(args,'exclude_op',None),asdict(sampling),ops) if (not seeds or ops) else None)
+                            getattr(args,'exclude_op',None),asdict(sampling),ops,True) if (not seeds or ops) else None)
 
     if resource_plan is not None:
         result["resource_plan"] = resource_plan

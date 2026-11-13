@@ -34,7 +34,7 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
               "_timings": {}, "_diagnostics": {"version":1,"shapes":{}}, "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}
     if hasattr(adapter, "config"):
         result["execution"] = asdict(adapter.config)
-    if bundle.spec.seed.version in {3,4,5,6}:
+    if bundle.spec.seed.version in {3,4,5,6,7,8}:
         from .case_spec import encode
         result.setdefault('execution', {})['case_spec'] = encode(bundle.spec)
     if hasattr(adapter, 'cpu_reference'):

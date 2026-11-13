@@ -26,7 +26,7 @@ SUPPORTED_CATEGORIES = tuple(sorted(set(_OP_CATEGORY.values())))
 def categories(spec):
     import json
     graph = json.loads(spec.graph_json)
-    result = {_OP_CATEGORY[node['op']] for node in graph['nodes']}
+    result = {_OP_CATEGORY.get(node['op'], 'Other') for node in graph['nodes']}
     if graph.get('reduce_axis') is not None:
         result.add('Reduce')
     return tuple(sorted(result))

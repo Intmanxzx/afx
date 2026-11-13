@@ -45,8 +45,15 @@ def perform(job):
     kind = job['kind']
     if kind == 'generate':
         from ..generation import materialize, workload_id
-        from ..case_spec import encode
-        bundle = materialize(job['seed'])
+        try:
+            bundle = materialize(job['seed'])
+        except Exception as exc:
+            # A full-dialect seed can legitimately be unsatisfiable for a
+            # particular NNSmith operator/shape combination.  Return a normal
+            # worker response so the reusable pool is not recycled; the
+            # coordinator cancels the case without creating an attempt row.
+            return {'skipped': True, 'reason': 'generation_failed',
+                    'error': f'{type(exc).__name__}: {exc}'[-500:]}
         if job.get('expected_workload_id') and workload_id(bundle)!=job['expected_workload_id']:
             raise ValueError('retest reproduction fingerprint mismatch')
         graph_ops = {n['op'] for n in json.loads(bundle.spec.graph_json)['nodes']}
@@ -104,8 +111,16 @@ def perform(job):
     # The reference is evaluated exactly once. Its CPU row is not_checked:
     # executing the same eager graph twice is not independent validation.
     # Target backends consume this artifact in the compare stage.
-    with capture_tail(forward=True) as log:
-        result = execute(bundle, adapter, evaluation, deferred=True, outputs=outputs, shape_starts=starts)
+    coverage = None
+    if kind == 'first_call_combined' and config.backend in {'af-mlir', 'af-legacy'}:
+        from ..backends.autofuse_coverage import observe_autofuse
+        coverage_context = observe_autofuse()
+    else:
+        from contextlib import nullcontext
+        coverage_context = nullcontext(None)
+    with coverage_context as coverage:
+        with capture_tail(forward=True) as log:
+            result = execute(bundle, adapter, evaluation, deferred=True, outputs=outputs, shape_starts=starts)
     if result['status'] in {'error','unsupported'} and log():
         diag = json.loads(result['execution']['diagnostics']); diag['error'] = log()
         result['execution']['diagnostics'] = json.dumps(diag)
@@ -127,8 +142,19 @@ def perform(job):
         peak=int(torch.npu.max_memory_allocated(config.device))
         if job.get('device_budget_bytes') and peak>job['device_budget_bytes']:
             raise ValueError('device memory budget exceeded')
+    no_coverage = bool(coverage and coverage.no_coverage)
+    if coverage:
+        diagnostic = json.loads(result['execution']['diagnostics'])
+        diagnostic['autofuse_coverage'] = {'candidates': coverage.candidates,
+                                           'schedule_entered': coverage.schedule_entered,
+                                           'schedule_succeeded': coverage.schedule_succeeded,
+                                           'codegen_succeeded': coverage.codegen_succeeded,
+                                           'events': coverage.events}
+        result['execution']['diagnostics'] = json.dumps(diagnostic)
     return {'result': result, 'outputs': artifact, 'shape_starts': starts, 'device_memory_bytes': device_memory,
-            'persistent_runtime': persistent_runtime}
+            'persistent_runtime': persistent_runtime,
+            'case_skipped': (kind == 'reference' and result['status'] in {'error', 'unsupported'}) or no_coverage,
+            'skip_reason': 'no_autofuse_coverage' if no_coverage else None}
 
 
 def main(fd):

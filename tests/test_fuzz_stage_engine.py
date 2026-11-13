@@ -151,13 +151,14 @@ def test_staged_worker_timeout_no_shape_and_no_auto_retry(tmp_path,monkeypatch):
         if count==1:args=[sys.executable,'-c','import time;time.sleep(60)']
         return original(args,**kwargs)
     monkeypatch.setattr(module.subprocess,'Popen',once)
-    # First generation worker times out; lightweight record worker gets its own timeout.
+    # Generation failure/timeout is an un-evaluable case and is skipped;
+    # it must not create a synthetic attempt or force a second record worker.
     result=drain(ledger,tmp_path/'db',timeout=10)
-    assert result['completed']==1 and result['failed']==1
+    assert result['completed']==0 and result['skipped']==1
     with sqlite3.connect(tmp_path/'db') as conn:
         assert conn.execute('SELECT count(*) FROM shapes').fetchone()[0]==0
-        assert conn.execute('SELECT count(*) FROM attempts').fetchone()[0]==1
-    assert count==2
+        assert conn.execute('SELECT count(*) FROM attempts').fetchone()[0]==0
+    assert count==1
 
 
 def test_snapshot_keeps_lifecycle_but_not_private_fact_outbox(tmp_path):

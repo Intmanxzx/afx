@@ -89,6 +89,71 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             s.facts['retry_index']=max(0,int(session.task.get('try_count',1))-1)
             return s
 
+        def has_record(case, session_id):
+            return any(x.kind == Kind.RECORD and x.session_id == session_id
+                       for x in case.stages.values())
+
+        def skip_case(case, reason):
+            """Drop an un-evaluable case without creating an attempt row."""
+            if case.skip_reason is None:
+                case.skip_reason = str(reason)[:500]
+            for other in list(case.stages.values()):
+                other.facts.setdefault('skip_reason', case.skip_reason)
+                if other.state == 'running':
+                    pool.cancel(other.identity)
+                elif other.state in {'ready', 'waiting_dependencies'}:
+                    other.state = 'cancelled'
+
+        def finalize_case_skip(case):
+            if case.skip_reason is None or case.skip_finalized:
+                return
+            if any(x.state == 'running' for x in case.stages.values()):
+                return
+            for task in case.tasks:
+                if task.get('done'):
+                    continue
+                ledger._finish_claim(task['id'], task['claim'], 'cancelled', case.skip_reason)
+                task['done'] = True
+                summary['skipped'] += 1
+            case.skip_finalized = True
+
+        def flush_deferred_targets(case):
+            """Publish outcomes only after the CPU oracle and AF verdict."""
+            if case.skip_reason is not None or case.reference is None:
+                return
+            combined = [x for x in case.stages.values() if x.kind == Kind.COMBINED]
+            compares = [x for x in case.stages.values() if x.kind == Kind.COMPARE]
+            # A target with a non-empty result still needs its independent
+            # compare stage.  Do not publish the CPU peer while that decision
+            # could still turn into a no-coverage skip.
+            if any(x.state not in {'succeeded', 'failed', 'cancelled'}
+                   for x in (*combined, *compares)):
+                return
+            for other in combined:
+                if has_record(case, other.session_id):
+                    continue
+                session = sessions[other.session_id]
+                if other.state == 'failed':
+                    make_record(case, session,
+                                failure(session.task, 'worker',
+                                        other.facts.get('error', 'target execution failed'),
+                                        case.bundle), ())
+                elif other.state == 'succeeded' and other.output and not other.output['result']['shape_results']:
+                    make_record(case, session, other.output['result'], (other,))
+            # The CPU reference is shared by all target sessions and is
+            # recorded exactly once, after the target verdict is durable in the
+            # stage DAG (the record workers may run in parallel afterwards).
+            if any(json.loads(t['execution'])['backend'] in {'cpu','cpu-eager'}
+                   for t in case.tasks):
+                cpu_task = next(t for t in case.tasks
+                                if json.loads(t['execution'])['backend'] in {'cpu','cpu-eager'})
+                cpu_session = next(x for x in sessions.values() if x.task['id'] == cpu_task['id'])
+                if not has_record(case, cpu_session.identity):
+                    result = json.loads(json.dumps(case.reference['result']))
+                    result['execution'].update(json.loads(cpu_task['execution']))
+                    result['backend'] = json.loads(cpu_task['execution'])['backend']
+                    make_record(case, cpu_session, result, ())
+
         def jobs(s,lease):
             case=cases[s.case_id];session=sessions.get(s.session_id)
             config=json.loads(session.task['execution']) if session else asdict(ExecutionConfig('cpu','cpu',budget.compile_threads,scheduling='staged'))
@@ -146,9 +211,10 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             s.facts['finished']=response.get('finished',time.monotonic_ns())
             if s.kind==Kind.GENERATE:
                 if not response['ok']:
-                    for t in case.tasks:
-                        ss=next(x for x in sessions.values() if x.task['id']==t['id'])
-                        make_record(case,ss,failure(t,'generation',response['error']),())
+                    skip_case(case, 'generation_failed')
+                    return
+                if response['value'].get('skipped'):
+                    skip_case(case, response['value'].get('reason', 'generation_failed'))
                     return
                 if response['value'].get('excluded'):
                     for t in case.tasks:
@@ -171,33 +237,33 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     s.state='failed'
                 if response['ok']:
                     case.reference=response['value'];s.output=response['value']
-                for t in case.tasks:
-                    ss=next(x for x in sessions.values() if x.task['id']==t['id'])
-                    if json.loads(t['execution'])['backend'] not in {'cpu','cpu-eager'}:continue
-                    result=response['value']['result'] if response['ok'] else failure(t,'reference',response['error'],case.bundle)
-                    result=json.loads(json.dumps(result));result['execution'].update(json.loads(t['execution']));result['backend']=json.loads(t['execution'])['backend']
-                    make_record(case,ss,result,())
-                if not response['ok']:
-                    for other in list(case.stages.values()):
-                        if other.kind==Kind.COMPARE and other.state=='waiting_dependencies':
-                            other.state='skipped'
-                            ss=sessions[other.session_id]
-                            # Wait for combined branch to stop using artifacts.
-                            make_record(case,ss,failure(ss.task,'reference',response['error'],case.bundle),())
+                    # Hold the CPU row until every target has crossed the
+                    # coverage/compare decision.  This prevents a later
+                    # no-Autofuse-coverage skip from leaving an orphan CPU
+                    # attempt in the effective denominator.
+                    flush_deferred_targets(case)
+                else:
+                    # CPU is the oracle. Its failure makes this input
+                    # un-evaluable, not an Autofuse failure.
+                    skip_case(case, 'cpu_reference_failed')
             elif s.kind==Kind.COMBINED:
                 if response['ok']:
                     s.output=response['value']
-                    if any(x.kind==Kind.RECORD and x.session_id==s.session_id for x in case.stages.values()):return
-                    if not s.output['result']['shape_results']:
-                        # Unsupported/preparation failures do not await tensors.
+                    if response['value'].get('case_skipped'):
+                        skip_case(case, response['value'].get('skip_reason') or 'target_un-evaluable')
+                        return
+                    # Target work can finish before the shared CPU oracle;
+                    # hold it in the stage rather than recording prematurely.
+                    if case.reference is not None and not has_record(case, s.session_id) and not s.output['result']['shape_results']:
                         for other in list(case.stages.values()):
-                            if other.kind==Kind.COMPARE and other.session_id==s.session_id:other.state='skipped'
+                            if other.kind==Kind.COMPARE and other.session_id==s.session_id:other.state='cancelled'
                         make_record(case,session,s.output['result'],(s,))
                 else:
-                    if any(x.kind==Kind.RECORD and x.session_id==s.session_id for x in case.stages.values()):return
+                    s.facts['error']=response['error']
                     for other in list(case.stages.values()):
-                        if other.kind==Kind.COMPARE and other.session_id==s.session_id:other.state='skipped'
-                    make_record(case,session,failure(session.task,'worker',response['error'],case.bundle),())
+                        if other.kind==Kind.COMPARE and other.session_id==s.session_id:other.state='cancelled'
+                    if case.reference is not None and not has_record(case, s.session_id):
+                        make_record(case,session,failure(session.task,'worker',response['error'],case.bundle),())
             elif s.kind==Kind.COMPARE:
                 s.output=response.get('value')
                 if response['ok']:
@@ -272,8 +338,11 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                             lease=pool.release(s.identity);s.facts['lease']=lease
                             try:response=s.future.result()
                             except Exception as exc:response={'ok':False,'error':type(exc).__name__+': '+str(exc)}
-                            if stopped:s.state='cancelled'
+                            if stopped or case.skip_reason is not None:
+                                s.state='cancelled'
                             else:finish(s,response)
+                    flush_deferred_targets(case)
+                    finalize_case_skip(case)
                     if all(t.get('done') for t in case.tasks) and not any(s.state=='running' for s in case.stages.values()):
                         from ..storage.stage_facts import save_case
                         if case.identity not in finalized:
