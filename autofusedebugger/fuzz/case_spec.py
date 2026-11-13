@@ -31,7 +31,8 @@ def decode(raw):
         from .generation.sampling import decode as decode_sampling
         config,_=decode_sampling(spec.seed)
         if graph.get('sampling')!=asdict(config):raise ValueError('sampling metadata differs from seed')
-    allowed={'add','mul','neg','relu','transpose','sum','mean','amin','amax'}
+    from .generation.operator_catalog import LEGACY_NAMES
+    allowed=set(LEGACY_NAMES.values())
     if any(node.get('op') not in allowed for node in graph['nodes']):
         raise ValueError('invalid op metadata')
     return spec

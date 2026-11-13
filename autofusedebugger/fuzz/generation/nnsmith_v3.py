@@ -16,8 +16,7 @@ from .fingerprint import content_manifest, workload_id
 ORACLE_ID = 'nnsmith-cpu/3'
 SOURCE_SHA256 = 'c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5'
 Z3_VERSION = '4.12.2'
-OPS = ('Add', 'Mul', 'Neg', 'ReLU', 'Transpose', 'ReduceSum', 'ReduceMean', 'ReduceMin', 'ReduceMax')
-NAMES = dict(zip(OPS, ('add', 'mul', 'neg', 'relu', 'transpose', 'sum', 'mean', 'amin', 'amax')))
+from .operator_catalog import LEGACY_OPS as OPS, NAMES, operator_classes, canonical_class_name
 
 
 def source_evidence():
@@ -53,7 +52,7 @@ def plan(token):
     import z3
     from z3 import z3 as impl
     # All selection is fixed, not filtered by device/backend capabilities.
-    ops = [getattr(operators, name) for name in OPS]
+    ops = operator_classes(operators, OPS)
     original = [(op, op.in_dtypes, op.out_dtypes) for op in ops]
     state = random.getstate()
     context = z3.main_ctx()
@@ -72,7 +71,7 @@ def plan(token):
         nodes, inputs, weights = [], [], []
         for inst in ir.insts:
             op = inst.iexpr.op
-            name = type(op).__name__
+            name = canonical_class_name(type(op).__name__)
             output = inst.retval()
             if name == 'Input':
                 inputs.append(_tensor(output, ir.vars[output], len(inputs)+len(weights)))
@@ -118,22 +117,47 @@ def reference(bundle, index):
 
 
 def execute_graph(torch, graph, weights, names):
-    """Interpret only the fixed op vocabulary; never eval uploaded source."""
+    """Interpret the historical NNSmith graph vocabulary without eval."""
     def forward(*inputs):
         values = dict(weights)
         values.update(zip(names, inputs))
         for node in graph['nodes']:
             xs = [values[name] for name in node['inputs']]
-            op, attrs = node['op'], node['attrs']
+            op, attrs = node['op'], node.get('attrs', {})
             if op == 'add': out = xs[0] + xs[1]
+            elif op == 'sub': out = xs[0] - xs[1]
             elif op == 'mul': out = xs[0] * xs[1]
-            elif op == 'neg': out = -xs[0]
+            elif op == 'div': out = xs[0] / xs[1]
+            elif op == 'pow': out = torch.pow(xs[0], xs[1])
+            elif op == 'max': out = torch.maximum(xs[0], xs[1])
+            elif op == 'min': out = torch.minimum(xs[0], xs[1])
+            elif op in {'neg', 'abs', 'sigmoid', 'sqrt', 'ceil', 'floor', 'round', 'sin', 'cos', 'tan', 'atan', 'asin', 'acos'}:
+                out = getattr(torch, op)(xs[0])
             elif op == 'relu': out = torch.relu(xs[0])
+            elif op == 'gelu': out = torch.nn.functional.gelu(xs[0])
+            elif op == 'leaky_relu': out = torch.nn.functional.leaky_relu(xs[0])
             elif op == 'transpose': out = xs[0].transpose(attrs['dim0'], attrs['dim1'])
-            else:
+            elif op in {'reshape', 'squeeze', 'expandLast1', 'expandLast2', 'expandLast3', 'expandLast4'}:
+                if op == 'reshape': out = xs[0].reshape(tuple(attrs.get('shape', xs[0].shape)))
+                elif op == 'squeeze': out = xs[0].squeeze(attrs.get('dim'))
+                else: out = xs[0]
+            elif op in {'sum', 'mean', 'amin', 'amax'}:
                 fn = {'sum': torch.sum, 'mean': torch.mean, 'amin': torch.amin, 'amax': torch.amax}[op]
-                dims = attrs['reduce_dim']
+                dims = attrs.get('reduce_dim')
                 out = fn(xs[0], dim=tuple(dims) if isinstance(dims, list) else dims)
+            elif op == 'cast': out = xs[0].to(getattr(torch, attrs['dtype']))
+            elif op in {'equal', 'greater', 'less'}: out = {'equal': torch.eq, 'greater': torch.gt, 'less': torch.lt}[op](xs[0], xs[1])
+            elif op in {'and', 'or'}: out = torch.logical_and(xs[0], xs[1]) if op == 'and' else torch.logical_or(xs[0], xs[1])
+            elif op == 'where': out = torch.where(xs[0], xs[1], xs[2])
+            elif op in {'clip', 'tril', 'triu'}:
+                if op == 'clip': out = torch.clamp(xs[0], attrs.get('min'), attrs.get('max'))
+                else: out = getattr(torch, op)(xs[0], attrs.get('diagonal', 0))
+            elif op in {'concat', 'cat'}: out = torch.cat(xs, dim=attrs.get('dim', 0))
+            elif op == 'slice': out = xs[0][tuple(attrs.get('slices', [slice(None)]))]
+            elif op in {'matmul', 'linear'}: out = torch.matmul(xs[0], xs[1])
+            elif op in {'index_select', 'gather'}: out = torch.index_select(xs[0], attrs['dim'], xs[1])
+            elif op == 'layer_norm': out = torch.nn.functional.layer_norm(xs[0], xs[0].shape[-1:])
+            else: raise ValueError(f'unsupported NNSmith graph op: {op}')
             values[node['output']] = out
         return tuple(values[name] for name in graph['outputs'])
     return forward

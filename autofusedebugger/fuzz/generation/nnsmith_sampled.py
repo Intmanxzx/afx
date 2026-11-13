@@ -12,8 +12,7 @@ from ..contracts import Seed, TensorSpec, CaseSpec, CaseBundle, canonical_json
 ORACLE_ID = 'nnsmith-cpu/5'
 SOURCE_SHA256 = 'c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5'
 Z3_VERSION = '4.12.2'
-OPS = ('Add', 'Mul', 'Neg', 'ReLU', 'Transpose', 'ReduceSum', 'ReduceMean', 'ReduceMin', 'ReduceMax')
-NAMES = dict(zip(OPS, ('add', 'mul', 'neg', 'relu', 'transpose', 'sum', 'mean', 'amin', 'amax')))
+from .operator_catalog import HISTORICAL_OPS as OPS, NAMES, operator_classes, canonical_class_name
 
 
 from .nnsmith_v3 import source_evidence
@@ -44,7 +43,7 @@ def plan(token):
     import z3
     from z3 import z3 as impl
     # All selection is fixed, not filtered by device/backend capabilities.
-    ops = [getattr(operators, name) for name in OPS]
+    ops = operator_classes(operators, OPS, prefer_torch_reduce=True)
     original = [(op, op.in_dtypes, op.out_dtypes) for op in ops]
     state = random.getstate()
     context = z3.main_ctx()
@@ -68,6 +67,12 @@ def plan(token):
             allowed = {dtype}
         eligible_ops = []
         for op in ops:
+            # Some historical patched classes are structural/decomposition
+            # entries and intentionally have no dtype signatures.  The old
+            # probe excluded those entries; do the same instead of letting a
+            # None signature abort the entire campaign.
+            if not op.in_dtypes or not op.out_dtypes:
+                continue
             pairs = [(a, b) for a, b in zip(op.in_dtypes, op.out_dtypes)
                      if all(t in allowed for t in (*a, *b))]
             # Do not leave an operator with an empty signature list: remove it
@@ -90,7 +95,7 @@ def plan(token):
         nodes, inputs, weights = [], [], []
         for inst in ir.insts:
             op = inst.iexpr.op
-            name = type(op).__name__
+            name = canonical_class_name(type(op).__name__)
             output = inst.retval()
             if name == 'Input':
                 inputs.append(_tensor(output, ir.vars[output], len(inputs)+len(weights)))

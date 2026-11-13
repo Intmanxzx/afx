@@ -187,3 +187,69 @@ def test_legacy_numeric_stream_is_unchanged(mode):
             return rng.random()
         expected = b''.join(struct.pack('<' + fmt, old_value()) for _ in range(100))
         assert materialize_spec(spec).storages[0] == expected
+
+
+def test_generation_operator_catalog_matches_pre_refactor_allowlist():
+    """The refactor must not shrink the historical operator factor surface."""
+    from autofusedebugger.fuzz.generation.operator_catalog import (
+        LEGACY_OPS, A3_OPS, A5_ONLY_OPS, ALL_OPS)
+
+    assert len(LEGACY_OPS) == 9
+    assert len(A3_OPS) == 30
+    assert len(A5_ONLY_OPS) == 20
+    assert len(ALL_OPS) == 50
+    assert set(A3_OPS).isdisjoint(A5_ONLY_OPS)
+    assert set(ALL_OPS) == set(A3_OPS) | set(A5_ONLY_OPS)
+    assert A3_OPS == ('Add', 'Sub', 'Mul', 'Max', 'Min', 'Div', 'Pow', 'Abs',
+        'Neg', 'Sigmoid', 'Clip', 'Equal', 'And', 'Or', 'Where', 'ReduceSum',
+        'ReduceMean', 'ReduceMin', 'ReduceMax', 'Reshape', 'Transpose', 'Squeeze',
+        'Concat', 'Cast', 'Slice', 'ExpandLast1', 'ExpandLast2', 'ExpandLast3',
+        'ExpandLast4', 'Sqrt')
+    assert A5_ONLY_OPS == ('Greater', 'Less', 'Ceil', 'Floor', 'Round', 'Sin',
+        'Cos', 'Tan', 'Atan', 'Asin', 'Acos', 'GELU', 'LeakyReLU', 'Tril',
+        'Triu', 'IndexSelect', 'Gather', 'LayerNorm', 'MatMul', 'Linear')
+
+
+def test_sampled_protocol_uses_pre_refactor_default_a3_scope():
+    from autofusedebugger.fuzz.generation.nnsmith_sampled import OPS
+    from autofusedebugger.fuzz.generation.operator_catalog import HISTORICAL_OPS
+
+    assert OPS == HISTORICAL_OPS
+    assert len(OPS) == 30
+
+
+def test_generation_operator_catalog_has_stable_graph_names():
+    from autofusedebugger.fuzz.generation.operator_catalog import ALL_OPS, NAMES
+
+    assert set(ALL_OPS) <= set(NAMES)
+    assert len(set(NAMES.values())) == len(NAMES)
+    assert NAMES['ReduceSum'] == 'sum'
+    assert NAMES['ReduceMean'] == 'mean'
+    assert NAMES['ReduceMin'] == 'amin'
+    assert NAMES['ReduceMax'] == 'amax'
+
+
+def test_sampling_factors_match_pre_refactor_generation_ranges():
+    """Audit every configurable factor against the old GenerationConfig."""
+    from autofusedebugger.fuzz.generation.sampling import (
+        DTYPE_MODES, DIM_MODES, VALUE_MODES, PROFILES, SamplingConfig)
+    pytest.importorskip('nnsmith')
+    from autofusedebugger.nnsmith_integration.generation import (
+        GenerationConfig, TENSOR_SCALE_PROFILES)
+
+    # Shape/range/element-budget/timeout factors are copied field-for-field.
+    for name, (dim_min, dim_max, budget, timeout, dim_mode) in PROFILES.items():
+        old = TENSOR_SCALE_PROFILES[name]
+        assert (dim_min, dim_max) == old['concr_ph_dim_rng']
+        assert budget == old['max_elem_per_tensor']
+        assert timeout * 1000 == old['timeout_ms']
+        assert dim_mode == old['dim_dist_mode']
+
+    # Node count, rank/axis protocol, and value modes retain their old bounds.
+    assert SamplingConfig().max_nodes == GenerationConfig().max_nodes == 5
+    assert 2 <= SamplingConfig().max_nodes < 256
+    assert DIM_MODES == ('uniform', 'half_normal', 'log_normal')
+    assert VALUE_MODES == ('uniform', 'log_scale', 'llm', 'recommendation')
+    assert DTYPE_MODES[:3] == ('float32', 'float16', 'mixed')
+    assert 'all' in DTYPE_MODES
+    assert GenerationConfig().dynamic_variants == 3
