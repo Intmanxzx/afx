@@ -200,7 +200,7 @@ function drawStackedBars(svgId, legendId, rows, statusKeys = STATUS_KEYS) {
     // 柱顶总数（深色加粗）。
     parts.push(`<text x="${x + barW / 2}" y="${topY - 6}" text-anchor="middle" fill="${VIZ.textPrimary}" font-family="${FONT}" font-size="12.5" font-weight="600" pointer-events="none">${total}</text>`);
     // 区间标签分两行完整显示端点；其他长标签截断。
-    const range = r.key.match(/^(\d+–)(\d+)$/) || r.key.match(/^(\([^,]+,)([^,]+\])$/);
+    const range = r.key.match(/^(\[[^,]+,|\([^,]+,)([^,]+\])$/) || r.key.match(/^(.+?–)(.+)$/);
     const label = range ? range[1] : r.key.length > 9 ? r.key.slice(0, 8) + '\u2026' : r.key;
     const suffix = range ? `<tspan x="${x + barW / 2}" dy="13">${escapeChart(range[2])}</tspan>` : '';
     parts.push(`<text x="${x + barW / 2}" y="${topPad + chartH + 20}" text-anchor="middle" fill="${VIZ.textSecondary}" font-family="${FONT}" font-size="12" pointer-events="none">${escapeChart(label)}${suffix}</text>`);
@@ -223,10 +223,18 @@ const SHAPE_BUCKET_ORDER = {
  ShapeDim: ['0–8','9–64','65–512','513–4096','4097–16384','16385–65536','65537–131072','>131072','未采集'],
  ShapeElem: ['0–1K','(1K,16K]','(16K,64K]','(64K,256K]','(256K,1M]','(1M,16M]','(16M,64M]','>64M','未采集'],
 };
-// Display-only abbreviations: keep API buckets, counts and boundaries unchanged.
+// Display-only labels: keep API buckets, counts and boundaries unchanged.
+// Use interval notation consistently so the first bucket is not formatted
+// differently from the subsequent right-closed buckets.
 const DIMENSION_LABELS = {
+ '0–8':'[0,8]', '9–64':'(8,64]', '65–512':'(64,512]',
  '513–4096':'(512,4K]', '4097–16384':'(4K,16K]',
  '16385–65536':'(16K,64K]', '65537–131072':'(64K,128K]', '>131072':'>128K',
+};
+const ELEMENT_LABELS = {
+ '0–1K':'[0,1K]', '(1K,16K]':'(1K,16K]', '(16K,64K]':'(16K,64K]',
+ '(64K,256K]':'(64K,256K]', '(256K,1M]':'(256K,1M]', '(1M,16M]':'(1M,16M]',
+ '(16M,64M]':'(16M,64M]', '>64M':'>64M',
 };
 // Display-only dtype abbreviations; API labels and coverage counts stay unchanged.
 const DTYPE_LABELS = {
@@ -238,7 +246,7 @@ const DTYPE_LABELS = {
 function displayChartRows(rows,id) {
  // Missing metadata needs no slot when all currently visible series are zero.
  rows=rows.filter(row=>row.key!=='未采集'||STATUS_KEYS.some(status=>(row[status]||0)>0));
- const labels=id==='ShapeDim'?DIMENSION_LABELS:id==='Dtype'?DTYPE_LABELS:null;
+ const labels=id==='ShapeDim'?DIMENSION_LABELS:id==='ShapeElem'?ELEMENT_LABELS:id==='Dtype'?DTYPE_LABELS:null;
  return labels ? rows.map(row=>({...row,key:labels[row.key]||row.key})) : rows;
 }
 function orderChartRows(rows,id) {

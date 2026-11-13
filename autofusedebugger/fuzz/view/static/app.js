@@ -96,6 +96,8 @@ function orderedColumns(){return [...columnPreferences.order.map(key=>currentCol
 function isVisible(c){return columnPreferences.visibility[c.key]??(c.defaultVisible&&(c.populated||c.key==='af-mlir:total'));}
 function saveColumns(){try{localStorage.setItem(preferenceKey,JSON.stringify(columnPreferences));}catch{}applyColumns();renderColumnPicker();}
 function configureColumns(definitions){currentColumns=definitions;applyColumns();if(!$('column-picker').open)renderColumnPicker();}
+// Retest controls are injected by retests.js when a user session is available.
+window.afFuzzColumns={setVisibility(key,visible){if(!currentColumns.some(c=>c.key===key))return;columnPreferences.visibility[key]=visible;applyColumns();if(!$('column-picker').open)renderColumnPicker();}};
 function applyColumns(){
  const visible=orderedColumns().filter(isVisible),table=$('rows').closest('table');table.querySelector('colgroup')?.remove();
  const cols=document.createElement('colgroup'),header=document.createElement('tr');
@@ -172,7 +174,7 @@ function renderRecords(items){
  }
  items=flattened;
  const backends=[...new Set(items.flatMap(item=>Object.keys(item.backends)))].sort((a,b)=>(a==='cpu'?-1:b==='cpu'?1:a.localeCompare(b)));
- const definitions=[{key:'history',label:'',width:64,defaultVisible:true},{key:'seed',label:'Seed / Shape',width:190,defaultVisible:true},{key:'ops',label:'关键 OP',width:220,defaultVisible:true},{key:'inputs',label:'输入 Shape / Dtype',width:230,defaultVisible:true},{key:'mode',label:'静态 / 动态',width:100,defaultVisible:true},{key:'user_name',label:'用户',width:120,defaultVisible:true}];
+ const definitions=[{key:'history',label:'',width:64,defaultVisible:true},{key:'seed',label:'Seed / Shape',width:190,defaultVisible:true},{key:'retest',label:'复测',width:112,defaultVisible:false},{key:'ops',label:'关键 OP',width:220,defaultVisible:true},{key:'inputs',label:'输入 Shape / Dtype',width:230,defaultVisible:true},{key:'mode',label:'静态 / 动态',width:100,defaultVisible:true},{key:'user_name',label:'用户',width:120,defaultVisible:true}];
  // Existing column preferences keep their order; place the newly split column
  // beside Seed on the first visit, rather than at the far end of the table.
  if(columnPreferences.order.length&&!columnPreferences.order.includes('ops'))columnPreferences.order.splice(Math.max(0,columnPreferences.order.indexOf('seed')+1),0,'ops');
@@ -313,10 +315,10 @@ function navigate(){
   const attempt=new URLSearchParams(fragment).get('attempt');
   if(attempt){const shape=new URLSearchParams(fragment).get('shape');details(attempt,shape===null?null:Number(shape));return;}
   const route=fragment==='performance'?'efficiency':fragment;
-  const name=['overview','records','efficiency','kernel'].includes(route)?route:'overview';
-  for(const key of ['overview','records','efficiency','kernel'])$(key+'-page').hidden=key!==name;
+  const name=['overview','records','efficiency','kernel','issues'].includes(route)?route:'overview';
+  for(const key of ['overview','records','efficiency','kernel','issues'])$(key+'-page').hidden=key!==name;
   $('detail').hidden=true;$('comparison').hidden=true;
-  $('page-title').textContent={overview:'总览',records:'功能&精度',efficiency:'工具效率',kernel:'Kernel性能',backends:'后端'}[name];
+  $('page-title').textContent={overview:'总览',records:'功能&精度',efficiency:'工具效率',kernel:'Kernel性能',issues:'问题分类',backends:'后端'}[name];
   document.querySelectorAll('nav a').forEach(el=>{el.classList.toggle('active',el.dataset.page===name);if(el.dataset.page===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
 }
 window.addEventListener('hashchange',()=>{hideFieldTooltip();navigate();refreshVisible();});
