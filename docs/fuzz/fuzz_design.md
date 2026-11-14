@@ -41,7 +41,7 @@ C2/D2 seed 使用独立的 160-bit entropy 空间；C2 保持单静态 Shape，D
 
 ## 3. 执行、精度与性能
 
-正常批测及默认 replay 执行 CPU 和 AF-MLIR。CPU 是 eager 精度基准。**已实施：移除自动 eager-npu 复核**；与 CPU 不一致即记录精度失败，保存误差证据后进入数据记录，不再追加设备任务。需要时由用户独立运行 `autofusedbg fuzz replay <seed> --backend eager-npu`，人工分析，不能自动覆盖原始失败。
+正常批测及默认 replay 执行 CPU 和 AF-MLIR。CPU 是 eager 精度基准。**已实施：移除自动 eager-npu 复核**；与 CPU 不一致即记录精度失败，保存误差证据后进入数据记录，不再追加设备任务。需要时由用户独立运行 `afx fuzz replay <seed> --backend eager-npu`，人工分析，不能自动覆盖原始失败。
 
 实现状态：执行代码不再调用自动复核，CPU 不一致即失败；显式 eager-npu replay 是新的独立 attempt。历史记录中的 `secondary_used`、`secondary_pass`、`basis` 保留原始语义。编译/执行异常不能靠复核变成 Pass。
 

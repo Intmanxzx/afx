@@ -8,13 +8,32 @@ from autofusedebugger.management.updates import verify_manifest,activate
 from autofusedebugger.management.store import Store
 
 
-def signed(tmp_path):
+def signed(tmp_path, wheels=None):
     key=Ed25519PrivateKey.generate()
     public=key.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw).hex()
     atomic(tmp_path/'trust.json',dict(release_keys={'test':public}))
-    manifest=dict(release_id='0.2.0',protocol=1,manager_schema=1,wheels=[{}])
+    manifest=dict(release_id='0.2.0',protocol=1,manager_schema=1,wheels=[{}] if wheels is None else wheels)
     envelope=dict(manifest=manifest,key_id='test',signature=base64.b64encode(key.sign(canonical(manifest).encode())).decode())
     return envelope
+
+
+def test_stage_accepts_signed_afx_wheel(tmp_path, monkeypatch):
+    from autofusedebugger.management import updates
+    artifact = tmp_path/'artifact.whl'
+    artifact.write_bytes(b'wheel')
+    envelope = signed(tmp_path, [dict(name='afx', version='0.1.2',
+        filename='afx-0.1.2-py3-none-any.whl', url='https://example.invalid/afx.whl', sha256='a'*64)])
+    monkeypatch.setattr(updates, 'download', lambda *args, **kwargs: artifact)
+    commands = []
+    monkeypatch.setattr(updates, 'command', lambda args, **kwargs: commands.append(args))
+    store = Store(tmp_path)
+    monkeypatch.setattr(store, 'event', lambda *args: None)
+    result = updates.stage(store, envelope, 'test')
+    directory = tmp_path/'tools'/result['release_id']
+    assert result['state'] == 'staged'
+    assert (directory/'requirements.lock').read_text().startswith('afx==0.1.2 --hash=sha256:')
+    assert (directory/'ready.json').is_file()
+    assert any('--require-hashes' in args for args in commands)
 
 
 def test_release_signature_and_version_gate(tmp_path):

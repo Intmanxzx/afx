@@ -45,7 +45,7 @@ def stage(store,envelope,operation_id):
         artifact=download(item['url'],item['sha256'],store.home/'artifacts',allowed_hosts=trust.get('allowed_hosts',[]))
         shutil.copy2(artifact,wheels/filename)
         requirements.append(f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']}")
-    if not any(item['name'].replace('-','_')=='autofusedebugger' for item in manifest['wheels']):raise ValueError('tool wheel missing')
+    if not any(item['name'].replace('-','_')=='afx' for item in manifest['wheels']):raise ValueError('tool wheel missing')
     lock=directory/'requirements.lock';lock.write_text('\n'.join(requirements)+'\n')
     command([sys.executable,'-m','venv',str(directory/'venv')])
     python=directory/'venv/bin/python'

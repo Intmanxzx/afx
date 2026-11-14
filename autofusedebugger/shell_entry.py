@@ -2,7 +2,7 @@
 
 Many models are started by a shell script that exports a batch of environment
 variables and then invokes the python entry. The convenience form
-``autofusedebugger bash launch.sh`` uses this module to:
+``afx bash launch.sh`` uses this module to:
 
 1. extract ``export KEY=VALUE`` lines and inject them into ``os.environ``;
 2. find the ``python xxx.py ...`` invocation and return it as the model entry.
@@ -193,7 +193,7 @@ def parse_shell_script(path: str | Path) -> ShellScriptPlan:
             key, value = export
             value = _expand_value(value, env)
             if key in _TOOL_OWNED_VARS:
-                plan.warnings.append(f"{key} is managed by autofusedebugger; script value ignored: {value}")
+                plan.warnings.append(f"{key} is managed by afx; script value ignored: {value}")
                 continue
             env[key] = value
             continue
@@ -243,7 +243,7 @@ def parse_shell_script(path: str | Path) -> ShellScriptPlan:
     if not plan.python_tokens:
         raise ValueError(
             f"no python model invocation found in {script}; "
-            "pass the python script explicitly: autofusedebugger python3 model.py ..."
+            "pass the python script explicitly: afx python3 model.py ..."
         )
     return plan
 

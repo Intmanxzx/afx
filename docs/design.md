@@ -181,11 +181,11 @@ Python 3.9+，仅依赖 NumPy。CAModel 命令、CANN 路径和 simulator 环境
 新增 CLI：
 
 ```bash
-autofusedebugger make-manifest --side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse --graph GRAPH --dump-dir DIR --out OUT
-autofusedebugger compare --cpu-manifest CPU --npu-manifest NPU [--out JSON] [--csv CSV] [--rtol R] [--atol A]
-autofusedebugger compare-npy --golden A.npy --actual B.npy [--rtol R] [--atol A]
-autofusedebugger camodel-info --cann-root CANN_ROOT
-autofusedebugger run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [--env KEY=VALUE]
+afx make-manifest --side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse --graph GRAPH --dump-dir DIR --out OUT
+afx compare --cpu-manifest CPU --npu-manifest NPU [--out JSON] [--csv CSV] [--rtol R] [--atol A]
+afx compare-npy --golden A.npy --actual B.npy [--rtol R] [--atol A]
+afx camodel-info --cann-root CANN_ROOT
+afx run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [--env KEY=VALUE]
 ```
 
 ### 接口检查项
@@ -283,8 +283,8 @@ CLI 参数非法由 argparse 报错。manifest schema 不匹配返回错误。�
 ```bash
 cd /home/xingzhixiong/dfx_dir/Autofuse-Debugger
 PYTHONPATH=. python3 -m pytest tests
-PYTHONPATH=. python3 -m autofusedebugger --help
-PYTHONPATH=. python3 -m autofusedebugger camodel-info --cann-root /home/xingzhixiong/Ascend/cann-9.1.0
+PYTHONPATH=. python3 -m afx --help
+PYTHONPATH=. python3 -m afx camodel-info --cann-root /home/xingzhixiong/Ascend/cann-9.1.0
 ```
 
 若后续集成到 Graph-autofusion 仓内，再按仓内测试要求补充：

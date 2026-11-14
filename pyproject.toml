@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "autofusedebugger"
+name = "afx"
 version = "0.1.2"
 description = "Autofuse debugging and reproducible CPU/NPU fuzz testing"
 readme = "README.md"
@@ -16,12 +16,11 @@ execution = ["numpy"]
 nnsmith = ["multipledispatch"]
 
 [project.scripts]
-autofusedebugger = "autofusedebugger.cli:main"
-autofusedbg = "autofusedebugger.cli:main"
+afx = "autofusedebugger.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["autofusedebugger*"]
+include = ["afx*", "autofusedebugger*"]
 
 [tool.setuptools.package-data]
 # Offline and cloud viewers share these prebuilt assets.

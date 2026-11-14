@@ -3,7 +3,7 @@
 set -eu
 umask 077
 ROOT=${AF_FUZZ_ROOT:-/home/ubuntu/af-fuzz}
-PYTHON=${AF_FUZZ_PYTHON:-$ROOT/venv/bin/autofusedbg}
+PYTHON=${AF_FUZZ_PYTHON:-$ROOT/venv/bin/afx}
 mkdir -p "$ROOT/private/backups"
 "$PYTHON" fuzz admin backup "$ROOT/data/results.sqlite" \
   "$ROOT/private/backups/results-$(date -u +%Y%m%dT%H%M%S)-$$.sqlite"

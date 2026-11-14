@@ -6,7 +6,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/share/autofusedbg/bootstrap/bin/python -m autofusedebugger daemon supervise
+ExecStart=%h/.local/share/autofusedbg/bootstrap/bin/python -m afx daemon supervise
 Restart=on-failure
 RestartSec=10
 UMask=0077

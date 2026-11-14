@@ -55,7 +55,7 @@
 ### 3.1 新用户
 
 1. 安装 wheel。
-2. 执行 `autofusedbg daemon start`，在未绑定模式启动管理服务。
+2. 执行 `afx daemon start`，在未绑定模式启动管理服务。
 3. 打开绑定地址，在已登录网页确认设备；或通过 CLI 输入注册 token。
 4. 服务端显示设备系统、Python、CPU/NPU、驱动、空间及已有环境。
 5. 用户选择环境方案，填写 CANN 地址或选择现有环境/本地源码构建。
@@ -448,19 +448,19 @@ Web 写请求沿用安全会话、来源检查和 CSRF 防护；客户端用设�
 ### 11.2 CLI 示例
 
 ```sh
-autofusedbg daemon start
-autofusedbg device enroll --token-stdin
-autofusedbg environment inspect --json
-autofusedbg environment plan environment.yaml --json
-autofusedbg environment apply --plan <plan-id> --json
-autofusedbg build submit --profile local-dev --json
-autofusedbg task validate task.yaml --json
-autofusedbg task submit task.yaml --workers 2 --json
-autofusedbg task inspect <task-id> --json
-autofusedbg task pause <task-id> --json
-autofusedbg task stop <task-id> --graceful --json
-autofusedbg operation wait <operation-id> --json
-autofusedbg config effective --json
+afx daemon start
+afx device enroll --token-stdin
+afx environment inspect --json
+afx environment plan environment.yaml --json
+afx environment apply --plan <plan-id> --json
+afx build submit --profile local-dev --json
+afx task validate task.yaml --json
+afx task submit task.yaml --workers 2 --json
+afx task inspect <task-id> --json
+afx task pause <task-id> --json
+afx task stop <task-id> --graceful --json
+afx operation wait <operation-id> --json
+afx config effective --json
 ```
 
 默认本地 CLI 连接本机管理服务；远程控制需显式目标和认证。统一输出 envelope：schema_version、ok、data、error(code/message/details)、operation_id。约定提交成功仅表示 accepted；wait 才给最终退出码；stdout 只输出机器可读结果，诊断写 stderr。
@@ -616,7 +616,7 @@ Docker 中已验证：
 
 ## 17. Agent CLI 命令契约
 
-`autofusedbg` 的管理命令是稳定的机器接口，不要求 Agent 解析人类日志。命令成功或失败都向 stdout 输出单个 JSON envelope：
+`afx` 的管理命令是稳定的机器接口，不要求 Agent 解析人类日志。命令成功或失败都向 stdout 输出单个 JSON envelope：
 
 ```json
 {"schema_version":1,"ok":true,"data":{}}
@@ -629,40 +629,40 @@ stdout 不混入进度文本；长操作只返回 `data.id`（operation ID），
 
 | 命令 | 用途 | 输入/输出 |
 | --- | --- | --- |
-| `autofusedbg daemon start [--foreground]` | 启动守护进程 | 返回本地 socket 已就绪 |
-| `autofusedbg daemon status` | 查询守护进程、连接、运行和活动操作 | JSON 状态 |
-| `autofusedbg daemon stop` | 无活动操作时停止守护进程 | 停止结果 |
-| `autofusedbg daemon run` / `supervise` | 前台运行/稳定启动器 | 供 systemd 或测试使用 |
-| `autofusedbg device enroll --token-stdin [--endpoint URL] [--name NAME]` | 从 stdin 读取注册 token | 设备 ID；token 不进入 argv |
-| `autofusedbg device pair [--endpoint URL] [--name NAME]` | 创建浏览器配对 | 配对 ID/码 |
-| `autofusedbg device status` | 查询本机配对和能力 | JSON 状态 |
-| `autofusedbg device revoke` | 撤销当前设备凭据 | 撤销结果 |
-| `autofusedbg environment inspect` / `list` | 检查/列出环境 | 环境列表和平台信息 |
-| `autofusedbg environment plan FILE` | 校验 YAML 并生成不可变安装计划 | plan ID |
-| `autofusedbg environment apply PLAN_ID` 或 `--plan PLAN_ID` | 执行已确认计划 | operation ID |
-| `autofusedbg environment status ENV_ID` | 查询环境 manifest 和状态 | environment ID/name |
-| `autofusedbg build submit FILE` | 提交本地 CANN 构建 | operation ID/build ID |
-| `autofusedbg build inspect OPERATION_ID` | 查询构建操作 | operation 状态 |
-| `autofusedbg task validate FILE` | 解析、补全并校验任务 | 有效任务快照/指纹 |
-| `autofusedbg task submit FILE [--workers N] [--wait]` | 提交执行任务 | operation ID/run ID |
-| `autofusedbg task list` | 列出任务 | run 列表 |
-| `autofusedbg task inspect RUN_ID` / `status` | 查看有效快照和运行状态 | run 状态 |
-| `autofusedbg task pause RUN_ID` | 安全暂停生成和派发 | operation 状态 |
-| `autofusedbg task resume RUN_ID` | 恢复任务 | operation 状态 |
-| `autofusedbg task stop RUN_ID [--graceful]` | 安全停止任务 | operation 状态 |
-| `autofusedbg task force-stop RUN_ID` | 仅终止本工具拥有的进程组 | operation 状态 |
-| `autofusedbg task reconfigure RUN_ID FILE [--wait]` | 连续任务在安全 epoch 应用新 YAML | 新 epoch/config hash |
-| `autofusedbg operation inspect OP_ID` | 查询一次 | 完整操作 envelope |
-| `autofusedbg operation wait OP_ID [--timeout SEC]` | 等待终态 | 终态和 result |
-| `autofusedbg operation logs OP_ID [--after SEQ]` | 读取有界结构化事件 | event 列表 |
-| `autofusedbg operation cancel OP_ID` | 取消排队/请求取消运行操作 | cancel 请求 |
-| `autofusedbg config validate FILE` | 校验客户端策略 | 有效策略 |
-| `autofusedbg config effective` | 查询当前策略 | 配置快照 |
-| `autofusedbg config apply FILE [--wait]` | 应用到后续新任务 | revision/operation |
-| `autofusedbg config export FILE` | 输出规范化 YAML | YAML 字符串 |
-| `autofusedbg tool stage FILE [--wait]` | 校验并预安装签名版本 | release ID |
-| `autofusedbg tool list` / `inspect RELEASE_ID` | 查询托管版本 | staged manifest |
-| `autofusedbg tool activate RELEASE_ID [--wait]` | 空闲时切换工具版本 | launcher 状态 |
-| `autofusedbg management trust FILE` | 设置本机信任/资源授权 | 仅本地 socket 可执行 |
+| `afx daemon start [--foreground]` | 启动守护进程 | 返回本地 socket 已就绪 |
+| `afx daemon status` | 查询守护进程、连接、运行和活动操作 | JSON 状态 |
+| `afx daemon stop` | 无活动操作时停止守护进程 | 停止结果 |
+| `afx daemon run` / `supervise` | 前台运行/稳定启动器 | 供 systemd 或测试使用 |
+| `afx device enroll --token-stdin [--endpoint URL] [--name NAME]` | 从 stdin 读取注册 token | 设备 ID；token 不进入 argv |
+| `afx device pair [--endpoint URL] [--name NAME]` | 创建浏览器配对 | 配对 ID/码 |
+| `afx device status` | 查询本机配对和能力 | JSON 状态 |
+| `afx device revoke` | 撤销当前设备凭据 | 撤销结果 |
+| `afx environment inspect` / `list` | 检查/列出环境 | 环境列表和平台信息 |
+| `afx environment plan FILE` | 校验 YAML 并生成不可变安装计划 | plan ID |
+| `afx environment apply PLAN_ID` 或 `--plan PLAN_ID` | 执行已确认计划 | operation ID |
+| `afx environment status ENV_ID` | 查询环境 manifest 和状态 | environment ID/name |
+| `afx build submit FILE` | 提交本地 CANN 构建 | operation ID/build ID |
+| `afx build inspect OPERATION_ID` | 查询构建操作 | operation 状态 |
+| `afx task validate FILE` | 解析、补全并校验任务 | 有效任务快照/指纹 |
+| `afx task submit FILE [--workers N] [--wait]` | 提交执行任务 | operation ID/run ID |
+| `afx task list` | 列出任务 | run 列表 |
+| `afx task inspect RUN_ID` / `status` | 查看有效快照和运行状态 | run 状态 |
+| `afx task pause RUN_ID` | 安全暂停生成和派发 | operation 状态 |
+| `afx task resume RUN_ID` | 恢复任务 | operation 状态 |
+| `afx task stop RUN_ID [--graceful]` | 安全停止任务 | operation 状态 |
+| `afx task force-stop RUN_ID` | 仅终止本工具拥有的进程组 | operation 状态 |
+| `afx task reconfigure RUN_ID FILE [--wait]` | 连续任务在安全 epoch 应用新 YAML | 新 epoch/config hash |
+| `afx operation inspect OP_ID` | 查询一次 | 完整操作 envelope |
+| `afx operation wait OP_ID [--timeout SEC]` | 等待终态 | 终态和 result |
+| `afx operation logs OP_ID [--after SEQ]` | 读取有界结构化事件 | event 列表 |
+| `afx operation cancel OP_ID` | 取消排队/请求取消运行操作 | cancel 请求 |
+| `afx config validate FILE` | 校验客户端策略 | 有效策略 |
+| `afx config effective` | 查询当前策略 | 配置快照 |
+| `afx config apply FILE [--wait]` | 应用到后续新任务 | revision/operation |
+| `afx config export FILE` | 输出规范化 YAML | YAML 字符串 |
+| `afx tool stage FILE [--wait]` | 校验并预安装签名版本 | release ID |
+| `afx tool list` / `inspect RELEASE_ID` | 查询托管版本 | staged manifest |
+| `afx tool activate RELEASE_ID [--wait]` | 空闲时切换工具版本 | launcher 状态 |
+| `afx management trust FILE` | 设置本机信任/资源授权 | 仅本地 socket 可执行 |
 
 所有会产生副作用的命令都支持 `--request-key KEY`。Agent 重试必须复用同一个 key；同一 key 搭配不同 payload 会返回冲突。输入文件使用安全 YAML 子集；传 `-` 表示 stdin。命令帮助可通过任意层级的 `--help` 获取，不能把帮助文本当作状态协议。

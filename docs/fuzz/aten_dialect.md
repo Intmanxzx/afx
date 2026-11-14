@@ -34,9 +34,9 @@
 同一个 C2/D2 seed 在固定 NNSmith 源码、Z3、Torch 版本和 seed 配置下生成同一个图和输入字节。`--ops` 在完整图物化后过滤，不参与随机流；`--exclude-op transpose` 也只过滤已经生成的图。因此过滤参数不会改变同一个 seed 的 workload。
 
 ```sh
-autofusedbg fuzz run --ops add,ge,sum,reshape --workers 4 --compile-threads 1 --save
-autofusedbg fuzz run --ops aten.add.Tensor,aten.ge.Tensor --count 10 --save
-autofusedbg fuzz run --exclude-op transpose --save
+afx fuzz run --ops add,ge,sum,reshape --workers 4 --compile-threads 1 --save
+afx fuzz run --ops aten.add.Tensor,aten.ge.Tensor --count 10 --save
+afx fuzz run --exclude-op transpose --save
 ```
 
 ## 跳过与 Autofuse 覆盖

@@ -19,7 +19,7 @@ wheels = [
 ]
 
 [[package]]
-name = "autofusedebugger"
+name = "afx"
 version = "0.1.2"
 source = { editable = "." }
 dependencies = [

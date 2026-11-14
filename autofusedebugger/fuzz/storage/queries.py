@@ -130,7 +130,7 @@ class ResultQueries:
         result['seed_short'] = Seed.parse(result['seed']).short
         result['backend_display'] = display_backend(result['backend'])
         result['replay_supported'] = Seed.parse(result['seed']).current
-        result['replay_command'] = ('autofusedbg fuzz replay ' + result['seed_short']) if result['replay_supported'] else ''
+        result['replay_command'] = ('afx fuzz replay ' + result['seed_short']) if result['replay_supported'] else ''
         result['shape_count'] = len(result['shape_results'])
         diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
         if shape_index is not None:

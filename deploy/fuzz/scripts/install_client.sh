@@ -12,7 +12,7 @@ Usage: install_client.sh --wheel FILE --cann-root DIR --home DIR [options]
   --nnsmith-repo URL     Pinned NNSmith clone source (may be a local Git repository)
   --library-dir DIR      Extra compiler runtime library directory
   --compiler-bin DIR     Compiler executables, when needed by the run package
-Creates HOME/client-env.sh and HOME/bin/autofusedbg. Does not create/change tokens
+Creates HOME/client-env.sh and HOME/bin/afx. Does not create/change tokens
 or start a campaign. Requires a matching, installed CANN graph-autofusion run package.
 HELP
 }
@@ -104,7 +104,7 @@ chmod 600 "$ENV_FILE"; mv "$ENV_FILE" "$HOME_DIR/client-env.sh"
   echo '#!/usr/bin/env bash'
   echo 'set -eo pipefail'
   printf 'source %q\n' "$HOME_DIR/client-env.sh"
-  printf 'exec %q -m autofusedebugger "$@"\n' "$PY"
-} > "$HOME_DIR/bin/autofusedbg.tmp"
-chmod 755 "$HOME_DIR/bin/autofusedbg.tmp"; mv "$HOME_DIR/bin/autofusedbg.tmp" "$HOME_DIR/bin/autofusedbg"
-echo "Client verified. Launcher: $HOME_DIR/bin/autofusedbg"
+  printf 'exec %q -m afx "$@"\n' "$PY"
+} > "$HOME_DIR/bin/afx.tmp"
+chmod 755 "$HOME_DIR/bin/afx.tmp"; mv "$HOME_DIR/bin/afx.tmp" "$HOME_DIR/bin/afx"
+echo "Client verified. Launcher: $HOME_DIR/bin/afx"

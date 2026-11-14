@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: autofusedbg-fuzz:0.1.2
+    image: afx-fuzz:0.1.2
     restart: unless-stopped
     network_mode: host
     volumes:

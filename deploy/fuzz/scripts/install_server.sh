@@ -47,14 +47,14 @@ chmod -R a+rX "$VENV"
 (cd / && "$VENV/bin/python" -I - <<'PY'
 import autofusedebugger, importlib.metadata, yaml, jsonschema, cryptography
 print(autofusedebugger.__file__)
-print(importlib.metadata.version('autofusedebugger'))
+print(importlib.metadata.version('afx'))
 PY
 )
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 PRIVATE="$ROOT/private/deploy-$STAMP-$DIGEST"
 mkdir -p "$PRIVATE"; chmod 700 "$PRIVATE"
 if [[ -f $DATABASE ]]; then
-  "$VENV/bin/python" -m autofusedebugger.fuzz admin backup "$DATABASE" "$PRIVATE/results.sqlite"
+  "$VENV/bin/python" -m afx fuzz admin backup "$DATABASE" "$PRIVATE/results.sqlite"
   # Prove the new code can start against a private copy before opening live data.
   "$VENV/bin/python" - "$PRIVATE/results.sqlite" <<'PY'
 import sys
@@ -90,7 +90,7 @@ cat > "$PRIVATE/new-dropin.conf" <<CONF
 User=$USER_NAME
 WorkingDirectory=$ROOT
 ExecStart=
-ExecStart=$VENV/bin/python -m autofusedebugger.fuzz admin serve $DATABASE --port $PORT
+ExecStart=$VENV/bin/python -m afx fuzz admin serve $DATABASE --port $PORT
 Environment=PYTHONPATH=
 Environment=PYTHONHOME=
 ReadWritePaths=$ROOT $(dirname "$DATABASE")

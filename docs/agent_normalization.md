@@ -2,7 +2,7 @@
 
 ## 作用
 
-`autofusedebugger` 可以把 PyTorch 模型脚本发送给 Agent，由 Agent 静态识别模型入口、图构造方式、输入生成方式、权重来源和运行约束，并返回固定格式的 `autofusedebugger-normalization/1` JSON。工具通过 OpenAI-compatible HTTP 或本地 CANNBot CLI 连接 Agent，不绑定某一个模型厂商或客户端。
+`afx` 可以把 PyTorch 模型脚本发送给 Agent，由 Agent 静态识别模型入口、图构造方式、输入生成方式、权重来源和运行约束，并返回固定格式的 `autofusedebugger-normalization/1` JSON。工具通过 OpenAI-compatible HTTP 或本地 CANNBot CLI 连接 Agent，不绑定某一个模型厂商或客户端。
 
 Agent 的职责是提供结构化分析和入口选择建议；模型脚本仍由本地 PyTorch adapter 加载和执行。Agent 不执行用户代码、不读取本地权重、不修改原始脚本，也不会自动执行它返回的命令或补丁。
 
@@ -100,7 +100,7 @@ export AUTOFUSEDEBUGGER_AGENT_MODEL=default
 ## 单独归一化
 
 ```bash
-autofusedebugger normalize-script \
+afx normalize-script \
     --script /path/to/model.py \
     --framework pytorch \
     --out /tmp/model_accuracy/agent_normalization.json \
@@ -122,7 +122,7 @@ autofusedebugger normalize-script \
 ## 与模型执行联动
 
 ```bash
-autofusedebugger run-script \
+afx run-script \
     --framework auto \
     --backend inductor_autofuse \
     --script /path/to/model.py \

@@ -15,7 +15,7 @@ def collect(home=None):
     result = {'python': platform.python_version(), 'platform': sys.platform,
               'machine': platform.machine(), 'device_name': identity.get('display_name'),
               'user_id': identity.get('user_id'), 'installation_id': config.get('source_id')}
-    for package, key in [('torch','torch'),('torch-npu','torch_npu'),('triton-ascend','triton'),('autofusedebugger','package_version')]:
+    for package, key in [('torch','torch'),('torch-npu','torch_npu'),('triton-ascend','triton'),('afx','package_version')]:
         try: result[key] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError: result[key] = None
     # Prefer the graph-autofusion run package's version.info, derived from the

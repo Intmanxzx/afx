@@ -1,15 +1,32 @@
 """Run with an installed wheel in an empty venv, not with the source on PYTHONPATH."""
 import importlib.util
+import importlib.metadata
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import threading
 from urllib.request import urlopen
 
 
 def main():
+    import afx
+    distribution = importlib.metadata.distribution('afx')
+    assert distribution.version == afx.__version__
+    entries = {entry.name: entry.value for entry in distribution.entry_points
+               if entry.group == 'console_scripts'}
+    assert entries == {'afx': 'autofusedebugger.cli:main'}, entries
+    executable = Path(sys.executable).parent / ('afx.exe' if sys.platform == 'win32' else 'afx')
+    with tempfile.TemporaryDirectory(prefix='afx-cli-smoke-') as cwd:
+        for command in ([str(executable)], [sys.executable, '-I', '-m', 'afx']):
+            for args in (['--help'], ['fuzz', '--help'], ['fuzz', 'replay', '--help'], ['daemon', '--help']):
+                result = subprocess.run([*command, *args], cwd=cwd, capture_output=True, text=True)
+                assert result.returncode == 0, result.stderr
+                assert 'usage: afx' in result.stdout, result.stdout
+    print('Installed wheel: afx metadata, console command and python -m afx passed')
     for name in ('torch', 'numpy', 'torch_npu', 'nnsmith'):
         if importlib.util.find_spec(name) is not None:
-            raise RuntimeError('wheel smoke requires an empty no-deps environment')
+            raise RuntimeError('wheel smoke requires an environment without model dependencies')
     from autofusedebugger.fuzz.storage import ResultRepository
     from autofusedebugger.fuzz.view.server import create_server as view
     from autofusedebugger.fuzz.central.server import create_server as central

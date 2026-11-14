@@ -19,7 +19,7 @@
 #
 # Usage:
 #   source autofusedebugger/nnsmith_integration/npu_env.sh
-#   autofusedbg af-fuzz --out-dir ... --n-cases ... --target npu
+#   afx fuzz --out-dir ... --n-cases ... --target npu
 
 export LD_LIBRARY_PATH=/opt/buildtools/python-3.12.9/lib:${LD_LIBRARY_PATH}
 source "${HOME}/Ascend/cann/set_env.sh"

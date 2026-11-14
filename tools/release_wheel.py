@@ -1,5 +1,6 @@
 """Validate a tagged wheel; publishing is opt-in. Requires Python 3.11+."""
 import argparse
+import configparser
 import email
 import hashlib
 import json
@@ -40,6 +41,8 @@ def request(url, *, method='GET', data=None, headers=None, missing=False):
 def validate(root, tag, dist):
     project = tomllib.loads((root / 'pyproject.toml').read_text())['project']
     version = project['version']
+    if project['name'] != 'afx':
+        raise ValueError('project name must be afx')
     if tag != 'v' + version or not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise ValueError('tag must match the stable project version vX.Y.Z')
     init = (root / 'autofusedebugger/__init__.py').read_text()
@@ -55,7 +58,7 @@ def validate(root, tag, dist):
     if len(wheels) != 1:
         raise ValueError('dist must contain exactly one wheel')
     wheel = wheels[0]
-    if wheel.name != f'autofusedebugger-{version}-py3-none-any.whl':
+    if wheel.name != f'afx-{version}-py3-none-any.whl':
         raise ValueError('unexpected wheel filename')
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -65,6 +68,15 @@ def validate(root, tag, dist):
         info = email.message_from_bytes(archive.read(metadata[0]))
         if info['Name'] != project['name'] or info['Version'] != version:
             raise ValueError('wheel metadata differs from project')
+        entry_path = metadata[0].removesuffix('METADATA') + 'entry_points.txt'
+        entries = configparser.ConfigParser()
+        if entry_path not in names:
+            raise ValueError('wheel lacks afx console entry point')
+        entries.read_string(archive.read(entry_path).decode())
+        if not entries.has_section('console_scripts') or dict(entries['console_scripts']) != {'afx': 'autofusedebugger.cli:main'}:
+            raise ValueError('wheel must expose only the afx console command')
+        if not {'afx/__init__.py', 'afx/__main__.py'} <= set(names):
+            raise ValueError('wheel lacks python -m afx entry point')
         for asset in ('index.html', 'app.js', 'charts.js'):
             if f'autofusedebugger/fuzz/view/static/{asset}' not in names:
                 raise ValueError('wheel lacks viewer assets')
@@ -76,7 +88,7 @@ def validate(root, tag, dist):
 
 
 def pypi_present(wheel, version):
-    raw = request(f'https://pypi.org/pypi/autofusedebugger/{version}/json', missing=True)
+    raw = request(f'https://pypi.org/pypi/afx/{version}/json', missing=True)
     if raw is None:
         return False
     for entry in json.loads(raw)['urls']:

@@ -4,7 +4,7 @@ import argparse
 
 class ScenarioParser(argparse.ArgumentParser):
     def format_help(self):
-        return '''usage: autofusedbg fuzz COMMAND [OPTIONS]
+        return '''usage: afx fuzz COMMAND [OPTIONS]
 
 客户端 · 执行、采集、自动上报
   setup --token TOKEN [--sync-interval 30]  初始化；用户名由云端解析
@@ -26,6 +26,6 @@ class ScenarioParser(argparse.ArgumentParser):
 维护 · 诊断、同步、恢复
   maintenance -h                         列出全部维护命令
 
-使用 autofusedbg fuzz COMMAND -h 查看参数；云端命令用 admin COMMAND -h。
+使用 afx fuzz COMMAND -h 查看参数；云端命令用 admin COMMAND -h。
 完整说明：docs/fuzz/fuzz_usage.md
 '''

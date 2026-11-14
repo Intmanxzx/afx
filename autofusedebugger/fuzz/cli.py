@@ -35,7 +35,7 @@ def main(argv=None):
     if argv and argv[0] == "replay":
         return replay(argv[1:])
     from .help import ScenarioParser
-    parser = ScenarioParser(prog="autofusedbg fuzz")
+    parser = ScenarioParser(prog="afx fuzz")
     sub = parser.add_subparsers(dest="command", required=True, parser_class=argparse.ArgumentParser)
     sub.add_parser("replay", help="replay a self-contained short seed")
     maintenance = sub.add_parser('maintenance', help='diagnostics, sync and data maintenance').add_subparsers(dest='maintenance_command', required=True)
@@ -227,7 +227,7 @@ def replay(argv):
 
 
 def replay_parser():
-    parser = argparse.ArgumentParser(prog="autofusedbg fuzz replay")
+    parser = argparse.ArgumentParser(prog="afx fuzz replay")
     parser.add_argument("seed", help="self-contained short seed")
     parser.add_argument("--scheduling",choices=("combined","staged"),default="staged")
     parser.add_argument("--static-only", action="store_true", help="execute base sample only; does not change case or workload ID")

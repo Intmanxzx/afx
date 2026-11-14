@@ -27,7 +27,7 @@ jobs:
           .release-venv/bin/python -m build --wheel --no-isolation
           .release-venv/bin/python -m twine check dist/*.whl
           python3 -m venv .wheel-smoke-venv
-          .wheel-smoke-venv/bin/python -m pip install --no-deps --force-reinstall dist/*.whl
+          .wheel-smoke-venv/bin/python -m pip install --force-reinstall dist/*.whl
           .wheel-smoke-venv/bin/python tools/fuzz_wheel_smoke.py
           TAG=$(git describe --tags --exact-match HEAD)
           .release-venv/bin/python tools/release_wheel.py --tag "$TAG" --repository niuyuhu/Autofuse-Debugger

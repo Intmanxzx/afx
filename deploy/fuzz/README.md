@@ -9,25 +9,25 @@
 ~~~bash
 # 新环境：换成实际匹配架构和 Python ABI 的 wheel 路径。
 bash install_client.sh \
-  --wheel /packages/autofusedebugger-0.1.2-py3-none-any.whl \
+  --wheel /packages/afx-0.1.2-py3-none-any.whl \
   --cann-root "$HOME/Ascend/cann" --home "$HOME/af-fuzz" \
   --torch-wheel /packages/torch.whl --torch-npu-wheel /packages/torch_npu.whl
 
 # 已有 Torch 环境。
 bash install_client.sh \
-  --wheel /packages/autofusedebugger-0.1.2-py3-none-any.whl \
+  --wheel /packages/afx-0.1.2-py3-none-any.whl \
   --cann-root "$HOME/Ascend/cann" --home /data/af-fuzz \
   --runtime-python /path/to/torch-venv/bin/python
 ~~~
 
 需要 GCC runtime 时传 --library-dir /path/to/gcc/lib64；需要其编译器时传 --compiler-bin /path/to/gcc/bin。--nnsmith-repo 可用镜像 URL 或本地 Git 仓库，基线 commit 不变。网络访问使用执行环境的 pip/Git 配置。
 
-每次创建以 wheel 摘要区分的 venv；同一目录已存在则拒绝覆盖，可用 --venv /new/path 指定新目录。脚本依次校验 NNSmith 源码、wheel 内容和实际导入指纹，再验证全部 368 条 ATen 规则、compile_adapter 和实际加载的 MLIR codegen 库。验证成功后才更新 HOME/client-env.sh 和 HOME/bin/autofusedbg。切换前用旧入口停止 campaign 和同步进程，再用新入口启动。
+每次创建以 wheel 摘要区分的 venv；同一目录已存在则拒绝覆盖，可用 --venv /new/path 指定新目录。脚本依次校验 NNSmith 源码、wheel 内容和实际导入指纹，再验证全部 368 条 ATen 规则、compile_adapter 和实际加载的 MLIR codegen 库。验证成功后才更新 HOME/client-env.sh 和 HOME/bin/afx。切换前用旧入口停止 campaign 和同步进程，再用新入口启动。
 
 ~~~bash
 # 新身份只在首次部署时 setup；已有 home 不重新 setup 或更换 token。
-/data/af-fuzz/bin/autofusedbg fuzz status
-/data/af-fuzz/bin/autofusedbg fuzz run --dtype-mode all --save \
+/data/af-fuzz/bin/afx fuzz status
+/data/af-fuzz/bin/afx fuzz run --dtype-mode all --save \
   --workers 4 --compile-threads 1 --device npu:0 --device npu:1
 ~~~
 
@@ -41,7 +41,7 @@ NNSmith 安装器包含在 wheel 内。它从固定 commit 应用固定顺序补
 
 ~~~bash
 bash install_server.sh \
-  --wheel /packages/autofusedebugger-0.1.2-py3-none-any.whl \
+  --wheel /packages/afx-0.1.2-py3-none-any.whl \
   --root /srv/af-fuzz --user fuzz --port 8090 \
   --database /srv/af-fuzz/data/results.sqlite --service af-fuzz
 ~~~

@@ -334,11 +334,11 @@ def cmd_run_direct_shell(argv: list[str]) -> int:
         parse_shell_script,
     )
 
-    """Convenience form: ``autofusedebugger bash launch.sh`` or ``autofusedebugger ./launch.sh``."""
+    """Convenience form: ``afx bash launch.sh`` or ``afx ./launch.sh``."""
     script_index = 0
     if Path(argv[0]).name in {"bash", "sh", "zsh", "dash", "ksh"}:
         if len(argv) < 2:
-            raise ValueError("shell launcher mode requires a script path, for example: autofusedebugger bash launch.sh")
+            raise ValueError("shell launcher mode requires a script path, for example: afx bash launch.sh")
         script_index = 1
     plan = parse_shell_script(argv[script_index])
     apply_plan_env(plan)
@@ -346,7 +346,7 @@ def cmd_run_direct_shell(argv: list[str]) -> int:
     if python_script is None:
         raise ValueError(
             f"no .py entry found in the python invocation of {plan.script}; "
-            "use 'autofusedebugger python3 model.py' instead"
+            "use 'afx python3 model.py' instead"
         )
     script_args = tuple(plan.python_tokens[plan.python_tokens.index(str(python_script)) + 1 :])
     return cmd_run_direct(python_script, script_args)
@@ -383,10 +383,10 @@ def build_parser() -> argparse.ArgumentParser:
     from autofusedebugger.adapters import backend_names, framework_names
 
     parser = argparse.ArgumentParser(
-        prog="autofusedebugger",
+        prog="afx",
         description="CPU/NPU eager/NPU Autofuse 精度对比和图分析工具",
-        epilog="快捷模式：autofusedebugger python3 model.py [模型脚本参数...]；"
-    "或 autofusedebugger bash launch.sh / autofusedebugger ./launch.sh 解析启动脚本继承环境变量",
+        epilog="快捷模式：afx python3 model.py [模型脚本参数...]；"
+    "或 afx bash launch.sh / afx ./launch.sh 解析启动脚本继承环境变量",
     )
     sub = parser.add_subparsers(dest="command_name", required=True)
 

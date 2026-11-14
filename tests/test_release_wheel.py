@@ -19,13 +19,16 @@ if sys.version_info >= (3, 11):
 def artifact(tmp_path):
     (tmp_path/'autofusedebugger').mkdir()
     (tmp_path/'autofusedebugger/__init__.py').write_text('__version__ = "0.1.2"\n')
-    (tmp_path/'pyproject.toml').write_text('[project]\nname="autofusedebugger"\nversion="0.1.2"\n')
+    (tmp_path/'pyproject.toml').write_text('[project]\nname="afx"\nversion="0.1.2"\n')
     def git(*args):
         subprocess.run(['git','-C',str(tmp_path),*args], check=True, capture_output=True)
     git('init');git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','fixture');git('tag','v0.1.2')
-    dist=tmp_path/'dist';dist.mkdir();wheel=dist/'autofusedebugger-0.1.2-py3-none-any.whl'
+    dist=tmp_path/'dist';dist.mkdir();wheel=dist/'afx-0.1.2-py3-none-any.whl'
     with zipfile.ZipFile(wheel,'w') as archive:
-        archive.writestr('autofusedebugger-0.1.2.dist-info/METADATA','Name: autofusedebugger\nVersion: 0.1.2\n')
+        archive.writestr('afx-0.1.2.dist-info/METADATA','Name: afx\nVersion: 0.1.2\n')
+        archive.writestr('afx-0.1.2.dist-info/entry_points.txt', '[console_scripts]\nafx = autofusedebugger.cli:main\n')
+        archive.writestr('afx/__init__.py', 'from autofusedebugger import __version__\n')
+        archive.writestr('afx/__main__.py', 'from autofusedebugger.cli import main\nraise SystemExit(main())\n')
         archive.writestr('autofusedebugger/__init__.py','__version__ = "0.1.2"\n')
         archive.writestr('autofusedebugger/nnsmith_integration/patches/example.patch', 'patch')
         for asset in ['index.html','app.js','charts.js']:
@@ -56,9 +59,27 @@ def test_nnsmith_patches_are_required(artifact):
         release.validate(root, 'v0.1.2', wheel.parent)
 
 
+@pytest.mark.parametrize('suffix, message', [
+    ('entry_points.txt', 'afx console'),
+    ('afx/__main__.py', 'python -m afx'),
+])
+def test_afx_entry_points_are_required(artifact, suffix, message):
+    root, wheel = artifact
+    with zipfile.ZipFile(wheel) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist() if not name.endswith(suffix)}
+    with zipfile.ZipFile(wheel, 'w') as archive:
+        for name, content in contents.items():
+            archive.writestr(name, content)
+    with pytest.raises(ValueError, match=message):
+        release.validate(root, 'v0.1.2', wheel.parent)
+
+
 def test_pypi_hash_idempotency(artifact,monkeypatch):
     _,wheel=artifact
-    monkeypatch.setattr(release,'request',lambda *a,**k: None)
+    def missing(url, **kwargs):
+        assert url == 'https://pypi.org/pypi/afx/0.1.2/json'
+        return None
+    monkeypatch.setattr(release,'request',missing)
     assert release.pypi_present(wheel,'0.1.2') is False
     data={'urls':[{'filename':wheel.name,'digests':{'sha256':release.digest(wheel.read_bytes())}}]}
     monkeypatch.setattr(release,'request',lambda *a,**k: json.dumps(data).encode())

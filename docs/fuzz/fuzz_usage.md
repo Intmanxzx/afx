@@ -1,6 +1,6 @@
 # Fuzz 使用说明
 
-同一个 `autofusedebugger` wheel 提供客户端、云端和本地查看器。当前生成规则与历史退役说明见[单实现 E/F](current_protocol.md)，架构见[设计文档](fuzz_design.md)。
+同一个 `afx` wheel 提供客户端、云端和本地查看器。当前生成规则与历史退役说明见[单实现 E/F](current_protocol.md)，架构见[设计文档](fuzz_design.md)。
 
 ## 安装
 
@@ -9,36 +9,36 @@
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install /path/to/autofusedebugger-<版本>-py3-none-any.whl
+python -m pip install /path/to/afx-<版本>-py3-none-any.whl
 ```
 
-发布到 PyPI 后可用 `python -m pip install autofusedebugger==<版本>`。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
+PyPI 上的 `afx` 当前属于其他项目，取得该项目发布权限前请从本项目 wheel 安装；不要直接从 PyPI 安装同名包。旧环境迁移时，先执行 `python -m pip uninstall autofusedebugger`，再安装新 wheel。命令统一为 `afx`（也可用 `python -m afx`），数据目录、环境变量和内部 Python 模块路径保持兼容。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
 
 ## 一、客户端：执行、采集、上报
 
 客户端和服务端一键安装命令见 [部署脚本说明](../../deploy/fuzz/README.md)。在已有 NPU Python 环境中安装 wheel；先加载所在机器的环境脚本。管理员私下发放 token，用户名由云端识别，不需要客户端填写。
 
 ```sh
-autofusedbg fuzz setup --token '管理员发放的TOKEN' --sync-interval 30
-autofusedbg fuzz run --save          # 无限后台测试，保存并自动上报
-autofusedbg fuzz status
-autofusedbg fuzz stop                # 停止当前批次
+afx fuzz setup --token '管理员发放的TOKEN' --sync-interval 30
+afx fuzz run --save          # 无限后台测试，保存并自动上报
+afx fuzz status
+afx fuzz stop                # 停止当前批次
 ```
 
 `--sync-interval` 单位为秒，默认 30。独立同步进程上传轻量记录，网络失败不阻塞测试，outbox/ACK 落盘后可续传。命令行可能被 shell 历史及进程列表记录，客户端凭据文件权限为仅当前用户可读。
 
 ```sh
-autofusedbg fuzz run --count 100 --save                  # 有限批次
-autofusedbg fuzz run --count 10 --fg      # 前台观察
-autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
-autofusedbg fuzz run --backend triton-npu         # 在 CPU、AF-MLIR 外增加后端
-autofusedbg fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6               # 只靠 seed 重建并运行
-autofusedbg fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --backend af-mlir  # 单后端诊断
-autofusedbg fuzz replay F0SQQTQNLFH6LUJHNFAX3A7CAP6 --static-only  # 仅基础 shape，静态编译
-autofusedbg fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --save      # 保存结果并加入自动上传队列
+afx fuzz run --count 100 --save                  # 有限批次
+afx fuzz run --count 10 --fg      # 前台观察
+afx fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
+afx fuzz run --backend triton-npu         # 在 CPU、AF-MLIR 外增加后端
+afx fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6               # 只靠 seed 重建并运行
+afx fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --backend af-mlir  # 单后端诊断
+afx fuzz replay F0SQQTQNLFH6LUJHNFAX3A7CAP6 --static-only  # 仅基础 shape，静态编译
+afx fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --save      # 保存结果并加入自动上传队列
 ```
 
-- 默认 CPU 为对照、AF-MLIR 为被测后端；对 CPU 精度不一致即失败，不自动复核或改判。需要人工复核时执行 `autofusedbg fuzz replay <seed> --backend eager-npu --save`，生成独立记录，不覆盖原结果。
+- 默认 CPU 为对照、AF-MLIR 为被测后端；对 CPU 精度不一致即失败，不自动复核或改判。需要人工复核时执行 `afx fuzz replay <seed> --backend eager-npu --save`，生成独立记录，不覆盖原结果。
 - 浮点输出复用 `autofusedebugger/compare.py` 的 dtype 默认容差：FP64 为 `rtol=atol=1e-7`，FP32 为 `1e-5`，FP16 为 `1e-3`，BF16 为 `1e-2`。逐元素要求 `abs(actual - CPU) <= atol + rtol * abs(CPU)`，诊断中的 `mismatches` 统计不满足该条件的元素。整数和布尔输出仍精确比较，shape/dtype 必须一致；同符号 Inf 通过，NaN 不通过。历史结果需要重新比较或重跑才会更新。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
 - 当前只有一套 E/F 生成实现：E 为静态，F 为动态。`--dynamic-variants 2..8` 设置动态样本数（默认 3），`--method symbolic-cinit|symbolic|concolic` 选择构图方法，两者均写入 seed。范围为四类 368 个 ATen overload。历史内测记录可读但不支持重放，旧 campaign 不自动迁移。详见[当前协议](current_protocol.md)。
@@ -52,10 +52,10 @@ autofusedbg fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --save      # 保存结果�
 数据根目录可用 `AUTOFUSEDBG_HOME` 指定。默认 Linux 为 `${XDG_DATA_HOME:-~/.local/share}/autofusedbg`，macOS 为 `~/Library/Application Support/autofusedbg`，Windows 为 `%LOCALAPPDATA%/autofusedbg`。结果在 `results/results.sqlite`，任务在 `tasks/tasks.sqlite`。后台执行/同步进程目前以 POSIX 环境为主；Windows 支持的是本地查看，不承诺 NPU 后台运行。
 
 ```sh
-autofusedbg fuzz maintenance doctor
-autofusedbg fuzz maintenance sync status
-autofusedbg fuzz maintenance sync once
-autofusedbg fuzz maintenance sync start
+afx fuzz maintenance doctor
+afx fuzz maintenance sync status
+afx fuzz maintenance sync once
+afx fuzz maintenance sync start
 ```
 
 setup成功后会记住数据目录，不必每次指定。优先级：显式--data-dir、AUTOFUSEDBG_HOME、已记住目录、系统默认目录。默认上报站点为 `https://autofuse.online`；私有部署使用维护级 `sync configure --endpoint` 配置。开机后须通过客户端入口或进程管理器重新启动同步，不把一个后台进程当作系统开机服务。
@@ -65,13 +65,13 @@ setup成功后会记住数据目录，不必每次指定。优先级：显式--d
 服务端不运行模型。单应用加 SQLite；HTTP 服务只监听 loopback，由 TLS 代理对外提供 HTTPS。
 
 ```sh
-autofusedbg fuzz admin user /srv/fuzz/results.sqlite niuyuhu
+afx fuzz admin user /srv/fuzz/results.sqlite niuyuhu
 # 输出一次 token，私下发给该用户；展示名不参与鉴权
 
-autofusedbg fuzz admin serve /srv/fuzz/results.sqlite --port 8090
+afx fuzz admin serve /srv/fuzz/results.sqlite --port 8090
 # 代理 https://autofuse.online -> 127.0.0.1:8090
 
-autofusedbg fuzz admin rotate-token /srv/fuzz/results.sqlite niuyuhu
+afx fuzz admin rotate-token /srv/fuzz/results.sqlite niuyuhu
 # 旧 token 立即失效，客户端用新 token 重新 setup
 ```
 
@@ -83,8 +83,8 @@ Linux 部署可使用 [Compose、Caddy、systemd 模板](../../deploy/fuzz/READM
 
 ```sh
 # 在线一致性灾备：包含结果、用户身份、接收回执和 ACK，必须私有保存
-autofusedbg fuzz admin backup /srv/fuzz/results.sqlite /backup/fuzz-20261110.sqlite
-autofusedbg fuzz maintenance check-db /backup/fuzz-20261110.sqlite
+afx fuzz admin backup /srv/fuzz/results.sqlite /backup/fuzz-20261110.sqlite
+afx fuzz maintenance check-db /backup/fuzz-20261110.sqlite
 ```
 
 恢复或迁移：停止目标服务，将私有备份复制到**新的目标目录**作为 `results.sqlite`，使用原版本 wheel 启动；核对用户、结果计数、客户端上传与重复上传不增记录后，再切域名/流量。不要覆盖运行中的 SQLite，也不要只复制活跃数据库主文件遗漏 WAL。异地保存备份，限制访问权限；公开快照不能替代此灾备。
@@ -96,17 +96,17 @@ autofusedbg fuzz maintenance check-db /backup/fuzz-20261110.sqlite
 在数据源导出结果快照，再复制到个人电脑：
 
 ```sh
-autofusedbg fuzz maintenance snapshot /path/results.sqlite ./results.snapshot.sqlite
-autofusedbg fuzz view ./results.snapshot.sqlite
+afx fuzz maintenance snapshot /path/results.sqlite ./results.snapshot.sqlite
+afx fuzz view ./results.snapshot.sqlite
 # 不自动打开浏览器：
-autofusedbg fuzz view ./results.snapshot.sqlite --no-browser --port 8091
+afx fuzz view ./results.snapshot.sqlite --no-browser --port 8091
 ```
 
 与公网使用同一套网页，默认只监听本机、只读查看，关闭命令即停止服务。仅打开可信 SQLite 文件。结果快照不含中心身份和 ACK，但仍含用例错误和环境元数据，分享前检查内容。
 
 ## 维护命令速查
 
-| 命令（前缀 `autofusedbg fuzz maintenance`） | 用途 |
+| 命令（前缀 `afx fuzz maintenance`） | 用途 |
 |---|---|
 | `seed SEED --show-spec` | 不执行模型，查看固定生成规格 |
 | `diagnose EXPECTED ACTUAL` | 比较两份生成轨迹，定位首个分歧 |
@@ -121,7 +121,7 @@ autofusedbg fuzz view ./results.snapshot.sqlite --no-browser --port 8091
 | `upgrade-queue QUEUE BACKUP` | 备份后升级旧任务库 |
 | `sync -h` | 配置、启动、检查或修复同步 |
 
-各命令完整参数见 `-h`；普通入口 `autofusedbg fuzz -h` 按上述场景分组。
+各命令完整参数见 `-h`；普通入口 `afx fuzz -h` 按上述场景分组。
 
 ## 四、维护者：构建和发布
 
@@ -163,7 +163,7 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 
 ### NNSmith执行环境
 
-run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
+run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install afx[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
 
 
 ### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）
@@ -184,12 +184,12 @@ mlir 入口仍是 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/bin/autofusedbg-npu
 `run` / `replay` 默认 `--scheduling staged`，后台仍使用原任务库及原 stop/status/recovery 命令。与已有 combined pending 队列混用时拒绝启动，先完成或显式停止旧队列，不改写历史执行契约。
 
 ```sh
-autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
-autofusedbg fuzz run --count 2 --workers 4 --worker-max-tasks 16 --save
-autofusedbg fuzz run --count 2 --workers 4 --worker-max-tasks 1 --save # 禁用运行时复用作对照
-autofusedbg fuzz replay F<26位seed> --backend eager-npu --save
-autofusedbg fuzz run --scheduling combined --workers 4 --save     # 旧执行路径回滚
-autofusedbg fuzz replay E<26位seed> --backend cpu --scheduling combined
+afx fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
+afx fuzz run --count 2 --workers 4 --worker-max-tasks 16 --save
+afx fuzz run --count 2 --workers 4 --worker-max-tasks 1 --save # 禁用运行时复用作对照
+afx fuzz replay F<26位seed> --backend eager-npu --save
+afx fuzz run --scheduling combined --workers 4 --save     # 旧执行路径回滚
+afx fuzz replay E<26位seed> --backend cpu --scheduling combined
 ```
 
 `--device-memory-bytes` 是每物理 NPU 的预算上限；低于阶段最低预约会明确失败，不无限等卡。`--workers` 约束全池进程数，不是每 backend 一个池。默认内存/缓存容量来自当前有效主机资源；可以继续使用 setup 的 memory/cache 配置。持久编译 worker 仍受能力门禁，CPU/eager 已启用，AF/编译型后端保守按 session 回收。
@@ -209,10 +209,10 @@ round64 的独立同步 daemon 也已重启到新安装，原结果 ACK 保留�
 ### 随机长跑、阶段显示与尺寸分布（2026-11-10）
 
 ```sh
-autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --device npu:1 --save
+afx fuzz run --exclude-op transpose --auto-resources --device npu:0 --device npu:1 --save
 ```
 
-不传 `--count` 会持续运行，使用相同 home 的 `autofusedbg fuzz stop` 停止。`--exclude-op transpose` 仅用于随机 staged campaign：先按当前 E/F 协议完整生成，在生成 worker 中跳过含 transpose 的候选，既不启动 backend，也不记录成成功/失败 Shape；队列 reason 为 `excluded_op`。不会更改历史 seed、算子定义或输入字节。有限 `--count` 表示候选数，可能因过滤而少于最终执行数。
+不传 `--count` 会持续运行，使用相同 home 的 `afx fuzz stop` 停止。`--exclude-op transpose` 仅用于随机 staged campaign：先按当前 E/F 协议完整生成，在生成 worker 中跳过含 transpose 的候选，既不启动 backend，也不记录成成功/失败 Shape；队列 reason 为 `excluded_op`。不会更改历史 seed、算子定义或输入字节。有限 `--count` 表示候选数，可能因过滤而少于最终执行数。
 
 `--auto-resources` 根据 CPU/cgroup、内存及设备数选择进程预算，compile_threads=1，并保留原内存/缓存上限；不与手工 workers/compile-threads 混用。双 Ascend 910 的小批量对照仅用于校准工具开销和槽使用，不证明 AICore 高使用率或成功编译吞吐最优。CPU 期望结果与 NPU 首调同依赖生成、可并行；结果校验等待两者。就绪 NPU 首调优先，避免后处理积压延迟空闲卡启动。
 
@@ -234,14 +234,14 @@ autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --de
 E/F 生成先使用完整 ATen 算子目录，seed 决定完整图；`--ops` 只在生成完成后过滤，不参与 seed 编码。因此同一 seed 在不同白名单下仍生成同一个 workload，只是可能被跳过：
 
 ```sh
-autofusedbg fuzz run --ops add,mul,mean,transpose --count 100 --scheduling staged
+afx fuzz run --ops add,mul,mean,transpose --count 100 --scheduling staged
 # 也接受 NNSmith 名称，例如：--ops core.Add,core.ReduceMean
 ```
 
 显式 seed 也支持白名单过滤：
 
 ```sh
-autofusedbg fuzz run E<26位seed> --ops add,mul --scheduling staged
+afx fuzz run E<26位seed> --ops add,mul --scheduling staged
 ```
 
 不满足白名单的 case 会标记为 `excluded_op`，不会启动 backend。

@@ -1,15 +1,15 @@
-# autofusedebugger
+# afx
 
-`autofusedebugger` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具。
+`afx` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具。
 当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
 
 ## Fuzz 测试平台
 
 ```sh
-autofusedbg fuzz setup --token "$FUZZ_TOKEN"
-autofusedbg fuzz run --count 100 --save
-autofusedbg fuzz replay C000000016
-autofusedbg fuzz view ./results.sqlite
+afx fuzz setup --token "$FUZZ_TOKEN"
+afx fuzz run --count 100 --save
+afx fuzz replay C000000016
+afx fuzz view ./results.sqlite
 ```
 
 [使用说明](docs/fuzz/fuzz_usage.md)：客户端、云端、本地查看、发布。
@@ -27,8 +27,12 @@ autofusedbg fuzz view ./results.sqlite
 从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 使用说明](docs/fuzz/fuzz_usage.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
 
 ```bash
-python3 -m pip install ./autofusedebugger-0.1.2-py3-none-any.whl
+python3 -m pip install ./afx-0.1.2-py3-none-any.whl
 ```
+
+命令和发行包名称已统一为 `afx`，也支持 `python3 -m afx`。新 wheel 只安装 `afx` 命令。
+从旧包切换时，先在同一个 Python 环境执行 `python3 -m pip uninstall autofusedebugger`，再安装新 wheel，避免两个发行包共用文件导致卸载冲突。已有数据目录、环境变量和 Python 内部模块路径保持兼容。
+PyPI 上的 `afx` 当前属于其他项目；取得该项目发布权限前，请使用本项目构建或 Release 提供的 wheel 安装。
 
 ### 方式二：源码安装
 
@@ -41,16 +45,16 @@ python3 -m pip install -e .
 安装完成后可以执行以下命令验证：
 
 ```bash
-autofusedebugger --help
+afx --help
 ```
 
 ## 使用
 
 对于已有的 PyTorch 推理脚本，最简单的方式是在原始 `python3` 命令前加上
-`autofusedebugger`。工具会自动识别脚本路径，原样传递脚本参数，并在当前执行目录生成报告：
+`afx`。工具会自动识别脚本路径，原样传递脚本参数，并在当前执行目录生成报告：
 
 ```bash
-autofusedebugger python3 /path/to/model.py \
+afx python3 /path/to/model.py \
     --device npu \
     --device_id 0
 ```
@@ -75,9 +79,9 @@ autofusedebugger python3 /path/to/model.py \
 启动脚本交给工具：
 
 ```bash
-autofusedebugger bash launch.sh
+afx bash launch.sh
 # 或
-autofusedebugger ./launch.sh
+afx ./launch.sh
 ```
 
 工具静态解析启动脚本（不执行它）：提取 `export KEY=VALUE` 注入当前进程环境，找到
@@ -90,7 +94,7 @@ autofusedebugger ./launch.sh
 也可以只继承环境文件而不改变入口方式：
 
 ```bash
-autofusedebugger run-script \
+afx run-script \
     --script /path/to/model.py \
     --env-file /path/to/launch.sh \
     --env EXTRA_KEY=VALUE \
@@ -100,13 +104,13 @@ autofusedebugger run-script \
 ```
 
 `--env-file` 只读取文件中的 export 行（同样不执行），`--env KEY=VALUE` 可重复使用。
-先在 shell 中 `export` 再直接运行 `autofusedebugger python3 model.py` 时，这些变量天然
+先在 shell 中 `export` 再直接运行 `afx python3 model.py` 时，这些变量天然
 生效（工具与模型同进程执行）。
 
 直接运行一个会构造模型、输入并执行推理的 PyTorch 脚本：
 
 ```bash
-python3 -m autofusedebugger run-script \
+python3 -m afx run-script \
     --framework pytorch \
     --backend inductor_autofuse \
     --script /path/to/model.py \
@@ -126,7 +130,7 @@ Agent 只在显式启用归一化或失败诊断时调用：
 ```bash
 export AUTOFUSEDEBUGGER_AGENT_NORMALIZE=1
 export AUTOFUSEDEBUGGER_AGENT_RECOVER=1
-autofusedebugger python3 /path/to/model.py --device npu
+afx python3 /path/to/model.py --device npu
 ```
 
 等价地，也可以在 `run-script` 中增加 `--agent-normalize --agent-recover`，或使用

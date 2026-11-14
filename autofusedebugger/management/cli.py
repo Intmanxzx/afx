@@ -46,11 +46,11 @@ def _add_file(parent, name="FILE"):
 
 def _build_parser() -> argparse.ArgumentParser:
     root = AgentArgumentParser(
-        prog="autofusedbg",
+        prog="afx",
         description="AutofuseDebugger managed client CLI. All output is JSON for Agent automation.",
         epilog="Exit codes: 0 success/accepted, 1 terminal operation failure, 2 usage or validation error, 3 daemon unavailable.",
     )
-    root.add_argument("--version", action="version", version="autofusedbg management protocol 1")
+    root.add_argument("--version", action="version", version="afx management protocol 1")
     groups = root.add_subparsers(dest="group", required=True, metavar="COMMAND", parser_class=AgentArgumentParser)
 
     def group(name, help_text):

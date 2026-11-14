@@ -1,6 +1,6 @@
 # 使用与执行阶段
 
-本文记录 `autofusedebugger` 的完整使用方式，以及 CPU、NPU eager 和 NPU Autofuse 三条执行路径分别使用的图和数据。根目录 [README.md](../README.md) 只保留快速上手内容。
+本文记录 `afx` 的完整使用方式，以及 CPU、NPU eager 和 NPU Autofuse 三条执行路径分别使用的图和数据。根目录 [README.md](../README.md) 只保留快速上手内容。
 
 ## 环境要求
 
@@ -23,10 +23,10 @@ cd /home/xingzhixiong/dfx_dir/Autofuse-Debugger
 python3 -m pip install -e .
 ```
 
-安装后使用命令 `autofusedebugger`；在未安装或需要调试仓库代码时，也可以使用：
+安装后使用命令 `afx`；在未安装或需要调试仓库代码时，也可以使用：
 
 ```bash
-PYTHONPATH=. python3 -m autofusedebugger --help
+PYTHONPATH=. python3 -m afx --help
 ```
 
 TensorFlow 和 JAX adapter 目前只保留接口，尚未实现执行和精度采集。
@@ -35,7 +35,7 @@ TensorFlow 和 JAX adapter 目前只保留接口，尚未实现执行和精度�
 
 ### 直接在原始命令前加工具名
 
-对于已有的模型启动脚本，不需要改动模型脚本内容或为 `autofusedebugger` 手工填写模型入口，
+对于已有的模型启动脚本，不需要改动模型脚本内容或为 `afx` 手工填写模型入口，
 可以将原来的：
 
 ```bash
@@ -45,7 +45,7 @@ python3 sasrec.py --device npu --device_id 0
 改为：
 
 ```bash
-autofusedebugger python3 sasrec.py --device npu --device_id 0
+afx python3 sasrec.py --device npu --device_id 0
 ```
 
 工具会把 `sasrec.py` 识别为目标脚本，将它后面的参数原样传给脚本，并继续使用当前目录作为
@@ -68,7 +68,7 @@ PyTorch；同时识别到多个框架时会报歧义并要求显式传入 `--fra
 网络的启动方式是 shell 脚本（内部 export 环境变量、调用 python）时，直接把脚本交给工具：
 
 ```bash
-autofusedebugger bash launch.sh     # 或 autofusedebugger ./launch.sh
+afx bash launch.sh     # 或 afx ./launch.sh
 ```
 
 工具对启动脚本做静态解析（不执行）：
@@ -84,7 +84,7 @@ autofusedebugger bash launch.sh     # 或 autofusedebugger ./launch.sh
 只继承环境文件、不改入口方式时使用 `run-script` 的环境参数：
 
 ```bash
-autofusedebugger run-script \
+afx run-script \
     --script /path/to/model.py \
     --env-file /path/to/launch.sh \
     --env EXTRA_KEY=VALUE \
@@ -96,13 +96,13 @@ autofusedebugger run-script \
 - `--env-file` 读取 shell 文件中的 `export` 行并注入（不执行文件），适合复用 launch.sh 或
   单独的 env 文件。
 - `--env KEY=VALUE` 直接注入单个变量，可重复。
-- 先在 shell 中 `export` 再运行 `autofusedebugger python3 model.py` 时变量天然生效：工具与
+- 先在 shell 中 `export` 再运行 `afx python3 model.py` 时变量天然生效：工具与
   模型同进程执行，继承当前 shell 的全部环境。
 
 `run-script` 面向用户已有的推理脚本。脚本不需要实现 `create_case()`，工具会捕获目标 `torch.nn.Module` 的一次调用，并使用捕获到的模型和输入完成三条路径的采集。
 
 ```bash
-autofusedebugger run-script \
+afx run-script \
     --framework pytorch \
     --backend inductor_autofuse \
     --script /path/to/model.py \
@@ -141,7 +141,7 @@ autofusedebugger run-script \
 
 ```bash
 cd /workspace/xingzhixiong/test-dev/smoke-testing/cann-ge
-autofusedebugger python3 \
+afx python3 \
     feature/AutoFuse/PyTorch/Inductor/tc_af_torch_inductor_codegen_0001.py
 ```
 
@@ -156,7 +156,7 @@ export AUTOFUSEDEBUGGER_AGENT_ENDPOINT=https://agent.example.com/v1/chat/complet
 export AUTOFUSEDEBUGGER_AGENT_API_KEY='your-api-key'
 export AUTOFUSEDEBUGGER_AGENT_MODEL='your-model-name'
 
-autofusedebugger normalize-script \
+afx normalize-script \
     --script /path/to/model.py \
     --framework pytorch \
     --out /tmp/model_accuracy/agent_normalization.json
@@ -165,7 +165,7 @@ autofusedebugger normalize-script \
 需要与执行联动时使用：
 
 ```bash
-autofusedebugger run-script \
+afx run-script \
     --script /path/to/model.py \
     --out-dir /tmp/model_accuracy \
     --html /tmp/model_accuracy.html \
@@ -184,7 +184,7 @@ AutofuseDebugger 完成。
 不执行推理、而是通过工厂函数返回模型和输入的用例可以使用 `run-torch-model`：
 
 ```bash
-autofusedebugger run-torch-model \
+afx run-torch-model \
     --script /path/to/case.py \
     --entry create_case \
     --out-dir /tmp/model_accuracy \
@@ -238,7 +238,7 @@ NPU eager pre-fusion 回放和 NPU Autofuse 执行，生成两方比较**；大�
 默认不会保存每个 Tensor 位置的 CPU/NPU 原值和 PASS/FAIL mask，以避免整网 HTML 和中间数据过大；逐元素判定、mismatch 数和汇总指标仍会正常计算。需要打开 HTML 的 Tensor 逐位置查看器时，在工具参数中增加：
 
 ```bash
-autofusedebugger run-script \
+afx run-script \
     --script /path/to/model.py \
     --out-dir /tmp/model_accuracy \
     --html /tmp/model_accuracy.html \
@@ -250,7 +250,7 @@ autofusedebugger run-script \
 默认阈值可用命令行覆盖：
 
 ```bash
-autofusedebugger run-script \
+afx run-script \
     --script /path/to/model.py \
     --out-dir /tmp/model_accuracy \
     --rtol 1e-5 \
@@ -284,13 +284,13 @@ HTML 以 NPU Autofuse post-fusion 图为主图，支持融合子图、逐算子�
 已有 dump 和 manifest 时可以跳过模型执行，单独生成比较结果或 HTML：
 
 ```bash
-autofusedebugger make-manifest \
+afx make-manifest \
     --side npu_autofuse \
     --graph work/npu_graph.json \
     --dump-dir work/npu_dump \
     --out work/npu_manifest.json
 
-autofusedebugger compare-three \
+afx compare-three \
     --cpu-manifest work/cpu_manifest.json \
     --npu-eager-manifest work/npu_eager_manifest.json \
     --npu-autofuse-manifest work/npu_manifest.json \
@@ -298,7 +298,7 @@ autofusedebugger compare-three \
     --csv work/report.csv \
     --html work/report.html
 
-autofusedebugger report-html \
+afx report-html \
     --report work/report.json \
     --out work/report.html
 ```
@@ -310,8 +310,8 @@ autofusedebugger report-html \
 `TORCHINDUCTOR_NPU_EXT_DEBUG=cpu` 只能验证 host 编译流程，不能代表真实 NPU 数值。完整的逐 kernel 精度报告应在可执行 AscendC kernel 的 NPU 环境运行。CAModel 相关目录探测和外部命令封装可以使用：
 
 ```bash
-autofusedebugger camodel-info --cann-root /path/to/cann
-autofusedebugger run-camodel \
+afx camodel-info --cann-root /path/to/cann
+afx run-camodel \
     --cann-root /path/to/cann \
     --out-dir work/camodel \
     --command 'bash run.sh'
