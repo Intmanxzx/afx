@@ -132,4 +132,4 @@ fi
 echo
 echo "完成。NPU Pod 上每次使用前先加载运行环境："
 echo "  source ${SCRIPT_DIR}/npu_env.sh"
-echo "  autofusedbg fuzz replay K2-<seed>        # 冒烟验证"
+echo "  autofusedbg fuzz replay E<26位seed>        # 冒烟验证"
