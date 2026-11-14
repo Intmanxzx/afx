@@ -2,7 +2,9 @@
 
 ## 采集约定
 
-CPU 与 NPU 后端统一读取 `$ASCEND_HOME_PATH/compiler/version.info` 的 `Version=`。
+CPU 与 NPU 后端优先读取实际导入的 graph-autofusion run 包根目录
+`share/info/graph_autofusion/version.info` 的 `Version=`；如果 run 包清单不可读，
+再回退到 `$ASCEND_HOME_PATH/compiler/version.info`。
 不调用 `torch_npu.npu.utils.get_cann_version()`，也不根据 `torch_npu` 是否已导入改变来源。
 未选择工具包、文件不可读或没有有效版本时记录 `None`，不回退到 runtime 接口或猜测其他安装目录。
 

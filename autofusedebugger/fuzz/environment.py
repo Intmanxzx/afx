@@ -18,18 +18,34 @@ def collect(home=None):
     for package, key in [('torch','torch'),('torch-npu','torch_npu'),('triton-ascend','triton'),('autofusedebugger','package_version')]:
         try: result[key] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError: result[key] = None
-    # All backends use the selected toolkit's version.info. Import state must
-    # not change provenance (the runtime uses a different version spelling).
+    # Prefer the graph-autofusion run package's version.info, derived from the
+    # actually imported autofuse package. Fall back to the selected toolkit
+    # version only when the run-package manifest is unavailable.
     result['cann'] = None
+    version_files = []
+    try:
+        spec = importlib.util.find_spec('autofuse')
+        if spec and spec.origin:
+            package_root = Path(spec.origin).resolve().parent
+            version_files.extend(parent/'share/info/graph_autofusion/version.info'
+                                 for parent in package_root.parents)
+    except (ImportError, ValueError, OSError):
+        pass
     root = os.environ.get('ASCEND_HOME_PATH')
     if root:
+        root = Path(root)
+        version_files.extend((root/'share/info/graph_autofusion/version.info',
+                              root/'compiler/version.info'))
+    for version_file in version_files:
         try:
-            lines = (Path(root)/'compiler/version.info').read_text().splitlines()
+            lines = version_file.read_text().splitlines()
             for line in lines:
                 key, separator, value = line.partition('=')
                 if separator and key.strip() == 'Version' and value.strip():
                     result['cann'] = value.strip()
                     break
+            if result['cann']:
+                break
         except (OSError, UnicodeError):
             pass
     # Fingerprint the actually selected binary, NOT an unrelated source checkout.
