@@ -1,4 +1,6 @@
 """Exercise real staged admission/pause boundaries without Torch, CANN or NPU."""
+from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+CURRENT_SEED = str(SamplingConfig.profile("small", max_nodes=1).seed(3))
 import json
 from pathlib import Path
 import threading
@@ -12,7 +14,7 @@ from autofusedebugger.fuzz.scheduling.budgets import Budget,write_policy
 
 def test_paused_queue_does_not_claim_and_graceful_stop_cancels_pending(tmp_path,monkeypatch):
     ledger=TaskLedger(tmp_path/'tasks.sqlite')
-    identity=ledger.enqueue('C16',ExecutionConfig('cpu','cpu',1,scheduling='staged',static_only=True),EvaluationConfig())
+    identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1,scheduling='staged',static_only=True),EvaluationConfig())
     write_policy(ledger,Budget())
     atomic(tmp_path/'control.json',dict(action='pause'))
     result=[];errors=[]

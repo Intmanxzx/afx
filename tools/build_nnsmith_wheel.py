@@ -6,6 +6,7 @@ The wheel is not published automatically. Distribution requires license review.
 """
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
@@ -35,7 +36,7 @@ def main():
     if subprocess.check_output(['git','-C',str(source),'status','--porcelain'],text=True).strip():
         raise ValueError('publisher requires a clean pinned checkout')
     order=re.search(r'PATCH_ORDER=\((.*?)\)',installer,re.S).group(1).split()
-    expected=re.search(r"SOURCE_SHA256\s*=\s*'([a-f0-9]{64})'",(root/'autofusedebugger/fuzz/generation/nnsmith_v3.py').read_text()).group(1)
+    expected=re.search(r"SOURCE_SHA256\s*=\s*'([a-f0-9]{64})'",(root/'autofusedebugger/fuzz/generation/runtime.py').read_text()).group(1)
     with tempfile.TemporaryDirectory(prefix='nnsmith-wheel-') as temp:
         working=Path(temp)/'source'
         shutil.copytree(source,working,ignore=shutil.ignore_patterns('.git','__pycache__','.venv'))
@@ -45,8 +46,13 @@ def main():
         package=working/'nnsmith'
         if tree_hash((p.relative_to(package).as_posix(),p.read_bytes()) for p in package.rglob('*.py'))!=expected:
             raise ValueError('patched source fingerprint mismatch')
+        # SCM-generated _version.py is not part of the frozen source tree.
+        metadata=working/'pyproject.toml'
+        metadata.write_text('\n'.join(line for line in metadata.read_text().splitlines()
+                                     if not line.lstrip().startswith('write_to'))+'\n')
         dist=Path(temp)/'dist'
-        subprocess.run([sys.executable,'-m','build','--wheel','--outdir',str(dist)],cwd=working,check=True)
+        subprocess.run([sys.executable,'-m','build','--wheel','--outdir',str(dist)],cwd=working,check=True,
+                       env=dict(os.environ, SETUPTOOLS_SCM_PRETEND_VERSION='0.1.0'))
         wheels=list(dist.glob('*.whl'))
         if len(wheels)!=1:raise ValueError('expected exactly one NNSmith wheel')
         with zipfile.ZipFile(wheels[0]) as archive:

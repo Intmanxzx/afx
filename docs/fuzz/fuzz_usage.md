@@ -12,11 +12,11 @@ python3 -m venv .venv
 python -m pip install /path/to/autofusedebugger-<版本>-py3-none-any.whl
 ```
 
-发布到 PyPI 后可用 `python -m pip install autofusedebugger==<版本>`。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看仅使用标准库，可安装 wheel 时加 `--no-deps`，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
+发布到 PyPI 后可用 `python -m pip install autofusedebugger==<版本>`。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
 
 ## 一、客户端：执行、采集、上报
 
-在已有 NPU Python 环境中安装 wheel；先加载所在机器的环境脚本。管理员私下发放 token，用户名由云端识别，不需要客户端填写。
+客户端和服务端一键安装命令见 [部署脚本说明](../../deploy/fuzz/README.md)。在已有 NPU Python 环境中安装 wheel；先加载所在机器的环境脚本。管理员私下发放 token，用户名由云端识别，不需要客户端填写。
 
 ```sh
 autofusedbg fuzz setup --token '管理员发放的TOKEN' --sync-interval 30
@@ -148,7 +148,7 @@ python tools/release_wheel.py --tag v0.1.2 --repository niuyuhu/Autofuse-Debugge
 
 Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修改；构建 wheel 必须含网页资源且包含NNSmith patches。发布不覆盖已有文件：同名同 SHA256 可跳过，不同内容报错；GitCode 成功而 PyPI 失败时重跑相同产物可以续发，**不能重建不同内容覆盖同一版本**。PyPI 版本不可覆盖，版本已占用时必须升版本。
 
-本轮只进行脚本 mock 测试、构建及安装验证，不使用真实发布凭据，不创建 Tag/Release、不上传 PyPI。首次真实流水线及 GitCode 项目权限需维护者发布时验证。
+构建及安装验证不需要发布凭据，也不需要创建 Tag/Release 或上传 PyPI。首次真实流水线及 GitCode 项目权限需维护者发布时验证。
 
 官方依据：[工作流结构](https://docs.gitcode.com/docs/help/home/org_project/pipeline/writing-pipelines/workflow-file-location-structure)、[Tag 触发器](https://docs.gitcode.com/docs/help/home/org_project/pipeline/writing-pipelines/configure-triggers)、[创建 Release](https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases)、[附件上传 URL（PUT）](https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url)。
 
@@ -163,7 +163,7 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 
 ### NNSmith执行环境
 
-run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁、安装Z3，并自动校验源码树指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，环境被改动后会自动重置修复。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
+run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
 
 
 ### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）

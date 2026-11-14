@@ -25,4 +25,4 @@ include = ["autofusedebugger*"]
 
 [tool.setuptools.package-data]
 # Offline and cloud viewers share these prebuilt assets.
-autofusedebugger = ["fuzz/view/static/*", "nnsmith_integration/patches/*.patch"]
+autofusedebugger = ["fuzz/view/static/*", "nnsmith_integration/patches/*.patch", "nnsmith_integration/install_af_fuzz.sh"]

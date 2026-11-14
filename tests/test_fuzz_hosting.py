@@ -121,7 +121,7 @@ sys.exit(hosting._child(*sys.argv[1:-1]))
     def command(q, db, timeout, fd, sock, run_id):
         return [sys.executable,'-c',code,str(q.path),str(db),str(timeout),str(fd),str(sock),run_id,str(pidfile)]
     monkeypatch.setattr(hosting, '_command', command)
-    started = hosting.launch(ledger,tmp_path/'results',[('C16',EX,EV,None)])
+    started = hosting.launch(ledger,tmp_path/'results',[(CURRENT_SEED,EX,EV,None)])
     try:
         deadline = time.monotonic()+10
         while not pidfile.exists() and time.monotonic()<deadline:
@@ -154,7 +154,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     from autofusedebugger.fuzz.contracts import Seed
     def launch(ledger, database, specs, **kwargs):
         assert list(specs) == []
-        configs, evaluation, count, devices, excluded, sampling = kwargs['campaign']
+        configs, evaluation, count, devices, excluded, sampling, ops = kwargs['campaign']
         return {'count': count, 'backends': [c.backend for c in configs]}
     monkeypatch.setattr(hosting, 'launch', launch)
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0

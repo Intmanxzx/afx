@@ -13,5 +13,8 @@ def source_evidence():
     result = {'generator': 'nnsmith.graph_gen.model_gen', 'source_sha256': digest.hexdigest(),
               'z3': z3.get_version_string(), 'source_path': str(root)}
     if result['source_sha256'] != SOURCE_SHA256 or result['z3'] != Z3_VERSION:
-        raise ValueError('NNSmith requires its pinned isolated source and Z3; no fallback')
+        raise ValueError(
+            f'NNSmith dependency mismatch at {root}: source_sha256={result["source_sha256"]} '
+            f'(expected {SOURCE_SHA256}), z3={result["z3"]} (expected {Z3_VERSION}). '
+            'Reinstall with nnsmith_integration/install_af_fuzz.sh and remove stale PYTHONPATH entries.')
     return result

@@ -69,7 +69,7 @@ def test_paging_filters_summary_and_detail(database):
     assert queries.summary(seed='680564733841876926926749214863536422954', status='ok')['total'] == 1
     assert len(queries.page(seed='680564733841876926926749214863536422954')['items']) == 2
     detail = queries.detail(first['items'][0]['id'])
-    assert detail['replay_command'] == 'autofusedbg fuzz replay C000000016'
+    assert detail['replay_command'] == ''  # Retired seeds remain readable, not executable.
     assert len(detail['shape_results']) == 1
     assert set(detail['contexts']) == {'execution', 'evaluation', 'environment'}
 
@@ -88,7 +88,7 @@ def test_http_assets_api_and_read_only(database):
         assert status == 200
         item = json.loads(body)['items'][0]
         status, _, body = request(url, 'api/attempts/'+item['id'])
-        assert status == 200 and json.loads(body)['replay_command'].endswith(' C000000016')
+        assert status == 200 and json.loads(body)['replay_command'] == ''
         assert json.loads(request(url, 'api/summary?status=fail')[2])['total'] == 1
     assert Path(database).read_bytes() == before
     assert set(Path(database).parent.iterdir()) == files
@@ -163,7 +163,7 @@ def test_untrusted_text_is_data_and_never_a_replay_command(database):
         assert item['backend'] == payload
         detail = json.loads(request(url, 'api/attempts/'+item['id'])[2])
         assert detail['error_summary'] == payload
-        assert detail['replay_command'] == 'autofusedbg fuzz replay C000000016'
+        assert detail['replay_command'] == ''  # Retired seeds remain readable, not executable.
         assert payload.encode() not in request(url)[2]
     with sqlite3.connect(database) as conn:
         conn.execute("UPDATE attempts SET seed='42; echo unsafe'")

@@ -7,6 +7,7 @@ import importlib.util
 import inspect
 import multiprocessing as mp
 import os
+import pickle
 import re
 import runpy
 import sys
@@ -497,7 +498,7 @@ class PyTorchAdapter(FrameworkAdapter):
                     identity = _module_identity(original)
                     if pattern is None or pattern.search(identity) or pattern.search(type(original).__name__):
                         try:
-                            child_capture_queue.put_nowait(
+                            child_capture_queue.put_nowait(pickle.dumps(
                                 CapturedInvocation(
                                     framework=self.name,
                                     model=original,
@@ -512,7 +513,7 @@ class PyTorchAdapter(FrameworkAdapter):
                                         "capture_process": "fork_child",
                                     },
                                 )
-                            )
+                            ))
                             state.sent = True
                         except (Full, OSError, ValueError):
                             pass
@@ -613,7 +614,9 @@ class PyTorchAdapter(FrameworkAdapter):
                                 run_af_restore()
                     if not captured and child_capture_queue is not None:
                         try:
-                            captured.append(child_capture_queue.get(timeout=2))
+                            # Serialize tensors by value: Torch's queue reducers
+                            # otherwise need the worker's FD server after it exits.
+                            captured.append(pickle.loads(child_capture_queue.get(timeout=2)))
                         except (Empty, EOFError, OSError):
                             pass
         finally:

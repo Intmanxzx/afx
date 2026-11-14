@@ -13,6 +13,7 @@ from autofusedebugger.fuzz.environment import collect
     ('Version=\n', None), ('Other=9.3.0\n', None), (None, None),
 ])
 def test_cann_always_reads_version_info(tmp_path, monkeypatch, loaded, contents, expected):
+    monkeypatch.setattr('autofusedebugger.fuzz.environment.importlib.util.find_spec', lambda name: None)
     monkeypatch.setenv('ASCEND_HOME_PATH', str(tmp_path))
     if contents is not None:
         (tmp_path/'compiler').mkdir()
@@ -31,6 +32,7 @@ def test_cann_always_reads_version_info(tmp_path, monkeypatch, loaded, contents,
 
 
 def test_no_selected_toolkit_is_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr('autofusedebugger.fuzz.environment.importlib.util.find_spec', lambda name: None)
     monkeypatch.delenv('ASCEND_HOME_PATH', raising=False)
     assert collect(tmp_path)['cann'] is None
 
