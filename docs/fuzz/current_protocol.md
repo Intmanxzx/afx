@@ -14,6 +14,7 @@
 ## 恢复与新增的因子
 
 - 继续使用 368 个精确 ATen overload，限定逐元素/比较、reduce、view；没有加入矩阵、卷积。
+- 逐个 overload 的可读清单见 [ATen 算子清单](aten_op_list.md)；规则源代码仍是 `aten_catalog.py`。
 - 图节点保存实际目标、完整模型状态、属性、输入及所有输出；执行器只解析注册的 ATen 目标。
 - 仍是 NNSmith/Z3 构图。`--method` 支持 symbolic-cinit（默认）、symbolic、concolic，写入 seed。
 - `--dynamic-variants 2..8` 恢复动态样本数（默认 3）。变化尺寸组按 seed 打乱；不再仅因

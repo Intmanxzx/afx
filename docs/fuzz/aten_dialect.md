@@ -15,6 +15,8 @@
 
 精确目录是 `autofusedebugger/nnsmith_integration/aten_catalog.py` 的 `RULES`。`aten_dialect.py` 为每条规则提供 NNSmith `AbsOpBase` 子类、dtype/shape 传递、Z3 约束及 materializer。图仍由 `nnsmith.graph_gen.model_gen` 构造，执行时调用目录中对应的真实 `torch.ops.aten.<name>.<overload>`。
 
+逐个 overload 的可读清单见 [ATen 算子清单](aten_op_list.md)。
+
 图节点保存完整的 ATen 目标、构造属性、算子对象状态和全部输出。CPU 与目标后端使用同一份 CaseSpec 和输入字节；CPU materializer 无法执行的生成结果直接跳过，不能替换成另一张图。
 
 ## 未建模边界

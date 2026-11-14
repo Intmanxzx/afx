@@ -1,9 +1,18 @@
 """One modeling test per target, exercising all declared dtype signatures."""
 import json
 import random
+from pathlib import Path
 import pytest
 
 from autofusedebugger.nnsmith_integration.aten_catalog import RULES
+
+
+def test_documented_aten_list_matches_catalog():
+    rows = []
+    for line in (Path(__file__).parents[1] / 'docs/fuzz/aten_op_list.md').read_text().splitlines():
+        if line.startswith('| ') and line.count('|') >= 8 and line.split('|')[2].strip().startswith('`aten.'):
+            rows.append(line.split('|')[2].strip().strip('`'))
+    assert rows == [rule.target for rule in RULES]
 
 
 @pytest.fixture(scope='module')
