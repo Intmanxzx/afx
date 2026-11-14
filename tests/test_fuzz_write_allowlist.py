@@ -42,6 +42,27 @@ def running(database):
     finally:server.shutdown();server.server_close();thread.join()
 
 
+
+def test_issue_retest_respects_browser_and_client_allowlist(setup,tmp_path,monkeypatch):
+    from autofusedebugger.fuzz.central import issue_groups
+    database,alice,bob,attempt,client,_=setup
+    policy(tmp_path,monkeypatch,bob,client)
+    monkeypatch.setattr(issue_groups,'_rows',lambda path,limit=issue_groups.MAX_CASES:[dict(
+        seed='1',shape_index=1,id=attempt,status='fail',function_status='Unknown',
+        accuracy_status='Failed',core_error='mismatch',error_summary='mismatch',
+        correctness='fail',performance='not_requested',measurement_status='not_requested',
+        op_types=['aten.matmul'])])
+    key=issue_groups.list_groups(database,'accuracy')['items'][0]['issue_key']
+    issue_groups.claim(database,bob['user_id'],key)
+    payload=dict(issue_key=key,client_id=client,repetitions=1)
+    with running(database) as (call,_,__):
+        _,headers,profile=call('/api/session',dict(token=alice['token']))
+        alice_auth={'Cookie':headers['Set-Cookie'].split(';')[0],'X-CSRF-Token':profile['csrf']}
+        _,headers,profile=call('/api/session',dict(token=bob['token']))
+        bob_auth={'Cookie':headers['Set-Cookie'].split(';')[0],'X-CSRF-Token':profile['csrf']}
+        assert call('/api/issues/retest',payload,headers=alice_auth)[0]==503
+        assert call('/api/issues/retest',dict(payload,client_id=uid()),headers=bob_auth)[0]==503
+
 def test_config_strict_and_disabled(tmp_path,monkeypatch):
     monkeypatch.delenv(ENVIRONMENT,raising=False)
     WriteAllowlist.environment().client('any','any')

@@ -43,7 +43,7 @@
     return result;
   }
   // Future protected controls use this wrapper, not a user id supplied by JS.
-  window.afSession = {request, authenticated:() => Boolean(profile)};
+  window.afSession = {request, authenticated:() => Boolean(profile), userId:() => profile?.user_id || null};
   button.addEventListener('click', async () => {
     if (!profile) {error.textContent = ''; dialog.showModal(); input.focus(); return;}
     button.disabled = true;

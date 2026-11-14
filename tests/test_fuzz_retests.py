@@ -147,6 +147,10 @@ def test_http_session_csrf_and_agent_routes(setup):
         assert 'HttpOnly' in cookie and 'Secure' in cookie and 'SameSite=Strict' in cookie
         auth={'Cookie':cookie.split(';')[0],'X-CSRF-Token':profile['csrf']}
         with call('/api/session',extra=auth) as response:assert json.load(response)['user_id']==bob['user_id']
+        with pytest.raises(HTTPError) as error:call('/api/issues?dimension=accuracy')
+        assert error.value.code==401
+        with call('/api/issues?dimension=accuracy',extra=auth) as response:
+            assert json.load(response)['dimension']=='accuracy'
         with pytest.raises(HTTPError):call('/api/retest/batches','POST',payload,{'Cookie':auth['Cookie']})
         with call('/api/retest/batches','POST',payload,auth) as response:assert json.load(response)['task_count']==1
         with call('/api/retest/claim','POST',dict(client_id=client,limit=1),{'Authorization':'Bearer '+bob['token']}) as response:

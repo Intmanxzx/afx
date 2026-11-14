@@ -145,8 +145,8 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
                     return self.send(200,data,{'/manage':'text/html; charset=utf-8','/manage.js':'text/javascript; charset=utf-8','/manage.css':'text/css; charset=utf-8'}[route])
                 if route=='/healthz':
                     return self.send(200,{'status':'ok','protocol':1})
-                if route in {'/','/report','/app.js','/charts.js','/style.css','/runtime.js','/session.js','/retests.js','/retests.css','/favicon.svg'}:
-                    name={'/':'index.html','/report':'index.html','/app.js':'app.js','/charts.js':'charts.js','/style.css':'style.css','/runtime.js':'runtime.js','/session.js':'session.js','/retests.js':'retests.js','/retests.css':'retests.css','/favicon.svg':'favicon.svg'}[route]
+                if route in {'/','/report','/app.js','/charts.js','/style.css','/runtime.js','/session.js','/retests.js','/retests.css','/issues.js','/issues.css','/favicon.svg'}:
+                    name={'/':'index.html','/report':'index.html','/app.js':'app.js','/charts.js':'charts.js','/style.css':'style.css','/runtime.js':'runtime.js','/session.js':'session.js','/retests.js':'retests.js','/retests.css':'retests.css','/issues.js':'issues.js','/issues.css':'issues.css','/favicon.svg':'favicon.svg'}[route]
                     data=resources.files('autofusedebugger.fuzz.view').joinpath('static').joinpath(name).read_bytes()
                     if route in {'/','/report'}:
                         data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'公共缓存每轮结束后等待30秒再检查更新，失败时退避；页面每15秒刷新；上传周期由测试端配置'.encode())
@@ -155,7 +155,7 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
                         data=data.replace(b'<!-- session-controls -->', b'<a href="/manage">Device management</a><span id="session-controls" class="status-group"></span>')
                         data=data.replace(b'<title>Autofuse Fuzz</title>', '<title>Autofuse一站式工作平台</title>'.encode())
                         data=data.replace(b'Autofuse<small>FUZZ WORKSPACE</small>', 'Autofuse一站式工作平台'.encode())
-                    return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/runtime.js':'text/javascript; charset=utf-8','/session.js':'text/javascript; charset=utf-8','/retests.js':'text/javascript; charset=utf-8','/retests.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[route])
+                    return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/runtime.js':'text/javascript; charset=utf-8','/session.js':'text/javascript; charset=utf-8','/retests.js':'text/javascript; charset=utf-8','/retests.css':'text/css; charset=utf-8','/issues.js':'text/javascript; charset=utf-8','/issues.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[route])
                 raw=parse_qs(url.query,keep_blank_values=True,max_num_fields=8)
                 if any(len(v)!=1 for v in raw.values()):
                     raise ValueError('duplicate field')

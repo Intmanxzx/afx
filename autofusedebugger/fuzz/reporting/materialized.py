@@ -142,7 +142,12 @@ def migrate(path):
     from ..storage.repository import _connect
     with closing(_connect(path, writable=True)) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
-        return refresh(conn)
+        result = refresh(conn)
+        # Central databases keep a collaborative issue index alongside this model.
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='owners'").fetchone():
+            from ..central.issue_groups import refresh_index
+            result['issues'] = refresh_index(conn)
+        return result
 
 
 def _flatten(conn, seed):

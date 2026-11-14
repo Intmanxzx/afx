@@ -20,6 +20,8 @@ def initialize(path):
         conn.execute('CREATE TABLE IF NOT EXISTS receipts (source_id TEXT NOT NULL, revision INTEGER NOT NULL, payload_hash TEXT NOT NULL, PRIMARY KEY(source_id,revision))')
         conn.execute('CREATE TABLE IF NOT EXISTS deleted_attempts (id TEXT PRIMARY KEY, result_hash TEXT NOT NULL, user_id TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS owners (attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), user_id TEXT NOT NULL REFERENCES users(id))')
+        from .issue_groups import initialize as initialize_issues
+        initialize_issues(conn)
 
 
 def create_user(path, display_name, key_file=None):
@@ -97,6 +99,7 @@ def ingest(path, key, payload):
         if after>ack:
             raise ValueError('client ACK ahead of server; restore matching server backup before resuming')
         previous=after
+        refreshed_seeds=set()
         for item in items:
             revision=item['revision']
             if type(revision) is not int or revision<=previous:
@@ -156,10 +159,13 @@ def ingest(path, key, payload):
             from ..reporting.index import index_attempt
             display=conn.execute('SELECT display_name FROM users WHERE id=?',(user,)).fetchone()[0]
             index_attempt(conn,identity,source,display,user)
+            refreshed_seeds.add(record['attempt']['seed'])
             conn.execute('INSERT INTO receipts VALUES (?,?,?)',(source,revision,receipt))
             ack=revision
         from ..reporting.materialized import refresh_if_installed
         refresh_if_installed(conn)
+        from .issue_groups import refresh_index
+        refresh_index(conn, refreshed_seeds)
         conn.execute('UPDATE sources SET ack=? WHERE id=?',(ack,source))
         return {'source_id':source,'ack':ack,'accepted':len(items)}
 

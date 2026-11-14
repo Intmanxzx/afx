@@ -8,7 +8,7 @@ import threading
 import time
 from urllib.parse import urlsplit, parse_qs
 
-from . import sessions, retests
+from . import sessions, retests, issue_groups
 from .maintenance import WriteAllowlist, MaintenanceBlocked, reject
 from .repository import authenticate
 from ..storage.repository import _connect
@@ -59,7 +59,7 @@ class ControlAPI:
             return True
         url = urlsplit(handler.path)
         route = url.path
-        if route != '/api/session' and not route.startswith('/api/retest/'):
+        if route != '/api/session' and not (route.startswith('/api/retest/') or route.startswith('/api/issues')):
             return False
         try:
             body = None
@@ -126,7 +126,7 @@ class ControlAPI:
                 self.write_allowlist.browser(user)
                 # Preview/create must target the allowed client too; cancellation
                 # remains available to the permitted user and checks ownership.
-                if route in {'/api/retest/preview','/api/retest/batches'}:
+                if route in {'/api/retest/preview','/api/retest/batches','/api/issues/retest'}:
                     self.write_allowlist.client(user, body.get('client_id') if isinstance(body,dict) else None)
             params = parse_qs(url.query, keep_blank_values=True, max_num_fields=2)
             if any(len(v) != 1 for v in params.values()):
@@ -134,10 +134,24 @@ class ControlAPI:
             parts = route.strip('/').split('/')
             batch_detail = len(parts) == 4 and parts[:3] == ['api','retest','batches']
             batch_cancel = len(parts) == 5 and parts[:3] == ['api','retest','batches'] and parts[4] == 'cancel'
-            allowed_query = {'before'} if route == '/api/retest/batches' else {'after'} if batch_detail else set()
+            allowed_query = {'before'} if route == '/api/retest/batches' else {'after'} if batch_detail else {'dimension'} if route == '/api/issues' else set()
             if params and (method != 'GET' or set(params) != allowed_query):
                 raise ValueError('unexpected query')
-            if route == '/api/session' and method == 'GET':
+            if route == '/api/issues' and method == 'GET':
+                result = issue_groups.list_groups(self.database, params.get('dimension', [None])[0])
+            elif route == '/api/issues/claim' and method == 'POST':
+                if not isinstance(body, dict) or set(body) != {'issue_key'}:
+                    raise ValueError('invalid issue claim')
+                result = issue_groups.claim(self.database, user, body['issue_key'])
+            elif route == '/api/issues/retest' and method == 'POST':
+                if not isinstance(body, dict) or set(body) - {'issue_key','client_id','repetitions','request_key'} or 'issue_key' not in body or 'client_id' not in body:
+                    raise ValueError('invalid issue retest')
+                result = issue_groups.retest(self.database, user, body['issue_key'], body['client_id'], body.get('repetitions', 1), body.get('request_key'))
+            elif route == '/api/issues/release' and method == 'POST':
+                if not isinstance(body, dict) or set(body) != {'issue_key'}:
+                    raise ValueError('invalid issue release')
+                result = issue_groups.release(self.database, user, body['issue_key'])
+            elif route == '/api/session' and method == 'GET':
                 result = profile
             elif route == '/api/session' and method == 'DELETE':
                 sessions.revoke(self.database, self._secret(handler))
