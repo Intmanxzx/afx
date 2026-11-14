@@ -1,7 +1,7 @@
 """Central branding, icon delivery and accessible login markup."""
 import threading
 from urllib.request import urlopen
-from autofusedebugger.fuzz.central.server import create_server
+from autofusex.fuzz.central.server import create_server
 
 
 def test_central_branding_and_navigation_order(tmp_path):

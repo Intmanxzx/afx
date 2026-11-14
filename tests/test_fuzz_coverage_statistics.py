@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from autofusedebugger.fuzz.case_spec import encode
-from autofusedebugger.fuzz.contracts import canonical_json
-from autofusedebugger.fuzz.reporting.incremental import IncrementalStatistics
-from autofusedebugger.fuzz.reporting.statistics import statistics
-from autofusedebugger.fuzz.storage import ResultRepository
+from autofusex.fuzz.case_spec import encode
+from autofusex.fuzz.contracts import canonical_json
+from autofusex.fuzz.reporting.incremental import IncrementalStatistics
+from autofusex.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.storage import ResultRepository
 from fuzz_fixtures import bundle
 
 
@@ -79,7 +79,7 @@ def test_shape_sizes_include_outputs_and_use_product_not_sum(tmp_path):
     with sqlite3.connect(repo.path) as conn:
         metadata = json.loads(conn.execute('SELECT metadata FROM case_facts').fetchone()[0])
         # Exercise the metadata producer independently of statistics.
-        from autofusedebugger.fuzz.reporting.report import spec_metadata
+        from autofusex.fuzz.reporting.report import spec_metadata
         spec = bundle().spec
         t = spec.inputs[0]
         spec = replace(spec, shape_samples=((replace(t, shape=(2,3), stride=(3,1)),),),
@@ -97,7 +97,7 @@ def test_numeric_chart_order_not_lexicographic():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusedebugger/fuzz/view/static/charts.js').read_text()
+    source = Path('autofusex/fuzz/view/static/charts.js').read_text()
     helpers = source[source.index('const SHAPE_BUCKET_ORDER'):source.index('const legendHidden')]
     subprocess.run([node, '-e', "const assert=require('assert'); const STATUS_KEYS=['gen_failed','gen_error','mlir_failed','fail','pass','unknown'];\n"+helpers+"""
 for (const id of ['ShapeDim','ShapeElem']) {
@@ -113,4 +113,4 @@ for (const id of ['ShapeDim','ShapeElem']) {
     assert 'return orderChartRows([...groups.values()],id)' in source
 
     assert 'displayChartRows(convert(result[key],id),id)' in source
-    assert '独立区间，K=1024' in Path('autofusedebugger/fuzz/view/static/index.html').read_text()
+    assert '独立区间，K=1024' in Path('autofusex/fuzz/view/static/index.html').read_text()

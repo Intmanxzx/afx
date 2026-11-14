@@ -1,0 +1,16 @@
+# Install as ~/.config/systemd/user/autofusex-manager.service.
+# Replace ExecStart with the absolute path to the lightweight bootstrap Python.
+[Unit]
+Description=AutofuseX managed device
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/autofusex/bootstrap/bin/python -m afx daemon supervise
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

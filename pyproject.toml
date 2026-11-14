@@ -16,12 +16,12 @@ execution = ["numpy"]
 nnsmith = ["multipledispatch"]
 
 [project.scripts]
-afx = "autofusedebugger.cli:main"
+afx = "autofusex.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["afx*", "autofusedebugger*"]
+include = ["afx*", "autofusex*"]
 
 [tool.setuptools.package-data]
 # Offline and cloud viewers share these prebuilt assets.
-autofusedebugger = ["fuzz/view/static/*", "nnsmith_integration/patches/*.patch", "nnsmith_integration/install_af_fuzz.sh"]
+autofusex = ["fuzz/view/static/*", "nnsmith_integration/patches/*.patch", "nnsmith_integration/install_af_fuzz.sh"]

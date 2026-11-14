@@ -2,15 +2,15 @@
 import json
 import pytest
 from test_fuzz_shape_cases import record
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.storage.queries import ResultQueries
-from autofusedebugger.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.reporting.statistics import statistics
 
 
 @pytest.mark.parametrize('order', [('cpu','af-mlir','eager-npu'), ('af-mlir','eager-npu','cpu')])
 def test_all_backends_required_in_any_arrival_order(tmp_path, order):
     repo = ResultRepository(tmp_path/'results')
-    from autofusedebugger.fuzz.reporting.incremental import IncrementalStatistics
+    from autofusex.fuzz.reporting.incremental import IncrementalStatistics
     inc = IncrementalStatistics(repo.path)
     for i, backend in enumerate(order):
         value = record(backend, ['pass','error','pass'])
@@ -44,7 +44,7 @@ def test_legacy_cpu_only_hidden_but_terminal_target_unknown_visible(tmp_path):
 
 
 def test_manifest_survives_sync(tmp_path):
-    from autofusedebugger.fuzz.sync.outbox import pending
+    from autofusex.fuzz.sync.outbox import pending
     repo = ResultRepository(tmp_path/'results')
     value = record('cpu', ['pass'])
     value['execution']['expected_backends'] = '["cpu","af-mlir"]'
@@ -59,6 +59,6 @@ def test_refresh_includes_later_pages():
     node = shutil.which('node')
     if not node: pytest.skip('node unavailable')
     from importlib.resources import files
-    source = files('autofusedebugger.fuzz.view').joinpath('static/app.js').read_text()
+    source = files('autofusex.fuzz.view').joinpath('static/app.js').read_text()
     body = source[source.index('function refreshVisible('):source.index('function cell(')]
     subprocess.run([node, '-e', "const assert=require('node:assert/strict');let page=2,calls=[];const activePage=()=> 'records';const load=(...args)=>calls.push(args);const loadCharts=()=>{};" + body + "refreshVisible(true);assert.deepEqual(calls,[[true,true]]);"], check=True)

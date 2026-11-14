@@ -1,5 +1,5 @@
 import pytest
-from autofusedebugger.management.config import parse,validate,fingerprint,merge,quantity
+from autofusex.management.config import parse,validate,fingerprint,merge,quantity
 
 
 def task():

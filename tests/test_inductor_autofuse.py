@@ -6,9 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-import autofusedebugger.inductor_autofuse as inductor_autofuse
-from autofusedebugger.graph import extract_edges
-from autofusedebugger.inductor_autofuse import (
+import autofusex.inductor_autofuse as inductor_autofuse
+from autofusex.graph import extract_edges
+from autofusex.inductor_autofuse import (
     _match_cpu_output,
     _fallback_capture_name,
     _trace_sort_key,
@@ -861,7 +861,7 @@ op0: SchedulerNode(ComputedBuffer)
     )
     capture_name = f"{kernel}__div"
     (trace / "output_code.py").write_text(
-        f"run_intermediate_hooks('{capture_name}::autofusedebugger_output::0', buf0)\n",
+        f"run_intermediate_hooks('{capture_name}::autofusex_output::0', buf0)\n",
         encoding="utf-8",
     )
     npu_path = tmp_path / "softmax.npu.npy"
@@ -881,7 +881,7 @@ op0: SchedulerNode(ComputedBuffer)
     fusion = next(op for op in graph["graph"][0]["op"] if op["type"] == "AutofuseFusion")
 
     assert fusion["original_aten_types"] == ["_softmax"]
-    assert fusion["output_desc"][0]["attr"][0]["key"] == "_autofusedebugger_cpu_origin_name"
+    assert fusion["output_desc"][0]["attr"][0]["key"] == "_autofusex_cpu_origin_name"
     assert fusion["output_desc"][0]["attr"][0]["value"]["s"] == "_softmax"
 
 
@@ -916,8 +916,8 @@ op0: SchedulerNode(ComputedBuffer)
     first = f"{kernel}__add"
     second = f"{kernel}__add_1"
     (trace / "output_code.py").write_text(
-        f"run_intermediate_hooks('{first}::autofusedebugger_output::0', buf0)\n"
-        f"run_intermediate_hooks('{second}::autofusedebugger_output::0', buf1)\n",
+        f"run_intermediate_hooks('{first}::autofusex_output::0', buf0)\n"
+        f"run_intermediate_hooks('{second}::autofusex_output::0', buf1)\n",
         encoding="utf-8",
     )
     values = np.arange(8, dtype=np.float32).reshape(2, 4)

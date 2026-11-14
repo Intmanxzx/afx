@@ -4,9 +4,9 @@ import uuid
 
 import pytest
 
-from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger, DDL, APPLICATION_ID
-from autofusedebugger.fuzz.scheduling.migrations import upgrade_queue
+from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.scheduling.ledger import TaskLedger, DDL, APPLICATION_ID
+from autofusex.fuzz.scheduling.migrations import upgrade_queue
 
 EX, EV = ExecutionConfig('cpu-eager','cpu',1), EvaluationConfig()
 
@@ -102,7 +102,7 @@ def test_reason_is_bounded_and_survives_reopen(tmp_path):
 
 
 def test_upgrade_failure_after_alter_rolls_back_and_keeps_backup(tmp_path, monkeypatch):
-    from autofusedebugger.fuzz.scheduling import migrations
+    from autofusex.fuzz.scheduling import migrations
     path, backup = tmp_path/'queue', tmp_path/'backup'
     old_queue(path)
     original = sqlite3.connect

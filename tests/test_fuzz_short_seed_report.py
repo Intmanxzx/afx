@@ -1,16 +1,16 @@
 import json
 import pytest
-from autofusedebugger.fuzz.contracts import Seed, ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.generation import workload_id
+from autofusex.fuzz.contracts import Seed, ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.generation import workload_id
 from fuzz_fixtures import bundle as materialize, CURRENT_SEED
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.storage.queries import ResultQueries
 
 
 def test_short_seed_is_lossless_and_protocol_hashes_unchanged():
     assert Seed.parse(str(2*2**128+42)).short == 'C000000016'
     assert str(Seed.parse('C16')) == str(2*2**128+42)
-    from autofusedebugger.fuzz.generation import materialize as generate
+    from autofusex.fuzz.generation import materialize as generate
     with pytest.raises(ValueError): generate('A16')
     assert len(Seed(2*2**128 + 36**9-1).short) == 10
     for value in (2*2**128, 2*2**128+42, 3*2**128-1):
@@ -35,12 +35,12 @@ def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
     pytest.importorskip("nnsmith")
     # This exercises an execution gate, not the query-only captured fixture.
     # Use the pinned generator so its source fingerprint passes seed validation.
-    from autofusedebugger.fuzz.generation import materialize as generate
-    from autofusedebugger.fuzz.backends import create_backend
-    from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.backends.base import UnsupportedBackend
+    from autofusex.fuzz.generation import materialize as generate
+    from autofusex.fuzz.backends import create_backend
+    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.backends.base import UnsupportedBackend
     def unavailable(): raise UnsupportedBackend('af-mlir runtime verification failed: test missing runtime')
-    monkeypatch.setattr('autofusedebugger.fuzz.backends.mlir_capability.verify_runtime',unavailable)
+    monkeypatch.setattr('autofusex.fuzz.backends.mlir_capability.verify_runtime',unavailable)
     result=execute(generate(CURRENT_SEED),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
     assert result['status']=='unsupported'
     assert 'runtime verification failed' in result['error_summary']
@@ -49,7 +49,7 @@ def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
 def test_report_endpoint_csp_and_html_escapes_errors(tmp_path):
     import threading
     from urllib.request import urlopen
-    from autofusedebugger.fuzz.central.server import create_server
+    from autofusex.fuzz.central.server import create_server
     repo=ResultRepository(tmp_path/'results')
     repo.save({'seed':str(2*2**128+42),'workload_id':workload_id(materialize('C16')),
         'oracle_id':'ref/1','backend':'<img src=x onerror=alert(1)>','status':'error',

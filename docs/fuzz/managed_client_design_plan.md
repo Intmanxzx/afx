@@ -2,12 +2,12 @@
 
 - 日期：2026-11-12（America/Phoenix）
 - 状态：设计基线与实现计划；本分支实现了 P1–P3 的本地/服务端控制骨架、环境适配器、安全操作日志和 Docker 验证夹具；真实 CANN/NPU 适配仍需单独验收。
-- 范围：AutofuseDebugger 客户端、中心服务、Web 控制台、CLI、依赖制品与发布流程。
+- 范围：AutofuseX 客户端、中心服务、Web 控制台、CLI、依赖制品与发布流程。
 - 目标平台：首期完整执行与自托管能力针对 Linux NPU 开发机/容器；其他平台提供能力检测和明确的“不支持”提示，不承诺相同的 CANN 安装与 NPU 能力。
 
 ## 1. 目标与核心决策
 
-用户仅需安装 AutofuseDebugger wheel 并启动轻量守护进程，即可绑定设备。此后通过网页准备运行环境、修改参数、控制任务和更新工具；所有主要操作同时提供 CLI，供人工和 Agent 使用。
+用户仅需安装 AutofuseX wheel 并启动轻量守护进程，即可绑定设备。此后通过网页准备运行环境、修改参数、控制任务和更新工具；所有主要操作同时提供 CLI，供人工和 Agent 使用。
 
 核心决策：
 
@@ -544,7 +544,7 @@ afx config effective --json
 
 ### 12.1 建议代码职责划分
 
-- 新 `autofusedebugger/management/`：schema/config、daemon、transport、operations、environments、builds、updates、cli。
+- 新 `autofusex/management/`：schema/config、daemon、transport、operations、environments、builds、updates、cli。
 - `fuzz/central/`：新增设备/配置/环境/操作仓储和 API；沿用会话、维护限制、备份机制。
 - `fuzz/scheduling/`：只增加管理适配、安全边界和关联元数据，不复制执行引擎。
 - `fuzz/view/static/`：设备、环境、任务、构建和版本页面。

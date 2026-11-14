@@ -6,11 +6,11 @@ import sys
 
 import pytest
 
-from autofusedebugger.fuzz.config import setup
-from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.scheduling.budgets import Budget, group_rss, scratch_size, write_policy, read_policy
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.scheduling import supervisor, hosting, budgets
+from autofusex.fuzz.config import setup
+from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.scheduling.budgets import Budget, group_rss, scratch_size, write_policy, read_policy
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling import supervisor, hosting, budgets
 from fuzz_fixtures import CURRENT_SEED
 
 EX, EV = ExecutionConfig('cpu-eager','cpu',1), EvaluationConfig()
@@ -112,7 +112,7 @@ def test_launch_admission_failure_has_no_partial_batch(tmp_path,monkeypatch):
 
 
 def test_setup_budget_reaches_cli_and_background_policy(tmp_path,monkeypatch):
-    from autofusedebugger.fuzz.cli import main
+    from autofusex.fuzz.cli import main
     setup(tmp_path,compile_threads=2,memory_budget_bytes=10000000,cache_budget_bytes=20000000)
     calls=[]
     monkeypatch.setattr(hosting,'launch',lambda l,d,s,**kw: calls.append((list(s),kw)) or {})

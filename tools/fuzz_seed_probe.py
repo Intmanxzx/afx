@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import resource
 
-from autofusedebugger.fuzz.diagnostics import GenerationTrace
+from autofusex.fuzz.diagnostics import GenerationTrace
 
 
 def main():
@@ -20,7 +20,7 @@ def main():
     args = p.parse_args()
     from nnsmith.abstract.op import Add, Mul, Neg, ReLU
     from nnsmith.materialize import Model
-    from autofusedebugger.nnsmith_integration.generation import GenerationConfig, generate_case
+    from autofusex.nnsmith_integration.generation import GenerationConfig, generate_case
     config = GenerationConfig(max_nodes=4, tensor_scale="small", concr_ph_dim_rng=(1, 4),
                               max_elem_per_tensor=256, dynamic_shapes=args.dynamic)
     model = Model.init("torch", "cpu")

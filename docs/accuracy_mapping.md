@@ -4,11 +4,11 @@
 
 本文描述的是当前代码行为，不是理想化的编译器 IR 对齐方案。对应实现主要位于：
 
-- `autofusedebugger/torch_model.py`：从同一次 Inductor 编译截获 pre-fusion transformed FX 图和真实 AOT 输入，并在 CPU/NPU eager 回放。
-- `autofusedebugger/inductor_autofuse.py`：native Inductor + AscendC/Autofuse 路径的 post-fusion 图解析和 CPU origin 匹配。
-- `autofusedebugger/npu_examples.py`：旧 GE/Qwen 适配路径中的 compiler provenance 解析。
-- `autofusedebugger/graph.py`：把 NPU 图输出属性转换为 manifest 的 `fusions` 映射。
-- `autofusedebugger/compare.py`：根据 manifest 执行最终的输出对照。
+- `autofusex/torch_model.py`：从同一次 Inductor 编译截获 pre-fusion transformed FX 图和真实 AOT 输入，并在 CPU/NPU eager 回放。
+- `autofusex/inductor_autofuse.py`：native Inductor + AscendC/Autofuse 路径的 post-fusion 图解析和 CPU origin 匹配。
+- `autofusex/npu_examples.py`：旧 GE/Qwen 适配路径中的 compiler provenance 解析。
+- `autofusex/graph.py`：把 NPU 图输出属性转换为 manifest 的 `fusions` 映射。
+- `autofusex/compare.py`：根据 manifest 执行最终的输出对照。
 
 ## 1. 映射的目标
 
@@ -139,8 +139,8 @@ CPU FX 拓扑中的稳定顺序更靠前
 7. 找到候选后，把下面两个属性写到 NPU 图的输出描述中：
 
 ```text
-_autofusedebugger_cpu_origin_name
-_autofusedebugger_cpu_origin_output_index
+_autofusex_cpu_origin_name
+_autofusex_cpu_origin_output_index
 ```
 
 需要特别注意：当前 native 匹配只使用编译器 provenance、名称、类型、shape 和稳定顺序，不读取 CPU/NPU 数值来决定映射。否则真正发生精度错误时，按数值距离选择候选会把失败节点错误映射到数值更接近但拓扑无关的 CPU 节点。该策略仍不是完整的拓扑图同构匹配。
@@ -184,7 +184,7 @@ NPU post-fusion kernel
 3. 对融合 kernel，读取 `benchmark.py` 中的 scheduler ID；对 `FusedSchedulerNode`，展开 `op0_op1` 中的组件 ID，并检查这些 ID 是否都存在于 `ir_pre_fusion.txt`。
 4. 使用 `benchmark.py` 的 `origin_ops` 和 `# return %exit` 找到融合出口，再在同一个 `graphN` 的 transformed FX 图中解析 `graphN::exit`。
 5. 对候选 FX 出口和 NPU dump 输出进行完整 shape 校验。只有 shape 相同，或仅存在标量 `()` 与 `(1,)` 的兼容差异时，才写入 canonical provenance。
-6. 校验通过时，NPU 输出属性会记录 `_autofusedebugger_prefusion_origin_id`、`_autofusedebugger_mapping_method` 和对应的 pre-fusion SchedulerNode ID；CPU/NPU eager 仍通过同一 GraphModule 的 canonical ID 直接映射。
+6. 校验通过时，NPU 输出属性会记录 `_autofusex_prefusion_origin_id`、`_autofusex_mapping_method` 和对应的 pre-fusion SchedulerNode ID；CPU/NPU eager 仍通过同一 GraphModule 的 canonical ID 直接映射。
 7. `ir_pre_fusion.txt` 缺失或 SchedulerNode 无法对应时，保留 compiler provenance 作为兼容回退，但将映射方法标记为 `canonical_source_id_ir_unverified`。shape 冲突时标记 `PROVENANCE_CONFLICT`，不建立映射，避免把不同 graph variant 或不同出口按元素个数强行比较。
 
 当前主要 `mapping_method` 含义如下：
@@ -271,7 +271,7 @@ NPU Autofuse output -> CPU origin -> NPU eager semantic output
 
 ### 2.7 compare 阶段的最终规则
 
-`autofusedebugger/graph.py` 会从 NPU `output_desc[].attr` 中提取 origin 属性，生成：
+`autofusex/graph.py` 会从 NPU `output_desc[].attr` 中提取 origin 属性，生成：
 
 ```json
 {
@@ -401,7 +401,7 @@ inductor_compile/
 对某个未映射 NPU 节点，重点核对：
 
 1. `npu_graph.json` 是否存在输出文件路径。
-2. `npu_graph.json` 的 `output_desc[].attr` 是否有 `_autofusedebugger_cpu_origin_name`。
+2. `npu_graph.json` 的 `output_desc[].attr` 是否有 `_autofusex_cpu_origin_name`。
 3. 融合节点的 `origin_ops` 和 `benchmark.py` 的 `# return` 是否符合预期。
 4. `cpu_graph.json` 是否真的存在同名出口节点，且该节点有输出 dump。
 5. CPU/NPU 输出元素数量是否相同，输出 index 是否都是 0。
@@ -417,7 +417,7 @@ jq '.graph[0].op[] | {
   outputs: [.output_desc[] | {
     dtype: (.data_type // .dtype),
     shape: .shape.dim,
-    attrs: [.attr[]? | select(.key | startswith("_autofusedebugger_cpu_origin"))]
+    attrs: [.attr[]? | select(.key | startswith("_autofusex_cpu_origin"))]
   }]
 }' /tmp/model_accuracy/npu_graph.json
 ```

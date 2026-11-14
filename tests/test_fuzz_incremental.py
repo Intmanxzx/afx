@@ -5,11 +5,11 @@ from contextlib import closing
 
 import pytest
 
-from autofusedebugger.fuzz.central.repository import initialize
-from autofusedebugger.fuzz.reporting.incremental import IncrementalStatistics
-from autofusedebugger.fuzz.reporting.statistics import statistics
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.storage.repository import _connect
+from autofusex.fuzz.central.repository import initialize
+from autofusex.fuzz.reporting.incremental import IncrementalStatistics
+from autofusex.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.storage.repository import _connect
 from test_fuzz_case_summary import save
 from test_fuzz_shape_cases import record
 
@@ -75,7 +75,7 @@ def test_shapes_nullable_means_extremes_and_duplicate(tmp_path):
 
 
 def test_failed_batch_keeps_checkpoint_and_retries(tmp_path,monkeypatch):
-    import autofusedebugger.fuzz.reporting.incremental as module
+    import autofusex.fuzz.reporting.incremental as module
     db=tmp_path/'db'; initialize(db); repo=ResultRepository(db)
     save(repo,'a','af-mlir','error'); inc=IncrementalStatistics(db);same(db,inc)
     save(repo,'a','af-mlir','ok')
@@ -90,7 +90,7 @@ def test_failed_batch_keeps_checkpoint_and_retries(tmp_path,monkeypatch):
 
 
 def test_concurrent_commit_is_not_lost(tmp_path,monkeypatch):
-    import autofusedebugger.fuzz.reporting.incremental as module
+    import autofusex.fuzz.reporting.incremental as module
     db=tmp_path/'db'; initialize(db); repo=ResultRepository(db)
     save(repo,'a','af-mlir','error');inc=IncrementalStatistics(db);same(db,inc)
     save(repo,'a','af-mlir','ok')
@@ -115,7 +115,7 @@ def test_replaced_source_rebuilds_sidecar(tmp_path):
 
 
 def test_no_group_rescan_for_unrelated_writes(tmp_path,monkeypatch):
-    import autofusedebugger.fuzz.reporting.incremental as module
+    import autofusex.fuzz.reporting.incremental as module
     db=tmp_path/'db';initialize(db);save(ResultRepository(db),'a','af-mlir','ok')
     inc=IncrementalStatistics(db);same(db,inc)
     with sqlite3.connect(db) as conn:conn.execute('CREATE TABLE unrelated(value)')
@@ -148,7 +148,7 @@ def test_window_late_facts_and_cached_aggregate(tmp_path):
 
 
 def test_bootstrap_batches_resume(tmp_path,monkeypatch):
-    import autofusedebugger.fuzz.reporting.incremental as module
+    import autofusex.fuzz.reporting.incremental as module
     db=tmp_path/'db';initialize(db);repo=ResultRepository(db)
     for i in range(5):
         value=record('af-mlir',['pass']);value['seed']=str(2*2**128+42+i)
@@ -191,9 +191,9 @@ def test_replace_group_and_transaction_rollback(tmp_path):
 
 
 def test_group_query_plan_uses_group_index(tmp_path):
-    from autofusedebugger.fuzz.reporting.cases import rollup
+    from autofusex.fuzz.reporting.cases import rollup
     db=tmp_path/'db';initialize(db);save(ResultRepository(db),'a','af-mlir','ok')
-    from autofusedebugger.fuzz.storage.repository import _connect
+    from autofusex.fuzz.storage.repository import _connect
     from contextlib import closing
     with closing(_connect(db)) as conn:
         sql,args=rollup()

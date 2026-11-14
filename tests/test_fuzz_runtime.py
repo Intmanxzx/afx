@@ -5,9 +5,9 @@ from contextlib import closing
 
 import pytest
 
-from autofusedebugger.fuzz.central.repository import initialize, create_user
-from autofusedebugger.fuzz.central.runtime import initialize as init_runtime, ingest, snapshot, connect
-from autofusedebugger.fuzz.storage.repository import _connect
+from autofusex.fuzz.central.repository import initialize, create_user
+from autofusex.fuzz.central.runtime import initialize as init_runtime, ingest, snapshot, connect
+from autofusex.fuzz.storage.repository import _connect
 
 
 def sample(source=None, run=None, machine='host-a', seq=1, elapsed=0, count=0):
@@ -69,7 +69,7 @@ def test_filters_and_counter_regression(central):
 
 
 def test_client_auth_and_stale_samples(tmp_path):
-    from autofusedebugger.fuzz.runtime import heartbeat, atomic, boot_id
+    from autofusex.fuzz.runtime import heartbeat, atomic, boot_id
     import time
     token='private-test-key-not-an-identity'
     (tmp_path/'token').write_text(token)
@@ -90,7 +90,7 @@ def test_client_auth_and_stale_samples(tmp_path):
 
 
 def test_runtime_http_routes_and_credential(central):
-    from autofusedebugger.fuzz.central.server import create_server
+    from autofusex.fuzz.central.server import create_server
     from urllib.request import urlopen, Request
     from urllib.error import HTTPError
     import threading
@@ -123,7 +123,7 @@ def test_concurrent_heartbeats_and_server_names(central):
 
 
 def test_reporter_counts_each_shape_not_whole_attempt(tmp_path):
-    from autofusedebugger.fuzz.runtime import Reporter
+    from autofusex.fuzz.runtime import Reporter
     reporter=Reporter(tmp_path,[])
     reporter.record({'status':'fail','shape_results':[{'correctness':'pass'},{'correctness':'fail'}]},'af-mlir')
     assert reporter.completed==2 and reporter.success==1
@@ -135,8 +135,8 @@ def test_reporter_counts_each_shape_not_whole_attempt(tmp_path):
 
 def test_retired_sampled_metadata_cannot_be_attached_to_current_seed():
     from dataclasses import replace, asdict
-    from autofusedebugger.fuzz.case_spec import decode, encode
-    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    from autofusex.fuzz.case_spec import decode, encode
+    from autofusex.fuzz.generation.sampling import SamplingConfig
     from tests.fuzz_fixtures import three_shapes_spec
     spec=three_shapes_spec();config=SamplingConfig();graph=json.loads(spec.graph_json)
     graph.update(dialect='nnsmith-sampled/5',sampling=asdict(config))

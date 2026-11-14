@@ -2,8 +2,8 @@ import io
 import json
 import uuid
 import pytest
-from autofusedebugger.fuzz.cli import main
-from autofusedebugger.fuzz.onboarding import initialize_user
+from autofusex.fuzz.cli import main
+from autofusex.fuzz.onboarding import initialize_user
 
 
 def test_top_level_is_small(capsys):
@@ -39,9 +39,9 @@ def test_setup_help_has_only_person_token_and_interval(capsys):
 
 
 def test_stop_defaults_to_all_tasks(tmp_path,monkeypatch):
-    from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-    from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig
-    monkeypatch.setenv('AUTOFUSEDBG_HOME',str(tmp_path))
+    from autofusex.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.fuzz.contracts import ExecutionConfig,EvaluationConfig
+    monkeypatch.setenv('AUTOFUSEX_HOME',str(tmp_path))
     ledger=TaskLedger(tmp_path/'tasks/tasks.sqlite')
     ids=[ledger.enqueue(str(2*2**128+i),ExecutionConfig('cpu','cpu',1),EvaluationConfig()) for i in range(3)]
     assert main(['stop'])==0
@@ -55,8 +55,8 @@ def test_admin_rotation_is_by_name(capsys):
 
 
 def test_admin_issues_token_once_without_file(tmp_path,capsys):
-    from autofusedebugger.fuzz.central.repository import authenticate
-    from autofusedebugger.fuzz.storage.queries import reading
+    from autofusex.fuzz.central.repository import authenticate
+    from autofusex.fuzz.storage.queries import reading
     db=tmp_path/'server.sqlite'
     assert main(['admin','user',str(db),'niuyuhu'])==0
     result=json.loads(capsys.readouterr().out)
@@ -68,8 +68,8 @@ def test_admin_issues_token_once_without_file(tmp_path,capsys):
 
 
 def test_admin_rotates_token_without_file(tmp_path,capsys):
-    from autofusedebugger.fuzz.central.repository import create_user,authenticate
-    from autofusedebugger.fuzz.storage.queries import reading
+    from autofusex.fuzz.central.repository import create_user,authenticate
+    from autofusex.fuzz.storage.queries import reading
     db=tmp_path/'server.sqlite';old=create_user(db,'niuyuhu')
     assert main(['admin','rotate-token',str(db),'niuyuhu'])==0
     new=json.loads(capsys.readouterr().out)
@@ -92,7 +92,7 @@ def test_documented_command_help_is_reachable(args, capsys):
 
 
 def test_short_flags_and_explicit_save(capsys):
-    from autofusedebugger.fuzz.cli import replay_parser
+    from autofusex.fuzz.cli import replay_parser
     args = replay_parser().parse_args(['B16', '--perf'])
     assert args.performance and not args.save
     assert replay_parser().parse_args(['B16', '--save']).save
@@ -104,29 +104,29 @@ def test_short_flags_and_explicit_save(capsys):
 
 
 def test_sync_uses_remembered_home(tmp_path, monkeypatch, capsys):
-    from autofusedebugger.fuzz import config
-    monkeypatch.delenv('AUTOFUSEDBG_HOME', raising=False)
+    from autofusex.fuzz import config
+    monkeypatch.delenv('AUTOFUSEX_HOME', raising=False)
     monkeypatch.setattr(config, 'default_home', lambda: tmp_path/'default')
     custom = tmp_path/'custom'
     config.remember_home(custom)
     assert config.data_home() == custom
-    monkeypatch.setattr('autofusedebugger.fuzz.sync.client.status', lambda home, database: {'directory': str(home)})
+    monkeypatch.setattr('autofusex.fuzz.sync.client.status', lambda home, database: {'directory': str(home)})
     assert main(['maintenance', 'sync', 'status']) == 0
     assert json.loads(capsys.readouterr().out)['directory'] == str(custom)
-    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path/'env'))
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path/'env'))
     assert config.data_home() == tmp_path/'env'
     assert config.data_home(tmp_path/'explicit') == tmp_path/'explicit'
 
 
 def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
-    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
+    monkeypatch.setattr('autofusex.fuzz.generation.runtime.source_evidence', lambda: {})
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusex.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     observed = []
     def launch(ledger, database, specifications, **kwargs):
         observed.append(kwargs)
         return {'state': 'test'}
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
+    monkeypatch.setattr('autofusex.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
     configs, evaluation, count, devices, excluded, sampling, ops = observed[-1]['campaign']
     assert ops is None
@@ -140,11 +140,11 @@ def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeyp
 
 
 def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypatch, capsys):
-    from autofusedebugger.fuzz.config import setup, load_config
-    from autofusedebugger.fuzz import resources
-    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0','npu:1'])
+    from autofusex.fuzz.config import setup, load_config
+    from autofusex.fuzz import resources
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusex.fuzz.generation.runtime.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusex.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0','npu:1'])
     cores = [36]
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling': cores[0], 'effective_memory_bytes': 200*1024**3})
@@ -154,7 +154,7 @@ def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypat
     def launch(ledger, database, specifications, **kwargs):
         observed.append(kwargs['budget'])
         return {'state': 'test'}
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
+    monkeypatch.setattr('autofusex.fuzz.scheduling.hosting.launch', launch)
     assert main(['run']) == 0
     result = json.loads(capsys.readouterr().out)
     assert result['resource_plan']['selected'] == {'cpu_workers':4,'compile_threads':8}
@@ -171,7 +171,7 @@ def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypat
 
 
 def test_setup_enables_auto_only_for_new_homes(tmp_path):
-    from autofusedebugger.fuzz.config import setup, load_config
+    from autofusex.fuzz.config import setup, load_config
     identity = {'user_id': str(uuid.uuid4()), 'display_name': 'test'}
     def opener(*args, **kwargs):
         return io.BytesIO(json.dumps(identity).encode())
@@ -188,16 +188,16 @@ def test_setup_enables_auto_only_for_new_homes(tmp_path):
 
 
 def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusex.fuzz.generation.runtime.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusex.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     def launch(*args, **kwargs):
         plan = json.loads(capsys.readouterr().err)['resource_plan']
         assert plan['version'] == 3
         assert plan['selected']['cpu_workers'] == kwargs['budget'].cpu_workers
         assert all(c.compile_threads == kwargs['budget'].compile_threads for c in kwargs['campaign'][0])
         return {'state': 'test'}
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
+    monkeypatch.setattr('autofusex.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
     assert 'resource_plan' in json.loads(capsys.readouterr().out)
 
@@ -207,10 +207,10 @@ def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys)
     ['--auto-resources', '--compile-threads', '2'],
 ])
 def test_auto_explicit_override_conflicts_never_launch(tmp_path, monkeypatch, capsys, flags):
-    monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', lambda *a, **kw: pytest.fail('launched'))
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusex.fuzz.generation.runtime.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusex.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
+    monkeypatch.setattr('autofusex.fuzz.scheduling.hosting.launch', lambda *a, **kw: pytest.fail('launched'))
     assert main(['run', *flags]) == 2
     assert 'cannot be combined' in capsys.readouterr().err
 
@@ -228,7 +228,7 @@ def test_setup_does_not_import_torch_or_discover_devices(tmp_path, monkeypatch):
         assert name.split('.')[0] not in {'torch', 'torch_npu'}
         return original_import(name, *args, **kwargs)
     monkeypatch.setattr(builtins, '__import__', guarded_import)
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices',
+    monkeypatch.setattr('autofusex.fuzz.scheduling.devices.select_devices',
                         lambda *a: pytest.fail('setup must not discover devices'))
     identity = {'user_id': str(uuid.uuid4()), 'display_name': 'test'}
     initialize_user(tmp_path, 'test-token-not-a-real-secret-12345',

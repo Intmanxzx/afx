@@ -5,7 +5,7 @@ import struct
 import numpy as np
 import pytest
 
-from autofusedebugger.fuzz.diagnostics import GenerationTrace, tensor_signature
+from autofusex.fuzz.diagnostics import GenerationTrace, tensor_signature
 
 
 @pytest.mark.parametrize("dtype,fmt", [("float32", "f"), ("float16", "e"), ("int32", "i")])

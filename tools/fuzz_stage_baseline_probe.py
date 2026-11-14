@@ -7,11 +7,11 @@ workers, not a warm-session benchmark. Wall spans are not kernel measurements.
 """
 import json,sys,time
 from pathlib import Path
-from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.scheduling.budgets import Budget,write_policy
-from autofusedebugger.fuzz.scheduling import supervisor
-from autofusedebugger.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.contracts import ExecutionConfig,EvaluationConfig
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.budgets import Budget,write_policy
+from autofusex.fuzz.scheduling import supervisor
+from autofusex.fuzz.storage.queries import ResultQueries
 root=Path(sys.argv[1]);root.mkdir(parents=True,exist_ok=False)
 workers=int(sys.argv[2]);backend=sys.argv[3]
 ledger=TaskLedger(root/'tasks');db=root/'results'

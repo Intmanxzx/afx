@@ -1,6 +1,6 @@
 # Fuzz 设计
 
-本文件描述当前 `autofusedebugger/fuzz` 及已确认的演进设计；第 9 节为分期方案，9.10 保留第一切片历史，9.11 记录当前阶段调度、资源池及观测实现与验证边界。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](fuzz_usage.md)。
+本文件描述当前 `autofusex/fuzz` 及已确认的演进设计；第 9 节为分期方案，9.10 保留第一切片历史，9.11 记录当前阶段调度、资源池及观测实现与验证边界。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](fuzz_usage.md)。
 
 ## 1. 模块与依赖
 
@@ -35,7 +35,7 @@ run/replay统一使用NNSmith `graph_gen.model_gen`，通过 seed 中编码的�
 
 C2/D2 seed 使用独立的 160-bit entropy 空间；C2 保持单静态 Shape，D2 在同一图和固定权重上构造 2–8 个合法 Shape，数量由 seed 编码，不能构造时显式失败，不退回静态。图由 NNSmith 生成，数据字节由字段寻址 SHA256 和规范小端编码生成，避免 Torch 全局 RNG 影响输入。workload 指纹覆盖完整规格与字节，缓存不参与确定性保证。
 
-依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。环境由 `autofusedebugger/nnsmith_integration/install_af_fuzz.sh` 一键复现：脚本在私有副本按固定顺序应用全部补丁，以普通 wheel 安装，构建前和安装后校验指纹；禁止 SCM 注入额外的 _version.py，补丁顺序与指纹强绑定。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
+依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。环境由 `autofusex/nnsmith_integration/install_af_fuzz.sh` 一键复现：脚本在私有副本按固定顺序应用全部补丁，以普通 wheel 安装，构建前和安装后校验指纹；禁止 SCM 注入额外的 _version.py，补丁顺序与指纹强绑定。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
 
 图、输入/输出规格作为受限轻量case_spec进入结果和同步协议，云端与离线view直接索引采集数据，不重新生成图、不依赖NNSmith。它不是重放所需的缓存。普通import不加载NNSmith；真正生成时才检查依赖。
 

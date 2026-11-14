@@ -52,8 +52,8 @@ afx python3 sasrec.py --device npu --device_id 0
 报告输出位置。对于 `/path/to/model.py`，默认产物为：
 
 ```text
-./model_autofusedebugger/       # dump、图、manifest、JSON/CSV 等中间产物
-./model_autofusedebugger.html   # 最终 HTML 报告
+./model_autofusex/       # dump、图、manifest、JSON/CSV 等中间产物
+./model_autofusex.html   # 最终 HTML 报告
 ```
 
 再次执行会清理并重新生成同名中间产物目录，同时覆盖同名 HTML。快捷模式会先静态扫描脚本的
@@ -152,9 +152,9 @@ afx python3 \
 复杂 PyTorch/Baize 脚本可以先交给可配置的 Agent 生成固定格式的归一化 JSON：
 
 ```bash
-export AUTOFUSEDEBUGGER_AGENT_ENDPOINT=https://agent.example.com/v1/chat/completions
-export AUTOFUSEDEBUGGER_AGENT_API_KEY='your-api-key'
-export AUTOFUSEDEBUGGER_AGENT_MODEL='your-model-name'
+export AUTOFUSEX_AGENT_ENDPOINT=https://agent.example.com/v1/chat/completions
+export AUTOFUSEX_AGENT_API_KEY='your-api-key'
+export AUTOFUSEX_AGENT_MODEL='your-model-name'
 
 afx normalize-script \
     --script /path/to/model.py \
@@ -177,7 +177,7 @@ afx run-script \
 
 Agent 的 HTTP、CANNBot、Codex/Claude/OpenCode CLI 配置，以及各环境变量的含义和默认值，见
 [agent_normalization.md](agent_normalization.md)。工具只接收归一化结果和诊断结果，实际模型执行仍由
-AutofuseDebugger 完成。
+AutofuseX 完成。
 
 ## 兼容 `create_case()` 用例
 

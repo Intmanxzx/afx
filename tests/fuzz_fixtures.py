@@ -1,9 +1,9 @@
 """Captured NNSmith metadata for unit tests, never a runtime replay cache."""
 from pathlib import Path
 from dataclasses import replace
-from autofusedebugger.fuzz.case_spec import decode
-from autofusedebugger.fuzz.contracts import CaseBundle, Seed
-from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.case_spec import decode
+from autofusex.fuzz.contracts import CaseBundle, Seed
+from autofusex.fuzz.generation.sampling import SamplingConfig
 import math
 
 CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))

@@ -15,15 +15,15 @@ import threading
 import time
 from urllib.request import build_opener, ProxyHandler
 
-from autofusedebugger.fuzz.central.server import create_server
-from autofusedebugger.fuzz.central.repository import create_user
-from autofusedebugger.fuzz.central import retests
-from autofusedebugger.fuzz.config import setup
-from autofusedebugger.fuzz.storage.repository import _connect
-from autofusedebugger.fuzz.storage.queries import ResultQueries
-from autofusedebugger.fuzz.sync.client import once
-from autofusedebugger.fuzz.sync.retests import Consumer
-from autofusedebugger.fuzz.sync.outbox import pending
+from autofusex.fuzz.central.server import create_server
+from autofusex.fuzz.central.repository import create_user
+from autofusex.fuzz.central import retests
+from autofusex.fuzz.config import setup
+from autofusex.fuzz.storage.repository import _connect
+from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.sync.client import once
+from autofusex.fuzz.sync.retests import Consumer
+from autofusex.fuzz.sync.outbox import pending
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     database=root/'central.sqlite'
     users=[create_user(database,name) for name in ('Original','Retester')]
     if args.structured:
-        from autofusedebugger.fuzz.reporting.materialized import migrate
+        from autofusex.fuzz.reporting.materialized import migrate
         migrate(database)
     server=create_server(database,0,cache_interval=.5)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
@@ -53,8 +53,8 @@ def main():
         for trial in range(6):
             archive=original/f'baseline-{trial}.sqlite'
             with (root/f'baseline-{trial}.log').open('w') as log:
-                env=dict(os.environ,AUTOFUSEDBG_HOME=str(original))
-                completed=subprocess.run([sys.executable,'-m','autofusedebugger.fuzz','replay','D00000000G',
+                env=dict(os.environ,AUTOFUSEX_HOME=str(original))
+                completed=subprocess.run([sys.executable,'-m','autofusex.fuzz','replay','D00000000G',
                     '--backend','af-mlir','--device',f'npu:{trial%2}','--save','--database',str(archive),'--compile-threads','1'],
                     env=env,stdout=log,stderr=subprocess.STDOUT,timeout=240)
             if not completed.returncode:break

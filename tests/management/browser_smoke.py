@@ -6,9 +6,9 @@ import threading
 import subprocess
 import ssl
 from playwright.sync_api import sync_playwright
-from autofusedebugger.fuzz.central.repository import create_user
-from autofusedebugger.fuzz.central.server import create_server
-from autofusedebugger.management.central import ControlStore
+from autofusex.fuzz.central.repository import create_user
+from autofusex.fuzz.central.server import create_server
+from autofusex.management.central import ControlStore
 
 with tempfile.TemporaryDirectory() as directory:
     database=Path(directory)/'central.sqlite';user=create_user(database,'Browser Fixture')

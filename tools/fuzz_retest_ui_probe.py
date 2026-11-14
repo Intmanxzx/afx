@@ -11,15 +11,15 @@ from playwright.sync_api import sync_playwright, expect
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tests'))
 from test_fuzz_retests import setup as setup_fixture
-from autofusedebugger.fuzz.central.server import create_server
-from autofusedebugger.fuzz.central import retests
+from autofusex.fuzz.central.server import create_server
+from autofusex.fuzz.central import retests
 from test_fuzz_retest_completion import upload
 
 root=Path(sys.argv[1]).resolve();root.mkdir(parents=True,exist_ok=False,mode=0o700)
 fixture=setup_fixture.__wrapped__(root)
 database,alice,bob,attempt,client,payload=fixture
 if "--structured" in sys.argv[2:]:
-    from autofusedebugger.fuzz.reporting.materialized import migrate
+    from autofusex.fuzz.reporting.materialized import migrate
     migrate(database)
 server=create_server(database,0,cache_interval=.2)
 subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(root/'key.pem'),

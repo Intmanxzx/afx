@@ -1,4 +1,4 @@
-from autofusedebugger.cli import main
+from autofusex.cli import main
 
 
 if __name__ == "__main__":

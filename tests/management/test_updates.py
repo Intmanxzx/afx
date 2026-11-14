@@ -2,10 +2,10 @@ import base64
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
-from autofusedebugger.management.artifacts import atomic
-from autofusedebugger.management.config import canonical
-from autofusedebugger.management.updates import verify_manifest,activate
-from autofusedebugger.management.store import Store
+from autofusex.management.artifacts import atomic
+from autofusex.management.config import canonical
+from autofusex.management.updates import verify_manifest,activate
+from autofusex.management.store import Store
 
 
 def signed(tmp_path, wheels=None):
@@ -18,7 +18,7 @@ def signed(tmp_path, wheels=None):
 
 
 def test_stage_accepts_signed_autofusex_wheel(tmp_path, monkeypatch):
-    from autofusedebugger.management import updates
+    from autofusex.management import updates
     artifact = tmp_path/'artifact.whl'
     artifact.write_bytes(b'wheel')
     envelope = signed(tmp_path, [dict(name='autofusex', version='0.1.2',
@@ -59,13 +59,13 @@ def test_launcher_failed_release_rolls_back_without_database_restore(tmp_path):
     import subprocess
     import sys
     import time
-    from autofusedebugger.management.daemon import request
+    from autofusex.management.daemon import request
     home=tmp_path/'home';store=Store(home)
     envelope=signed(home)
     identity='a'*64;directory=home/'tools'/identity;directory.mkdir(parents=True)
     broken=directory/'broken-python';broken.write_text('#!/bin/sh\nexit 42\n');broken.chmod(0o700)
     atomic(directory/'ready.json',dict(id=identity,envelope=envelope,python=str(broken)))
-    child=subprocess.Popen([sys.executable,'-m','autofusedebugger','daemon','supervise','--data-dir',str(home)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    child=subprocess.Popen([sys.executable,'-m','autofusex','daemon','supervise','--data-dir',str(home)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:
         for _ in range(100):
             try:request(home,dict(action='status'));break

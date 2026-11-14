@@ -1,4 +1,4 @@
-from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.generation.sampling import SamplingConfig
 CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 """Current production CLI -> supervisor -> NNSmith -> execution -> storage tests."""
 import json
@@ -9,7 +9,7 @@ import pytest
 
 
 def test_no_template_implementation_or_fallback():
-    from autofusedebugger.fuzz import generation
+    from autofusex.fuzz import generation
     assert not Path(generation.__file__).with_name('v1.py').exists()
     assert not Path(generation.__file__).with_name('v2.py').exists()
     for seed in ('A16','B16','42'):
@@ -24,10 +24,10 @@ class Block(importlib.abc.MetaPathFinder):
  def find_spec(self,name,*args):
   if name.split('.')[0] in {'torch','torch_npu','numpy','nnsmith','z3'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.view.server import create_server
-from autofusedebugger.fuzz.central.server import create_server as central
-from autofusedebugger.fuzz.cli import main
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.view.server import create_server
+from autofusex.fuzz.central.server import create_server as central
+from autofusex.fuzz.cli import main
 assert main(['maintenance','doctor'])==0
 '''
     subprocess.run([sys.executable,'-c',code],check=True)
@@ -35,14 +35,14 @@ assert main(['maintenance','doctor'])==0
 
 def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
     pytest.importorskip('nnsmith');pytest.importorskip('torch')
-    from autofusedebugger.fuzz.cli import main
-    from autofusedebugger.fuzz.scheduling import hosting
-    from autofusedebugger.fuzz.scheduling.campaign import initialize,refill
-    from autofusedebugger.fuzz.generation import materialize
-    from autofusedebugger.fuzz.contracts import Seed
-    from autofusedebugger.fuzz.storage.queries import ResultQueries
-    monkeypatch.setenv('AUTOFUSEDBG_HOME',str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.scheduling.campaign.secrets.randbelow',lambda _:42)
+    from autofusex.fuzz.cli import main
+    from autofusex.fuzz.scheduling import hosting
+    from autofusex.fuzz.scheduling.campaign import initialize,refill
+    from autofusex.fuzz.generation import materialize
+    from autofusex.fuzz.contracts import Seed
+    from autofusex.fuzz.storage.queries import ResultQueries
+    monkeypatch.setenv('AUTOFUSEX_HOME',str(tmp_path))
+    monkeypatch.setattr('autofusex.fuzz.scheduling.campaign.secrets.randbelow',lambda _:42)
     def launch(ledger,database,specifications,**kw):
         initialize(ledger,*kw['campaign']);refill(ledger)
         tasks=ledger.page()['items']
@@ -64,10 +64,10 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
 
 def test_real_supervisor_worker_uses_nnsmith(tmp_path):
     pytest.importorskip('nnsmith');pytest.importorskip('torch')
-    from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-    from autofusedebugger.fuzz.scheduling.supervisor import drain
-    from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig
-    from autofusedebugger.fuzz.storage import ResultRepository
+    from autofusex.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.fuzz.scheduling.supervisor import drain
+    from autofusex.fuzz.contracts import ExecutionConfig,EvaluationConfig
+    from autofusex.fuzz.storage import ResultRepository
     ledger=TaskLedger(tmp_path/'tasks.sqlite');database=tmp_path/'results.sqlite'
     identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1),EvaluationConfig())
     assert drain(ledger,database)['completed']==1
@@ -78,12 +78,12 @@ def test_real_supervisor_worker_uses_nnsmith(tmp_path):
 
 @pytest.mark.parametrize('value', ['A16','A000000016','B16','B000000016','42',42,str(2**128+42),2**128+42])
 def test_no_ab_seed_compatibility(value):
-    from autofusedebugger.fuzz.contracts import Seed
+    from autofusex.fuzz.contracts import Seed
     with pytest.raises(ValueError): Seed.parse(value)
 
 
 def test_only_current_seed_roundtrip():
-    from autofusedebugger.fuzz.contracts import Seed
+    from autofusex.fuzz.contracts import Seed
     seed=Seed.parse('C000000016')
     assert Seed.parse(str(seed))==seed
     assert seed.short=='C000000016'

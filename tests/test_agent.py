@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-import autofusedebugger.agent as agent
-import autofusedebugger.script_runner as script_runner
-from autofusedebugger.agent import AgentClient, AgentConfig, AgentError
-from autofusedebugger.adapters import CapturedInvocation
-from autofusedebugger.cli import build_parser
-from autofusedebugger.normalization import (
+import autofusex.agent as agent
+import autofusex.script_runner as script_runner
+from autofusex.agent import AgentClient, AgentConfig, AgentError
+from autofusex.adapters import CapturedInvocation
+from autofusex.cli import build_parser
+from autofusex.normalization import (
     NORMALIZATION_SCHEMA,
     RECOVERY_SCHEMA,
     normalize_script,

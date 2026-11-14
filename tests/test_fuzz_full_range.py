@@ -9,8 +9,8 @@ import pytest
 def test_fixed_full_range_seed_replays_without_global_rng_changes():
     pytest.importorskip('nnsmith')
     import random
-    from autofusedebugger.fuzz.generation import materialize, workload_id, nnsmith_sampled
-    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    from autofusex.fuzz.generation import materialize, workload_id, nnsmith_sampled
+    from autofusex.fuzz.generation.sampling import SamplingConfig
     config = SamplingConfig.profile('small', dtype_mode='float32', max_nodes=3)
     for i in (0, 1, 2, 10):
         seed = config.seed(i)
@@ -27,8 +27,8 @@ def test_probe_noaf_failure_and_unknown_restore(monkeypatch):
     pytest.importorskip('torch_npu')
     from torch._inductor.scheduler import Scheduler
     from torch_npu._inductor.ascendc import codegen
-    from autofusedebugger.fuzz.backends.autofuse_coverage import observe_autofuse, NoAutofuseCoverage
-    from autofusedebugger.fuzz.failure_details import validate
+    from autofusex.fuzz.backends.autofuse_coverage import observe_autofuse, NoAutofuseCoverage
+    from autofusex.fuzz.failure_details import validate
     with patch.object(Scheduler, 'codegen', lambda self: None):
         original = Scheduler.codegen
         with observe_autofuse() as c:
@@ -52,10 +52,10 @@ def test_all_target_publish_barrier(tmp_path, monkeypatch, late_kind):
     """A fast peer must not commit before a slow peer's skip verdict."""
     import time
     from concurrent.futures import ThreadPoolExecutor
-    from autofusedebugger.fuzz.scheduling import staged
-    from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-    from autofusedebugger.fuzz.scheduling.budgets import Budget, write_policy
-    from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
+    from autofusex.fuzz.scheduling import staged
+    from autofusex.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.fuzz.scheduling.budgets import Budget, write_policy
+    from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
     recorded = []
     class FakePool:
         def __init__(self,*args,**kw):
@@ -84,12 +84,12 @@ def test_all_target_publish_barrier(tmp_path, monkeypatch, late_kind):
         def close(self): self.executor.shutdown(wait=True)
     monkeypatch.setattr(staged,'Pool',FakePool)
     monkeypatch.setattr(staged,'discover',lambda names: [])
-    from autofusedebugger.fuzz.storage import stage_facts
+    from autofusex.fuzz.storage import stage_facts
     monkeypatch.setattr(stage_facts,'save_case',lambda *args:None)
     monkeypatch.setattr(stage_facts,'finish_window',lambda *args:None)
     ledger=TaskLedger(tmp_path/'queue')
     for backend in ['cpu','npu-eager','cpu-compile']:
-        from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+        from autofusex.fuzz.generation.sampling import SamplingConfig
         ledger.enqueue(str(SamplingConfig.profile('small').seed(3)),ExecutionConfig(backend,'npu:0' if backend=='npu-eager' else 'cpu',1,scheduling='staged',batch_id='test'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=4))
     summary=staged.drain(ledger,tmp_path/'results')
@@ -101,27 +101,27 @@ def test_all_target_publish_barrier(tmp_path, monkeypatch, late_kind):
 
 def test_generation_failure_reuses_worker(tmp_path):
     pytest.importorskip('nnsmith')
-    from autofusedebugger.fuzz.scheduling.stage_worker import perform
-    from autofusedebugger.fuzz.generation import materialize
-    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    from autofusex.fuzz.scheduling.stage_worker import perform
+    from autofusex.fuzz.generation import materialize
+    from autofusex.fuzz.generation.sampling import SamplingConfig
     config = SamplingConfig.profile('small', dtype_mode='float32', max_nodes=3)
     job = dict(kind='generate', directory=str(tmp_path), seed=str(config.seed(0)), config={})
-    with patch('autofusedebugger.fuzz.generation.materialize', side_effect=ValueError('unsupported op parameters')):
+    with patch('autofusex.fuzz.generation.materialize', side_effect=ValueError('unsupported op parameters')):
         result = perform(job)
     assert result['skipped'] and result['reason'] == 'generation_failed'
     assert perform(job)['workload_id']  # same process succeeds on next job
-    with patch('autofusedebugger.fuzz.generation.runtime.source_evidence', side_effect=ValueError('source mismatch')):
+    with patch('autofusex.fuzz.generation.runtime.source_evidence', side_effect=ValueError('source mismatch')):
         with pytest.raises(ValueError, match='source mismatch'): perform(job)
 
 
 def test_noaf_stops_remaining_dynamic_samples():
     from test_fuzz_precise_metrics import Adapter
-    from autofusedebugger.fuzz.generation import materialize as bundle
-    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    from autofusex.fuzz.generation import materialize as bundle
+    from autofusex.fuzz.generation.sampling import SamplingConfig
     current=str(SamplingConfig.profile('small',max_nodes=1,dtype_mode='float32').seed(3))
-    from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.contracts import EvaluationConfig
-    from autofusedebugger.fuzz.backends.autofuse_coverage import NoAutofuseCoverage
+    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.contracts import EvaluationConfig
+    from autofusex.fuzz.backends.autofuse_coverage import NoAutofuseCoverage
     adapter = Adapter()
     calls = []
     def invoke(*args):
@@ -141,13 +141,13 @@ def test_noaf_stops_remaining_dynamic_samples():
 
 def test_coverage_diagnostics_repository_roundtrip(tmp_path):
     from test_fuzz_precise_metrics import Adapter
-    from autofusedebugger.fuzz.generation import materialize as bundle
-    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    from autofusex.fuzz.generation import materialize as bundle
+    from autofusex.fuzz.generation.sampling import SamplingConfig
     current=str(SamplingConfig.profile('small',max_nodes=1,dtype_mode='float32').seed(3))
-    from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.contracts import EvaluationConfig
-    from autofusedebugger.fuzz.backends.autofuse_coverage import Coverage
-    from autofusedebugger.fuzz.storage import ResultRepository
+    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.contracts import EvaluationConfig
+    from autofusex.fuzz.backends.autofuse_coverage import Coverage
+    from autofusex.fuzz.storage import ResultRepository
     result = execute(bundle(current), Adapter(), EvaluationConfig())
     coverage = asdict(Coverage(candidates=1, installed=True, events=['AF_CANDIDATE']))
     diag = json.loads(result['execution']['diagnostics'])
@@ -159,17 +159,17 @@ def test_coverage_diagnostics_repository_roundtrip(tmp_path):
 
 
 def test_retired_graph_never_falls_back_to_interpreter():
-    from autofusedebugger.fuzz.generation.torch_dialect import execute_graph
+    from autofusex.fuzz.generation.torch_dialect import execute_graph
     with pytest.raises(ValueError,match='retired graph dialect'):
         execute_graph(None,{'dialect':'nnsmith-sampled/5'}, {}, [], 'cpu')
 
 
 def test_skips_have_bounded_audit_without_attempts(tmp_path):
     import sqlite3
-    from autofusedebugger.fuzz.storage.stage_facts import save_case
-    from autofusedebugger.fuzz.storage.lifecycle import stamp
-    from autofusedebugger.fuzz.scheduling.stages import Case, StageTask, Kind
-    from autofusedebugger.fuzz.contracts import ExecutionConfig
+    from autofusex.fuzz.storage.stage_facts import save_case
+    from autofusex.fuzz.storage.lifecycle import stamp
+    from autofusex.fuzz.scheduling.stages import Case, StageTask, Kind
+    from autofusex.fuzz.contracts import ExecutionConfig
     case = Case('id', 'C16', stamp(), [{'attempt_id':'not-saved', 'execution':json.dumps(asdict(ExecutionConfig('cpu','cpu',1)))}], str(tmp_path))
     case.skip_reason = 'cpu_reference_failed'; case.skip_finalized = True
     stage = StageTask(Kind.REFERENCE, 'id')

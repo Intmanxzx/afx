@@ -3,10 +3,10 @@ import sys
 import time
 from pathlib import Path
 import pytest
-from autofusedebugger.management import tasks
-from autofusedebugger.management.artifacts import atomic
-from autofusedebugger.management.config import canonical,validate
-from autofusedebugger.management.store import Store
+from autofusex.management import tasks
+from autofusex.management.artifacts import atomic
+from autofusex.management.config import canonical,validate
+from autofusex.management.store import Store
 
 
 def prepared(tmp_path):

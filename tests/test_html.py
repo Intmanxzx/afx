@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from autofusedebugger.html import write_report_html, write_report_html_from_json
+from autofusex.html import write_report_html, write_report_html_from_json
 
 
 def test_write_report_html_embeds_rows(tmp_path: Path) -> None:
     report = {
-        "schema": "autofusedebugger-report/1",
+        "schema": "autofusex-report/1",
         "rtol": 1e-3,
         "atol": 1e-3,
         "summary": {
@@ -395,7 +395,7 @@ def test_write_report_html_deduplicates_tensor_payloads(tmp_path: Path) -> None:
 
 
 def test_write_report_html_externalizes_large_tensor_payloads(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("AUTOFUSEDEBUGGER_EMBED_TENSOR_BYTES", "0")
+    monkeypatch.setenv("AUTOFUSEX_EMBED_TENSOR_BYTES", "0")
     encoded = {
         "encoding": "base64",
         "dtype": "float32",

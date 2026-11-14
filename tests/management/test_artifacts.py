@@ -2,7 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 import pytest
-from autofusedebugger.management import artifacts
+from autofusex.management import artifacts
 
 
 def test_local_trust_and_path_confinement(tmp_path):

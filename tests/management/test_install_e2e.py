@@ -4,9 +4,9 @@ import platform
 import sys
 import zipfile
 from pathlib import Path
-from autofusedebugger.management.store import Store
-from autofusedebugger.management.artifacts import atomic,sha256
-from autofusedebugger.management import environments
+from autofusex.management.store import Store
+from autofusex.management.artifacts import atomic,sha256
+from autofusex.management import environments
 
 
 def wheel(path):

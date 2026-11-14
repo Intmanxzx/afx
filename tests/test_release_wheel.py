@@ -17,8 +17,8 @@ if sys.version_info >= (3, 11):
 
 @pytest.fixture
 def artifact(tmp_path):
-    (tmp_path/'autofusedebugger').mkdir()
-    (tmp_path/'autofusedebugger/__init__.py').write_text('__version__ = "0.1.2"\n')
+    (tmp_path/'autofusex').mkdir()
+    (tmp_path/'autofusex/__init__.py').write_text('__version__ = "0.1.2"\n')
     (tmp_path/'pyproject.toml').write_text('[project]\nname="autofusex"\nversion="0.1.2"\n')
     def git(*args):
         subprocess.run(['git','-C',str(tmp_path),*args], check=True, capture_output=True)
@@ -26,13 +26,13 @@ def artifact(tmp_path):
     dist=tmp_path/'dist';dist.mkdir();wheel=dist/'autofusex-0.1.2-py3-none-any.whl'
     with zipfile.ZipFile(wheel,'w') as archive:
         archive.writestr('autofusex-0.1.2.dist-info/METADATA','Name: autofusex\nVersion: 0.1.2\n')
-        archive.writestr('autofusex-0.1.2.dist-info/entry_points.txt', '[console_scripts]\nafx = autofusedebugger.cli:main\n')
-        archive.writestr('afx/__init__.py', 'from autofusedebugger import __version__\n')
-        archive.writestr('afx/__main__.py', 'from autofusedebugger.cli import main\nraise SystemExit(main())\n')
-        archive.writestr('autofusedebugger/__init__.py','__version__ = "0.1.2"\n')
-        archive.writestr('autofusedebugger/nnsmith_integration/patches/example.patch', 'patch')
+        archive.writestr('autofusex-0.1.2.dist-info/entry_points.txt', '[console_scripts]\nafx = autofusex.cli:main\n')
+        archive.writestr('afx/__init__.py', 'from autofusex import __version__\n')
+        archive.writestr('afx/__main__.py', 'from autofusex.cli import main\nraise SystemExit(main())\n')
+        archive.writestr('autofusex/__init__.py','__version__ = "0.1.2"\n')
+        archive.writestr('autofusex/nnsmith_integration/patches/example.patch', 'patch')
         for asset in ['index.html','app.js','charts.js']:
-            archive.writestr('autofusedebugger/fuzz/view/static/'+asset,'content')
+            archive.writestr('autofusex/fuzz/view/static/'+asset,'content')
     return tmp_path, wheel
 
 

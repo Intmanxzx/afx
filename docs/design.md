@@ -89,7 +89,7 @@ Autofuse 会把多个单算子融合为 NPU 侧融合算子。整网精度劣化
 
 4. 输出
 
-   写出 `autofusedebugger-manifest/1` JSON。
+   写出 `autofusex-manifest/1` JSON。
 
 ### 功能需求 2：逐算子精度比较
 
@@ -231,10 +231,10 @@ afx run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [-
 
 当前不修改 Graph-autofusion 仓内子模块。新增独立目录：
 
-- `autofusedebugger/graph.py`：GE dump 图解析和 manifest 生成。
-- `autofusedebugger/compare.py`：精度比较核心。
-- `autofusedebugger/camodel.py`：CANN simulator/CAModel 目录发现与环境变量构造。
-- `autofusedebugger/runner.py`：外部命令执行封装。
+- `autofusex/graph.py`：GE dump 图解析和 manifest 生成。
+- `autofusex/compare.py`：精度比较核心。
+- `autofusex/camodel.py`：CANN simulator/CAModel 目录发现与环境变量构造。
+- `autofusex/runner.py`：外部命令执行封装。
 - `docs/`：设计与 manifest 文档。
 - `tests/`：最小 pytest。
 

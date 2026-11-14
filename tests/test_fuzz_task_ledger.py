@@ -6,9 +6,9 @@ import uuid
 
 import pytest
 
-from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.storage.transfer import check_database
+from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.storage.transfer import check_database
 
 
 EX = ExecutionConfig('cpu-eager', 'cpu')
@@ -94,7 +94,7 @@ def test_process_crash_does_not_reclaim_until_explicit_recovery(tmp_path):
     identity = ledger.enqueue('680564733841876926926749214863536422954', EX, EV)
     code = '''
 import os,sys
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.ledger import TaskLedger
 TaskLedger(sys.argv[1]).claim()
 os._exit(79)
 '''
@@ -116,7 +116,7 @@ def test_cross_process_claim_is_unique(tmp_path):
     ledger.enqueue('680564733841876926926749214863536422954', EX, EV)
     code = '''
 import json,sys
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.ledger import TaskLedger
 print(json.dumps(TaskLedger(sys.argv[1]).claim()))
 '''
     children = [subprocess.Popen([sys.executable, '-c', code, str(ledger.path)], stdout=subprocess.PIPE, text=True)
@@ -139,10 +139,10 @@ def test_resume_cancelled_task_respects_capacity(tmp_path):
 def test_scheduler_import_has_no_execution_dependency():
     code = '''
 import sys
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.ledger import TaskLedger
 assert not set(sys.modules) & {'torch','numpy','nnsmith','torch_npu'}
-assert 'autofusedebugger.fuzz.execution' not in sys.modules
-assert 'autofusedebugger.fuzz.backends' not in sys.modules
+assert 'autofusex.fuzz.execution' not in sys.modules
+assert 'autofusex.fuzz.backends' not in sys.modules
 '''
     assert subprocess.run([sys.executable, '-c', code]).returncode == 0
 

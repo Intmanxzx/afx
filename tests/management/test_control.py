@@ -1,9 +1,9 @@
 import json
 import time
 import pytest
-from autofusedebugger.management.central import ControlStore, Conflict
-from autofusedebugger.management.store import Store
-from autofusedebugger.fuzz.central.repository import create_user
+from autofusex.management.central import ControlStore, Conflict
+from autofusex.management.store import Store
+from autofusex.fuzz.central.repository import create_user
 
 
 @pytest.fixture
@@ -69,7 +69,7 @@ def test_local_journal_recovery(tmp_path):
 
 def test_device_token_cannot_login_or_adopt_other_source(control):
     import uuid
-    from autofusedebugger.fuzz.central.repository import authenticate,authenticate_upload
+    from autofusex.fuzz.central.repository import authenticate,authenticate_upload
     store,alice,_,credential=control
     with store.connect() as db:
         with pytest.raises(PermissionError):authenticate(db,credential['token'])
@@ -92,7 +92,7 @@ def test_pairing_exchange_retries_without_plaintext_secret(control):
 
 
 def test_cancel_queued_and_running_operations(tmp_path):
-    from autofusedebugger.management.operations import execute
+    from autofusex.management.operations import execute
     store=Store(tmp_path/'home');target=store.submit('environment.inspect',{},'target')
     cancel=store.submit('operation.cancel',dict(operation_id=target['id']),'cancel')
     execute(store,cancel,{})

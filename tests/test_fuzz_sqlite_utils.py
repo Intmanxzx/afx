@@ -1,6 +1,6 @@
 import sqlite3
 import pytest
-from autofusedebugger.fuzz.storage.sqlite_utils import enable_wal
+from autofusex.fuzz.storage.sqlite_utils import enable_wal
 
 
 def test_wal_retries_transient_busy_only():

@@ -8,12 +8,12 @@ import sys
 
 import pytest
 
-from autofusedebugger.fuzz.config import setup
-from autofusedebugger.fuzz.contracts import (
+from autofusex.fuzz.config import setup
+from autofusex.fuzz.contracts import (
     CaseBundle, CaseSpec, EvaluationConfig, ExecutionConfig, Seed,
     ShapeResult, TensorSpec, canonical_json,
 )
-from autofusedebugger.fuzz.diagnostics import GenerationTrace, first_divergence
+from autofusex.fuzz.diagnostics import GenerationTrace, first_divergence
 
 
 def test_import_and_light_cli_do_not_load_dependencies_or_mutate_environment(tmp_path):
@@ -25,13 +25,13 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError('heavy import: '+fullname)
 sys.meta_path.insert(0, Block())
 before = dict(os.environ)
-import autofusedebugger
-import autofusedebugger.cli
-from autofusedebugger.fuzz.cli import main
+import autofusex
+import autofusex.cli
+from autofusex.fuzz.cli import main
 assert main(['maintenance', 'doctor']) == 0
-from autofusedebugger.fuzz.config import setup
+from autofusex.fuzz.config import setup
 setup(sys.argv[1])
-from autofusedebugger.fuzz.cli import replay_parser
+from autofusex.fuzz.cli import replay_parser
 replay_parser()
 assert before == dict(os.environ)
 '''
@@ -109,7 +109,7 @@ def test_first_divergence_reports_stage_axis_and_input_order():
 
 def test_tensor_diagnostics_include_values_layout_and_alias():
     np = pytest.importorskip("numpy")
-    from autofusedebugger.fuzz.diagnostics import tensor_signature
+    from autofusex.fuzz.diagnostics import tensor_signature
     x = np.arange(6, dtype=np.float32).reshape(2, 3)
     sig = tensor_signature([("x", x), ("view", x.T), ("copy", x.copy())])
     assert sig[0]["alias_group"] == sig[1]["alias_group"] != sig[2]["alias_group"]
@@ -122,8 +122,8 @@ def test_tensor_diagnostics_include_values_layout_and_alias():
 
 def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
     from fuzz_fixtures import CURRENT_SEED
-    import autofusedebugger.cli as cli
-    from autofusedebugger.fuzz import cli as fuzz_cli
+    import autofusex.cli as cli
+    from autofusex.fuzz import cli as fuzz_cli
     seen = []
     monkeypatch.setattr(fuzz_cli, "execute_args", lambda args: seen.append(args.seed) or 0)
     assert cli.main(["fuzz", "replay", CURRENT_SEED, "--scheduling", "combined"]) == 0
@@ -134,7 +134,7 @@ def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
 
 def test_input_size_and_order_report_first_binding_divergence():
     np = pytest.importorskip("numpy")
-    from autofusedebugger.fuzz.diagnostics import InputSignatureError, validate_input_signature
+    from autofusex.fuzz.diagnostics import InputSignatureError, validate_input_signature
     expected = [{"name": "x", "dtype": "float32", "shape": [2, 3]}]
     with pytest.raises(InputSignatureError) as error:
         validate_input_signature(expected, {"x": np.zeros((3, 2), dtype="float32")}, stage="before_backend")
@@ -170,7 +170,7 @@ def test_graph_trace_captures_axes_omitted_from_ir_text():
 
 
 def test_setup_short_user_flag(tmp_path, capsys):
-    from autofusedebugger.fuzz.cli import main
+    from autofusex.fuzz.cli import main
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc:
         main(['setup', '--help'])
@@ -181,13 +181,13 @@ def test_setup_short_user_flag(tmp_path, capsys):
 
 
 def test_nnsmith_patch_check_does_not_apply_implicitly(monkeypatch):
-    from autofusedebugger.nnsmith_integration import _nnsmith_patch
+    from autofusex.nnsmith_integration import _nnsmith_patch
     assert callable(_nnsmith_patch.ensure_ascendc_patch_applied)
     # Ordinary package import must not import NNSmith or apply patches.
     code = '''
 import sys
-import autofusedebugger
-import autofusedebugger.nnsmith_integration
+import autofusex
+import autofusex.nnsmith_integration
 assert not any(n == 'nnsmith' or n.startswith('nnsmith.') for n in sys.modules)
 '''
     subprocess.run([sys.executable, '-c', code], check=True)

@@ -3,11 +3,11 @@ import sqlite3
 
 import pytest
 
-from autofusedebugger.fuzz.reporting.index import rebuild
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.storage.queries import ResultQueries
-from autofusedebugger.fuzz.storage.transfer import restore
-from autofusedebugger.fuzz.telemetry import validate
+from autofusex.fuzz.reporting.index import rebuild
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.storage.transfer import restore
+from autofusex.fuzz.telemetry import validate
 
 
 def record(backend='cpu', batch='run1'):
@@ -45,8 +45,8 @@ def test_invalid_telemetry(raw):
 
 
 def test_environment_is_lightweight_and_never_reads_key(tmp_path):
-    from autofusedebugger.fuzz.config import setup
-    from autofusedebugger.fuzz.environment import collect
+    from autofusex.fuzz.config import setup
+    from autofusex.fuzz.environment import collect
     setup(tmp_path,display_name='设备A',user_id='owner')
     result=collect(tmp_path)
     assert result['device_name']=='设备A' and result['user_id']=='owner'
@@ -61,8 +61,8 @@ def test_failed_filter_keeps_peer_backend(tmp_path):
 
 
 def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
-    from autofusedebugger.fuzz.reporting.statistics import statistics
-    from autofusedebugger.fuzz.reporting import report
+    from autofusex.fuzz.reporting.statistics import statistics
+    from autofusex.fuzz.reporting import report
     repo=ResultRepository(tmp_path/'db');repo.save(record());repo.save(record('af-mlir'))
     monkeypatch.setattr(report,'spec_metadata',lambda *args:pytest.fail('must not regenerate during query'))
     result=statistics(repo.path)
@@ -77,7 +77,7 @@ def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
 def test_new_http_endpoints_and_snapshot(tmp_path):
     import threading
     from urllib.request import urlopen
-    from autofusedebugger.fuzz.view.server import create_server
+    from autofusex.fuzz.view.server import create_server
     repo=ResultRepository(tmp_path/'db');repo.save(record())
     with create_server(repo.path) as server:
         thread=threading.Thread(target=server.serve_forever);thread.start()
@@ -88,8 +88,8 @@ def test_new_http_endpoints_and_snapshot(tmp_path):
 
 
 def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
-    from autofusedebugger.fuzz.central.repository import create_user, ingest
-    from autofusedebugger.fuzz.sync.outbox import pending
+    from autofusex.fuzz.central.repository import create_user, ingest
+    from autofusex.fuzz.sync.outbox import pending
     central=tmp_path/'central';key=tmp_path/'key';create_user(central,'管理员命名的设备',key)
     repo=ResultRepository(tmp_path/'local');repo.save(record(),environment={'device_name':'untrusted','torch_npu':'2.10'})
     repo.save(record('af-mlir'),environment={'device_name':'untrusted','torch_npu':'2.10'})
@@ -102,8 +102,8 @@ def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
 
 
 def test_historical_cann_spelling_rebuild_preserves_records(tmp_path, monkeypatch):
-    from autofusedebugger.fuzz.reporting import index
-    from autofusedebugger.fuzz.reporting.statistics import statistics
+    from autofusex.fuzz.reporting import index
+    from autofusex.fuzz.reporting.statistics import statistics
     repo = ResultRepository(tmp_path/'db')
     env = {'installation_id': 'device-a', 'cann': '9.3.0-beta.1'}
     # Reproduce the old index with distinct runtime/file spellings.
@@ -117,7 +117,7 @@ def test_historical_cann_spelling_rebuild_preserves_records(tmp_path, monkeypatc
             return {table: conn.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall()
                     for table in ('attempts', 'contexts', 'shapes')}
     before = immutable()
-    from autofusedebugger.fuzz.reporting.incremental import IncrementalStatistics
+    from autofusex.fuzz.reporting.incremental import IncrementalStatistics
     incremental = IncrementalStatistics(repo.path)
     assert incremental.refresh()['case_groups'] == 1
     for expected in (1, 0):
@@ -143,5 +143,5 @@ def test_historical_cann_spelling_rebuild_preserves_records(tmp_path, monkeypatc
     ('9.3.0', '9.3.0'), ('9.3.0.beta1-custom', '9.3.0.beta1-custom'), (None, None),
 ])
 def test_cann_legacy_spelling_is_narrow(value, expected):
-    from autofusedebugger.fuzz.reporting.index import canonical_cann_version
+    from autofusex.fuzz.reporting.index import canonical_cann_version
     assert canonical_cann_version(value) == expected

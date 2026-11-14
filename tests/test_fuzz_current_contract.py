@@ -3,17 +3,17 @@ import json
 import random
 from dataclasses import replace,asdict
 import pytest
-from autofusedebugger.fuzz.contracts import TensorSpec,CaseSpec,canonical_json
-from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.contracts import TensorSpec,CaseSpec,canonical_json
+from autofusex.fuzz.generation.sampling import SamplingConfig
 
 
 def build_spec(count=3,nodes=1,extent=6,weight=True):
     """Independent valid Add chain; bypass search to exercise full boundary size."""
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.abstract.dtype import DType
-    from autofusedebugger.nnsmith_integration.aten_dialect import classes
-    from autofusedebugger.fuzz.generation.torch_dialect import capture
-    from autofusedebugger.fuzz.generation.runtime import SOURCE_SHA256,Z3_VERSION
+    from autofusex.nnsmith_integration.aten_dialect import classes
+    from autofusex.fuzz.generation.torch_dialect import capture
+    from autofusex.fuzz.generation.runtime import SOURCE_SHA256,Z3_VERSION
     cls=next(c for c in classes() if c.rule.target=='aten.add.Tensor')
     ins=TensorSpec('x','float32',(extent,),(1,),alias_group=0)
     # Weight has the same numeric extent but only reduces to a scalar. Equal
@@ -41,12 +41,12 @@ def build_spec(count=3,nodes=1,extent=6,weight=True):
 
 @pytest.mark.parametrize('count',range(2,9))
 def test_dynamic_counts_weight_dimensions_and_outside_initial_range(count):
-    from autofusedebugger.fuzz.generation.nnsmith_dynamic import variants
-    from autofusedebugger.fuzz.generation.nnsmith_sampled import materialize_spec
-    from autofusedebugger.fuzz.backends.torch import TorchAdapter
-    from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig
-    from autofusedebugger.fuzz.case_spec import encode,decode
-    from autofusedebugger.fuzz.generation.torch_dialect import execute_graph
+    from autofusex.fuzz.generation.nnsmith_dynamic import variants
+    from autofusex.fuzz.generation.nnsmith_sampled import materialize_spec
+    from autofusex.fuzz.backends.torch import TorchAdapter
+    from autofusex.fuzz.contracts import ExecutionConfig,EvaluationConfig
+    from autofusex.fuzz.case_spec import encode,decode
+    from autofusex.fuzz.generation.torch_dialect import execute_graph
     import torch
     spec=build_spec(count)
     expanded=variants(spec,65536,count,random.Random(123))
@@ -70,17 +70,17 @@ def test_dynamic_counts_weight_dimensions_and_outside_initial_range(count):
 
 
 def test_64_nodes_survive_artifacts_database_snapshot_and_upload(tmp_path):
-    from autofusedebugger.fuzz.generation.nnsmith_dynamic import variants
-    from autofusedebugger.fuzz.generation.nnsmith_sampled import materialize_spec
-    from autofusedebugger.fuzz.generation import workload_id
-    from autofusedebugger.fuzz.scheduling.artifacts import write_bundle,bundle_from
-    from autofusedebugger.fuzz.case_spec import encode,decode
-    from autofusedebugger.fuzz.storage import ResultRepository
-    from autofusedebugger.fuzz.storage.transfer import restore
-    from autofusedebugger.fuzz.storage.queries import ResultQueries
-    from autofusedebugger.fuzz.sync.outbox import pending
-    from autofusedebugger.fuzz.central.repository import create_user,ingest
-    from autofusedebugger.fuzz.limits import MAX_SYNC_BYTES
+    from autofusex.fuzz.generation.nnsmith_dynamic import variants
+    from autofusex.fuzz.generation.nnsmith_sampled import materialize_spec
+    from autofusex.fuzz.generation import workload_id
+    from autofusex.fuzz.scheduling.artifacts import write_bundle,bundle_from
+    from autofusex.fuzz.case_spec import encode,decode
+    from autofusex.fuzz.storage import ResultRepository
+    from autofusex.fuzz.storage.transfer import restore
+    from autofusex.fuzz.storage.queries import ResultQueries
+    from autofusex.fuzz.sync.outbox import pending
+    from autofusex.fuzz.central.repository import create_user,ingest
+    from autofusex.fuzz.limits import MAX_SYNC_BYTES
     spec=variants(build_spec(count=8,nodes=64,weight=False),65536,8,random.Random(123))
     raw=encode(spec);assert len(raw)>12000 and decode(raw)==spec
     bundle=materialize_spec(spec)
@@ -100,9 +100,9 @@ def test_64_nodes_survive_artifacts_database_snapshot_and_upload(tmp_path):
 
 
 def test_old_history_has_no_replay_command(tmp_path):
-    from autofusedebugger.fuzz.storage import ResultRepository
-    from autofusedebugger.fuzz.storage.queries import ResultQueries
-    from autofusedebugger.fuzz.contracts import Seed
+    from autofusex.fuzz.storage import ResultRepository
+    from autofusex.fuzz.storage.queries import ResultQueries
+    from autofusex.fuzz.contracts import Seed
     repo=ResultRepository(tmp_path/'results')
     identity=repo.save(dict(seed=str(Seed.parse('C16')),workload_id='a'*64,oracle_id='old',backend='cpu',status='ok',shape_results=[]))
     detail=ResultQueries(repo.path).detail(identity)
@@ -117,8 +117,8 @@ def test_json_roundtrip_matches_independent_nnsmith_native_semantics(name):
     from nnsmith.abstract.dtype import DType
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.materialize.torch.forward import forward_fn
-    from autofusedebugger.nnsmith_integration.aten_dialect import classes
-    from autofusedebugger.fuzz.generation.torch_dialect import capture,execute_graph
+    from autofusex.nnsmith_integration.aten_dialect import classes
+    from autofusex.fuzz.generation.torch_dialect import capture,execute_graph
     # Only currently modeled targets are paired; no claim that the new four
     # families include LayerNorm/Gather/Cast, which need additional rules.
     if name=='Reshape':
@@ -157,8 +157,8 @@ def test_actual_parameters_against_independent_torch_oracle(target,attrs,shape,o
     import torch,math
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.abstract.dtype import DType
-    from autofusedebugger.nnsmith_integration.aten_dialect import classes
-    from autofusedebugger.fuzz.generation.torch_dialect import capture,execute_graph
+    from autofusex.nnsmith_integration.aten_dialect import classes
+    from autofusex.fuzz.generation.torch_dialect import capture,execute_graph
     x=torch.arange(math.prod(shape),dtype=torch.float32).reshape(shape)*3-4
     op=next(c for c in classes() if c.rule.target==target)();op.extra_attrs=attrs
     tensors=[AbsTensor(shape,DType.float32)]
@@ -170,11 +170,12 @@ def test_actual_parameters_against_independent_torch_oracle(target,attrs,shape,o
 
 
 def test_current_golden_fingerprints():
-    from autofusedebugger.fuzz.generation import materialize,workload_id
-    expected=[(False,3,0,3,'f3010a5897c40063dcc956d30203c8c69d158a7d0fa3c24fec5a2ec30d5d88da'),
-              (False,3,1,3,'724ce7410aeb294ce2d18d9a62570744688a98079ee1d9e2185c8bb54c6f145d'),
-              (True,2,3,1,'1428b3776e76c80e199c170d4fbeec227737a40969678f2a519e2e1d5004e0a3'),
-              (True,8,3,1,'e2b5ada25a9a6f1777f6ba08c2671645f8de5deb5f573963f7d7e2d37cb2e5fc')]
+    from autofusex.fuzz.generation import materialize,workload_id
+    # The serialized materializer classes use the autofusex package namespace.
+    expected=[(False,3,0,3,'beff182d50770e0a8b4b09823beb4029bb5c5468fdf019b04e9b16c20cac97f0'),
+              (False,3,1,3,'e1cb081b8ea7b7020aa5d968df3d2c7bf46797c3a0fd2d913acbd946aac55ce0'),
+              (True,2,3,1,'419b1deb6bd0e6bbe5f951ee67bf8140d343036ff72afd0ca7b323ca408513be'),
+              (True,8,3,1,'269f864d73f221126f3dbe0e17122b337f84c0325e300391f8b65c20a17feee0')]
     for dynamic,count,entropy,nodes,digest in expected:
         config=SamplingConfig.profile('small',max_nodes=nodes,dtype_mode='float32',dynamic_variants=count)
         assert workload_id(materialize(config.seed(entropy,dynamic)))==digest

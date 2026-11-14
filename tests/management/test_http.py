@@ -3,8 +3,8 @@ import threading
 from urllib.request import Request,build_opener,ProxyHandler
 from urllib.error import HTTPError
 import pytest
-from autofusedebugger.fuzz.central.repository import create_user
-from autofusedebugger.fuzz.central.server import create_server
+from autofusex.fuzz.central.repository import create_user
+from autofusex.fuzz.central.server import create_server
 
 
 def test_real_http_session_pairing_control_and_static_ui(tmp_path):
@@ -40,7 +40,7 @@ def test_real_http_session_pairing_control_and_static_ui(tmp_path):
 
 
 def test_management_maintenance_and_legacy_auth_stay_isolated(tmp_path,monkeypatch):
-    from autofusedebugger.fuzz.central.maintenance import ENVIRONMENT
+    from autofusex.fuzz.central.maintenance import ENVIRONMENT
     policy=tmp_path/'allowlist.json';policy.write_text(json.dumps(dict(enabled=True,users=[],clients=[])))
     monkeypatch.setenv(ENVIRONMENT,str(policy))
     server=create_server(tmp_path/'central.sqlite',0);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()

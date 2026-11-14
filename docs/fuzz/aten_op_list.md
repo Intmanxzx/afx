@@ -2,7 +2,7 @@
 
 当前 C2/D2 协议使用的完整 ATen overload 清单，共 **368** 个。
 
-源代码定义：[aten_catalog.py](../../autofusedebugger/nnsmith_integration/aten_catalog.py)。本文件按 `RULES` 自动展开，便于人工查看；新增或删除算子时应同步更新。
+源代码定义：[aten_catalog.py](../../autofusex/nnsmith_integration/aten_catalog.py)。本文件按 `RULES` 自动展开，便于人工查看；新增或删除算子时应同步更新。
 
 | # | ATen target | family | dtype | result | arity | outputs | mode |
 |---:|---|---|---|---|---:|---:|---|

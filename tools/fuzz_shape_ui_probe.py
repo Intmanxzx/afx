@@ -2,10 +2,10 @@
 import json,sys,threading,re
 from pathlib import Path
 from playwright.sync_api import sync_playwright,expect
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.view.server import create_server
-from autofusedebugger.fuzz.generation import workload_id
-from autofusedebugger.fuzz.case_spec import encode
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.view.server import create_server
+from autofusex.fuzz.generation import workload_id
+from autofusex.fuzz.case_spec import encode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"tests"))
 from fuzz_fixtures import bundle, three_shapes_spec
 root=Path(sys.argv[1]);root.mkdir(exist_ok=True);repo=ResultRepository(root/'results.sqlite')

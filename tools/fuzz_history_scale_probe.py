@@ -8,9 +8,9 @@ import time
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tests'))
 from test_fuzz_global_rounds import save
-from autofusedebugger.fuzz.storage.repository import ResultRepository,_connect
-from autofusedebugger.fuzz.storage.queries import ResultQueries
-from autofusedebugger.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.storage.repository import ResultRepository,_connect
+from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.reporting.statistics import statistics
 
 path=Path(sys.argv[1]);assert not path.exists()
 repo=ResultRepository(path)

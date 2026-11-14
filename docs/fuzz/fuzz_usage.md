@@ -12,7 +12,7 @@ python3 -m venv .venv
 python -m pip install /path/to/autofusex-<版本>-py3-none-any.whl
 ```
 
-发行包名称为 `autofusex`，发布到 PyPI 后可用 `python -m pip install autofusex==<版本>` 安装；尚未发布时使用本项目 wheel。旧环境迁移时，先执行 `python -m pip uninstall autofusedebugger`，再安装新 wheel；若安装过本项目过渡期间的 `afx` wheel，也应先卸载该发行包。命令统一为 `afx`（也可用 `python -m afx`），数据目录、环境变量和内部 Python 模块路径保持兼容。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
+发行包名称为 `autofusex`，发布到 PyPI 后可用 `python -m pip install autofusex==<版本>` 安装；尚未发布时使用本项目 wheel。命令为 `afx`（也可用 `python -m afx` 或 `python -m autofusex`），Python 导入包、默认数据目录和环境变量前缀分别为 `autofusex`、`autofusex` 和 `AUTOFUSEX_*`。此版本使用全新数据环境，不兼容旧包路径和历史数据。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
 
 ## 一、客户端：执行、采集、上报
 
@@ -39,7 +39,7 @@ afx fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --save      # 保存结果并加入�
 ```
 
 - 默认 CPU 为对照、AF-MLIR 为被测后端；对 CPU 精度不一致即失败，不自动复核或改判。需要人工复核时执行 `afx fuzz replay <seed> --backend eager-npu --save`，生成独立记录，不覆盖原结果。
-- 浮点输出复用 `autofusedebugger/compare.py` 的 dtype 默认容差：FP64 为 `rtol=atol=1e-7`，FP32 为 `1e-5`，FP16 为 `1e-3`，BF16 为 `1e-2`。逐元素要求 `abs(actual - CPU) <= atol + rtol * abs(CPU)`，诊断中的 `mismatches` 统计不满足该条件的元素。整数和布尔输出仍精确比较，shape/dtype 必须一致；同符号 Inf 通过，NaN 不通过。历史结果需要重新比较或重跑才会更新。
+- 浮点输出复用 `autofusex/compare.py` 的 dtype 默认容差：FP64 为 `rtol=atol=1e-7`，FP32 为 `1e-5`，FP16 为 `1e-3`，BF16 为 `1e-2`。逐元素要求 `abs(actual - CPU) <= atol + rtol * abs(CPU)`，诊断中的 `mismatches` 统计不满足该条件的元素。整数和布尔输出仍精确比较，shape/dtype 必须一致；同符号 Inf 通过，NaN 不通过。历史结果需要重新比较或重跑才会更新。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
 - 当前只有一套 E/F 生成实现：E 为静态，F 为动态。`--dynamic-variants 2..8` 设置动态样本数（默认 3），`--method symbolic-cinit|symbolic|concolic` 选择构图方法，两者均写入 seed。范围为四类 368 个 ATen overload。历史内测记录可读但不支持重放，旧 campaign 不自动迁移。详见[当前协议](current_protocol.md)。
 - `--ops add,ge,sum,reshape` 或 `--ops aten.add.Tensor,aten.ge.Tensor` 在图生成后按白名单过滤；`--exclude-op transpose` 保留。生成失败、CPU 不可执行、无 Autofuse 覆盖跳过，不计入有效 attempts。
@@ -49,7 +49,7 @@ afx fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --save      # 保存结果并加入�
 - 使用--save时，功能失败保存短错误、阶段和已采集上下文；精度失败保存误差统计。长日志、tensor、编译产物不默认上传。
 - 停止测试不会删除数据或凭据，也不会停止独立上传进程。
 
-数据根目录可用 `AUTOFUSEDBG_HOME` 指定。默认 Linux 为 `${XDG_DATA_HOME:-~/.local/share}/autofusedbg`，macOS 为 `~/Library/Application Support/autofusedbg`，Windows 为 `%LOCALAPPDATA%/autofusedbg`。结果在 `results/results.sqlite`，任务在 `tasks/tasks.sqlite`。后台执行/同步进程目前以 POSIX 环境为主；Windows 支持的是本地查看，不承诺 NPU 后台运行。
+数据根目录可用 `AUTOFUSEX_HOME` 指定。默认 Linux 为 `${XDG_DATA_HOME:-~/.local/share}/autofusex`，macOS 为 `~/Library/Application Support/autofusex`，Windows 为 `%LOCALAPPDATA%/autofusex`。结果在 `results/results.sqlite`，任务在 `tasks/tasks.sqlite`。后台执行/同步进程目前以 POSIX 环境为主；Windows 支持的是本地查看，不承诺 NPU 后台运行。
 
 ```sh
 afx fuzz maintenance doctor
@@ -58,7 +58,7 @@ afx fuzz maintenance sync once
 afx fuzz maintenance sync start
 ```
 
-setup成功后会记住数据目录，不必每次指定。优先级：显式--data-dir、AUTOFUSEDBG_HOME、已记住目录、系统默认目录。默认上报站点为 `https://autofuse.online`；私有部署使用维护级 `sync configure --endpoint` 配置。开机后须通过客户端入口或进程管理器重新启动同步，不把一个后台进程当作系统开机服务。
+setup成功后会记住数据目录，不必每次指定。优先级：显式--data-dir、AUTOFUSEX_HOME、已记住目录、系统默认目录。默认上报站点为 `https://autofuse.online`；私有部署使用维护级 `sync configure --endpoint` 配置。开机后须通过客户端入口或进程管理器重新启动同步，不把一个后台进程当作系统开机服务。
 
 ## 二、云端：身份、汇总、网站
 
@@ -132,7 +132,7 @@ afx fuzz view ./results.snapshot.sqlite --no-browser --port 8091
 1. 确认 PyPI 项目名所有权和项目开源授权。本仓库尚无 LICENSE，脚本不代替作者选择许可证。
 2. 在 GitCode 项目配置 Secrets：`GITCODE_RELEASE_TOKEN`（本项目 Release 写权限）、`PYPI_API_TOKEN`（该 PyPI 项目范围）。不要放到代码、日志或客户端 token 中。
 3. 保护 `v*` Tag 的创建权限；只允许可信维护者发布。确认流水线 runner 可以访问 PyPI、GitCode API。
-4. 同步修改 `pyproject.toml` 和 `autofusedebugger/__init__.py` 中版本，以及部署模板版本，提交后创建同名 `v<版本>` Tag。
+4. 同步修改 `pyproject.toml` 和 `autofusex/__init__.py` 中版本，以及部署模板版本，提交后创建同名 `v<版本>` Tag。
 
 ```sh
 # 在隔离构建环境中；本项目开发测试仍按约定在 mlir 进行
@@ -163,7 +163,7 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 
 ### NNSmith执行环境
 
-run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusex[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
+run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusex/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusex[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
 
 
 ### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）

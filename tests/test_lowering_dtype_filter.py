@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import torch
 
-from autofusedebugger.nnsmith_integration.lowering_dtype_filter import (
+from autofusex.nnsmith_integration.lowering_dtype_filter import (
     LOWERING_GUARD_TARGETS,
     SOC_GATED_OPS,
     filter_probed_dtypes,

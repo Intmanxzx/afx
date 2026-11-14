@@ -9,7 +9,7 @@ from contextlib import nullcontext
 import json
 from pathlib import Path
 
-from autofusedebugger.fuzz.diagnostics import GenerationTrace, first_divergence
+from autofusex.fuzz.diagnostics import GenerationTrace, first_divergence
 
 
 def main():
@@ -18,7 +18,7 @@ def main():
     args = p.parse_args()
     from nnsmith.abstract.op import Add, Mul, Neg, ReLU
     from nnsmith.graph_gen import model_gen
-    from autofusedebugger.nnsmith_integration.generation import _seeded_solver_context
+    from autofusex.nnsmith_integration.generation import _seeded_solver_context
     directory = Path(args.output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     ops = [Add, Mul, Neg, ReLU]

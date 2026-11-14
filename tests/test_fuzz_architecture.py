@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 
-ROOT = Path(__file__).parents[1] / "autofusedebugger/fuzz"
+ROOT = Path(__file__).parents[1] / "autofusex/fuzz"
 
 
 def test_fuzz_does_not_import_legacy_debugger_or_nnsmith():
@@ -15,9 +15,9 @@ def test_fuzz_does_not_import_legacy_debugger_or_nnsmith():
                 assert node.level <= 2 or (path == ROOT / 'central/server.py' and node.level == 3 and node.module == 'management.central'), path
                 module = node.module or ""
                 assert not module.startswith("nnsmith") or path.name in {"__init__.py", "runtime.py", "nnsmith_sampled.py", "nnsmith_dynamic.py", "torch_dialect.py"}, path
-                if module.startswith("autofusedebugger"):
-                    assert (module.startswith(("autofusedebugger.fuzz", "autofusedebugger.nnsmith_integration.aten_")) or
-                            (module == "autofusedebugger.compare" and path == ROOT / "backends/torch.py")), path
+                if module.startswith("autofusex"):
+                    assert (module.startswith(("autofusex.fuzz", "autofusex.nnsmith_integration.aten_")) or
+                            (module == "autofusex.compare" and path == ROOT / "backends/torch.py")), path
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     assert not alias.name.startswith("nnsmith") or path.name in {"__init__.py", "runtime.py", "nnsmith_sampled.py", "nnsmith_dynamic.py", "torch_dialect.py"}, path
@@ -36,10 +36,10 @@ import importlib.abc,sys,runpy
 class Block(importlib.abc.MetaPathFinder):
  def find_spec(self,name,*args):
   if name.split('.')[0] in {'torch','numpy','torch_npu','nnsmith'}: raise AssertionError(name)
-  if name.startswith('autofusedebugger.') and not name.startswith('autofusedebugger.fuzz'): raise AssertionError(name)
+  if name.startswith('autofusex.') and not name.startswith('autofusex.fuzz'): raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-sys.argv=['autofusedebugger.fuzz','maintenance','doctor']
-runpy.run_module('autofusedebugger.fuzz',run_name='__main__')
+sys.argv=['autofusex.fuzz','maintenance','doctor']
+runpy.run_module('autofusex.fuzz',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

@@ -8,7 +8,7 @@ manifest 用于解耦“如何采集 CPU/NPU/CAModel dump”和“如何逐算�
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `schema` | string | 固定为 `autofusedebugger-manifest/1` |
+| `schema` | string | 固定为 `autofusex-manifest/1` |
 | `side` | string | `cpu`、`npu_eager`、`npu_autofuse`，或 `inductor_prefusion_cpu` / `inductor_prefusion_npu_eager` |
 | `model` | object | 模型名、图文件等描述信息 |
 | `artifacts.root` | string | tensor dump 文件根目录 |
@@ -82,4 +82,4 @@ native NPU Autofuse graph node 还可能包含以下映射诊断字段：
 | `NC1HWC0` | `NHWC` / `ND` |
 | `NDC1HWC0` | `NDHWC` / `ND` |
 
-后续如需要支持 FRACTAL、NZ 等格式，应在 `autofusedebugger/compare.py` 中补充确定的布局转换函数，并添加测试。
+后续如需要支持 FRACTAL、NZ 等格式，应在 `autofusex/compare.py` 中补充确定的布局转换函数，并添加测试。

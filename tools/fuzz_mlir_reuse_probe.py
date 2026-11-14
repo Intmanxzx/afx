@@ -10,11 +10,11 @@ import json
 import time
 from pathlib import Path
 
-from autofusedebugger.fuzz.contracts import Seed, ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.scheduling.budgets import Budget, write_policy
-from autofusedebugger.fuzz.scheduling.staged import drain
-from autofusedebugger.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.contracts import Seed, ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.budgets import Budget, write_policy
+from autofusex.fuzz.scheduling.staged import drain
+from autofusex.fuzz.storage.queries import ResultQueries
 
 
 def main():

@@ -3,7 +3,7 @@ import types
 
 import pytest
 
-from autofusedebugger.fuzz.environment import collect
+from autofusex.fuzz.environment import collect
 
 
 @pytest.mark.parametrize('loaded', [False, True])
@@ -13,7 +13,7 @@ from autofusedebugger.fuzz.environment import collect
     ('Version=\n', None), ('Other=9.3.0\n', None), (None, None),
 ])
 def test_cann_always_reads_version_info(tmp_path, monkeypatch, loaded, contents, expected):
-    monkeypatch.setattr('autofusedebugger.fuzz.environment.importlib.util.find_spec', lambda name: None)
+    monkeypatch.setattr('autofusex.fuzz.environment.importlib.util.find_spec', lambda name: None)
     monkeypatch.setenv('ASCEND_HOME_PATH', str(tmp_path))
     if contents is not None:
         (tmp_path/'compiler').mkdir()
@@ -32,7 +32,7 @@ def test_cann_always_reads_version_info(tmp_path, monkeypatch, loaded, contents,
 
 
 def test_no_selected_toolkit_is_unknown(tmp_path, monkeypatch):
-    monkeypatch.setattr('autofusedebugger.fuzz.environment.importlib.util.find_spec', lambda name: None)
+    monkeypatch.setattr('autofusex.fuzz.environment.importlib.util.find_spec', lambda name: None)
     monkeypatch.delenv('ASCEND_HOME_PATH', raising=False)
     assert collect(tmp_path)['cann'] is None
 
@@ -48,6 +48,6 @@ def test_graph_autofusion_run_version_has_precedence(tmp_path, monkeypatch):
     graph_version = root/'share/info/graph_autofusion/version.info'
     graph_version.parent.mkdir(parents=True)
     graph_version.write_text('Version=9.2.0\n')
-    monkeypatch.setattr('autofusedebugger.fuzz.environment.importlib.util.find_spec',
+    monkeypatch.setattr('autofusex.fuzz.environment.importlib.util.find_spec',
                         lambda name: type('Spec', (), {'origin': str(package/'__init__.py')})())
     assert collect(tmp_path/'home')['cann'] == '9.2.0'

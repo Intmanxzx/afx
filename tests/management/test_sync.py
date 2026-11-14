@@ -1,6 +1,6 @@
-from autofusedebugger.management import daemon
-from autofusedebugger.management.central import ControlStore
-from autofusedebugger.fuzz.central.repository import create_user
+from autofusex.management import daemon
+from autofusex.management.central import ControlStore
+from autofusex.fuzz.central.repository import create_user
 
 
 def test_manager_center_flow_retries_lost_ack_without_duplicate_effect(tmp_path,monkeypatch):

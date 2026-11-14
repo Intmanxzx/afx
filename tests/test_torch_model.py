@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import autofusedebugger.torch_model as torch_model
-from autofusedebugger.cli import build_parser
-from autofusedebugger.artifact_io import tensor_to_numpy
+import autofusex.torch_model as torch_model
+from autofusex.cli import build_parser
+from autofusex.artifact_io import tensor_to_numpy
 
-from autofusedebugger.torch_model import (
+from autofusex.torch_model import (
     TorchCase,
     _execution_context,
     _model_device_hints,
@@ -291,7 +291,7 @@ def test_cli_has_run_script_with_script_arguments() -> None:
 def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from autofusedebugger import cli
+    from autofusex import cli
 
     script = tmp_path / "model.py"
     script.write_text("# test\n", encoding="utf-8")
@@ -302,15 +302,15 @@ def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
         return {"passed": True, "summary": {"status": "PASS", "passed": 0, "total": 0}}
 
     monkeypatch.chdir(tmp_path)
-    from autofusedebugger import script_runner, torch_model
+    from autofusex import script_runner, torch_model
     monkeypatch.setattr(script_runner, "run_framework_script", fake_run_framework_script)
     monkeypatch.setattr(torch_model, "format_run_summary", lambda summary: "summary")
 
     assert cli.main(["python3", str(script), "--device", "npu", "--custom-flag"]) == 0
     assert received["script"] == script.resolve()
     assert received["script_args"] == ("--device", "npu", "--custom-flag")
-    assert received["out_dir"] == tmp_path / "model_autofusedebugger"
-    assert received["html_path"] == tmp_path / "model_autofusedebugger.html"
+    assert received["out_dir"] == tmp_path / "model_autofusex"
+    assert received["html_path"] == tmp_path / "model_autofusex.html"
 
 
 def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None:

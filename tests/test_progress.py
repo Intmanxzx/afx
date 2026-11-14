@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from autofusedebugger.progress import progress_stage
+from autofusex.progress import progress_stage
 
 
 def test_progress_stage_logs_start_and_done(capsys: pytest.CaptureFixture[str]) -> None:

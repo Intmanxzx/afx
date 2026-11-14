@@ -3,8 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from test_fuzz_retests import setup
 
-from autofusedebugger.fuzz.central import issue_groups
-from autofusedebugger.fuzz.central.repository import create_user
+from autofusex.fuzz.central import issue_groups
+from autofusex.fuzz.central.repository import create_user
 
 
 def row(error, *, status='error', correctness='error', performance='skipped', function_status='unknown',
@@ -80,11 +80,11 @@ def test_concurrent_claims_have_one_owner(monkeypatch, tmp_path):
 def test_materialized_issue_index_is_used(tmp_path, monkeypatch):
     from contextlib import closing
 
-    from autofusedebugger.fuzz.central import retests, sessions
-    from autofusedebugger.fuzz.central.repository import create_user, ingest
-    from autofusedebugger.fuzz.reporting import materialized
-    from autofusedebugger.fuzz.storage.repository import ResultRepository, _connect
-    from autofusedebugger.fuzz.sync.outbox import pending
+    from autofusex.fuzz.central import retests, sessions
+    from autofusex.fuzz.central.repository import create_user, ingest
+    from autofusex.fuzz.reporting import materialized
+    from autofusex.fuzz.storage.repository import ResultRepository, _connect
+    from autofusex.fuzz.sync.outbox import pending
 
     database = tmp_path / 'central.sqlite'
     alice = create_user(database, 'Alice')
@@ -111,11 +111,11 @@ def test_materialized_issue_index_is_used(tmp_path, monkeypatch):
 def test_ingest_refreshes_materialized_issue_index(tmp_path, monkeypatch):
     from contextlib import closing
 
-    from autofusedebugger.fuzz.central import retests, sessions
-    from autofusedebugger.fuzz.central.repository import create_user, ingest
-    from autofusedebugger.fuzz.reporting import materialized
-    from autofusedebugger.fuzz.storage.repository import ResultRepository, _connect
-    from autofusedebugger.fuzz.sync.outbox import pending
+    from autofusex.fuzz.central import retests, sessions
+    from autofusex.fuzz.central.repository import create_user, ingest
+    from autofusex.fuzz.reporting import materialized
+    from autofusex.fuzz.storage.repository import ResultRepository, _connect
+    from autofusex.fuzz.sync.outbox import pending
 
     database = tmp_path / 'central.sqlite'
     alice = create_user(database, 'Alice')
@@ -143,9 +143,9 @@ def test_issue_retest_reuses_existing_control_plane(setup):
     import json as json_module
     import uuid
 
-    from autofusedebugger.fuzz.central import retests
-    from autofusedebugger.fuzz.reporting import materialized
-    from autofusedebugger.fuzz.storage.repository import _connect
+    from autofusex.fuzz.central import retests
+    from autofusex.fuzz.reporting import materialized
+    from autofusex.fuzz.storage.repository import _connect
 
     database, _, bob, _, client, _ = setup
     materialized.migrate(database)

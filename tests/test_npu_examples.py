@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from autofusedebugger.npu_examples import (
+from autofusex.npu_examples import (
     _GeGraphSnapshot,
     _ge_output_summaries,
     _load_pre_run_ge_models,
@@ -102,8 +102,8 @@ def test_runtime_ge_graph_uses_real_edges_and_fx_origin(tmp_path: Path) -> None:
     assert ops[1]["origin_ops"] == ["GatherV2"]
     assert ops[1]["output_desc"][0]["layout"] == "ND"
     assert ops[1]["output_desc"][0]["attr"] == [
-        {"key": "_autofusedebugger_cpu_origin_name", "value": {"s": "embedding"}},
-        {"key": "_autofusedebugger_cpu_origin_output_index", "value": {"i": 0}},
+        {"key": "_autofusex_cpu_origin_name", "value": {"s": "embedding"}},
+        {"key": "_autofusex_cpu_origin_output_index", "value": {"i": 0}},
     ]
     assert graph["metadata"]["topology"] == "CANN GE PreRunAfterBuild"
 
@@ -188,7 +188,7 @@ def test_prefusion_graph_prefers_optimized_stage(tmp_path: Path, monkeypatch: py
     early.touch()
     optimized.touch()
     monkeypatch.setattr(
-        "autofusedebugger.npu_examples._load_runtime_ge_model",
+        "autofusex.npu_examples._load_runtime_ge_model",
         lambda path: path.name,
     )
 

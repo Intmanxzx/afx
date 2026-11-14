@@ -1,10 +1,10 @@
 import json
-from autofusedebugger.fuzz.execution import execute
-from autofusedebugger.fuzz.contracts import EvaluationConfig
+from autofusex.fuzz.execution import execute
+from autofusex.fuzz.contracts import EvaluationConfig
 from fuzz_fixtures import bundle as materialize
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.storage.queries import ResultQueries
-from autofusedebugger.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.reporting.statistics import statistics
 
 
 class Adapter:

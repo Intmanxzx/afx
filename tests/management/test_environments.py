@@ -3,9 +3,9 @@ import platform
 import sys
 from pathlib import Path
 import pytest
-from autofusedebugger.management.store import Store
-from autofusedebugger.management.artifacts import atomic
-from autofusedebugger.management import environments
+from autofusex.management.store import Store
+from autofusex.management.artifacts import atomic
+from autofusex.management import environments
 
 
 def setup(tmp_path):

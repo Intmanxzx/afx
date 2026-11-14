@@ -4,12 +4,12 @@ from collections import Counter, defaultdict
 import json
 import random
 from pathlib import Path
-from autofusedebugger.fuzz.contracts import Seed
-from autofusedebugger.fuzz.generation import plan
+from autofusex.fuzz.contracts import Seed
+from autofusex.fuzz.generation import plan
 
 
 def audit(count, versions=(3,4,5,6), config=None):
-    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    from autofusex.fuzz.generation.sampling import SamplingConfig
     config = config or SamplingConfig()
     rng=random.Random(20261110)
     hist=defaultdict(Counter); accepted=Counter(); errors=Counter(); records=[]

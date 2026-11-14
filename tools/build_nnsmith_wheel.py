@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--out',required=True)
     args=parser.parse_args()
     root=Path(__file__).resolve().parents[1]
-    installer=(root/'autofusedebugger/nnsmith_integration/install_af_fuzz.sh').read_text()
+    installer=(root/'autofusex/nnsmith_integration/install_af_fuzz.sh').read_text()
     commit=re.search(r'NNSMITH_COMMIT="([a-f0-9]+)"',installer).group(1)
     source=Path(args.source).resolve();output=Path(args.out).resolve();output.mkdir(parents=True,exist_ok=True)
     actual=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
@@ -36,12 +36,12 @@ def main():
     if subprocess.check_output(['git','-C',str(source),'status','--porcelain'],text=True).strip():
         raise ValueError('publisher requires a clean pinned checkout')
     order=re.search(r'PATCH_ORDER=\((.*?)\)',installer,re.S).group(1).split()
-    expected=re.search(r"SOURCE_SHA256\s*=\s*'([a-f0-9]{64})'",(root/'autofusedebugger/fuzz/generation/runtime.py').read_text()).group(1)
+    expected=re.search(r"SOURCE_SHA256\s*=\s*'([a-f0-9]{64})'",(root/'autofusex/fuzz/generation/runtime.py').read_text()).group(1)
     with tempfile.TemporaryDirectory(prefix='nnsmith-wheel-') as temp:
         working=Path(temp)/'source'
         shutil.copytree(source,working,ignore=shutil.ignore_patterns('.git','__pycache__','.venv'))
         for name in order:
-            patch=root/'autofusedebugger/nnsmith_integration/patches'/(name+'.patch')
+            patch=root/'autofusex/nnsmith_integration/patches'/(name+'.patch')
             subprocess.run(['patch','-p1','--forward','--no-backup-if-mismatch','-i',str(patch)],cwd=working,check=True)
         package=working/'nnsmith'
         if tree_hash((p.relative_to(package).as_posix(),p.read_bytes()) for p in package.rglob('*.py'))!=expected:

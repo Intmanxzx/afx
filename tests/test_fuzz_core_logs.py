@@ -5,14 +5,14 @@ import sys
 
 import pytest
 
-from autofusedebugger.fuzz.core_logs import ProcessTail, capture_tail
+from autofusex.fuzz.core_logs import ProcessTail, capture_tail
 
 
 @pytest.mark.parametrize('forward', [False, True])
 def test_native_writer_holding_gil_completes(forward):
     code = f'''
 import ctypes
-from autofusedebugger.fuzz.core_logs import capture_tail
+from autofusex.fuzz.core_logs import capture_tail
 lib = ctypes.PyDLL(None)
 lib.write.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t]
 data = ctypes.create_string_buffer(b'x' * 1048576 + b'\\nerror: native token=private-value\\n')
@@ -52,8 +52,8 @@ def test_parent_tail_preserves_verdict_across_noisy_crash():
 
 def test_pool_timeout_keeps_native_log(tmp_path, monkeypatch):
     import socket
-    from autofusedebugger.fuzz.scheduling.pool import Pool
-    from autofusedebugger.fuzz.scheduling.budgets import Budget
+    from autofusex.fuzz.scheduling.pool import Pool
+    from autofusex.fuzz.scheduling.budgets import Budget
     pool = Pool(Budget(cpu_workers=1), tmp_path, 0, [])
     left, right = socket.socketpair()
     class Scratch:

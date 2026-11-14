@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from autofusedebugger.fuzz.diagnostics import first_divergence
+from autofusex.fuzz.diagnostics import first_divergence
 
 
 def classify_pair(a, b, metadata_a, metadata_b):

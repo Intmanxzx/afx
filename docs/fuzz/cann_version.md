@@ -18,7 +18,7 @@ CPU 与 NPU 后端优先读取实际导入的 graph-autofusion run 包根目录
 新写入自动使用兼容规则。旧库先做私有 SQLite 一致性备份，再显式运行：
 
 ```python
-from autofusedebugger.fuzz.reporting.index import migrate_cann_versions
+from autofusex.fuzz.reporting.index import migrate_cann_versions
 print(migrate_cann_versions('/absolute/path/to/results.sqlite'))
 ```
 

@@ -8,11 +8,11 @@ import time
 
 import pytest
 
-from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.scheduling.ownership import own_queue
-from autofusedebugger.fuzz.scheduling import hosting
-from autofusedebugger.fuzz.storage import ResultRepository
+from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.ownership import own_queue
+from autofusex.fuzz.scheduling import hosting
+from autofusex.fuzz.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='POSIX process hosting')
@@ -31,7 +31,7 @@ def wait_finished(ledger, timeout=30):
 
 def test_detached_run_finishes_after_launcher_exits(tmp_path):
     pytest.importorskip("torch")
-    output = subprocess.run([sys.executable, '-m', 'autofusedebugger.fuzz', 'run', CURRENT_SEED, '--save',
+    output = subprocess.run([sys.executable, '-m', 'autofusex.fuzz', 'run', CURRENT_SEED, '--save',
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
     response = json.loads(output.stdout)
@@ -113,7 +113,7 @@ def test_background_sigterm_cleans_active_worker(tmp_path, monkeypatch):
     # Injection exists only in this test's child process, not a production CLI hook.
     code = '''
 import sys
-from autofusedebugger.fuzz.scheduling import hosting,supervisor
+from autofusex.fuzz.scheduling import hosting,supervisor
 worker="import pathlib,os,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)"
 supervisor._worker_command=lambda *a:[sys.executable,'-c',worker,sys.argv[-1]]
 sys.exit(hosting._child(*sys.argv[1:-1]))
@@ -150,8 +150,8 @@ def test_background_rejects_npu_before_enqueue(tmp_path):
 
 def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, tmp_path, capsys):
     import json
-    from autofusedebugger.fuzz.cli import main
-    from autofusedebugger.fuzz.contracts import Seed
+    from autofusex.fuzz.cli import main
+    from autofusex.fuzz.contracts import Seed
     def launch(ledger, database, specs, **kwargs):
         assert list(specs) == []
         configs, evaluation, count, devices, excluded, sampling, ops = kwargs['campaign']
@@ -165,7 +165,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
 
 
 def test_background_infinite_campaign_stops_without_refilling(tmp_path):
-    from autofusedebugger.fuzz.scheduling.campaign import stop
+    from autofusex.fuzz.scheduling.campaign import stop
     ledger = TaskLedger(tmp_path/'queue')
     hosting.launch(ledger, tmp_path/'results', [], campaign=([EX], EV, None))
     deadline = time.monotonic() + 20

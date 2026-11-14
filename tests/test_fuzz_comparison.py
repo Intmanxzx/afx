@@ -1,5 +1,5 @@
-from autofusedebugger.fuzz.storage import ResultRepository
-from autofusedebugger.fuzz.storage.comparison import compare
+from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.storage.comparison import compare
 
 
 def result(backend='cpu-eager',duration=100):
@@ -43,8 +43,8 @@ def test_public_and_offline_compare_routes(tmp_path):
     import json
     import threading
     from urllib.request import urlopen
-    from autofusedebugger.fuzz.central.server import create_server as central
-    from autofusedebugger.fuzz.view.server import create_server as offline
+    from autofusex.fuzz.central.server import create_server as central
+    from autofusex.fuzz.view.server import create_server as offline
     repo = ResultRepository(tmp_path/'results')
     left = repo.save(result())
     right = repo.save(result('cpu-compile', 50))
@@ -61,7 +61,7 @@ def test_public_and_offline_compare_routes(tmp_path):
 
 
 def test_newest_pages_do_not_duplicate_or_skip(tmp_path):
-    from autofusedebugger.fuzz.storage.queries import ResultQueries
+    from autofusex.fuzz.storage.queries import ResultQueries
     repo = ResultRepository(tmp_path/'results')
     identities = [repo.save(result()) for _ in range(5)]
     query = ResultQueries(repo.path)

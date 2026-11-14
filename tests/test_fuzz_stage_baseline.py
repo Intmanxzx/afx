@@ -1,4 +1,4 @@
-from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.generation.sampling import SamplingConfig
 CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 """First migration slice: no fictitious split, no inferred historic metrics."""
 import json
@@ -7,12 +7,12 @@ import sys
 import time
 import pytest
 
-from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.scheduling import supervisor, campaign
-from autofusedebugger.fuzz.scheduling.budgets import Budget, write_policy
-from autofusedebugger.fuzz.storage.lifecycle import append
-from autofusedebugger.fuzz.storage import ResultRepository
+from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling import supervisor, campaign
+from autofusex.fuzz.scheduling.budgets import Budget, write_policy
+from autofusex.fuzz.storage.lifecycle import append
+from autofusex.fuzz.storage import ResultRepository
 
 
 @pytest.mark.skipif(sys.platform != 'linux', reason='managed flock/SQLite isolation requires Linux')
@@ -54,7 +54,7 @@ def test_worker_failure_never_generates_graph(tmp_path, monkeypatch):
     ledger=TaskLedger(tmp_path/'queue')
     ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1),EvaluationConfig())
     task=ledger.claim()
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.materialize', lambda *a: (_ for _ in ()).throw(AssertionError('no generation')))
+    monkeypatch.setattr('autofusex.fuzz.generation.materialize', lambda *a: (_ for _ in ()).throw(AssertionError('no generation')))
     supervisor._save_worker_failure(ledger,tmp_path/'db',task,'timeout','')
     assert supervisor._has_result(tmp_path/'db',task)
     assert ResultRepository(tmp_path/'db').detail(task['attempt_id'])['shape_results']==[]
@@ -63,8 +63,8 @@ def test_worker_failure_never_generates_graph(tmp_path, monkeypatch):
 def test_lifecycle_idempotent_separate_from_result_hash(tmp_path):
     from fuzz_fixtures import bundle
     from test_fuzz_precise_metrics import Adapter
-    from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.sync.outbox import pending, acknowledge
+    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.sync.outbox import pending, acknowledge
     result=execute(bundle('C16'),Adapter(),EvaluationConfig())
     db=tmp_path/'db';repo=ResultRepository(db);identity=repo.save(result)
     original=repo.detail(identity)['result_hash']
@@ -82,8 +82,8 @@ def test_lifecycle_idempotent_separate_from_result_hash(tmp_path):
 def test_processing_span_is_not_sum_or_kernel(tmp_path):
     from fuzz_fixtures import bundle
     from test_fuzz_precise_metrics import Adapter
-    from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.storage.queries import ResultQueries
+    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.storage.queries import ResultQueries
     result=execute(bundle('C16'),Adapter(),EvaluationConfig())
     metrics=json.loads(result['execution']['telemetry'])['shapes']['0']
     assert metrics['shape_processing']>=sum(v for k,v in metrics.items() if k!='shape_processing')
@@ -113,8 +113,8 @@ def test_cpu_refill_not_blocked_by_npu_backlog(tmp_path):
 def test_lifecycle_write_failure_does_not_rewrite_execution(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
     from test_fuzz_precise_metrics import Adapter
-    from autofusedebugger.fuzz.execution import execute
-    from autofusedebugger.fuzz.storage import repository
+    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.storage import repository
     result=execute(bundle('C16'),Adapter(),EvaluationConfig())
     repo=ResultRepository(tmp_path/'db');identity=repo.save(result)
     before=repo.detail(identity)['result_hash']

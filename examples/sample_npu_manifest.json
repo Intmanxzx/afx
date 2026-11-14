@@ -1,5 +1,5 @@
 {
-  "schema": "autofusedebugger-manifest/1",
+  "schema": "autofusex-manifest/1",
   "side": "npu",
   "model": {"name": "sample", "graph": "sample_npu_graph.json"},
   "artifacts": {"root": "."},

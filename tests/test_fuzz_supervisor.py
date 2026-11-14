@@ -10,11 +10,11 @@ import time
 
 import pytest
 
-from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.scheduling.ownership import own_queue
-from autofusedebugger.fuzz.scheduling import supervisor
-from autofusedebugger.fuzz.storage import ResultRepository
+from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.ownership import own_queue
+from autofusex.fuzz.scheduling import supervisor
+from autofusex.fuzz.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED, SECOND_CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='managed execution currently POSIX only')
@@ -23,7 +23,7 @@ EV = EvaluationConfig()
 
 
 def saved_result(task):
-    from autofusedebugger.fuzz.generation import materialize, workload_id, oracle_id
+    from autofusex.fuzz.generation import materialize, workload_id, oracle_id
     bundle = materialize(task['seed'])
     return {'seed': task['seed'], 'workload_id': workload_id(bundle), 'oracle_id': oracle_id(bundle),
             'backend': 'cpu-eager', 'status': 'ok', 'execution': json.loads(task['execution']),
@@ -154,8 +154,8 @@ def test_inherited_lock_survives_supervisor_death(tmp_path):
     pidfile = tmp_path/'worker.pid'
     code = '''
 import os,pathlib,subprocess,sys,time
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
-from autofusedebugger.fuzz.scheduling.ownership import own_queue
+from autofusex.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling.ownership import own_queue
 with own_queue(TaskLedger(sys.argv[1])) as fd:
  p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],pass_fds=(fd,),start_new_session=True)
  pathlib.Path(sys.argv[2]).write_text(str(p.pid))
@@ -182,7 +182,7 @@ with own_queue(TaskLedger(sys.argv[1])) as fd:
 
 
 def test_cli_rejects_npu_and_exposes_lightweight_status(tmp_path, capsys):
-    from autofusedebugger.fuzz.cli import main
+    from autofusex.fuzz.cli import main
     with pytest.raises(SystemExit):
         main(['run', CURRENT_SEED, '--backend', 'invalid'])
     ledger, identity, _ = setup(tmp_path)
@@ -195,7 +195,7 @@ def test_worker_commits_then_crashes_before_parent_ack(tmp_path, monkeypatch):
     ledger, identity, database = setup(tmp_path)
     code = '''
 import os,sys
-from autofusedebugger.fuzz.scheduling.worker import run
+from autofusex.fuzz.scheduling.worker import run
 run(*sys.argv[1:])
 os._exit(82)
 '''
@@ -223,8 +223,8 @@ def test_keyboard_interrupt_cleans_worker_and_leaves_explicit_resume(tmp_path):
     pidfile = tmp_path/'worker.pid'
     code = '''
 import pathlib,sys
-from autofusedebugger.fuzz.scheduling import supervisor
-from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
+from autofusex.fuzz.scheduling import supervisor
+from autofusex.fuzz.scheduling.ledger import TaskLedger
 worker="import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(120)"
 supervisor._worker_command=lambda *a:[sys.executable,'-c',worker,sys.argv[3]]
 try:
@@ -258,7 +258,7 @@ class Block(importlib.abc.MetaPathFinder):
  def find_spec(self,name,*args):
   if name.split('.')[0] in {'torch','numpy','nnsmith','torch_npu'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-from autofusedebugger.fuzz.cli import main
+from autofusex.fuzz.cli import main
 assert main(['status','--data-dir',sys.argv[1]]) == 0
 '''
     assert subprocess.run([sys.executable, '-c', code, str(tmp_path)]).returncode == 0
@@ -282,7 +282,7 @@ def test_unsaved_worker_completes_without_result_or_outbox(tmp_path):
     from dataclasses import replace
     ledger, identity, database = setup(tmp_path)
     # Use a fresh queue so each task's persisted save policy is unambiguous.
-    from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
+    from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
     ephemeral = TaskLedger(tmp_path/'ephemeral.sqlite')
     identity = ephemeral.enqueue(CURRENT_SEED, ExecutionConfig('cpu', 'cpu', 1, save_results=False), EvaluationConfig())
     summary = supervisor.drain(ephemeral, database)

@@ -5,9 +5,9 @@ import sqlite3
 import sys
 import time
 import uuid
-from autofusedebugger.fuzz.storage.repository import _initialize
-from autofusedebugger.fuzz.storage.queries import ResultQueries
-from autofusedebugger.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.storage.repository import _initialize
+from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.reporting.statistics import statistics
 
 path=Path(sys.argv[1])
 with path.open('xb'):pass

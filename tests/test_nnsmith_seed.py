@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("nnsmith")
 pytest.importorskip("z3")
 # Tests require an explicitly prepared compatible NNSmith copy; imports never patch it.
-import autofusedebugger  # noqa: F401
+import autofusex  # noqa: F401
 
 pytest.importorskip("nnsmith.graph_gen")
 
@@ -55,7 +55,7 @@ def test_seed_survives_candidate_order_and_previous_cases(seed):
 def test_seed_survives_fresh_process_and_hash_randomization():
     worker = '''
 import json
-import autofusedebugger
+import autofusex
 from nnsmith.abstract.op import Add, Mul, Neg, ReLU
 from nnsmith.graph_gen import model_gen
 ops = list({Add, Mul, Neg, ReLU})
@@ -79,7 +79,7 @@ print(json.dumps(results))
 
 def test_probe_canonicalizes_ops_and_paired_dtype_signatures(tmp_path, monkeypatch):
     import nnsmith.narrow_spec as narrow
-    from autofusedebugger.nnsmith_integration import ascendc_opset
+    from autofusex.nnsmith_integration import ascendc_opset
 
     # This is a cached hardware-probe result, deliberately in unstable order.
     cache = {
@@ -129,7 +129,7 @@ def test_solver_unknown_is_not_skipped_as_unsatisfiable():
 
 def test_graph_timeout_becomes_case_generation_error(monkeypatch):
     import nnsmith.graph_gen as graph_gen
-    from autofusedebugger.nnsmith_integration.fuzz_loop import run_single_case
+    from autofusex.nnsmith_integration.fuzz_loop import run_single_case
 
     ticks = iter([0.0, 1.0])
     monkeypatch.setattr(graph_gen, "time", SimpleNamespace(time=lambda: next(ticks)))
@@ -150,7 +150,7 @@ def _materialized_case(seed, mode, *, slow=False, out_dir=None, complex_graph=Fa
     import torch
     from nnsmith.materialize.torch import TorchModelCPU
     from nnsmith.materialize.torch import input_gen
-    from autofusedebugger.nnsmith_integration import fuzz_loop
+    from autofusex.nnsmith_integration import fuzz_loop
 
     captured = {}
     ops = [Add, Mul, Neg, ReLU]
@@ -275,7 +275,7 @@ def test_gradient_refinement_uses_steps_without_reading_clock(initial, expected_
     from nnsmith.abstract.op import Placeholder, Sqrt
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.gir import GraphIR, InstExpr
-    from autofusedebugger.nnsmith_integration.fuzz_loop import _seeded_materialization
+    from autofusex.nnsmith_integration.fuzz_loop import _seeded_materialization
 
     ir = GraphIR()
     t = AbsTensor([4], DType.float32)
@@ -309,7 +309,7 @@ def test_complex_graph_seed_ignores_solver_history():
         Sqrt, Transpose, Reshape, ReduceMin, Slice, MatMul, ExpandLast1,
     )
     from nnsmith.materialize.torch.dialect import TorchReduceSum
-    from autofusedebugger.nnsmith_integration.fuzz_loop import _seeded_solver_context
+    from autofusex.nnsmith_integration.fuzz_loop import _seeded_solver_context
 
     ops = [Add, Mul, Neg, ReLU, Sqrt, Transpose, Reshape, ReduceMin,
            Slice, MatMul, ExpandLast1, TorchReduceSum]
@@ -334,7 +334,7 @@ def test_complex_graph_seed_ignores_solver_history():
 
 def test_generation_contexts_restore_settings_after_exception():
     import torch
-    from autofusedebugger.nnsmith_integration.fuzz_loop import (
+    from autofusex.nnsmith_integration.fuzz_loop import (
         _seeded_materialization, _seeded_solver_context,
     )
 
@@ -352,7 +352,7 @@ def test_generation_contexts_restore_settings_after_exception():
 
 
 def test_repro_seed_without_debug_does_not_dump_failed_case(tmp_path, monkeypatch):
-    from autofusedebugger.nnsmith_integration import fuzz_loop
+    from autofusex.nnsmith_integration import fuzz_loop
 
     def no_dump(path):
         raise AssertionError("Seed-only replay must not dump model artifacts")
@@ -378,7 +378,7 @@ def test_repro_seed_without_debug_does_not_dump_failed_case(tmp_path, monkeypatc
 
 @pytest.mark.parametrize("seed", [0, 42, 389609433])
 def test_scoped_solver_context_prevents_observed_history_drift(seed):
-    from autofusedebugger.nnsmith_integration.generation import _seeded_solver_context
+    from autofusex.nnsmith_integration.generation import _seeded_solver_context
     ops = [Add, Mul, Neg, ReLU]
     previous = z3.main_ctx()
     with _seeded_solver_context(seed):
@@ -393,7 +393,7 @@ def test_scoped_solver_context_prevents_observed_history_drift(seed):
 
 def test_production_solver_scope_isolates_candidate_order_and_history():
     """Production scope, unlike raw model_gen, resets the context AST history."""
-    from autofusedebugger.nnsmith_integration.generation import _seeded_solver_context
+    from autofusex.nnsmith_integration.generation import _seeded_solver_context
     ops = [Add, Mul, Neg, ReLU]
     for seed in (0, 42, 389609433):
         with _seeded_solver_context(seed):

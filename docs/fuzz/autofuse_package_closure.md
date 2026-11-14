@@ -37,4 +37,4 @@ AF 后端在设备初始化前导入编译 adapter 并检查 `build_tiling_obj`�
 执行阶段耗时，不是 Kernel 耗时或整个上传链路耗时。
 恢复后的 campaign 在 npu:0 / npu:1 均产生了新的 AF-MLIR ok 结果，ACK 已推进到 1730。
 本机专项 20 passed；额外架构检查仍有上游 dtype 修复引入的既有失败：
-TorchAdapter 导入 autofusedebugger.compare，与旧架构测试约束冲突。本次未扩大范围修改。
+TorchAdapter 导入 autofusex.compare，与旧架构测试约束冲突。本次未扩大范围修改。

@@ -10,8 +10,8 @@ import sys
 import time
 import uuid
 
-from autofusedebugger.fuzz.storage.repository import _initialize
-from autofusedebugger.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.storage.repository import _initialize
+from autofusex.fuzz.storage.queries import ResultQueries
 
 
 def main(path):

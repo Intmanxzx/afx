@@ -1,7 +1,7 @@
 import threading,tempfile,json,sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
-from autofusedebugger.fuzz.central.server import create_server
+from autofusex.fuzz.central.server import create_server
 root=Path(tempfile.mkdtemp());s=create_server(root/'db',0);threading.Thread(target=s.serve_forever,daemon=True).start()
 try:
  with sync_playwright() as p:
