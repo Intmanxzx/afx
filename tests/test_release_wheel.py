@@ -30,7 +30,6 @@ def artifact(tmp_path):
         archive.writestr('afx/__init__.py', 'from autofusex import __version__\n')
         archive.writestr('afx/__main__.py', 'from autofusex.cli import main\nraise SystemExit(main())\n')
         archive.writestr('autofusex/__init__.py','__version__ = "0.1.2"\n')
-        archive.writestr('autofusex/nnsmith_integration/patches/example.patch', 'patch')
         for asset in ['index.html','app.js','charts.js']:
             archive.writestr('autofusex/fuzz/view/static/'+asset,'content')
     return tmp_path, wheel
@@ -49,14 +48,9 @@ def test_plan_is_offline_and_version_checked(artifact, monkeypatch, capsys):
         release.validate(root,'v0.1.2',wheel.parent)
 
 
-def test_nnsmith_patches_are_required(artifact):
+def test_nnsmith_patches_are_not_bundled(artifact):
     root, wheel = artifact
-    with zipfile.ZipFile(wheel) as archive:
-        contents = {n: archive.read(n) for n in archive.namelist() if not n.endswith('.patch')}
-    with zipfile.ZipFile(wheel, 'w') as archive:
-        for name, content in contents.items(): archive.writestr(name, content)
-    with pytest.raises(ValueError, match='NNSmith patches'):
-        release.validate(root, 'v0.1.2', wheel.parent)
+    release.validate(root, 'v0.1.2', wheel.parent)
 
 
 @pytest.mark.parametrize('suffix, message', [

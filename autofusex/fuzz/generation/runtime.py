@@ -16,5 +16,5 @@ def source_evidence():
         raise ValueError(
             f'NNSmith dependency mismatch at {root}: source_sha256={result["source_sha256"]} '
             f'(expected {SOURCE_SHA256}), z3={result["z3"]} (expected {Z3_VERSION}). '
-            'Reinstall with nnsmith_integration/install_af_fuzz.sh and remove stale PYTHONPATH entries.')
+            'Install the pinned AutofuseX NNSmith fork and remove stale PYTHONPATH entries.')
     return result

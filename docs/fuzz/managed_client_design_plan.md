@@ -45,7 +45,7 @@
 | `fuzz/central/retests.py`、`sync/retests.py` | 复测租约、幂等与结果关联 | 通用控制语义；保持原复测兼容 |
 | `fuzz/scheduling/` | 队列、campaign、staged 调度、资源预算、后台执行 | 管理服务适配、控制动作、配置安全应用 |
 | `scheduling/staged.py` | 启动时读取预算并创建 Pool | 不能靠修改配置文件热调整运行中的 Pool |
-| `nnsmith_integration/install_af_fuzz.sh` | 固定提交、补丁顺序、指纹验证 | 发布端预构建，客户端安装制品而非现场打补丁 |
+| 独立 AutofuseX NNSmith fork | 固定 commit、源码指纹和 Z3 版本 | 由 pip 安装，客户端不再现场打补丁 |
 | `pyproject.toml` | wheel、CLI；基础依赖含 NumPy | 轻量引导依赖和运行依赖拆分、入口惰性导入审计 |
 
 特别注意：当前 campaign 的 stop 会请求中断/取消任务，不能直接作为新设计的“安全排空停止”；现有后台 supervisor 也不是永久进程管理服务，需要新增语义而不是重命名接口。

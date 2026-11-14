@@ -80,8 +80,8 @@ def validate(root, tag, dist):
         for asset in ('index.html', 'app.js', 'charts.js'):
             if f'autofusex/fuzz/view/static/{asset}' not in names:
                 raise ValueError('wheel lacks viewer assets')
-        if not any(name.startswith('autofusex/nnsmith_integration/patches/') and name.endswith('.patch') for name in names):
-            raise ValueError('wheel lacks NNSmith patches')
+        if any(name.startswith('autofusex/nnsmith_integration/patches/') for name in names):
+            raise ValueError('wheel contains obsolete bundled NNSmith patches')
         if archive.read('autofusex/__init__.py').decode() != init:
             raise ValueError('wheel package version source differs')
     return wheel, version

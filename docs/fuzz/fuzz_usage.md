@@ -146,7 +146,7 @@ python tools/release_wheel.py --tag v0.1.2 --repository niuyuhu/Autofuse-Debugge
 # 默认只校验及展示计划，不上传；真实发布仅由可信 Tag 流水线加 --publish
 ```
 
-Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修改；构建 wheel 必须含网页资源且包含NNSmith patches。发布不覆盖已有文件：同名同 SHA256 可跳过，不同内容报错；GitCode 成功而 PyPI 失败时重跑相同产物可以续发，**不能重建不同内容覆盖同一版本**。PyPI 版本不可覆盖，版本已占用时必须升版本。
+Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修改；构建 wheel 必须含网页资源，NNSmith fork 作为独立 pip 依赖发布。发布不覆盖已有文件：同名同 SHA256 可跳过，不同内容报错；GitCode 成功而 PyPI 失败时重跑相同产物可以续发，**不能重建不同内容覆盖同一版本**。PyPI 版本不可覆盖，版本已占用时必须升版本。
 
 构建及安装验证不需要发布凭据，也不需要创建 Tag/Release 或上传 PyPI。首次真实流水线及 GitCode 项目权限需维护者发布时验证。
 
@@ -158,12 +158,12 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 - 后台任务的 seed、状态等调度元数据仍持久化，用于 status/stop/恢复；它们不等于结果归档。
 - `run` 不传 `--count` 且未指定 seed 列表时无限生成，直到 `fuzz stop`；指定 seed 列表则只执行该列表。
 - 前台使用 `--fg`，请求性能采集使用 `--perf`。
-- NNSmith 集成和全部 patches 已恢复，wheel 包含补丁；不在导入时打补丁，也不修改共享 NNSmith。run/replay已统一接入NNSmith；手写A/B模板已删除，旧seed拒绝执行。当前覆盖Elementwise/Reduce/Transpose的静态fp32随机图，不代表全部算子及动态shape已经完成。
+- NNSmith 集成和全部 AscendC 修改已迁移到独立 fork；AutofuseX 通过 pip 固定 commit 安装它，不在导入时打补丁，也不修改共享 checkout。run/replay 已统一接入 NNSmith。
 
 
 ### NNSmith执行环境
 
-run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusex/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusex[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
+run/replay 要求安装 AutofuseX NNSmith fork 和 Z3 4.12.2；源码指纹不匹配即拒绝，不回退手写图。安装方式是 pip install autofusex[execution]，或在离线 wheelhouse 中安装同一 fork wheel。
 
 
 ### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）
