@@ -180,9 +180,7 @@ def test_setup_short_user_flag(tmp_path, capsys):
     assert '--user-name' not in help_text and '--display-name' not in help_text
 
 
-def test_nnsmith_patch_check_does_not_apply_implicitly(monkeypatch):
-    from autofusex.nnsmith_integration import _nnsmith_patch
-    assert callable(_nnsmith_patch.ensure_ascendc_patch_applied)
+def test_nnsmith_integration_import_is_lazy():
     # Ordinary package import must not import NNSmith or apply patches.
     code = '''
 import sys

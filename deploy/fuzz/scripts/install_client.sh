@@ -8,6 +8,7 @@ Usage: install_client.sh --wheel FILE --cann-root DIR --home DIR [options]
   --runtime-python PATH  Reuse Torch/torch_npu from this existing Python
   --torch-wheel FILE     Install Torch wheel on a fresh environment
   --torch-npu-wheel FILE Install the matching torch_npu wheel
+  --nnsmith-wheel FILE  Install a prebuilt fork wheel (offline/local distribution)
   --venv DIR             New venv (default: HOME/deployments/client-WHEEL_SHA256)
   --library-dir DIR      Extra compiler runtime library directory
   --compiler-bin DIR     Compiler executables, when needed by the run package
@@ -15,7 +16,7 @@ Creates HOME/client-env.sh and HOME/bin/afx. Does not create/change tokens
 or start a campaign. Requires a matching, installed CANN graph-autofusion run package.
 HELP
 }
-PYTHON_BIN=python3; RUNTIME_PYTHON=; TORCH_WHEEL=; NPU_WHEEL=; WHEEL=; CANN_ROOT=; HOME_DIR=; VENV=; LIBRARY_DIR=; COMPILER_BIN=
+PYTHON_BIN=python3; RUNTIME_PYTHON=; TORCH_WHEEL=; NPU_WHEEL=; WHEEL=; CANN_ROOT=; HOME_DIR=; VENV=; LIBRARY_DIR=; COMPILER_BIN=; NNSMITH_WHEEL=
 while (($#)); do
   [[ $1 == -h || $1 == --help ]] && { usage; exit 0; }
   (($#>=2)) || { usage >&2; exit 2; }
@@ -23,7 +24,7 @@ while (($#)); do
     --wheel) WHEEL=$2;; --cann-root) CANN_ROOT=$2;; --home) HOME_DIR=$2;;
     --python) PYTHON_BIN=$2;; --runtime-python) RUNTIME_PYTHON=$2;;
     --torch-wheel) TORCH_WHEEL=$2;; --torch-npu-wheel) NPU_WHEEL=$2;;
-    --venv) VENV=$2;;
+    --venv) VENV=$2;; --nnsmith-wheel) NNSMITH_WHEEL=$2;;
     --library-dir) LIBRARY_DIR=$2;; --compiler-bin) COMPILER_BIN=$2;;
     *) echo "Unknown option: $1" >&2; exit 2;;
   esac
@@ -64,8 +65,11 @@ else
   "$PY" -m pip install "$TORCH_WHEEL" "$NPU_WHEEL"
 fi
 "$PY" -m pip install 'decorator' 'attrs' 'psutil' 'scipy' 'packaging'
-"$PY" -m pip install --ignore-installed "$WHEEL" \
-  'nnsmith @ git+https://github.com/Intmanxzx/nnsmith.git@7fbc50448bd3693efb1706089101ff3c4f057dac'
+if [[ -n $NNSMITH_WHEEL ]]; then
+  "$PY" -m pip install --ignore-installed "$WHEEL" "$NNSMITH_WHEEL"
+else
+  "$PY" -m pip install --ignore-installed "$WHEEL[execution]"
+fi
 # Fail before publishing the new launcher if dependencies or MLIR are incomplete.
 (cd / && "$PY" - "$CANN_ROOT" <<'PY'
 import json, sys

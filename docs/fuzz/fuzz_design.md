@@ -35,7 +35,7 @@ run/replay统一使用NNSmith `graph_gen.model_gen`，通过 seed 中编码的�
 
 C2/D2 seed 使用独立的 160-bit entropy 空间；C2 保持单静态 Shape，D2 在同一图和固定权重上构造 2–8 个合法 Shape，数量由 seed 编码，不能构造时显式失败，不退回静态。图由 NNSmith 生成，数据字节由字段寻址 SHA256 和规范小端编码生成，避免 Torch 全局 RNG 影响输入。workload 指纹覆盖完整规格与字节，缓存不参与确定性保证。
 
-依赖要求：AutofuseX NNSmith fork commit `7fbc50448bd3693efb1706089101ff3c4f057dac`，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。源码修改和补丁历史都在独立 fork 中维护；AutofuseX 通过 pip 固定 commit 安装，不在客户端现场打补丁。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
+依赖要求：AutofuseX NNSmith fork commit `9d7f4d16aaeda931e1d79a2f91dbd09d72f86ab3`，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。源码修改和补丁历史都在独立 fork 中维护；AutofuseX 通过 pip 固定 commit 安装，不在客户端现场打补丁。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
 
 图、输入/输出规格作为受限轻量case_spec进入结果和同步协议，云端与离线view直接索引采集数据，不重新生成图、不依赖NNSmith。它不是重放所需的缓存。普通import不加载NNSmith；真正生成时才检查依赖。
 

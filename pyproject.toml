@@ -13,7 +13,7 @@ dependencies = ["PyYAML>=6.0,<7", "jsonschema>=4.18,<5", "cryptography>=41"]
 [project.optional-dependencies]
 execution = [
   "numpy",
-  "nnsmith @ git+https://github.com/Intmanxzx/nnsmith.git@7fbc50448bd3693efb1706089101ff3c4f057dac",
+  "nnsmith @ git+https://github.com/Intmanxzx/nnsmith.git@9d7f4d16aaeda931e1d79a2f91dbd09d72f86ab3",
 ]
 
 [project.scripts]

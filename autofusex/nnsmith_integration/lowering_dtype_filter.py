@@ -83,7 +83,7 @@ LOWERING_GUARD_TARGETS: dict[str, tuple] = {
     "core.ReduceMean": (aten.mean.dim,),
     # ReduceMin/ReduceMax's forward_fn is rewritten by
     # ascendc_reduce_min_max_amin_amax.patch to call amin/amax instead of
-    # min/max.dim -- see that patch and _nnsmith_patch.py.
+    # min/max.dim -- see that patch and the NNSmith fork.
     "core.ReduceMin": (aten.amin.default,),
     "core.ReduceMax": (aten.amax.default,),
     # view / layout

@@ -39,8 +39,13 @@ def observe_autofuse():
     """
     state = Coverage()
     try:
-        from torch._inductor.scheduler import Scheduler
-        from torch_npu._inductor.ascendc import codegen as af_codegen
+        # Importing torch_npu._inductor initializes the selected backend.
+        # Select AscendC before observation, just as torch.compile will;
+        # otherwise fresh workers initialize the default Triton backend.
+        import os
+        with patch.dict(os.environ, TORCHINDUCTOR_NPU_BACKEND='ascendc'):
+            from torch_npu._inductor.ascendc import codegen as af_codegen
+            from torch._inductor.scheduler import Scheduler
     except (ImportError, AttributeError):
         yield state
         return

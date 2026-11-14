@@ -34,6 +34,17 @@ python3 -m pip install ./autofusex-0.1.2-py3-none-any.whl
 源码包和目录统一为 `autofusex`，环境变量使用 `AUTOFUSEX_*`。此版本按全新数据环境使用，不提供旧包路径或历史数据兼容。
 发布到 PyPI 后可用 `python3 -m pip install autofusex` 安装；尚未发布时使用本项目构建或 Release 提供的 wheel。
 
+执行 fuzz 时安装 execution 扩展，pip 会安装固定提交的 [NNSmith fork](https://github.com/Intmanxzx/nnsmith) 及其依赖：
+
+```bash
+python3 -m pip install './autofusex-0.1.2-py3-none-any.whl[execution]'
+# 源码开发环境
+python3 -m pip install -e '.[execution]'
+```
+
+无法访问 GitHub 时，先从 fork 构建 NNSmith wheel，然后通过 pip 同时安装两个本地 wheel。
+NNSmith 的修改直接维护在 fork 中，本项目不再携带或应用补丁。
+
 ### 方式二：源码安装
 
 ```bash

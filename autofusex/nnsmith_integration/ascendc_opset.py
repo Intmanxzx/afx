@@ -86,7 +86,7 @@ ASCENDC_OPSET_A3: List[str] = [
     "core.ReduceMean",  # x.mean(dim) -> aten.mean, float_dtypes()
     # core.ReduceMin/core.ReduceMax -- see
     # patches/ascendc_reduce_min_max_amin_amax.patch (auto-applied, see
-    # _nnsmith_patch.py): forward_fn rewritten from `x.min(dim).values` /
+    # the NNSmith fork): forward_fn rewritten from `x.min(dim).values` /
     # `x.max(dim).values` (traces to the tuple-returning aten.min.dim /
     # aten.max.dim, whose int64 `indices` half never matches the registered
     # float/int output dtype set -- see the "excluded from both tiers" note
@@ -158,7 +158,7 @@ _ASCENDC_A5_ONLY_ADDITIONS: List[str] = [
     # core.IndexSelect -- NNSmith has no native op for aten.gather/
     # aten.index_select/aten.embedding/aten.index.Tensor at all; this class
     # is added via patches/ascendc_index_select.patch (auto-applied, see
-    # _nnsmith_patch.py). All four of ascendc's gather-family registrations
+    # the NNSmith fork). All four of ascendc's gather-family registrations
     # in gather_lowering.py are since=Soc.A5 with NO A3 entry whatsoever, so
     # this only belongs in the A5 tier.
     #

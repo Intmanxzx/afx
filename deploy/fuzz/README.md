@@ -4,7 +4,7 @@
 
 ## 客户端
 
-准备 Python 3.11、venv/pip、已安装的 CANN toolkit 和同版本 graph-autofusion run 包。SQLite 3.31+ 由 `ensure_sqlite.sh` 自动检测；缺失时使用系统包管理器安装，预编译 Python 若固定加载旧私有库会自动切到系统库，不需要源码编译。Torch 为当前协议要求的 2.10.0+cpu，并配套 torch_npu。脚本支持安装本地 runtime wheel，也支持复用现有 Python 的 Torch；不会升级共享 runtime。
+准备 Python 3.11、venv/pip、Git（通过仓库安装依赖时）、已安装的 CANN toolkit 和同版本 graph-autofusion run 包。SQLite 3.31+ 由 `ensure_sqlite.sh` 自动检测；缺失时使用系统包管理器安装，预编译 Python 若固定加载旧私有库会自动切到系统库，不需要源码编译。Torch 为当前协议要求的 2.10.0+cpu，并配套 torch_npu。脚本支持安装本地 runtime wheel，也支持复用现有 Python 的 Torch；不会升级共享 runtime。
 
 ~~~bash
 # 新环境：换成实际匹配架构和 Python ABI 的 wheel 路径。
@@ -20,7 +20,7 @@ bash install_client.sh \
   --runtime-python /path/to/torch-venv/bin/python
 ~~~
 
-需要 GCC runtime 时传 --library-dir /path/to/gcc/lib64；需要其编译器时传 --compiler-bin /path/to/gcc/bin。NNSmith 由 pip 安装固定的 AutofuseX fork 版本。
+需要 GCC runtime 时传 --library-dir /path/to/gcc/lib64；需要其编译器时传 --compiler-bin /path/to/gcc/bin。NNSmith 由 pip 安装固定的 AutofuseX fork 版本。无法访问 GitHub 时，传 --nnsmith-wheel /packages/nnsmith-0.1.1+autofusex.2-py3-none-any.whl 安装提前构建的 fork wheel。
 
 每次创建以 wheel 摘要区分的 venv；同一目录已存在则拒绝覆盖，可用 --venv /new/path 指定新目录。安装后验证 NNSmith fork、全部 368 条 ATen 规则、compile_adapter 和实际加载的 MLIR codegen 库。验证成功后才更新 HOME/client-env.sh 和 HOME/bin/afx。切换前用旧入口停止 campaign 和同步进程，再用新入口启动。
 
