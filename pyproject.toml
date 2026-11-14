@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "afx"
+name = "autofusex"
 version = "0.1.2"
 description = "Autofuse debugging and reproducible CPU/NPU fuzz testing"
 readme = "README.md"

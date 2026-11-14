@@ -9,13 +9,13 @@
 ~~~bash
 # 新环境：换成实际匹配架构和 Python ABI 的 wheel 路径。
 bash install_client.sh \
-  --wheel /packages/afx-0.1.2-py3-none-any.whl \
+  --wheel /packages/autofusex-0.1.2-py3-none-any.whl \
   --cann-root "$HOME/Ascend/cann" --home "$HOME/af-fuzz" \
   --torch-wheel /packages/torch.whl --torch-npu-wheel /packages/torch_npu.whl
 
 # 已有 Torch 环境。
 bash install_client.sh \
-  --wheel /packages/afx-0.1.2-py3-none-any.whl \
+  --wheel /packages/autofusex-0.1.2-py3-none-any.whl \
   --cann-root "$HOME/Ascend/cann" --home /data/af-fuzz \
   --runtime-python /path/to/torch-venv/bin/python
 ~~~
@@ -41,7 +41,7 @@ NNSmith 安装器包含在 wheel 内。它从固定 commit 应用固定顺序补
 
 ~~~bash
 bash install_server.sh \
-  --wheel /packages/afx-0.1.2-py3-none-any.whl \
+  --wheel /packages/autofusex-0.1.2-py3-none-any.whl \
   --root /srv/af-fuzz --user fuzz --port 8090 \
   --database /srv/af-fuzz/data/results.sqlite --service af-fuzz
 ~~~

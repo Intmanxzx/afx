@@ -11,7 +11,7 @@ from urllib.request import urlopen
 
 def main():
     import afx
-    distribution = importlib.metadata.distribution('afx')
+    distribution = importlib.metadata.distribution('autofusex')
     assert distribution.version == afx.__version__
     entries = {entry.name: entry.value for entry in distribution.entry_points
                if entry.group == 'console_scripts'}
@@ -23,7 +23,7 @@ def main():
                 result = subprocess.run([*command, *args], cwd=cwd, capture_output=True, text=True)
                 assert result.returncode == 0, result.stderr
                 assert 'usage: afx' in result.stdout, result.stdout
-    print('Installed wheel: afx metadata, console command and python -m afx passed')
+    print('Installed wheel: autofusex metadata, afx console command and python -m afx passed')
     for name in ('torch', 'numpy', 'torch_npu', 'nnsmith'):
         if importlib.util.find_spec(name) is not None:
             raise RuntimeError('wheel smoke requires an environment without model dependencies')

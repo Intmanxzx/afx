@@ -19,14 +19,14 @@ if sys.version_info >= (3, 11):
 def artifact(tmp_path):
     (tmp_path/'autofusedebugger').mkdir()
     (tmp_path/'autofusedebugger/__init__.py').write_text('__version__ = "0.1.2"\n')
-    (tmp_path/'pyproject.toml').write_text('[project]\nname="afx"\nversion="0.1.2"\n')
+    (tmp_path/'pyproject.toml').write_text('[project]\nname="autofusex"\nversion="0.1.2"\n')
     def git(*args):
         subprocess.run(['git','-C',str(tmp_path),*args], check=True, capture_output=True)
     git('init');git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','fixture');git('tag','v0.1.2')
-    dist=tmp_path/'dist';dist.mkdir();wheel=dist/'afx-0.1.2-py3-none-any.whl'
+    dist=tmp_path/'dist';dist.mkdir();wheel=dist/'autofusex-0.1.2-py3-none-any.whl'
     with zipfile.ZipFile(wheel,'w') as archive:
-        archive.writestr('afx-0.1.2.dist-info/METADATA','Name: afx\nVersion: 0.1.2\n')
-        archive.writestr('afx-0.1.2.dist-info/entry_points.txt', '[console_scripts]\nafx = autofusedebugger.cli:main\n')
+        archive.writestr('autofusex-0.1.2.dist-info/METADATA','Name: autofusex\nVersion: 0.1.2\n')
+        archive.writestr('autofusex-0.1.2.dist-info/entry_points.txt', '[console_scripts]\nafx = autofusedebugger.cli:main\n')
         archive.writestr('afx/__init__.py', 'from autofusedebugger import __version__\n')
         archive.writestr('afx/__main__.py', 'from autofusedebugger.cli import main\nraise SystemExit(main())\n')
         archive.writestr('autofusedebugger/__init__.py','__version__ = "0.1.2"\n')
@@ -77,7 +77,7 @@ def test_afx_entry_points_are_required(artifact, suffix, message):
 def test_pypi_hash_idempotency(artifact,monkeypatch):
     _,wheel=artifact
     def missing(url, **kwargs):
-        assert url == 'https://pypi.org/pypi/afx/0.1.2/json'
+        assert url == 'https://pypi.org/pypi/autofusex/0.1.2/json'
         return None
     monkeypatch.setattr(release,'request',missing)
     assert release.pypi_present(wheel,'0.1.2') is False

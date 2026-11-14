@@ -1,6 +1,6 @@
 # Fuzz 使用说明
 
-同一个 `afx` wheel 提供客户端、云端和本地查看器。当前生成规则与历史退役说明见[单实现 E/F](current_protocol.md)，架构见[设计文档](fuzz_design.md)。
+同一个 `autofusex` wheel 提供客户端、云端和本地查看器，命令为 `afx`。当前生成规则与历史退役说明见[单实现 E/F](current_protocol.md)，架构见[设计文档](fuzz_design.md)。
 
 ## 安装
 
@@ -9,10 +9,10 @@
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install /path/to/afx-<版本>-py3-none-any.whl
+python -m pip install /path/to/autofusex-<版本>-py3-none-any.whl
 ```
 
-PyPI 上的 `afx` 当前属于其他项目，取得该项目发布权限前请从本项目 wheel 安装；不要直接从 PyPI 安装同名包。旧环境迁移时，先执行 `python -m pip uninstall autofusedebugger`，再安装新 wheel。命令统一为 `afx`（也可用 `python -m afx`），数据目录、环境变量和内部 Python 模块路径保持兼容。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
+发行包名称为 `autofusex`，发布到 PyPI 后可用 `python -m pip install autofusex==<版本>` 安装；尚未发布时使用本项目 wheel。旧环境迁移时，先执行 `python -m pip uninstall autofusedebugger`，再安装新 wheel；若安装过本项目过渡期间的 `afx` wheel，也应先卸载该发行包。命令统一为 `afx`（也可用 `python -m afx`），数据目录、环境变量和内部 Python 模块路径保持兼容。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
 
 ## 一、客户端：执行、采集、上报
 
@@ -163,7 +163,7 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 
 ### NNSmith执行环境
 
-run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install afx[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
+run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusex[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
 
 
 ### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）

@@ -19,7 +19,7 @@ wheels = [
 ]
 
 [[package]]
-name = "afx"
+name = "autofusex"
 version = "0.1.2"
 source = { editable = "." }
 dependencies = [

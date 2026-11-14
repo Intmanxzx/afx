@@ -1,6 +1,6 @@
-# afx
+# autofusex
 
-`afx` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具。
+`autofusex` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具，命令简称 `afx`。
 当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
 
 ## Fuzz 测试平台
@@ -27,12 +27,12 @@ afx fuzz view ./results.sqlite
 从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 使用说明](docs/fuzz/fuzz_usage.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
 
 ```bash
-python3 -m pip install ./afx-0.1.2-py3-none-any.whl
+python3 -m pip install ./autofusex-0.1.2-py3-none-any.whl
 ```
 
-命令和发行包名称已统一为 `afx`，也支持 `python3 -m afx`。新 wheel 只安装 `afx` 命令。
+发行包名称为 `autofusex`，命令为 `afx`，也支持 `python3 -m afx`。
 从旧包切换时，先在同一个 Python 环境执行 `python3 -m pip uninstall autofusedebugger`，再安装新 wheel，避免两个发行包共用文件导致卸载冲突。已有数据目录、环境变量和 Python 内部模块路径保持兼容。
-PyPI 上的 `afx` 当前属于其他项目；取得该项目发布权限前，请使用本项目构建或 Release 提供的 wheel 安装。
+若安装过本项目改名过渡期间的 `afx` wheel，也应先卸载该发行包再安装 `autofusex`。发布到 PyPI 后可用 `python3 -m pip install autofusex` 安装；尚未发布时使用本项目构建或 Release 提供的 wheel。
 
 ### 方式二：源码安装
 

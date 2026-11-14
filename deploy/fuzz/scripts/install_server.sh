@@ -47,7 +47,7 @@ chmod -R a+rX "$VENV"
 (cd / && "$VENV/bin/python" -I - <<'PY'
 import autofusedebugger, importlib.metadata, yaml, jsonschema, cryptography
 print(autofusedebugger.__file__)
-print(importlib.metadata.version('afx'))
+print(importlib.metadata.version('autofusex'))
 PY
 )
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
