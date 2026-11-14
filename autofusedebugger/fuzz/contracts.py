@@ -54,7 +54,7 @@ class Seed:
 
     def require_current(self):
         if not self.current:
-            raise ValueError('retired internal-test seed: history is readable but replay is unsupported; start a new C2/D2 campaign')
+            raise ValueError('retired internal-test seed: history is readable but replay is unsupported; start a new K2/L2 campaign')
         return self
 
     def __str__(self):
@@ -68,7 +68,7 @@ class Seed:
         while number:
             number, digit = divmod(number, 36)
             digits = alphabet[digit] + digits
-        prefix = ('D2-' if self.dynamic else 'C2-') if self.current else {3:'C',4:'D',5:'E',6:'F',7:'G',8:'H',9:'I',10:'J'}[self.version]
+        prefix = ('L2-' if self.dynamic else 'K2-') if self.current else {3:'C',4:'D',5:'E',6:'F',7:'G',8:'H',9:'I',10:'J'}[self.version]
         return prefix + (digits or '0').zfill(9)
 
     @classmethod
@@ -77,6 +77,12 @@ class Seed:
             return value
         if type(value) is int:
             return cls(value)
+        if isinstance(value, str) and re.fullmatch(r'[KLMN]2-[0-9A-Z]{1,31}', value):
+            entropy = int(value[3:], 36)
+            if entropy >= 2**160:
+                raise ValueError('seed entropy overflow')
+            return cls((11 if value[0] in {'L', 'N'} else 10) * 2**160 + entropy)
+        # C2/D2 remain accepted as legacy aliases for already-published seeds.
         if isinstance(value, str) and re.fullmatch(r'[CD]2-[0-9A-Z]{1,31}', value):
             entropy = int(value[3:], 36)
             if entropy >= 2**160:

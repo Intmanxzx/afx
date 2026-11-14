@@ -1,6 +1,6 @@
 # Fuzz 使用说明
 
-同一个 `autofusedebugger` wheel 提供客户端、云端和本地查看器。当前生成规则与历史退役说明见[单实现 C2/D2](current_protocol.md)，架构见[设计文档](fuzz_design.md)。
+同一个 `autofusedebugger` wheel 提供客户端、云端和本地查看器。当前生成规则与历史退役说明见[单实现 K2/L2](current_protocol.md)，架构见[设计文档](fuzz_design.md)。
 
 ## 安装
 
@@ -32,16 +32,16 @@ autofusedbg fuzz run --count 100 --save                  # 有限批次
 autofusedbg fuzz run --count 10 --fg      # 前台观察
 autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
 autofusedbg fuzz run --backend triton-npu         # 在 CPU、AF-MLIR 外增加后端
-autofusedbg fuzz replay C2-F89VYA334IECZ6OI7Q8Z027SZ               # 只靠 seed 重建并运行
-autofusedbg fuzz replay C2-F89VYA334IECZ6OI7Q8Z027SZ --backend af-mlir  # 单后端诊断
-autofusedbg fuzz replay D2-F89VYA334IECZ6OI7Q8Z027SZ --static-only  # 仅基础 shape，静态编译
-autofusedbg fuzz replay C2-F89VYA334IECZ6OI7Q8Z027SZ --save      # 保存结果并加入自动上传队列
+autofusedbg fuzz replay K2-F89VYA334IECZ6OI7Q8Z027SZ               # 只靠 seed 重建并运行
+autofusedbg fuzz replay K2-F89VYA334IECZ6OI7Q8Z027SZ --backend af-mlir  # 单后端诊断
+autofusedbg fuzz replay L2-F89VYA334IECZ6OI7Q8Z027SZ --static-only  # 仅基础 shape，静态编译
+autofusedbg fuzz replay K2-F89VYA334IECZ6OI7Q8Z027SZ --save      # 保存结果并加入自动上传队列
 ```
 
 - 默认 CPU 为对照、AF-MLIR 为被测后端；对 CPU 精度不一致即失败，不自动复核或改判。需要人工复核时执行 `autofusedbg fuzz replay <seed> --backend eager-npu --save`，生成独立记录，不覆盖原结果。
 - 浮点输出复用 `autofusedebugger/compare.py` 的 dtype 默认容差：FP64 为 `rtol=atol=1e-7`，FP32 为 `1e-5`，FP16 为 `1e-3`，BF16 为 `1e-2`。逐元素要求 `abs(actual - CPU) <= atol + rtol * abs(CPU)`，诊断中的 `mismatches` 统计不满足该条件的元素。整数和布尔输出仍精确比较，shape/dtype 必须一致；同符号 Inf 通过，NaN 不通过。历史结果需要重新比较或重跑才会更新。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
-- 当前只有一套 C2/D2 生成实现：C2 静态，D2 动态。`--dynamic-variants 2..8` 设置动态样本数（默认 3），`--method symbolic-cinit|symbolic|concolic` 选择构图方法，两者均写入 seed。范围为四类 368 个 ATen overload。历史内测记录可读但不支持重放，旧 campaign 不自动迁移。详见[当前协议](current_protocol.md)。
+- 当前只有一套 K2/L2 生成实现：C2 静态，D2 动态。`--dynamic-variants 2..8` 设置动态样本数（默认 3），`--method symbolic-cinit|symbolic|concolic` 选择构图方法，两者均写入 seed。范围为四类 368 个 ATen overload。历史内测记录可读但不支持重放，旧 campaign 不自动迁移。详见[当前协议](current_protocol.md)。
 - `--ops add,ge,sum,reshape` 或 `--ops aten.add.Tensor,aten.ge.Tensor` 在图生成后按白名单过滤；`--exclude-op transpose` 保留。生成失败、CPU 不可执行、无 Autofuse 覆盖跳过，不计入有效 attempts。
 - 默认探测所有可见 NPU，随机 campaign 派发时选择空闲兼容卡，不提前固定到忙卡；显式队列/replay 仍遵守设备约束。同一逻辑卡同一时刻只运行一个任务，跨进程仍由物理 UUID 锁保护。CPU 与不同 NPU 卡可并发；总并发受 `cpu_workers`（`--workers`）约束，workers × compile_threads 不得超过有效 CPU 核数，内存和缓存预算按整个活动池合计。
 - 老 setup 若保存了 `cpu_workers=1`，仍尊重该配置；双卡机器可显式用 `--workers 4 --compile-threads 1`，提供两个 NPU 任务及 CPU 任务的并发余量。吞吐提升取决于生成、编译、执行耗时，不保证单个 kernel 更快。
@@ -187,9 +187,9 @@ mlir 入口仍是 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/bin/autofusedbg-npu
 autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
 autofusedbg fuzz run --count 2 --workers 4 --worker-max-tasks 16 --save
 autofusedbg fuzz run --count 2 --workers 4 --worker-max-tasks 1 --save # 禁用运行时复用作对照
-autofusedbg fuzz replay D2-<seed> --backend eager-npu --save
+autofusedbg fuzz replay L2-<seed> --backend eager-npu --save
 autofusedbg fuzz run --scheduling combined --workers 4 --save     # 旧执行路径回滚
-autofusedbg fuzz replay C2-<seed> --backend cpu --scheduling combined
+autofusedbg fuzz replay K2-<seed> --backend cpu --scheduling combined
 ```
 
 `--device-memory-bytes` 是每物理 NPU 的预算上限；低于阶段最低预约会明确失败，不无限等卡。`--workers` 约束全池进程数，不是每 backend 一个池。默认内存/缓存容量来自当前有效主机资源；可以继续使用 setup 的 memory/cache 配置。持久编译 worker 仍受能力门禁，CPU/eager 已启用，AF/编译型后端保守按 session 回收。
@@ -212,13 +212,13 @@ round64 的独立同步 daemon 也已重启到新安装，原结果 ACK 保留�
 autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --device npu:1 --save
 ```
 
-不传 `--count` 会持续运行，使用相同 home 的 `autofusedbg fuzz stop` 停止。`--exclude-op transpose` 仅用于随机 staged campaign：先按当前 C2/D2 协议完整生成，在生成 worker 中跳过含 transpose 的候选，既不启动 backend，也不记录成成功/失败 Shape；队列 reason 为 `excluded_op`。不会更改历史 seed、算子定义或输入字节。有限 `--count` 表示候选数，可能因过滤而少于最终执行数。
+不传 `--count` 会持续运行，使用相同 home 的 `autofusedbg fuzz stop` 停止。`--exclude-op transpose` 仅用于随机 staged campaign：先按当前 K2/L2 协议完整生成，在生成 worker 中跳过含 transpose 的候选，既不启动 backend，也不记录成成功/失败 Shape；队列 reason 为 `excluded_op`。不会更改历史 seed、算子定义或输入字节。有限 `--count` 表示候选数，可能因过滤而少于最终执行数。
 
 `--auto-resources` 根据 CPU/cgroup、内存及设备数选择进程预算，compile_threads=1，并保留原内存/缓存上限；不与手工 workers/compile-threads 混用。双 Ascend 910 的小批量对照仅用于校准工具开销和槽使用，不证明 AICore 高使用率或成功编译吞吐最优。CPU 期望结果与 NPU 首调同依赖生成、可并行；结果校验等待两者。就绪 NPU 首调优先，避免后处理积压延迟空闲卡启动。
 
 生命周期显示 UTC `HH:mm:ss.SSS`，悬停保留完整日期和时区；用例执行耗时保留一位小数。阶段名称为 CPU 期望结果、CPU 结果校验、NPU首调(惰性编译/执行/同步)。缺失数值仍显示未采集，但删除冗余解释文案。
 
-分布分析工具：`python tools/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 C2/D2，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前尺寸和动态 Shape 数量均由 seed 编码；若要改变分布，必须同步更新当前协议和重放指纹。
+分布分析工具：`python tools/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 K2/L2，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前尺寸和动态 Shape 数量均由 seed 编码；若要改变分布，必须同步更新当前协议和重放指纹。
 
 当前 oracle1 环境为 `/home/ubuntu/af-fuzz/venv-continuous-1110`，旧版本/旧备份/旧结果已按要求清除；systemd 主服务直接引用新环境，不再叠加历史 override。身份与 ACK、防旧数据回流的 tombstone 保留。后续自动备份只备份新数据，不再使用已经删除的旧环境。客户端新安装为 `/mnt/workspace/af-fuzz/continuous-1110/installed`。
 
@@ -226,12 +226,12 @@ autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --de
 
 ### 大 Shape 与分布采样
 
-新建随机 campaign 默认使用当前 C2/D2 协议。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes`、`--generation-timeout`、`--dynamic-variants` 和 `--method`。旧 campaign 不自动迁移，需正常停止后新建。
+新建随机 campaign 默认使用当前 K2/L2 协议。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes`、`--generation-timeout`、`--dynamic-variants` 和 `--method`。旧 campaign 不自动迁移，需正常停止后新建。
 
 
 ### OP 白名单过滤
 
-C2/D2 生成先使用完整 ATen 算子目录，seed 决定完整图；`--ops` 只在生成完成后过滤，不参与 seed 编码。因此同一 seed 在不同白名单下仍生成同一个 workload，只是可能被跳过：
+K2/L2 生成先使用完整 ATen 算子目录，seed 决定完整图；`--ops` 只在生成完成后过滤，不参与 seed 编码。因此同一 seed 在不同白名单下仍生成同一个 workload，只是可能被跳过：
 
 ```sh
 autofusedbg fuzz run --ops add,mul,mean,transpose --count 100 --scheduling staged
@@ -241,7 +241,7 @@ autofusedbg fuzz run --ops add,mul,mean,transpose --count 100 --scheduling stage
 显式 seed 也支持白名单过滤：
 
 ```sh
-autofusedbg fuzz run C2-<seed> --ops add,mul --scheduling staged
+autofusedbg fuzz run K2-<seed> --ops add,mul --scheduling staged
 ```
 
 不满足白名单的 case 会标记为 `excluded_op`，不会启动 backend。
