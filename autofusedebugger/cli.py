@@ -5,29 +5,6 @@ import os
 import sys
 from pathlib import Path
 
-from autofusedebugger.agent import AgentConfig
-from autofusedebugger.adapters import backend_names, framework_names
-from autofusedebugger.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
-from autofusedebugger.camodel import camodel_info, format_info
-from autofusedebugger.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
-from autofusedebugger.graph import build_manifest
-from autofusedebugger.html import write_report_html, write_report_html_from_json
-from autofusedebugger.progress import progress_stage
-from autofusedebugger.runner import run_camodel_command, run_command, run_debug_cpu_command
-from autofusedebugger.script_runner import (
-    default_direct_output_paths,
-    parse_python_script_invocation,
-    run_framework_script,
-)
-from autofusedebugger.shell_entry import (
-    apply_env_overrides,
-    apply_plan_env,
-    is_shell_script_invocation,
-    parse_shell_script,
-)
-from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
-from autofusedebugger.torch_model import run_torch_model
-
 
 def _add_agent_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -75,6 +52,8 @@ def _add_with_cpu_option(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_make_manifest(args: argparse.Namespace) -> int:
+    from autofusedebugger.graph import build_manifest
+
     manifest = build_manifest(
         side=args.side,
         graph_path=args.graph,
@@ -89,6 +68,10 @@ def cmd_make_manifest(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
+    from autofusedebugger.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
+    from autofusedebugger.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
+    from autofusedebugger.html import write_report_html, write_report_html_from_json
+
     report = compare_manifests(
         args.cpu_manifest,
         args.npu_manifest,
@@ -111,6 +94,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_compare_three(args: argparse.Namespace) -> int:
+    from autofusedebugger.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
+    from autofusedebugger.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
+    from autofusedebugger.html import write_report_html, write_report_html_from_json
+    from autofusedebugger.progress import progress_stage
+
     with progress_stage("Three-way tensor comparison", detail="existing manifests"):
         report = compare_three_manifests(
             args.cpu_manifest,
@@ -147,6 +135,9 @@ def cmd_compare_three(args: argparse.Namespace) -> int:
 
 
 def cmd_compare_npy(args: argparse.Namespace) -> int:
+    from autofusedebugger.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
+    from autofusedebugger.html import write_report_html, write_report_html_from_json
+
     from pathlib import Path
 
     from autofusedebugger.compare import TensorRef
@@ -183,116 +174,47 @@ def cmd_compare_npy(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    from autofusedebugger.runner import run_camodel_command, run_command, run_debug_cpu_command
+
     ret = run_command(args.command, args.out_dir, args.env)
     print(f"command exited with {ret}; logs: {args.out_dir}/run.stdout, {args.out_dir}/run.stderr")
     return ret
 
 
 def cmd_run_debug_cpu(args: argparse.Namespace) -> int:
+    from autofusedebugger.runner import run_camodel_command, run_command, run_debug_cpu_command
+
     ret = run_debug_cpu_command(args.command, args.out_dir, args.env)
     print(f"debug-cpu command exited with {ret}; logs: {args.out_dir}/run.stdout, {args.out_dir}/run.stderr")
     return ret
 
 
 def cmd_camodel_info(args: argparse.Namespace) -> int:
+    from autofusedebugger.camodel import camodel_info, format_info
+
     print(format_info(camodel_info(args.cann_root)))
     return 0
 
 
 def cmd_run_camodel(args: argparse.Namespace) -> int:
+    from autofusedebugger.runner import run_camodel_command, run_command, run_debug_cpu_command
+
     ret = run_camodel_command(args.command, args.out_dir, args.cann_root, args.soc, args.env)
     print(f"camodel command exited with {ret}; logs: {args.out_dir}/run.stdout, {args.out_dir}/run.stderr")
     return ret
 
 
-def cmd_af_fuzz(args: argparse.Namespace) -> int:
-    op_categories = (
-        [c.strip() for c in args.op_categories.split(",") if c.strip()]
-        if args.op_categories
-        else None
-    )
-    devices = (
-        [int(d.strip()) for d in args.devices.split(",") if d.strip()]
-        if args.devices
-        else None
-    )
-
-    if getattr(args, "compare_performance", False):
-        from autofusedebugger.nnsmith_integration.performance.cli import run
-        return run(args, op_categories=op_categories, devices=devices)
-
-    if getattr(args, "mixed_shapes", False):
-        raise ValueError("--mixed-shapes requires --compare-performance")
-
-    if getattr(args, "resume", False) or getattr(args, "keep_perf_artifacts", False):
-        raise ValueError("--resume and --keep-perf-artifacts require --compare-performance")
-
-    if args.repro_seed is not None:
-        from autofusedebugger.nnsmith_integration.fuzz_loop import run_repro_case
-
-        result = run_repro_case(
-            out_dir=args.out_dir,
-            repro_seed=args.repro_seed,
-            max_nodes=args.max_nodes,
-            timeout_ms=args.timeout_ms,
-            method=args.method,
-            max_elem_per_tensor=args.max_elem_per_tensor,
-            tensor_scale=args.tensor_scale,
-            target=args.target,
-            debug=True if args.debug is None else args.debug,
-            soc_tier=args.soc_tier,
-            value_dist_mode=args.value_dist_mode,
-            dynamic_shapes=args.dynamic_shapes, dynamic_variants=args.dynamic_variants,
-            op_categories=op_categories,
-        )
-        print(
-            f"case_id={result.case_id} status={result.status} "
-            f"symptom={result.symptom} stage={result.stage}"
-        )
-        if result.bug_dir:
-            print(f"artifacts: {result.bug_dir}")
-        return 0 if result.status == "pass" else 1
-
-    # Must be set before fuzz_loop (and with it torch/inductor) is imported:
-    # torch._inductor.config reads this env var once at import time. Spawned
-    # --jobs workers inherit it. Overrides the package-level default of 4
-    # (see autofusedebugger/__init__.py).
-    if args.compile_threads is not None:
-        os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(args.compile_threads)
-
-    from autofusedebugger.nnsmith_integration.fuzz_loop import run_fuzz_session_parallel
-
-    summary = run_fuzz_session_parallel(
-        out_dir=args.out_dir,
-        n_cases=100 if args.n_cases is None else args.n_cases,
-        max_nodes=args.max_nodes,
-        timeout_ms=args.timeout_ms,
-        method=args.method,
-        max_elem_per_tensor=args.max_elem_per_tensor,
-        tensor_scale=args.tensor_scale,
-        seed=args.seed,
-        target=args.target,
-        jobs=args.jobs,
-        devices=devices,
-        soc_tier=args.soc_tier,
-        value_dist_mode=args.value_dist_mode,
-        dynamic_shapes=args.dynamic_shapes, dynamic_variants=args.dynamic_variants,
-        op_categories=op_categories,
-    )
-    print(
-        f"total={summary.total} passed={summary.passed} failed={summary.failed} "
-        f"gen_errors={summary.gen_errors}; summary: {args.out_dir}/summary.html"
-    )
-    return 0 if summary.failed == 0 else 1
-
-
 def cmd_report_html(args: argparse.Namespace) -> int:
+    from autofusedebugger.html import write_report_html, write_report_html_from_json
+
     write_report_html_from_json(args.report, args.out, args.title)
     print(f"wrote {args.out}")
     return 0
 
 
 def cmd_normalize_script(args: argparse.Namespace) -> int:
+    from autofusedebugger.agent import AgentConfig
+
     script_args = tuple(args.script_args)
     if script_args[:1] == ("--",):
         script_args = script_args[1:]
@@ -330,6 +252,10 @@ def cmd_normalize_script(args: argparse.Namespace) -> int:
 
 
 def cmd_run_torch_model(args: argparse.Namespace) -> int:
+    from autofusedebugger.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
+    from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
+    from autofusedebugger.torch_model import run_torch_model
+
     enable_autofuse_graph_dump(Path(args.out_dir).resolve() / "autofuse_dump")
     summary = run_torch_model(
         script=args.script,
@@ -350,6 +276,19 @@ def cmd_run_torch_model(args: argparse.Namespace) -> int:
 
 
 def cmd_run_script(args: argparse.Namespace) -> int:
+    from autofusedebugger.script_runner import (
+        default_direct_output_paths,
+        parse_python_script_invocation,
+        run_framework_script,
+    )
+    from autofusedebugger.shell_entry import (
+        apply_env_overrides,
+        apply_plan_env,
+        is_shell_script_invocation,
+        parse_shell_script,
+    )
+    from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
+
     script_args = tuple(args.script_args)
     if script_args[:1] == ("--",):
         script_args = script_args[1:]
@@ -388,6 +327,13 @@ def cmd_run_script(args: argparse.Namespace) -> int:
 
 
 def cmd_run_direct_shell(argv: list[str]) -> int:
+    from autofusedebugger.shell_entry import (
+        apply_env_overrides,
+        apply_plan_env,
+        is_shell_script_invocation,
+        parse_shell_script,
+    )
+
     """Convenience form: ``autofusedebugger bash launch.sh`` or ``autofusedebugger ./launch.sh``."""
     script_index = 0
     if Path(argv[0]).name in {"bash", "sh", "zsh", "dash", "ksh"}:
@@ -407,6 +353,13 @@ def cmd_run_direct_shell(argv: list[str]) -> int:
 
 
 def cmd_run_direct(script: Path, script_args: tuple[str, ...]) -> int:
+    from autofusedebugger.script_runner import (
+        default_direct_output_paths,
+        parse_python_script_invocation,
+        run_framework_script,
+    )
+    from autofusedebugger.torch_model import format_run_summary as format_torch_run_summary
+
     out_dir, html_path = default_direct_output_paths(script)
     print(f"AutofuseDebugger direct mode: script={script}")
     print(f"AutofuseDebugger outputs: out_dir={out_dir} html={html_path}")
@@ -427,6 +380,8 @@ def cmd_run_direct(script: Path, script_args: tuple[str, ...]) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from autofusedebugger.adapters import backend_names, framework_names
+
     parser = argparse.ArgumentParser(
         prog="autofusedebugger",
         description="CPU/NPU eager/NPU Autofuse 精度对比和图分析工具",
@@ -435,6 +390,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command_name", required=True)
 
+    sub.add_parser("fuzz", help="setup, doctor, replay and seed diagnostics; use fuzz --help")
     make = sub.add_parser("make-manifest", help="build a manifest from graph JSON and an npy dump directory")
     make.add_argument(
         "--side",
@@ -602,148 +558,29 @@ def build_parser() -> argparse.ArgumentParser:
     camodel.add_argument("--env", action="append", default=[], help="extra KEY=VALUE env, repeatable")
     camodel.set_defaults(func=cmd_run_camodel)
 
-    fuzz = sub.add_parser(
-        "af-fuzz", help="generate NNSmith cases and verify them end-to-end against the autofuse backend"
-    )
-    fuzz.add_argument("--out-dir", required=True)
-    fuzz.add_argument("--n-cases", type=int, default=None,
-                      help="case limit; omitted: continuous in performance mode, 100 in correctness mode; resume uses the saved limit")
-    fuzz.add_argument("--max-nodes", type=int, default=5)
-    fuzz.add_argument(
-        "--timeout-ms",
-        type=int,
-        default=None,
-        help="Per-case generation timeout. Default: None, so --tensor-scale's "
-        "profile value takes effect; passing this explicitly overrides the "
-        "profile's timeout_ms (see TENSOR_SCALE_PROFILES in fuzz_loop.py).",
-    )
-    fuzz.add_argument("--dynamic-shapes", action="store_true", help="validate multiple input shapes using strict symbolic dimensions and torch.compile(dynamic=True)")
-    fuzz.add_argument("--dynamic-variants", type=int, default=3, help="number of distinct shapes per dynamic case, 2..8 (default 3)")
-    fuzz.add_argument("--method", default="symbolic-cinit")
-    fuzz.add_argument(
-        "--max-elem-per-tensor",
-        type=int,
-        default=None,
-        help="Per-tensor element-count cap. Default: None, so --tensor-scale's "
-        "profile value takes effect; passing this explicitly overrides the "
-        "profile's max_elem_per_tensor (see TENSOR_SCALE_PROFILES in "
-        "fuzz_loop.py).",
-    )
-    fuzz.add_argument(
-        "--tensor-scale",
-        # Hardcoded literal, not derived from fuzz_loop.TENSOR_SCALE_PROFILES:
-        # build_parser() runs on every CLI invocation regardless of which
-        # subcommand is selected, so computing this from fuzz_loop would force
-        # fuzz_loop's heavy nnsmith/torch imports (and autofusedebugger's
-        # nnsmith patch side effect) on every invocation, not just af-fuzz.
-        # Keep in sync with the keys of TENSOR_SCALE_PROFILES in fuzz_loop.py.
-        choices=["default", "large", "medium", "small", "16k", "32k", "64k", "128k"],
-        default="default",
-        help="Controls max_elem_per_tensor + concr_ph_dim_rng + timeout_ms "
-        "together (see TENSOR_SCALE_PROFILES in fuzz_loop.py). 'default' "
-        "samples per-dim sizes from [1, 128k] with a half-normal "
-        "distribution (small shapes common, large shapes rare). 'small' "
-        "matches the original hardcoded defaults for regression "
-        "compatibility. '16k'/'32k'/'64k'/'128k' push concr_ph_dim_rng's "
-        "per-dim upper bound to that many elements (long-context seq_len "
-        "style scenarios), well beyond 'large''s 8192.",
-    )
-    fuzz.add_argument(
-        "--value-dist-mode",
-        choices=["llm", "log_scale", "recommendation", "uniform"],
-        default="uniform",
-        help="Input value sampling mode (see "
-        "nnsmith.materialize.torch.symbolnet.random_tensor). 'uniform' "
-        "(default) matches the original [3,7) behavior; 'log_scale' spans "
-        "+-10^-4..10^4 magnitudes; 'llm' mimics LLM activations (mostly "
-        "N(0, 0.2^2), with 5%% of elements amplified 100x-10000x as "
-        "'massive activations'); 'recommendation' mimics min-max "
-        "normalized recommendation-system features (uniform [0,1)). "
-        "Applies both to make_oracle's fallback random inputs and to the "
-        "inputs model.refine_weights() pre-samples as PracticalHybridSearch's "
-        "search starting points, so the cached sat_inputs it may settle on "
-        "also reflects this mode instead of silently reverting to uniform. "
-        "Does not affect PracticalHybridSearch's internal weight sampling, "
-        "which remains fixed at uniform.",
-    )
-    fuzz.add_argument("--seed", type=int, default=None)
-    fuzz.add_argument("--target", default="npu")
-    fuzz.add_argument(
-        "--jobs",
-        type=int,
-        default=2,
-        help="run N persistent case workers consuming a shared task pool "
-        "(each worker compiles on real NPU hardware, which is memory/CPU "
-        "heavy -- start low and watch system load before raising this; "
-        "jobs=8 has been observed to crash a 40-core/229GB instance). "
-        "Default 2: on A5 (32GB cgroup, 1 NPU, cold compile cache, inductor "
-        "compile pool 4) jobs=2 ran 20 cases in 81s / 17GB peak vs 211s / "
-        "11GB at jobs=1, while jobs=4 only reached 74s at 28GB peak. Raise "
-        "it on machines with more memory; peak memory is roughly "
-        "jobs * (~2GB + compile-threads * ~1.5GB)",
-    )
-    fuzz.add_argument(
-        "--devices",
-        default=None,
-        help="comma-separated NPU device indices to spread --jobs workers across "
-        "(e.g. '0,1' on a 2-card box): worker i stays on devices[i %% len(devices)]; idle workers claim the next case, "
-        "round-robin, so --jobs can exceed the card count. Only affects --target "
-        "npu (the default); ignored for cuda/cpu. Default: unset, meaning every "
-        "worker runs on plain npu (device 0), identical to single-device behavior.",
-    )
-    fuzz.add_argument(
-        "--compile-threads",
-        type=int,
-        default=None,
-        help="size of each process's inductor parallel-compile worker pool "
-        "(sets TORCHINDUCTOR_COMPILE_THREADS). Each worker is a full python "
-        "process importing torch (~0.7-1.5GB RSS) and every --jobs process "
-        "gets its own pool. Default: the TORCHINDUCTOR_COMPILE_THREADS env "
-        "var if set, else 4. Inductor's own default is min(32, host cpu "
-        "count), which OOM-kills a 32GB container on a cold compile cache",
-    )
-    fuzz.add_argument(
-        "--soc-tier",
-        choices=("A3", "A5"),
-        default="A3",
-        help="narrow the generated op catalog to ops ascendc registers a fused lowering for on this "
-        "NPU generation (see ascendc_opset.py); use A5 once validating on A5 hardware",
-    )
-    fuzz.add_argument(
-        "--op-categories",
-        default=None,
-        help="comma-separated subset of op categories to generate cases from (e.g. "
-        "'elewise,reduce'), replacing the default full op catalog entirely -- not "
-        "additionally restricting it. Choices: elewise, reduce, view, gather, norm, "
-        "matmul (see OP_CATEGORIES in ascendc_opset.py for which ops belong to each). "
-        "Applied after --soc-tier's own hardware-support filtering, so it can only "
-        "narrow further, never add back an op the soc_tier doesn't support. Default: "
-        "unset, meaning no restriction beyond --soc-tier.",
-    )
-    fuzz.add_argument(
-        "--repro-seed",
-        type=int,
-        default=None,
-        help="re-run exactly one case (its recorded `case_seed`, e.g. from summary.json's case_id "
-        "suffix or CaseResult.seed) instead of a batch; implies --debug unless --no-debug is passed",
-    )
-    fuzz.add_argument(
-        "--debug",
-        dest="debug",
-        action="store_true",
-        default=None,
-        help="dump torch_compile_debug/ + inductor cache + model/oracle/repro.py for the reproduced "
-        "case, pass or fail (only applies with --repro-seed)",
-    )
-    fuzz.add_argument("--no-debug", dest="debug", action="store_false")
-    from autofusedebugger.nnsmith_integration.performance.cli import add_arguments
-    add_arguments(fuzz)
-    fuzz.set_defaults(func=cmd_af_fuzz, debug=None)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv and raw_argv[0] in {"daemon", "device", "environment", "task", "operation", "config", "build", "tool", "management"}:
+        from autofusedebugger.management.cli import main as management_main
+        return management_main(raw_argv)
+    if raw_argv and raw_argv[0] == "fuzz":
+        from autofusedebugger.fuzz.cli import main as fuzz_main
+        return fuzz_main(raw_argv[1:])
+    from autofusedebugger.script_runner import (
+        default_direct_output_paths,
+        parse_python_script_invocation,
+        run_framework_script,
+    )
+    from autofusedebugger.shell_entry import (
+        apply_env_overrides,
+        apply_plan_env,
+        is_shell_script_invocation,
+        parse_shell_script,
+    )
+
     try:
         direct = parse_python_script_invocation(raw_argv)
         if direct is not None:

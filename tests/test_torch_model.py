@@ -302,8 +302,9 @@ def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
         return {"passed": True, "summary": {"status": "PASS", "passed": 0, "total": 0}}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "run_framework_script", fake_run_framework_script)
-    monkeypatch.setattr(cli, "format_torch_run_summary", lambda summary: "summary")
+    from autofusedebugger import script_runner, torch_model
+    monkeypatch.setattr(script_runner, "run_framework_script", fake_run_framework_script)
+    monkeypatch.setattr(torch_model, "format_run_summary", lambda summary: "summary")
 
     assert cli.main(["python3", str(script), "--device", "npu", "--custom-flag"]) == 0
     assert received["script"] == script.resolve()
@@ -413,7 +414,7 @@ def test_capture_prefusion_graphs_skips_cpu_replay_by_default(tmp_path: Path) ->
 
     model = torch.nn.Linear(4, 5, bias=False).eval()
     inputs = (torch.ones(2, 3, 4),)
-    spec = {"gm": model, "example_inputs": inputs}
+    spec = {"gm": torch.fx.symbolic_trace(model), "example_inputs": inputs}
 
     cpu_graph, cpu_outputs, eager_graph, eager_outputs = torch_model.capture_prefusion_graphs(
         [spec],
@@ -437,7 +438,7 @@ def test_capture_prefusion_graphs_with_cpu_captures_both_sides(tmp_path: Path) -
 
     model = torch.nn.Linear(4, 5, bias=False).eval()
     inputs = (torch.ones(2, 3, 4),)
-    spec = {"gm": model, "example_inputs": inputs}
+    spec = {"gm": torch.fx.symbolic_trace(model), "example_inputs": inputs}
 
     cpu_graph, cpu_outputs, eager_graph, eager_outputs = torch_model.capture_prefusion_graphs(
         [spec],

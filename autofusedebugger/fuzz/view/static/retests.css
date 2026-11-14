@@ -1,0 +1,22 @@
+.retest-toolbar {display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.retest-toolbar[hidden]{display:none}
+.retest-row-control {display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.retest-provenance {display:block;font-size:11px;white-space:normal;margin-top:5px;color:var(--muted,#64748b)}
+dialog {max-width:min(760px,90vw);max-height:85vh;overflow:auto;border:1px solid #64748b;border-radius:12px;padding:24px;background:var(--panel,#fff);color:var(--text,#172033)}
+dialog::backdrop {background:#0f172a66}
+dialog form {display:grid;gap:12px;min-width:min(400px,75vw)}
+dialog input,dialog select {max-width:100%}
+dialog article {border-bottom:1px solid #64748b44;padding:12px 0}
+dialog button {margin-right:8px}
+#session-controls {display:flex;align-items:center;gap:8px}
+
+.login-dialog .login-actions{display:flex;justify-content:flex-end;gap:12px}
+.login-dialog .login-actions button{margin:0;min-width:84px}
+.login-dialog [role="alert"]:empty{display:none}
+#session-controls{flex-shrink:0;overflow:visible}
+
+/* Keep row actions out of the seed cell so long seeds remain readable. */
+.case-table td[data-column="retest"] { white-space: nowrap; vertical-align: middle; }
+.case-table .retest-row-control { display: inline-flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap; }
+.case-table .retest-row-control input { margin: 0; flex: 0 0 auto; }
+.case-table .retest-row-control button { margin: 0; }

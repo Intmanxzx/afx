@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("nnsmith")
 pytest.importorskip("z3")
-# Import-time patches must land before binding NNSmith classes/functions.
+# Tests require an explicitly prepared compatible NNSmith copy; imports never patch it.
 import autofusedebugger  # noqa: F401
 
 pytest.importorskip("nnsmith.graph_gen")
@@ -26,14 +26,22 @@ import z3
 
 
 def _graph(seed, ops):
-    ir = model_gen(
-        ops, method="symbolic-cinit", seed=seed, init_fp=True,
-        max_nodes=4, timeout_ms=10000, concr_ph_dim_rng=(1, 8),
-    ).make_concrete()
-    return {
-        "instructions": str(ir),
-        "tensors": [(name, str(t.dtype), list(t.shape)) for name, t in ir.vars.items()],
-    }
+    # Match the runtime boundary: each generation uses an independent Z3 context.
+    from z3 import z3 as impl
+    previous = z3.main_ctx()
+    try:
+        impl._main_ctx = z3.Context()
+        ir = model_gen(
+            ops, method="symbolic-cinit", seed=seed, init_fp=True,
+            max_nodes=4, timeout_ms=10000, concr_ph_dim_rng=(1, 8),
+        ).make_concrete()
+        return {
+            "instructions": str(ir),
+            "tensors": [(name, str(t.dtype), list(t.shape)) for name, t in ir.vars.items()],
+        }
+    finally:
+        impl._main_ctx = previous
+
 
 
 @pytest.mark.parametrize("seed", [0, 42, 389609433])
@@ -366,3 +374,31 @@ def test_repro_seed_without_debug_does_not_dump_failed_case(tmp_path, monkeypatc
     assert result.status == "fail", result.error_summary
     assert result.bug_dir is None
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("seed", [0, 42, 389609433])
+def test_scoped_solver_context_prevents_observed_history_drift(seed):
+    from autofusedebugger.nnsmith_integration.generation import _seeded_solver_context
+    ops = [Add, Mul, Neg, ReLU]
+    previous = z3.main_ctx()
+    with _seeded_solver_context(seed):
+        first = _graph(seed, ops)
+    assert z3.main_ctx() is previous
+    _graph(seed + 1, ops)
+    with _seeded_solver_context(seed):
+        second = _graph(seed, list(reversed(ops)))
+    assert first == second
+    assert z3.main_ctx() is previous
+
+
+def test_production_solver_scope_isolates_candidate_order_and_history():
+    """Production scope, unlike raw model_gen, resets the context AST history."""
+    from autofusedebugger.nnsmith_integration.generation import _seeded_solver_context
+    ops = [Add, Mul, Neg, ReLU]
+    for seed in (0, 42, 389609433):
+        with _seeded_solver_context(seed):
+            first = _graph(seed, ops)
+        _graph(seed + 1, ops)
+        with _seeded_solver_context(seed):
+            replay = _graph(seed, list(reversed(ops)))
+        assert replay == first

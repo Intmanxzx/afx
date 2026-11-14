@@ -1,51 +1,9 @@
-"""Transparently applies the ascendc-specific NNSmith patches (new ops such
-as `IndexSelect`, `Gather`, `LayerNorm`, plus smaller API tweaks such as the
-`rtol`/`atol` tolerance parameters -- see `_ASCENDC_PATCHES` below and the
-individual files under `patches/`) to an already-installed NNSmith package,
-so af-fuzz users never have to run `git apply`/`patch` themselves.
+"""Read-only legacy compatibility checks and explicit isolated-copy patch preparation.
 
-Why a patch instead of a long-term fork/vendoring: NNSmith is installed as
-an editable pip package from a local checkout (`pip install -e`), and the
-project's standing rule is "NNSmith is a dependency, not modified in place"
--- but these changes genuinely cannot be made any other way (e.g. NNSmith's
-operator registration is a class-definition-time decorator, not something
-that can be monkeypatched in from outside after the fact; see each class's
-own docstring in its patch for why). A patch file keeps each modification
-small, reviewable, and reversible, and lets this module apply them
-automatically on first use instead of requiring a manual step.
-
-`_ASCENDC_PATCHES` is a list of independent patch entries, each pairing a
-patch file with a `probe` callable that returns True iff that patch is
-already applied. Not every patch adds an importable symbol (e.g. a patch
-that only adds a keyword parameter to an existing method has nothing new to
-import), so the probe is pluggable: see the `_..._probe()` factory
-functions below (new ones added over time as new patch shapes demand them)
-for the probing strategies in use, and `_AscendcPatch.probe`'s docstring
-for why callers never need to know which strategy a given entry uses. Entries
-are applied in order; each is checked and applied on its own, so one
-already-applied patch is simply skipped while another still gets applied,
-and a new patch only needs a new entry in the list -- no change to the
-apply/verify logic below.
-
-Call `ensure_ascendc_patch_applied()` before importing anything from
-`nnsmith.abstract.op` that depends on these ops existing. It is a no-op
-if all patches are already applied (idempotent -- safe to call on every
-import).
-
-Known limitation for whoever edits an *existing* patch file's content
-(not just adds a new one): every probe here answers "does the installed
-NNSmith look like this patch landed," not "does it match this *exact
-version* of the patch file." If you change what a patch file does (e.g.
-add a new mode/parameter to a function that already had some other
-mode/parameter the probe was already satisfied by), the probe keeps
-returning True against an installation that only has the *old* version
-applied -- `ensure_ascendc_patch_applied()` will skip it, and the
-installed NNSmith silently keeps running the stale code. There is no
-content-hash or version check, only a structural probe (symbol exists /
-parameter exists / etc). After editing a patch file's content, manually
-verify (or force-reapply) the installed NNSmith yourself; don't trust
-this module to detect that the file's content changed underneath an
-already-satisfied probe.
+Ordinary imports do not call this module. Execution checks fail with a diagnostic
+rather than changing dependencies. Only a caller explicitly passing the imported
+isolated copy's parent can opt into patch application. Structural probes are not
+content/version proofs; legacy determinism remains environment-scoped.
 """
 
 from __future__ import annotations
@@ -600,20 +558,26 @@ def _apply_one_patch(patch: _AscendcPatch, target_dir: Path) -> None:
     )
 
 
-def ensure_ascendc_patch_applied() -> None:
-    """Idempotently ensures every ascendc NNSmith patch in `_ASCENDC_PATCHES`
-    is applied to the installed NNSmith package. Each patch is checked and
-    applied independently: a patch whose `probe()` already returns True is
-    skipped, while the others are still applied. Raises `NNSmithPatchError`
-    with an actionable message, naming the specific patch file involved, if
-    NNSmith isn't installed or a patch can't be applied (e.g. the installed
-    NNSmith version has drifted too far from what that patch expects).
+def ensure_ascendc_patch_applied(*, isolated_copy: Path = None) -> None:
+    """Check compatibility; only patch when the caller names an isolated copy.
+
+    Structural probes do not establish exact dependency-version compatibility.
+    The caller must prepare the copy before binding NNSmith classes.
     """
     pending = [patch for patch in _ASCENDC_PATCHES if not patch.probe()]
     if not pending:
         return
 
     target_dir = _find_nnsmith_package_parent()
+    if isolated_copy is None:
+        raise NNSmithPatchError(
+            "NNSmith is missing required compatibility patches: "
+            + ", ".join(p.path.name for p in pending)
+            + ". Shared dependencies are never modified automatically. "
+              "Prepare an isolated NNSmith copy explicitly before execution."
+        )
+    if Path(isolated_copy).resolve() != target_dir.resolve():
+        raise NNSmithPatchError("isolated_copy must name the imported NNSmith package parent")
 
     for patch in pending:
         if patch.probe():

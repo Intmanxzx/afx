@@ -3,14 +3,28 @@
 `autofusedebugger` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具。
 当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
 
+## Fuzz 测试平台
+
+```sh
+autofusedbg fuzz setup --token "$FUZZ_TOKEN"
+autofusedbg fuzz run --count 100 --save
+autofusedbg fuzz replay C000000016
+autofusedbg fuzz view ./results.sqlite
+```
+
+[使用说明](docs/fuzz/fuzz_usage.md)：客户端、云端、本地查看、发布。
+
+[设计文档](docs/fuzz/fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
+
+公网结果入口：https://autofuse.online 。启用--save后客户端默认每30秒自动上报，CPU作为精度对照，按shape统计用例。
+
 ## 安装
 
-请先准备好 PyTorch、torch_npu 和 CANN 环境，再选择以下一种方式安装。
+执行模型前准备匹配的 PyTorch、torch_npu 和 CANN；云端和本地查看不需要这些运行环境。
 
 ### 方式一：wheel 包安装
 
-进入 [v0.1.2 发行版](https://gitcode.com/xingzhixiong/Autofuse-Debugger/releases/v0.1.2)，下载
-`autofusedebugger-0.1.2-py3-none-any.whl`，然后在 wheel 所在目录执行：
+从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 使用说明](docs/fuzz/fuzz_usage.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
 
 ```bash
 python3 -m pip install ./autofusedebugger-0.1.2-py3-none-any.whl
@@ -19,7 +33,7 @@ python3 -m pip install ./autofusedebugger-0.1.2-py3-none-any.whl
 ### 方式二：源码安装
 
 ```bash
-git clone https://gitcode.com/xingzhixiong/Autofuse-Debugger.git
+git clone https://gitcode.com/niuyuhu/Autofuse-Debugger.git
 cd ${HOME}/Autofuse-Debugger    # ${HOME}表示用户拉取工具代码的目录
 python3 -m pip install -e .
 ```

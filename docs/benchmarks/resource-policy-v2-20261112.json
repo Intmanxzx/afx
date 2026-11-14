@@ -1,0 +1,602 @@
+{
+  "4x6-a": {
+    "wall_s": 59.5954284009058,
+    "summary": {
+      "recovered": 0,
+      "interrupted": 0,
+      "completed": 8,
+      "failed": 0,
+      "cancelled": 0,
+      "record_failed": 0,
+      "skipped": 0
+    },
+    "attempts": [
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 21.48654982,
+        "queue_s": 3.859e-05,
+        "first_s": [
+          14.3494184
+        ],
+        "pid": 2593796,
+        "temperature": "cold",
+        "rss_bytes": 16834371584
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 21.602717476,
+        "queue_s": 0.000503868,
+        "first_s": [
+          14.096225135
+        ],
+        "pid": 2593798,
+        "temperature": "cold",
+        "rss_bytes": 16842924032
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 11.419535212,
+        "queue_s": 21.562387933,
+        "first_s": [
+          10.280640018
+        ],
+        "pid": 2593796,
+        "temperature": "warm",
+        "rss_bytes": 16918429696
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 10.916237296,
+        "queue_s": 21.685316396,
+        "first_s": [
+          9.773713604
+        ],
+        "pid": 2593798,
+        "temperature": "warm",
+        "rss_bytes": 16930013184
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 11.535085748,
+        "queue_s": 10.982415118,
+        "first_s": [
+          10.582458823,
+          0.00122148,
+          0.001073467
+        ],
+        "pid": 2593796,
+        "temperature": "warm",
+        "rss_bytes": 16965804032
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 11.535958792,
+        "queue_s": 10.481750783,
+        "first_s": [
+          10.579232312,
+          0.001192409,
+          0.001062097
+        ],
+        "pid": 2593798,
+        "temperature": "warm",
+        "rss_bytes": 16979513344
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.592177857,
+        "queue_s": 11.698517895,
+        "first_s": [
+          0.631014395
+        ],
+        "pid": 2593796,
+        "temperature": "warm",
+        "rss_bytes": 16973328384
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.576192252,
+        "queue_s": 10.901310359,
+        "first_s": [
+          0.631633265
+        ],
+        "pid": 2593798,
+        "temperature": "warm",
+        "rss_bytes": 16987082752
+      }
+    ]
+  },
+  "4x6-b": {
+    "wall_s": 58.4956438569352,
+    "summary": {
+      "recovered": 0,
+      "interrupted": 0,
+      "completed": 8,
+      "failed": 0,
+      "cancelled": 0,
+      "record_failed": 0,
+      "skipped": 0
+    },
+    "attempts": [
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 21.290800487,
+        "queue_s": 3.7241e-05,
+        "first_s": [
+          14.211443594
+        ],
+        "pid": 2597121,
+        "temperature": "cold",
+        "rss_bytes": 16828497920
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 21.697996624,
+        "queue_s": 0.000521559,
+        "first_s": [
+          14.24838246
+        ],
+        "pid": 2597123,
+        "temperature": "cold",
+        "rss_bytes": 16883277824
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 10.906945199,
+        "queue_s": 21.28842023,
+        "first_s": [
+          9.745911577
+        ],
+        "pid": 2597121,
+        "temperature": "warm",
+        "rss_bytes": 16910757888
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 10.853668842,
+        "queue_s": 21.747629351,
+        "first_s": [
+          9.710544605
+        ],
+        "pid": 2597123,
+        "temperature": "warm",
+        "rss_bytes": 16973398016
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 11.439056725,
+        "queue_s": 10.458038241,
+        "first_s": [
+          10.492487918,
+          0.001187889,
+          0.001077407
+        ],
+        "pid": 2597121,
+        "temperature": "warm",
+        "rss_bytes": 16959696896
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 11.599104645,
+        "queue_s": 10.61859129,
+        "first_s": [
+          10.596776024,
+          0.00121354,
+          0.001114098
+        ],
+        "pid": 2597123,
+        "temperature": "warm",
+        "rss_bytes": 17022193664
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.83554779,
+        "queue_s": 11.210175091,
+        "first_s": [
+          0.622305129
+        ],
+        "pid": 2597121,
+        "temperature": "warm",
+        "rss_bytes": 16967004160
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.54958442,
+        "queue_s": 11.399989634,
+        "first_s": [
+          0.625619641
+        ],
+        "pid": 2597123,
+        "temperature": "warm",
+        "rss_bytes": 17029636096
+      }
+    ]
+  },
+  "6x6-a": {
+    "wall_s": 59.70750470098574,
+    "summary": {
+      "recovered": 0,
+      "interrupted": 0,
+      "completed": 8,
+      "failed": 0,
+      "cancelled": 0,
+      "record_failed": 0,
+      "skipped": 0
+    },
+    "attempts": [
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 21.177623784,
+        "queue_s": 4.0821e-05,
+        "first_s": [
+          14.129859649
+        ],
+        "pid": 2590750,
+        "temperature": "cold",
+        "rss_bytes": 16837558272
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 21.704915313,
+        "queue_s": 0.000863804,
+        "first_s": [
+          14.164031998
+        ],
+        "pid": 2590752,
+        "temperature": "cold",
+        "rss_bytes": 16863039488
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 10.820555594,
+        "queue_s": 21.153858156,
+        "first_s": [
+          9.6879801
+        ],
+        "pid": 2590750,
+        "temperature": "warm",
+        "rss_bytes": 16919658496
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 11.639240938,
+        "queue_s": 21.72566095,
+        "first_s": [
+          9.760189513
+        ],
+        "pid": 2590752,
+        "temperature": "warm",
+        "rss_bytes": 16949723136
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 12.177817556,
+        "queue_s": 31.993053125,
+        "first_s": [
+          10.687554918,
+          0.001237719,
+          0.001128037
+        ],
+        "pid": 2590750,
+        "temperature": "warm",
+        "rss_bytes": 16971128832
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 11.539681441,
+        "queue_s": 33.407031666,
+        "first_s": [
+          10.60076942,
+          0.001206739,
+          0.001133598
+        ],
+        "pid": 2590752,
+        "temperature": "warm",
+        "rss_bytes": 16997330944
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.596658432,
+        "queue_s": 22.932950089,
+        "first_s": [
+          0.652657213
+        ],
+        "pid": 2590750,
+        "temperature": "warm",
+        "rss_bytes": 16978657280
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.600469403,
+        "queue_s": 23.017247909,
+        "first_s": [
+          0.648807732
+        ],
+        "pid": 2590752,
+        "temperature": "warm",
+        "rss_bytes": 17004810240
+      }
+    ]
+  },
+  "6x6-b": {
+    "wall_s": 61.69785697897896,
+    "summary": {
+      "recovered": 0,
+      "interrupted": 0,
+      "completed": 8,
+      "failed": 0,
+      "cancelled": 0,
+      "record_failed": 0,
+      "skipped": 0
+    },
+    "attempts": [
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 21.897499163,
+        "queue_s": 3.5991e-05,
+        "first_s": [
+          14.901994269
+        ],
+        "pid": 2600144,
+        "temperature": "cold",
+        "rss_bytes": 16818565120
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 22.305136754,
+        "queue_s": 0.000536989,
+        "first_s": [
+          14.78740197
+        ],
+        "pid": 2600146,
+        "temperature": "cold",
+        "rss_bytes": 16852774912
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 10.771344233,
+        "queue_s": 21.873425951,
+        "first_s": [
+          9.60625654
+        ],
+        "pid": 2600144,
+        "temperature": "warm",
+        "rss_bytes": 16903516160
+      },
+      {
+        "seed": "C000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 12.367742818,
+        "queue_s": 22.329156535,
+        "first_s": [
+          11.219186968
+        ],
+        "pid": 2600146,
+        "temperature": "warm",
+        "rss_bytes": 16941182976
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 12.567154755,
+        "queue_s": 32.654677361,
+        "first_s": [
+          10.724049972,
+          0.001211839,
+          0.001092027
+        ],
+        "pid": 2600144,
+        "temperature": "warm",
+        "rss_bytes": 16951595008
+      },
+      {
+        "seed": "D000000016",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass",
+          "pass",
+          "pass"
+        ],
+        "stage_s": 11.446980282,
+        "queue_s": 35.888448179,
+        "first_s": [
+          10.51085489,
+          0.001200619,
+          0.001078047
+        ],
+        "pid": 2600146,
+        "temperature": "warm",
+        "rss_bytes": 16990732288
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:0",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.533483191,
+        "queue_s": 22.955648531,
+        "first_s": [
+          0.597915216
+        ],
+        "pid": 2600144,
+        "temperature": "warm",
+        "rss_bytes": 16959016960
+      },
+      {
+        "seed": "E9SQECC3GJ1J8KJBR869MZ1XHC",
+        "device": "npu:1",
+        "status": "ok",
+        "correctness": [
+          "pass"
+        ],
+        "stage_s": 1.641662167,
+        "queue_s": 24.776512699,
+        "first_s": [
+          0.655617862
+        ],
+        "pid": 2600146,
+        "temperature": "warm",
+        "rss_bytes": 16998244352
+      }
+    ]
+  }
+}

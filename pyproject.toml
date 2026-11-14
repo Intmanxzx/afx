@@ -5,13 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "autofusedebugger"
 version = "0.1.2"
-description = "CPU vs native Inductor NPU Autofuse per-kernel accuracy debugger"
+description = "Autofuse debugging and reproducible CPU/NPU fuzz testing"
+readme = "README.md"
 requires-python = ">=3.9"
-dependencies = ["numpy"]
+dependencies = ["PyYAML>=6.0,<7", "jsonschema>=4.18,<5", "cryptography>=41"]
 
 [project.optional-dependencies]
-# NNSmith itself is not on PyPI under this name; install the local clone with
-# `pip install -e /path/to/nnsmith` separately, this only pulls its own deps.
+execution = ["numpy"]
+# Execution libraries are installed into managed environments; legacy users can opt in.
 nnsmith = ["multipledispatch"]
 
 [project.scripts]
@@ -23,10 +24,5 @@ where = ["."]
 include = ["autofusedebugger*"]
 
 [tool.setuptools.package-data]
-# Non-.py data the package reads at runtime (not auto-included by
-# setuptools): the ascendc NNSmith patch, applied transparently on first use
-# by nnsmith_integration/_nnsmith_patch.py. Editable installs (`pip install
-# -e .`, the way this project is always deployed so far) find this file via
-# its real on-disk path regardless of this declaration, but a non-editable
-# build (wheel/sdist) would silently drop it without this.
-autofusedebugger = ["nnsmith_integration/patches/*.patch"]
+# Offline and cloud viewers share these prebuilt assets.
+autofusedebugger = ["fuzz/view/static/*", "nnsmith_integration/patches/*.patch", "nnsmith_integration/install_af_fuzz.sh"]

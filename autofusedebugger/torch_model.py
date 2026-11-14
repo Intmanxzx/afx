@@ -672,6 +672,7 @@ def _capture_prefusion_graph(
     import torch
 
     module = _prefusion_graph_copy(gm, device)
+    dump_dir.mkdir(parents=True, exist_ok=True)
     inputs = _to_device(_clone_execution_value(example_inputs), device)
     saved: dict[str, dict[str, Any]] = {}
     cpu_replay_fallbacks: list[dict[str, str]] = []
