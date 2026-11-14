@@ -6,6 +6,7 @@ otherwise they fall back to the exact legacy query, never stale heads.
 """
 import json
 
+from .cases import compatible_ctes
 from .failure_origin import VERSION as CLASSIFICATION_VERSION
 
 VERSION = 3
@@ -76,7 +77,7 @@ def rollup(conn, **params):
         return sql, values
     from .search import exact_seed
     seed = params.get('seed') or exact_seed(params.get('q'))
-    sql = _cached_sql(sql, history=params.get('history', False))
+    sql = compatible_ctes(_cached_sql(sql, history=params.get('history', False)))
     return sql.replace('SEED_PREDICATE', 'seed=?' if seed is not None else '1=1'), values
 
 
@@ -100,11 +101,11 @@ def refresh(conn):
         # reuse this narrow table, not the diagnostic blobs or Python UDFs.
         conn.execute('CREATE TEMP TABLE model_results AS '+sql+'SELECT * FROM all_results', values)
         compact = 'WITH all_results AS (SELECT * FROM model_results), backend_latest AS (SELECT DISTINCT id,seed,backend,workload_id,attempt_cursor FROM model_results), '
-        rest = sql[sql.index('shape_bounds AS MATERIALIZED ('):]
+        rest = sql[sql.index('shape_bounds AS '):]
         derived = compact + rest
         # Source seed predicate was consumed when creating model_results.
         history_source = original(seed=seed, history=True)[0]
-        history_sql = compact + history_source[history_source.index('shape_bounds AS MATERIALIZED ('):]
+        history_sql = compact + history_source[history_source.index('shape_bounds AS '):]
         queries = ['SELECT * FROM model_results', derived+'SELECT * FROM unfiltered_cases',
                    history_sql+'SELECT * FROM round_cases', history_sql+'SELECT * FROM projection']
         for table, query in zip(TABLES, queries):

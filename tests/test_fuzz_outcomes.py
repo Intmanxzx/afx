@@ -20,6 +20,9 @@ def test_user_filter_applies_to_rows_counts_statistics(tmp_path):
     query=ResultQueries(repo.path)
     assert query.summary(user_id='alice')['total']==1
     assert len(query.page(user_id='alice')['items'])==1
-    assert query.case_page(user_id='alice')['items'][0]['user_id']=='alice'
-    assert statistics(repo.path,user_id='alice')['attempts']==1
+    # Global latest Shape belongs to Bob; filtering must not revive Alice's older round.
+    assert query.case_page(user_id='alice')['items'] == []
+    assert query.case_page(user_id='bob')['items'][0]['user_id']=='bob'
+    assert statistics(repo.path,user_id='alice')['attempts']==0
+    assert statistics(repo.path,user_id='bob')['attempts']==1
     assert query.summary(user_id="' OR 1=1 --")['total']==0

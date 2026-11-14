@@ -1,5 +1,6 @@
 """Whitelist boundary: never archive tensors, arbitrary environment or raw logs."""
 import hashlib
+from ..limits import MAX_CONTEXT_BYTES
 import json
 import re
 
@@ -73,7 +74,7 @@ def normalize(result, environment):
     if diagnostics is not None:
         from ..failure_details import validate as validate_diagnostics
         contexts['execution']['diagnostics']=validate_diagnostics(diagnostics)
-    if len(canonical(contexts['execution']))>16384:raise ValueError('execution context too large')
+    if len(canonical(contexts['execution']))>MAX_CONTEXT_BYTES:raise ValueError('execution context too large')
     row = {key: text(result[key], limit) for key, limit in
            (('seed',128),('workload_id',64),('oracle_id',128),('backend',64),('status',32))}
     row.update(prepare_ns=integer(result.get('prepare_ns')),

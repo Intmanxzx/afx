@@ -1,3 +1,4 @@
+import re
 import json
 import sqlite3
 from contextlib import closing
@@ -197,7 +198,7 @@ def test_group_query_plan_uses_group_index(tmp_path):
     with closing(_connect(db)) as conn:
         sql,args=rollup()
         sql=sql.replace('JOIN attempt_arrivals_v2 r ON r.attempt_id=a.id','JOIN attempt_arrivals_v2 r ON r.attempt_id=a.id AND a.seed=?')
-        plans=[r[3] for r in conn.execute('EXPLAIN QUERY PLAN '+sql+'SELECT * FROM latest',['missing'])]
+        plans=[re.sub(r'(?:TABLE \w+ AS |SUBQUERY \d+ AS )', '', r[3]) for r in conn.execute('EXPLAIN QUERY PLAN '+sql+'SELECT * FROM latest',['missing'])]
     assert any('SEARCH a USING' in p and 'seed=?' in p for p in plans)
     # Later SCAN a entries refer to materialized CTE rows, not attempts.
     assert any('SEARCH r USING' in p for p in plans)

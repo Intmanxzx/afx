@@ -2,7 +2,7 @@ import json
 import pytest
 from autofusedebugger.fuzz.contracts import Seed, ExecutionConfig, EvaluationConfig
 from autofusedebugger.fuzz.generation import workload_id
-from fuzz_fixtures import bundle as materialize
+from fuzz_fixtures import bundle as materialize, CURRENT_SEED
 from autofusedebugger.fuzz.storage import ResultRepository
 from autofusedebugger.fuzz.storage.queries import ResultQueries
 
@@ -15,7 +15,7 @@ def test_short_seed_is_lossless_and_protocol_hashes_unchanged():
     assert len(Seed(2*2**128 + 36**9-1).short) == 10
     for value in (2*2**128, 2*2**128+42, 3*2**128-1):
         assert Seed.parse(Seed(value).short).value == value
-    for invalid in ('B-1','b16','E0','B'+'Z'*25):
+    for invalid in ('B-1','b16','A16','B'+'Z'*25):
         with pytest.raises(ValueError): Seed.parse(invalid)
 
 
@@ -26,7 +26,8 @@ def test_report_short_query_detail_and_no_heavy_import(tmp_path):
         'shape_results':[{'shape_index':0,'correctness':'pass','performance':'not_requested'}]})
     query=ResultQueries(repo.path)
     assert query.page(seed='C16')['items'][0]['seed_short']=='C000000016'
-    assert query.detail(identity)['replay_command']=='autofusedbg fuzz replay C000000016'
+    assert query.detail(identity)['replay_supported'] is False
+    assert query.detail(identity)['replay_command']==''
 
 
 def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
@@ -40,7 +41,7 @@ def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
     from autofusedebugger.fuzz.backends.base import UnsupportedBackend
     def unavailable(): raise UnsupportedBackend('af-mlir runtime verification failed: test missing runtime')
     monkeypatch.setattr('autofusedebugger.fuzz.backends.mlir_capability.verify_runtime',unavailable)
-    result=execute(generate('C16'),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
+    result=execute(generate(CURRENT_SEED),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
     assert result['status']=='unsupported'
     assert 'runtime verification failed' in result['error_summary']
 

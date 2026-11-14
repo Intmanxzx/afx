@@ -19,6 +19,20 @@ from autofusedebugger.adapters import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_fixture_script_imports(tmp_path):
+    # Each test creates a different script tree with common names such as libs.
+    previous = dict(sys.modules)
+    yield
+    for name, module in list(sys.modules.items()):
+        origin = getattr(module, '__file__', None)
+        if origin and tmp_path in Path(origin).resolve().parents:
+            if name in previous:
+                sys.modules[name] = previous[name]
+            else:
+                sys.modules.pop(name, None)
+
+
 def test_pytorch_adapter_captures_model_args_kwargs_and_stops_script(tmp_path: Path) -> None:
     pytest.importorskip("torch")
     script = tmp_path / "model.py"

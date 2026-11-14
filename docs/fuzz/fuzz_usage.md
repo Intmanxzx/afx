@@ -1,6 +1,6 @@
 # Fuzz 使用说明
 
-同一个 `autofusedebugger` wheel 提供客户端、云端和本地查看器。架构及能力边界见[设计文档](fuzz_design.md)。
+同一个 `autofusedebugger` wheel 提供客户端、云端和本地查看器。当前生成规则与历史退役说明见[单实现 E/F](current_protocol.md)，架构见[设计文档](fuzz_design.md)。
 
 ## 安装
 
@@ -12,11 +12,11 @@ python3 -m venv .venv
 python -m pip install /path/to/autofusedebugger-<版本>-py3-none-any.whl
 ```
 
-发布到 PyPI 后可用 `python -m pip install autofusedebugger==<版本>`。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看仅使用标准库，可安装 wheel 时加 `--no-deps`，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
+发布到 PyPI 后可用 `python -m pip install autofusedebugger==<版本>`。Windows 激活命令为 `.venv\Scripts\activate`。云端和本地查看使用 wheel 声明的依赖，无需 Torch、NNSmith、CANN、NPU 或 Node。客户端必须自行准备匹配的 Torch、torch_npu、CANN 和所选后端；安装本包不会配置或升级它们。
 
 ## 一、客户端：执行、采集、上报
 
-在已有 NPU Python 环境中安装 wheel；先加载所在机器的环境脚本。管理员私下发放 token，用户名由云端识别，不需要客户端填写。
+客户端和服务端一键安装命令见 [部署脚本说明](../../deploy/fuzz/README.md)。在已有 NPU Python 环境中安装 wheel；先加载所在机器的环境脚本。管理员私下发放 token，用户名由云端识别，不需要客户端填写。
 
 ```sh
 autofusedbg fuzz setup --token '管理员发放的TOKEN' --sync-interval 30
@@ -32,16 +32,17 @@ autofusedbg fuzz run --count 100 --save                  # 有限批次
 autofusedbg fuzz run --count 10 --fg      # 前台观察
 autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
 autofusedbg fuzz run --backend triton-npu         # 在 CPU、AF-MLIR 外增加后端
-autofusedbg fuzz replay C000000016               # 只靠 seed 重建并运行
-autofusedbg fuzz replay C000000016 --backend af-mlir  # 单后端诊断
-autofusedbg fuzz replay D000000016 --static-only  # 仅基础 shape，静态编译
-autofusedbg fuzz replay C000000016 --save      # 保存结果并加入自动上传队列
+autofusedbg fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6               # 只靠 seed 重建并运行
+autofusedbg fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --backend af-mlir  # 单后端诊断
+autofusedbg fuzz replay F0SQQTQNLFH6LUJHNFAX3A7CAP6 --static-only  # 仅基础 shape，静态编译
+autofusedbg fuzz replay E0SQQTQNLFH6LUJHNFAX3A7CAP6 --save      # 保存结果并加入自动上传队列
 ```
 
 - 默认 CPU 为对照、AF-MLIR 为被测后端；对 CPU 精度不一致即失败，不自动复核或改判。需要人工复核时执行 `autofusedbg fuzz replay <seed> --backend eager-npu --save`，生成独立记录，不覆盖原结果。
 - 浮点输出复用 `autofusedebugger/compare.py` 的 dtype 默认容差：FP64 为 `rtol=atol=1e-7`，FP32 为 `1e-5`，FP16 为 `1e-3`，BF16 为 `1e-2`。逐元素要求 `abs(actual - CPU) <= atol + rtol * abs(CPU)`，诊断中的 `mismatches` 统计不满足该条件的元素。整数和布尔输出仍精确比较，shape/dtype 必须一致；同符号 Inf 通过，NaN 不通过。历史结果需要重新比较或重跑才会更新。
 - 后端名称：`cpu`、`eager-npu`、`triton-npu`、`af-legacy`、`af-mlir`。`run --backend` 增加被测后端，`replay --backend` 则只执行指定后端。
-- C seed 保留单个静态 Shape；新增 D seed 在同一 NNSmith 图和固定权重上生成 3 个不同的合法 Shape，使用动态编译。新随机批跑按 seed 奇偶约 1:1 选择静态/动态；`--static-only` 可只产生静态用例。无法生成 3 个合法样本的 D seed 显式失败，不偷换成静态用例。旧 C seed 的重放内容不变。
+- 当前只有一套 E/F 生成实现：E 为静态，F 为动态。`--dynamic-variants 2..8` 设置动态样本数（默认 3），`--method symbolic-cinit|symbolic|concolic` 选择构图方法，两者均写入 seed。范围为四类 368 个 ATen overload。历史内测记录可读但不支持重放，旧 campaign 不自动迁移。详见[当前协议](current_protocol.md)。
+- `--ops add,ge,sum,reshape` 或 `--ops aten.add.Tensor,aten.ge.Tensor` 在图生成后按白名单过滤；`--exclude-op transpose` 保留。生成失败、CPU 不可执行、无 Autofuse 覆盖跳过，不计入有效 attempts。
 - 默认探测所有可见 NPU，随机 campaign 派发时选择空闲兼容卡，不提前固定到忙卡；显式队列/replay 仍遵守设备约束。同一逻辑卡同一时刻只运行一个任务，跨进程仍由物理 UUID 锁保护。CPU 与不同 NPU 卡可并发；总并发受 `cpu_workers`（`--workers`）约束，workers × compile_threads 不得超过有效 CPU 核数，内存和缓存预算按整个活动池合计。
 - 老 setup 若保存了 `cpu_workers=1`，仍尊重该配置；双卡机器可显式用 `--workers 4 --compile-threads 1`，提供两个 NPU 任务及 CPU 任务的并发余量。吞吐提升取决于生成、编译、执行耗时，不保证单个 kernel 更快。
 - `--perf` 请求性能采集；目前无法可靠拆分的编译/kernel 指标留空，不能把首次调用或总耗时当 kernel 性能。
@@ -147,7 +148,7 @@ python tools/release_wheel.py --tag v0.1.2 --repository niuyuhu/Autofuse-Debugge
 
 Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修改；构建 wheel 必须含网页资源且包含NNSmith patches。发布不覆盖已有文件：同名同 SHA256 可跳过，不同内容报错；GitCode 成功而 PyPI 失败时重跑相同产物可以续发，**不能重建不同内容覆盖同一版本**。PyPI 版本不可覆盖，版本已占用时必须升版本。
 
-本轮只进行脚本 mock 测试、构建及安装验证，不使用真实发布凭据，不创建 Tag/Release、不上传 PyPI。首次真实流水线及 GitCode 项目权限需维护者发布时验证。
+构建及安装验证不需要发布凭据，也不需要创建 Tag/Release 或上传 PyPI。首次真实流水线及 GitCode 项目权限需维护者发布时验证。
 
 官方依据：[工作流结构](https://docs.gitcode.com/docs/help/home/org_project/pipeline/writing-pipelines/workflow-file-location-structure)、[Tag 触发器](https://docs.gitcode.com/docs/help/home/org_project/pipeline/writing-pipelines/configure-triggers)、[创建 Release](https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases)、[附件上传 URL（PUT）](https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url)。
 
@@ -162,7 +163,7 @@ Tag 必须对应当前提交，版本必须一致，目录必须无 tracked 修�
 
 ### NNSmith执行环境
 
-run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁、安装Z3，并自动校验源码树指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，环境被改动后会自动重置修复。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
+run/replay要求隔离安装的已补丁NNSmith和Z3 4.12.2；源码指纹见设计文档。不匹配即拒绝，不自动修改共享NNSmith，不回退手写图。使用仓库自带的一键脚本在目标环境中安装：`bash autofusedebugger/nnsmith_integration/install_af_fuzz.sh`——脚本按固定顺序打补丁，构建普通 NNSmith wheel，安装固定 Z3/setuptools，并校验源码、wheel 内容和实际导入指纹与`SOURCE_SHA256`一致后才算成功；可重复运行，只修复脚本管理的隔离副本，不重置共享 checkout。补丁顺序与指纹强绑定，勿单独调整。`pip install autofusedebugger[nnsmith]`仅安装声明的辅助依赖，不会自动提供已补丁源码。
 
 
 ### 第一切片历史：合并执行观测基线（已由下节阶段调度替代）
@@ -184,11 +185,11 @@ mlir 入口仍是 `/mnt/workspace/af-fuzz/refactor-d0-Nh5vfp/bin/autofusedbg-npu
 
 ```sh
 autofusedbg fuzz run --workers 4 --compile-threads 1 --device npu:0 --device npu:1 --save
-autofusedbg fuzz run C16 D16 --workers 4 --worker-max-tasks 16 --save
-autofusedbg fuzz run C16 D16 --workers 4 --worker-max-tasks 1 --save # 禁用运行时复用作对照
-autofusedbg fuzz replay D16 --backend eager-npu --save
+autofusedbg fuzz run --count 2 --workers 4 --worker-max-tasks 16 --save
+autofusedbg fuzz run --count 2 --workers 4 --worker-max-tasks 1 --save # 禁用运行时复用作对照
+autofusedbg fuzz replay F<26位seed> --backend eager-npu --save
 autofusedbg fuzz run --scheduling combined --workers 4 --save     # 旧执行路径回滚
-autofusedbg fuzz replay C16 --backend cpu --scheduling combined
+autofusedbg fuzz replay E<26位seed> --backend cpu --scheduling combined
 ```
 
 `--device-memory-bytes` 是每物理 NPU 的预算上限；低于阶段最低预约会明确失败，不无限等卡。`--workers` 约束全池进程数，不是每 backend 一个池。默认内存/缓存容量来自当前有效主机资源；可以继续使用 setup 的 memory/cache 配置。持久编译 worker 仍受能力门禁，CPU/eager 已启用，AF/编译型后端保守按 session 回收。
@@ -211,13 +212,13 @@ round64 的独立同步 daemon 也已重启到新安装，原结果 ACK 保留�
 autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --device npu:1 --save
 ```
 
-不传 `--count` 会持续运行，使用相同 home 的 `autofusedbg fuzz stop` 停止。`--exclude-op transpose` 仅用于随机 staged campaign：先按原 C/D 协议生成，在生成 worker 中跳过含 transpose 的候选，既不启动 backend，也不记录成成功/失败 Shape；队列 reason 为 `excluded_op`。不会更改历史 seed、算子定义或输入字节。有限 `--count` 表示候选数，可能因过滤而少于最终执行数。
+不传 `--count` 会持续运行，使用相同 home 的 `autofusedbg fuzz stop` 停止。`--exclude-op transpose` 仅用于随机 staged campaign：先按当前 E/F 协议完整生成，在生成 worker 中跳过含 transpose 的候选，既不启动 backend，也不记录成成功/失败 Shape；队列 reason 为 `excluded_op`。不会更改历史 seed、算子定义或输入字节。有限 `--count` 表示候选数，可能因过滤而少于最终执行数。
 
-`--auto-resources` 根据 CPU/cgroup、内存及设备数选择进程预算，compile_threads=1，并保留原内存/缓存上限；不与手工 workers/compile-threads 混用。双 Ascend 910 的 8 个固定无 Transpose Case 对照：4 worker 61.42 s、8 worker 63.60 s，两组执行槽使用率约 94%/83%，8 worker 无收益，因此双卡起始预算选 4 worker。该样本 AF-MLIR 全失败，只能校准工具开销/槽使用，不能证明 AICore 高使用率或成功编译吞吐最优。CPU 期望结果与 NPU 首调同依赖生成、可并行；结果校验等待两者。就绪 NPU 首调优先，避免后处理积压延迟空闲卡启动。
+`--auto-resources` 根据 CPU/cgroup、内存及设备数选择进程预算，compile_threads=1，并保留原内存/缓存上限；不与手工 workers/compile-threads 混用。双 Ascend 910 的小批量对照仅用于校准工具开销和槽使用，不证明 AICore 高使用率或成功编译吞吐最优。CPU 期望结果与 NPU 首调同依赖生成、可并行；结果校验等待两者。就绪 NPU 首调优先，避免后处理积压延迟空闲卡启动。
 
 生命周期显示 UTC `HH:mm:ss.SSS`，悬停保留完整日期和时区；用例执行耗时保留一位小数。阶段名称为 CPU 期望结果、CPU 结果校验、NPU首调(惰性编译/执行/同步)。缺失数值仍显示未采集，但删除冗余解释文案。
 
-分布分析工具：`python tools/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 C/D，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前协议轴范围 1–8、最多 4096 元素；D 变体按固定顺序选合法尺寸，不是新的均匀抽样。若要扩大范围/改变分布，必须另立可编码生成协议，不修改 C/D 重放语义。
+分布分析工具：`python tools/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 E/F，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前尺寸和动态 Shape 数量均由 seed 编码；若要改变分布，必须同步更新当前协议和重放指纹。
 
 当前 oracle1 环境为 `/home/ubuntu/af-fuzz/venv-continuous-1110`，旧版本/旧备份/旧结果已按要求清除；systemd 主服务直接引用新环境，不再叠加历史 override。身份与 ACK、防旧数据回流的 tombstone 保留。后续自动备份只备份新数据，不再使用已经删除的旧环境。客户端新安装为 `/mnt/workspace/af-fuzz/continuous-1110/installed`。
 
@@ -225,4 +226,22 @@ autofusedbg fuzz run --exclude-op transpose --auto-resources --device npu:0 --de
 
 ### 大 Shape 与分布采样
 
-新建随机 campaign 默认使用可重放 E/F 协议；旧 C/D 和已持久化的旧 campaign 不改含义。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes` 和 `--generation-timeout`。完整历史对照、公式、预算限制和验证方法见 [采样协议](fuzz_design.md#附录-a可重放采样协议-ef)。要使正在运行的旧 campaign 使用新采样，需正常停止后新建，不能原地改旧 seed。
+新建随机 campaign 默认使用当前 E/F 协议。支持 `--tensor-scale`、`--dim-range MIN MAX`、`--max-elem-per-tensor`、`--dim-dist-mode`、`--value-dist-mode`、`--dtype-mode`、`--max-nodes`、`--generation-timeout`、`--dynamic-variants` 和 `--method`。旧 campaign 不自动迁移，需正常停止后新建。
+
+
+### OP 白名单过滤
+
+E/F 生成先使用完整 ATen 算子目录，seed 决定完整图；`--ops` 只在生成完成后过滤，不参与 seed 编码。因此同一 seed 在不同白名单下仍生成同一个 workload，只是可能被跳过：
+
+```sh
+autofusedbg fuzz run --ops add,mul,mean,transpose --count 100 --scheduling staged
+# 也接受 NNSmith 名称，例如：--ops core.Add,core.ReduceMean
+```
+
+显式 seed 也支持白名单过滤：
+
+```sh
+autofusedbg fuzz run E<26位seed> --ops add,mul --scheduling staged
+```
+
+不满足白名单的 case 会标记为 `excluded_op`，不会启动 backend。

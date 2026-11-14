@@ -106,7 +106,8 @@ for (const id of ['ShapeDim','ShapeElem']) {
  assert.equal(rows.reduce((n,r)=>n+r.pass,0),9);
  const displayed=displayChartRows(rows,id);
  assert.deepStrictEqual(displayed.map(r=>r.pass),rows.map(r=>r.pass));
- if(id==='ShapeDim') assert.deepStrictEqual(displayed.map(r=>r.key),['0–8','9–64','65–512','(512,4K]','(4K,16K]','(16K,64K]','(64K,128K]','>128K','未采集']);
+ if(id==='ShapeDim') assert.deepStrictEqual(displayed.map(r=>r.key),['[0,8]','(8,64]','(64,512]','(512,4K]','(4K,16K]','(16K,64K]','(64K,128K]','>128K','未采集']);
+ else assert.deepStrictEqual(displayed.map(r=>r.key),['[0,1K]','(1K,16K]','(16K,64K]','(64K,256K]','(256K,1M]','(1M,16M]','(16M,64M]','>64M','未采集']);
 }
 """], check=True, capture_output=True, text=True)
     assert 'return orderChartRows([...groups.values()],id)' in source

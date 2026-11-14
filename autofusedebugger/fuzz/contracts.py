@@ -29,19 +29,33 @@ class Seed:
     def __post_init__(self):
         if type(self.value) is not int or self.value < 0:
             raise ValueError("seed must be a nonnegative integer")
-        if self.version not in {3, 4, 5, 6}:
+        if not self.current and (self.value >= 2**160 or self.version not in {3, 4, 5, 6, 7, 8, 9, 10}):
             raise ValueError(f"unsupported generation version {self.version}; no fallback")
-        if self.version in {5, 6}:
+        if self.current:
             from .generation.sampling import decode
             decode(self)
 
     @property
     def version(self):
-        return self.value // 2**128 + 1
+        return self.value // (2**160 if self.value >= 2**160 else 2**128) + 1
 
     @property
     def entropy(self):
-        return self.value % 2**128
+        return self.value % (2**160 if self.current else 2**128)
+
+    @property
+    def current(self):
+        return self.value >= 2**160 and self.version in {11, 12}
+
+    @property
+    def dynamic(self):
+        self.require_current()
+        return self.version == 12
+
+    def require_current(self):
+        if not self.current:
+            raise ValueError('retired internal-test seed: history is readable but replay is unsupported; start a new E/F campaign')
+        return self
 
     def __str__(self):
         return str(self.value)
@@ -54,7 +68,13 @@ class Seed:
         while number:
             number, digit = divmod(number, 36)
             digits = alphabet[digit] + digits
-        return {3:'C',4:'D',5:'E',6:'F'}[self.version] + (digits or '0').zfill(9)
+        if self.current:
+            # E/F are the current static/dynamic aliases. Padding to 26 base36
+            # digits keeps them distinct from retired E/F seeds (max 25 digits).
+            prefix = 'F' if self.dynamic else 'E'
+            return prefix + (digits or '0').zfill(26)
+        prefix = {3:'C',4:'D',5:'E',6:'F',7:'G',8:'H',9:'I',10:'J'}[self.version]
+        return prefix + (digits or '0').zfill(9)
 
     @classmethod
     def parse(cls, value):
@@ -62,11 +82,22 @@ class Seed:
             return value
         if type(value) is int:
             return cls(value)
-        if isinstance(value, str) and re.fullmatch(r'[CDEF][0-9A-Z]{1,25}', value):
+        if isinstance(value, str) and re.fullmatch(r'[EF][0-9A-Z]{26}', value):
+            entropy = int(value[1:], 36)
+            if entropy >= 2**160:
+                raise ValueError('seed entropy overflow')
+            return cls((11 if value[0] == 'F' else 10) * 2**160 + entropy)
+        # C2/D2 remain accepted as legacy aliases for already-published seeds.
+        if isinstance(value, str) and re.fullmatch(r'[CD]2-[0-9A-Z]{1,31}', value):
+            entropy = int(value[3:], 36)
+            if entropy >= 2**160:
+                raise ValueError('seed entropy overflow')
+            return cls((11 if value[0] == 'D' else 10) * 2**160 + entropy)
+        if isinstance(value, str) and re.fullmatch(r'[CDEFGHIJ][0-9A-Z]{1,25}', value):
             entropy = int(value[1:], 36)
             if entropy >= 2**128:
                 raise ValueError('seed entropy overflow')
-            return cls(('CDEF'.index(value[0]) + 2) * 2**128 + entropy)
+            return cls(('CDEFGHIJ'.index(value[0]) + 2) * 2**128 + entropy)
         if not isinstance(value, str) or not re.fullmatch(r"0|[1-9][0-9]*", value):
             raise ValueError("seed must be canonical decimal digits; no profiles or extra parameters")
         return cls(int(value))

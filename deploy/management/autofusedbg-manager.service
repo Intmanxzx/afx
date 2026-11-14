@@ -1,0 +1,16 @@
+# Install as ~/.config/systemd/user/autofusedbg-manager.service.
+# Replace ExecStart with the absolute path to the lightweight bootstrap Python.
+[Unit]
+Description=AutofuseDebugger managed device
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/autofusedbg/bootstrap/bin/python -m autofusedebugger daemon supervise
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

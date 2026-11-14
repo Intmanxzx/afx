@@ -119,7 +119,7 @@ def test_sync_uses_remembered_home(tmp_path, monkeypatch, capsys):
 
 
 def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
     monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     observed = []
@@ -128,13 +128,14 @@ def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeyp
         return {'state': 'test'}
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
-    configs, evaluation, count, devices, excluded, sampling = observed[-1]['campaign']
+    configs, evaluation, count, devices, excluded, sampling, ops = observed[-1]['campaign']
+    assert ops is None
     assert sampling['dim_dist_mode'] == 'half_normal'
     assert sampling['dim_max'] == 131072
     assert count is None and observed[-1]['foreground']
     assert all(not c.save_results for c in configs)
     assert main(['run', '--count', '3', '--save']) == 0
-    configs, _, count, devices, excluded, sampling = observed[-1]['campaign']
+    configs, _, count, devices, excluded, sampling, ops = observed[-1]['campaign']
     assert count == 3 and all(c.save_results for c in configs)
 
 
@@ -142,7 +143,7 @@ def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypat
     from autofusedebugger.fuzz.config import setup, load_config
     from autofusedebugger.fuzz import resources
     monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0','npu:1'])
     cores = [36]
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
@@ -188,7 +189,7 @@ def test_setup_enables_auto_only_for_new_homes(tmp_path):
 
 def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     def launch(*args, **kwargs):
         plan = json.loads(capsys.readouterr().err)['resource_plan']
@@ -207,7 +208,7 @@ def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys)
 ])
 def test_auto_explicit_override_conflicts_never_launch(tmp_path, monkeypatch, capsys, flags):
     monkeypatch.setenv('AUTOFUSEDBG_HOME', str(tmp_path))
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', lambda: {})
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.runtime.source_evidence', lambda: {})
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.devices.select_devices', lambda _: ['npu:0'])
     monkeypatch.setattr('autofusedebugger.fuzz.scheduling.hosting.launch', lambda *a, **kw: pytest.fail('launched'))
     assert main(['run', *flags]) == 2

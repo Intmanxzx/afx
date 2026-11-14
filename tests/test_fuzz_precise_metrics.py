@@ -34,11 +34,13 @@ def test_metric_hooks_and_search(tmp_path):
         def compile_duration_ns(self):return 5678
     result=execute(materialize('680564733841876926926749214863536422954'),Profiled(),EvaluationConfig(performance=True))
     repo=ResultRepository(tmp_path/'db');repo.save(result,environment={'user_id':'uuid','device_name':'niuyuhu','cann':'9.3'})
+    # Public Shape cases require a complete primary AF-MLIR round.
+    repo.save(dict(result, backend='af-mlir'), environment={'user_id':'uuid','device_name':'niuyuhu','cann':'9.3'})
     query=ResultQueries(repo.path)
     for text in ['niu','9.3','C000000016','pass','eager-npu']:
-        assert query.summary(q=text)['total']==1
+        assert query.summary(q=text)['total']==(1 if text=='eager-npu' else 2)
         assert len(query.case_page(q=text)['items'])==1
-        assert statistics(repo.path,q=text)['attempts']==1
+        assert statistics(repo.path,q=text)['attempts']==2  # A matching Shape retains peer backends.
     assert query.summary(q='%')['total']==0
     item=query.case_page()['items'][0]
     assert item['user_name']=='niuyuhu'

@@ -16,7 +16,7 @@ cli / scheduling -> generation -> contracts + tensors
 | 模块 | 职责及扩展点 |
 |---|---|
 | contracts、tensors | frozen CaseSpec/CaseBundle，规范字节、TensorSpec、执行与评估配置 |
-| generation | 统一生成入口；C 静态协议与 D 多 Shape 协议，固定 NNSmith 源码/Z3及算子域，无模板回退 |
+| generation | 统一生成入口；C2 静态协议与 D2 多 Shape 协议，固定 NNSmith 源码/Z3及 ATen 算子域，无模板回退 |
 | backends | 延迟加载Torch，适配check/prepare/inputs/invoke/synchronize/compare；新增后端不能改变case |
 | execution | 执行保留共用 Shape 循环，支持 C 静态与 D 多 Shape；正确性和可选性能阶段；失败阶段、误差、计时 |
 | scheduling | 持久任务、批次、worker监督、租约、超时/恢复、预算 |
@@ -29,13 +29,13 @@ cli / scheduling -> generation -> contracts + tensors
 
 ## 2. NNSmith生成与seed
 
-run/replay统一使用NNSmith `graph_gen.model_gen`，通过symbolic-cinit与独立Z3 context生成随机拓扑、输入规格和算子属性，再转成不可变CaseBundle。手写v1/v2模板已删除；开发态不保留旧A/B的解析、展示或执行兼容；旧数字编码也拒绝，不重新解释为新图，旧记录需清理后重新采集。
+run/replay统一使用NNSmith `graph_gen.model_gen`，通过 seed 中编码的方法和独立 Z3 context 生成随机拓扑、输入规格和算子属性，再转成不可变 CaseBundle。当前只有 C2（静态）和 D2（动态）两种协议；旧内测 seed 可读历史记录，但拒绝重放，不重新解释为新图。
 
-当前C协议：Elementwise（Add/Mul/Neg/ReLU）、Reduce（Sum/Mean/Min/Max）、独立Transpose，固定8个计算节点，fp32、单静态shape、维度1–8、单tensor最多4096元素。生成未达到节点预算时拒绝，不接受随机器速度变化的部分图。算子选择不按设备能力过滤，后端不支持则失败。
+当前 C2/D2 使用项目内固定的 ATen 目录，覆盖逐元素、比较、reduce 和 view/shape 四类共 368 个 overload；矩阵乘和卷积暂不纳入。生成未达到节点预算、NNSmith 求解失败或 CPU materializer 无法执行时跳过，不接受随机器速度变化的部分图。算子选择不按设备能力过滤，后端不支持则失败。
 
-C/D + 9位 base36 为新批次的 10 字符 seed；C 保持单静态 Shape，D 在同一图和固定权重上构造 3 个合法不同 Shape，不能构造时显式失败，不退回静态。图由NNSmith生成，数据字节由字段寻址SHA256和规范小端编码生成，避免Torch全局RNG影响输入。workload指纹覆盖完整规格与字节，缓存不参与确定性保证。
+C2/D2 seed 使用独立的 160-bit entropy 空间；C2 保持单静态 Shape，D2 在同一图和固定权重上构造 2–8 个合法 Shape，数量由 seed 编码，不能构造时显式失败，不退回静态。图由 NNSmith 生成，数据字节由字段寻址 SHA256 和规范小端编码生成，避免 Torch 全局 RNG 影响输入。workload 指纹覆盖完整规格与字节，缓存不参与确定性保证。
 
-依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。环境由 `autofusedebugger/nnsmith_integration/install_af_fuzz.sh` 一键复现：脚本按固定顺序应用全部补丁并校验指纹，补丁顺序与指纹强绑定。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
+依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。环境由 `autofusedebugger/nnsmith_integration/install_af_fuzz.sh` 一键复现：脚本在私有副本按固定顺序应用全部补丁，以普通 wheel 安装，构建前和安装后校验指纹；禁止 SCM 注入额外的 _version.py，补丁顺序与指纹强绑定。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
 
 图、输入/输出规格作为受限轻量case_spec进入结果和同步协议，云端与离线view直接索引采集数据，不重新生成图、不依赖NNSmith。它不是重放所需的缓存。普通import不加载NNSmith；真正生成时才检查依赖。
 
@@ -366,57 +366,7 @@ oracle1 已切换到新环境，服务 active；公开 app.js SHA256 `fd8108a52b
 生产新增约 9600 attempt 后，summary/cases/statistics 触发旧 3 秒读查询期限，HTTP 503 使网站看似无数据，实际原始记录仍在。修复：rollup 不携带完整 diagnostics/telemetry 参与排序，只保留当前聚合需要的列；无搜索时不构造关联搜索投影；统计页在同一只读快照中物化窄临时表复用，优先使用已完成窗口聚合；统计请求使用有界 16 项/30 秒合并缓存。列表/汇总/统计的读预算为 10 秒，其余保持 3 秒，主库仍 mode=ro。缓存可能延迟最多 30 秒，不会修改结果。约 9638 条生产副本验证列表/汇总约 0.6–1.8 秒、统计冷请求约 3–7 秒，公开统计热请求约 0.15 秒；不声称解决无限数据规模问题。
 
 
-## 附录 A：可重放采样协议 E/F
-
-协议与验证记录保留如下；文中的部署路径和硬件状态为当时快照，操作前应核对现状。
-
-E 为静态、F 为同一固定图的三组合法动态 shape。C/D 的图和数值字节不变；已经持久化的旧 campaign 继续使用 C/D，新建 campaign 默认 E/F。配置编码进 128-bit seed entropy，短码因此比 C/D 长；无需外部配置即可 replay。不要给已有 seed 追加采样参数。
-
-```sh
-autofusedbg fuzz run --tensor-scale default --count 100 --save
-autofusedbg fuzz run --tensor-scale large --value-dist-mode llm --dtype-mode mixed --count 100
-autofusedbg fuzz run --dim-range 1 1000000 --max-elem-per-tensor 10000000 --dim-dist-mode half_normal --count 100
-```
-
-### 历史因子逐项核对
-
-| 因子 | 历史行为 | E/F 行为 |
-|---|---|---|
-| 轴长 | default `[1,131072]` 半正态；small/medium/large 均匀；16k–128k 对数正态 | 同档位、同 NNSmith 抽样函数；范围、分布和元素预算可覆盖 |
-| 元素预算 | small 65,536；medium 1,048,576；large 16,777,216；default 524,288 | 保留；预算是每张量上限，不是单轴范围 |
-| 图节点数 | 2 到 max_nodes 均匀，默认上限 5；上限 1 时固定 1 | 恢复；超时未完成节点预算明确报错 |
-| rank | `random.choice(rank_choices)`，默认初始 rank 0–5 | 同固定源码；不是正态抽样，最终 rank 可能经反向插图超过初始范围 |
-| 轴位置 | 首尾轴权重 3，中间 1；多轴无放回加权抽样 | 保留；Transpose 第二轴仍在其余轴中均匀抽样 |
-| Reduce 轴数 | 固定源码 MultiAxisReduceBase 的均匀轴数抽样 | 保留，不退化为单轴 |
-| dtype | 旧硬件探测后可用 dtype 池，浮点候选有额外权重 | 默认恢复 NNSmith `DTYPE_GEN_ALL`（`all`），再与算子 dtype 签名取交集；保留 `mixed` 兼容模式和单一 dtype 模式，不把生成链路锁死在 fp16/fp32；seed 编码保持前 3 个模式兼容 |
-| 数值 | uniform、log_scale、llm、recommendation，区分 input/weight | 恢复公式与角色区分；独立 seed-local RNG，不再固定为 C/D 的 65 个离散值 |
-| 动态候选 | 小尺寸、原尺寸附近、半尺寸候选，seeded shuffle；不改常量 | F 恢复该候选范围与随机顺序，并验证中间张量预算；D 不变 |
-
-数值公式：uniform `[3,7)`；log_scale 随机符号乘 `10**U(-4,4)`；llm 权重 `N(0,.02²)`、输入 `N(0,.2²)` 且 5% 元素放大 100–10000 倍；recommendation 权重 `N(0,1/numel)`、输入 `[0,1)`。新协议复现的是这些分布及固定字节，不承诺与旧 Torch RNG 同 seed 逐字节一致。不会用数值搜索替换为另一分布；溢出/非有限输出作为测试结果保留。
-
-### 范围与限制
-
-- E/F 编码支持轴上下界至 16,777,215、元素预算至 33,554,431、节点上限 255、solver timeout 至 511 秒。原始 32-bit 随机种子和配置共同决定身份。
-- `--generation-timeout` 是写入 seed 的求解上限；`--timeout` 是外部 worker/stage 墙钟安全上限（默认 120 秒），大预算实验需同时调高后者。
-- 实际输入分布受符号约束、broadcast、Reduce、元素预算挤压影响，不能宣称最终轴长严格服从初始分布。预算挤压可产生 1，即使请求范围下界大于 1。
-- 不扩展当前九种 op 的执行词汇；dtype 生成与 canonical storage 已恢复 NNSmith 生成集合（含 float16/float32/float64/bfloat16、整数、bool、complex），生成时只与固定算子签名取交集，不以本机硬件探测改变 seed；后端不支持的 dtype 必须记录真实执行失败，不能声称所有类型均已上板验证。
-- rank 环境覆盖不属于 E/F 配置；非默认 `NNSMITH_MAX_RANK` 明确拒绝，避免环境改变重放。
-- Case/output artifact 仍有独立 64 MiB 安全上限，多张量大图可能明确拒绝，不会降低 shape 伪装成功。
-- F 无法找到三组合法输入时明确失败。采样失败必须纳入统计，不能只报告接受样本。
-- 源码/Z3 指纹继续固定；跨平台求解器确定性仍未宣称完全保证。
-
-### 验证
-
-`tools/fuzz_shape_distribution.py --count 128 --output ...` 同时审计 C/D/E/F，按最终输入、rank、轴位置、动态 sample、Transpose 过滤前后分层，并记录错误与 dtype/元素数。单测同时覆盖配置往返、历史档位逐字段一致、边界轴权重、最终输入大轴、角色数值统计、C/D 重放不变、保存元数据重新物化、动态和 dtype CPU 执行。
-
-2026-11-10 的 128 组审计：C 128 接受，D 91 接受/37 失败，E 128 接受，F 98 接受/30 失败。C/D 最大基准输入轴为 8；E/F 为 122,468。E 基准输入共 499 个轴，其中 102 个大于 8、88 个大于 8,192，包含 float16/float32。原始报告为本次验证产物，不作为协议定义。
-
-部署：oracle1 使用 `/home/ubuntu/af-fuzz/venv-sampling-1110`，部署前私有一致性备份及 service 原配置在 `/home/ubuntu/af-fuzz/private/sampling-1110/`。服务切换不改生产库；回滚时恢复该目录的 service 配置并重启，不回拷旧数据库覆盖新结果。mlir 客户端安装在 `/mnt/workspace/af-fuzz/sampling-1110/installed`，原入口保存在同目录 `entry.before`。没有终止或改写原有长跑 campaign；新建 campaign 才启用 E/F。
-
-硬件检查：通过 `npussh mlir` 使用两张 Ascend910（逻辑 0/1，物理 12/13），对轴长 66,371 的静态 E 和三组动态 F，eager-NPU/AF-MLIR 均通过 CPU 精度对比（共 8 个 device/backend/mode 组合）。百万轴覆盖另以三个分布的固定 `[1000000,1000000]` 配置验证最终输入包含 1,000,000，而非只检查抽样函数。
-
-
-## 附录 B：数据查看性能优化记录（2026-11-10）
+## 附录：数据查看性能优化记录（2026-11-10）
 
 以下为当时的性能测量及部署记录，并非当前服务配置或性能保证；操作前应核对现状。
 

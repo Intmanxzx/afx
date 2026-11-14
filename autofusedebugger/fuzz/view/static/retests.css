@@ -14,3 +14,9 @@ dialog button {margin-right:8px}
 .login-dialog .login-actions button{margin:0;min-width:84px}
 .login-dialog [role="alert"]:empty{display:none}
 #session-controls{flex-shrink:0;overflow:visible}
+
+/* Keep row actions out of the seed cell so long seeds remain readable. */
+.case-table td[data-column="retest"] { white-space: nowrap; vertical-align: middle; }
+.case-table .retest-row-control { display: inline-flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap; }
+.case-table .retest-row-control input { margin: 0; flex: 0 0 auto; }
+.case-table .retest-row-control button { margin: 0; }

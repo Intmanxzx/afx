@@ -59,6 +59,8 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
             statistics_cache.clear()
         public_cache.invalidate()
     control_api = ControlAPI(database, on_publish=published_retest, write_allowlist=write_allowlist)
+    from ...management.central import ControlAPI as ManagedAPI
+    managed_api = ManagedAPI(database, write_allowlist, control_api)
 
     def cached_statistics(params):
         from ..reporting.statistics import statistics
@@ -120,6 +122,7 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
             return self.send(entry.status, entry.body, headers=headers)
 
         def do_GET(self):
+            if managed_api.handle(self, "GET"):return
             if control_api.handle(self, "GET"):return
             try:
                 if len(self.path)>2048:
@@ -136,6 +139,10 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
                         user = authenticate(conn, auth[7:])
                         name = conn.execute('SELECT display_name FROM users WHERE id=?', (user,)).fetchone()[0]
                     return self.send(200, {'user_id': user, 'display_name': name})
+                if route in {'/manage', '/manage.js', '/manage.css'}:
+                    name = {'/manage':'manage.html','/manage.js':'manage.js','/manage.css':'manage.css'}[route]
+                    data=resources.files('autofusedebugger.fuzz.view').joinpath('static').joinpath(name).read_bytes()
+                    return self.send(200,data,{'/manage':'text/html; charset=utf-8','/manage.js':'text/javascript; charset=utf-8','/manage.css':'text/css; charset=utf-8'}[route])
                 if route=='/healthz':
                     return self.send(200,{'status':'ok','protocol':1})
                 if route in {'/','/report','/app.js','/charts.js','/style.css','/runtime.js','/session.js','/retests.js','/retests.css','/favicon.svg'}:
@@ -145,7 +152,7 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
                         data=data.replace('离线结果'.encode(),'团队结果'.encode()).replace('只读 · 本机查看'.encode(),'公开结果 · 自动同步'.encode()).replace('查看不会运行模型或上传数据'.encode(),'公共缓存每轮结束后等待30秒再检查更新，失败时退避；页面每15秒刷新；上传周期由测试端配置'.encode())
                     if route in {'/','/report'}:
                         data=data.replace(b'</head>', b'<script src="session.js" defer></script><script src="retests.js" defer></script><link rel="stylesheet" href="retests.css"></head>')
-                        data=data.replace(b'<!-- session-controls -->', b'<span id="session-controls" class="status-group"></span>')
+                        data=data.replace(b'<!-- session-controls -->', b'<a href="/manage">Device management</a><span id="session-controls" class="status-group"></span>')
                         data=data.replace(b'<title>Autofuse Fuzz</title>', '<title>Autofuse一站式工作平台</title>'.encode())
                         data=data.replace(b'Autofuse<small>FUZZ WORKSPACE</small>', 'Autofuse一站式工作平台'.encode())
                     return self.send(200,data,{'/':'text/html; charset=utf-8','/report':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/charts.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/runtime.js':'text/javascript; charset=utf-8','/session.js':'text/javascript; charset=utf-8','/retests.js':'text/javascript; charset=utf-8','/retests.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[route])
@@ -213,6 +220,7 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
             except (OSError,sqlite3.Error):
                 self.send(503,{'error':'database unavailable'})
         def do_POST(self):
+            if managed_api.handle(self, "POST"):return
             if control_api.handle(self, "POST"):return
             if self.path not in {'/api/upload','/api/facts','/api/heartbeat'}:return self.send(404,{'error':'not found'})
             try:
@@ -226,12 +234,18 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
                 # Authenticate before reading/validating any submitted records.
                 from contextlib import closing
                 from ..storage.repository import _connect
-                from .repository import authenticate
-                with closing(_connect(database)) as conn:user=authenticate(conn,auth[7:])
+                from .repository import authenticate, authenticate_upload
+                with closing(_connect(database)) as conn:
+                    user=(authenticate if self.path=='/api/heartbeat' else authenticate_upload)(conn,auth[7:])
                 body=self.rfile.read(length)
                 if len(body)!=length:raise ValueError('incomplete body')
                 payload=json.loads(body)
-                write_allowlist.client(user, payload.get('source_id') if isinstance(payload,dict) else None)
+                client_id = payload.get('source_id') if isinstance(payload,dict) else None
+                with closing(_connect(database)) as conn:
+                    import hashlib
+                    managed = conn.execute('SELECT id FROM managed_devices WHERE token_hash=? AND active=1', (hashlib.sha256(auth[7:].encode()).hexdigest(),)).fetchone()
+                    if managed: client_id = managed[0]
+                write_allowlist.client(user, client_id)
                 if self.path=='/api/heartbeat':
                     from .runtime import ingest as heartbeat
                     result=heartbeat(database,auth[7:],payload)

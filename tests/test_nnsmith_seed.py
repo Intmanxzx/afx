@@ -26,14 +26,22 @@ import z3
 
 
 def _graph(seed, ops):
-    ir = model_gen(
-        ops, method="symbolic-cinit", seed=seed, init_fp=True,
-        max_nodes=4, timeout_ms=10000, concr_ph_dim_rng=(1, 8),
-    ).make_concrete()
-    return {
-        "instructions": str(ir),
-        "tensors": [(name, str(t.dtype), list(t.shape)) for name, t in ir.vars.items()],
-    }
+    # Match the runtime boundary: each generation uses an independent Z3 context.
+    from z3 import z3 as impl
+    previous = z3.main_ctx()
+    try:
+        impl._main_ctx = z3.Context()
+        ir = model_gen(
+            ops, method="symbolic-cinit", seed=seed, init_fp=True,
+            max_nodes=4, timeout_ms=10000, concr_ph_dim_rng=(1, 8),
+        ).make_concrete()
+        return {
+            "instructions": str(ir),
+            "tensors": [(name, str(t.dtype), list(t.shape)) for name, t in ir.vars.items()],
+        }
+    finally:
+        impl._main_ctx = previous
+
 
 
 @pytest.mark.parametrize("seed", [0, 42, 389609433])

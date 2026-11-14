@@ -1,3 +1,5 @@
+from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 """Stage scheduling, independent fact sync and bounded artifact regressions."""
 import json
 import sqlite3
@@ -96,7 +98,7 @@ def test_real_staged_cpu_shared_generation_and_runtime(tmp_path):
     from autofusedebugger.fuzz.scheduling.budgets import write_policy
     ledger=TaskLedger(tmp_path/'tasks')
     for backend in ['cpu','cpu-compile']:
-        ledger.enqueue('C16',ExecutionConfig(backend,'cpu',1,scheduling='staged',static_only=True,batch_id='test'),EvaluationConfig())
+        ledger.enqueue(CURRENT_SEED,ExecutionConfig(backend,'cpu',1,scheduling='staged',static_only=True,batch_id='test'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=2))
     # CPU compile is a real distinct backend; no self-comparison shortcut.
     result=drain(ledger,tmp_path/'db',timeout=120)
@@ -117,7 +119,7 @@ def test_staged_cancel_reaps_workers_and_preserves_retry(tmp_path,monkeypatch):
     from autofusedebugger.fuzz.scheduling.budgets import write_policy
     from autofusedebugger.fuzz.scheduling import pool as module
     ledger=TaskLedger(tmp_path/'tasks')
-    identity=ledger.enqueue('C16',ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
+    identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=1))
     original=module.subprocess.Popen
     children=[]
@@ -142,7 +144,7 @@ def test_staged_worker_timeout_no_shape_and_no_auto_retry(tmp_path,monkeypatch):
     from autofusedebugger.fuzz.scheduling.supervisor import drain
     from autofusedebugger.fuzz.scheduling.budgets import write_policy
     from autofusedebugger.fuzz.scheduling import pool as module
-    ledger=TaskLedger(tmp_path/'tasks');ledger.enqueue('C16',ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
+    ledger=TaskLedger(tmp_path/'tasks');ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=1))
     original=module.subprocess.Popen;count=0
     def once(args,**kwargs):
@@ -151,13 +153,14 @@ def test_staged_worker_timeout_no_shape_and_no_auto_retry(tmp_path,monkeypatch):
         if count==1:args=[sys.executable,'-c','import time;time.sleep(60)']
         return original(args,**kwargs)
     monkeypatch.setattr(module.subprocess,'Popen',once)
-    # First generation worker times out; lightweight record worker gets its own timeout.
+    # A worker timeout is infrastructure interruption, not a generated-case
+    # rejection. Neither outcome creates a synthetic attempt or auto-retry.
     result=drain(ledger,tmp_path/'db',timeout=10)
-    assert result['completed']==1 and result['failed']==1
+    assert result['completed']==0 and result['interrupted']==1 and result['skipped']==0
     with sqlite3.connect(tmp_path/'db') as conn:
         assert conn.execute('SELECT count(*) FROM shapes').fetchone()[0]==0
-        assert conn.execute('SELECT count(*) FROM attempts').fetchone()[0]==1
-    assert count==2
+        assert conn.execute('SELECT count(*) FROM attempts').fetchone()[0]==0
+    assert count==1
 
 
 def test_snapshot_keeps_lifecycle_but_not_private_fact_outbox(tmp_path):
@@ -179,7 +182,7 @@ def test_record_failure_is_resumable_not_fake_success(tmp_path,monkeypatch):
     from autofusedebugger.fuzz.scheduling.budgets import write_policy
     from autofusedebugger.fuzz.scheduling.pool import Pool
     ledger=TaskLedger(tmp_path/'tasks')
-    identity=ledger.enqueue('C16',ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
+    identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=2))
     original=Pool._run
     def disk_failure(self, identity, key, job, timeout):
@@ -207,7 +210,7 @@ def test_shared_bundle_reuses_exact_input_bytes_without_regeneration(tmp_path,mo
     from fuzz_fixtures import bundle
     from autofusedebugger.fuzz.scheduling.artifacts import write_bundle,bundle_from
     case=bundle('C16');ref=write_bundle(tmp_path,case)
-    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_v3.materialize_spec',lambda *a:pytest.fail('must not regenerate input bytes'))
+    monkeypatch.setattr('autofusedebugger.fuzz.generation.nnsmith_sampled.materialize_spec',lambda *a:pytest.fail('must not regenerate input bytes'))
     assert bundle_from(ref,tmp_path)==case
     (tmp_path/'inputs.bin').write_bytes(b'corrupt')
     with pytest.raises(ValueError,match='digest'):bundle_from(ref,tmp_path)
@@ -295,7 +298,8 @@ def test_reference_is_once_per_shape_without_self_comparison(tmp_path, monkeypat
     monkeypatch.setattr(backend.TorchAdapter, 'cpu_reference', forbidden)
     monkeypatch.setattr(backend.TorchAdapter, 'compare', forbidden)
     from dataclasses import replace
-    shared = bundle()
+    from autofusedebugger.fuzz.generation import materialize
+    shared = materialize(CURRENT_SEED)
     shared = replace(shared, spec=replace(shared.spec, shape_samples=shared.spec.shape_samples*samples,
                                           output_samples=shared.spec.output_samples*samples))
     monkeypatch.setattr(artifacts, 'bundle_from', lambda *args: shared)
@@ -336,6 +340,18 @@ def test_compressed_artifact_bound_checked_before_loading(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match='unpacked'):
         artifacts.read_arrays(tmp_path, dict(version=1, file=path.name, counts=[1],
             sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+
+
+def test_ops_whitelist_filters_generated_graph_without_changing_seed(tmp_path, monkeypatch):
+    from fuzz_fixtures import bundle
+    from autofusedebugger.fuzz import generation
+    from autofusedebugger.fuzz.scheduling.stage_worker import perform
+    monkeypatch.setattr(generation, 'materialize', lambda _: bundle())
+    # C16 contains relu/amin/add/mul/amax/transpose; an add-only whitelist
+    # must skip it after generation, not alter the generated graph.
+    assert perform({'kind':'generate','seed':'C16','directory':str(tmp_path),
+                    'ops':['add']}) == {'excluded':True}
+    assert not list(tmp_path.iterdir())
 
 
 def test_excluded_graph_never_runs_backend(tmp_path, monkeypatch):

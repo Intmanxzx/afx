@@ -1,7 +1,4 @@
-"""E/F: restored historical sampling with configuration embedded in the seed.
-
-C/D generation and storage semantics remain frozen in their existing modules.
-"""
+"""Current C2/D2 NNSmith ATen generation and canonical values."""
 from functools import lru_cache
 import hashlib
 import math
@@ -9,14 +6,7 @@ import struct
 
 from ..contracts import Seed, TensorSpec, CaseSpec, CaseBundle, canonical_json
 
-ORACLE_ID = 'nnsmith-cpu/5'
-SOURCE_SHA256 = 'c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5'
-Z3_VERSION = '4.12.2'
-OPS = ('Add', 'Mul', 'Neg', 'ReLU', 'Transpose', 'ReduceSum', 'ReduceMean', 'ReduceMin', 'ReduceMax')
-NAMES = dict(zip(OPS, ('add', 'mul', 'neg', 'relu', 'transpose', 'sum', 'mean', 'amin', 'amax')))
-
-
-from .nnsmith_v3 import source_evidence
+from .runtime import source_evidence, SOURCE_SHA256, Z3_VERSION
 from .sampling import decode
 from dataclasses import asdict
 
@@ -30,21 +20,21 @@ def _tensor(name, abstract, alias=0):
 @lru_cache(maxsize=8)
 def plan(token):
     seed = Seed.parse(token)
-    if seed.version not in {5, 6}:
-        raise ValueError('E/F seed required')
+    seed.require_current()
     config, random_seed = decode(seed)
     evidence = source_evidence()
     from nnsmith.abstract import op as pinned_ops
     if pinned_ops.__MAX_RANK__ != 5:
-        raise ValueError('E/F requires default NNSMITH_MAX_RANK=5; environment must not alter replay')
-    from nnsmith.abstract import op as operators
+        raise ValueError('C2/D2 requires default NNSMITH_MAX_RANK=5; environment must not alter replay')
     from nnsmith.abstract.dtype import DType
     from nnsmith.graph_gen import model_gen
     import random
     import z3
     from z3 import z3 as impl
     # All selection is fixed, not filtered by device/backend capabilities.
-    ops = [getattr(operators, name) for name in OPS]
+    from autofusedebugger.nnsmith_integration.aten_dialect import classes, validate_runtime
+    validate_runtime()
+    ops = classes()
     original = [(op, op.in_dtypes, op.out_dtypes) for op in ops]
     state = random.getstate()
     context = z3.main_ctx()
@@ -68,8 +58,11 @@ def plan(token):
             allowed = {dtype}
         eligible_ops = []
         for op in ops:
+            # A selectable model must declare a nonempty input/output signature.
+            if not op.in_dtypes or not op.out_dtypes:
+                continue
             pairs = [(a, b) for a, b in zip(op.in_dtypes, op.out_dtypes)
-                     if all(t in allowed for t in (*a, *b))]
+                     if all(t in allowed for t in a)]
             # Do not leave an operator with an empty signature list: remove it
             # from this mode's candidate catalog instead. This is important for
             # explicit integer/complex modes where many floating-point-only
@@ -81,7 +74,7 @@ def plan(token):
             raise ValueError(f'no NNSmith operators support dtype mode {config.dtype_mode!r}')
         from nnsmith.graph_gen import set_z3_state
         set_z3_state(random_seed % (2**31-1))
-        ir = model_gen(eligible_ops, method='symbolic-cinit', seed=random_seed % (2**31-1),
+        ir = model_gen(eligible_ops, method=config.method, seed=random_seed % (2**31-1),
                        dtype_choices=sorted(allowed, key=str),
                        init_fp=True, max_nodes=node_count, timeout_ms=config.timeout_seconds*1000,
                        concr_ph_dim_rng=(config.dim_min, config.dim_max),
@@ -97,19 +90,25 @@ def plan(token):
             elif name == 'Constant':
                 weights.append(_tensor(output, ir.vars[output], len(inputs)+len(weights)))
             else:
-                nodes.append({'op': NAMES[name], 'inputs': list(inst.iexpr.args), 'output': output,
-                              'attrs': dict(op.extra_attrs)})
+                from .torch_dialect import capture, encode
+                nodes.append({'op': op.rule.target, 'inputs': list(inst.iexpr.args),
+                              'output': output, 'outputs': list(inst.retvals()),
+                              'attrs': encode(dict(op.extra_attrs)), 'materializer': capture(op)})
         if len(nodes) != node_count:
             raise ValueError('NNSmith generation ended before its fixed node budget; no partial case accepted')
         outputs = tuple(_tensor(name, ir.vars[name]) for name in ir.leaf_var())
-        graph = {'dialect': 'nnsmith-sampled/5', 'sampling': asdict(config), 'nodes': nodes, 'outputs': [t.name for t in outputs],
-                 'reduce_axis': None, 'generator': evidence['generator'],
-                 'source_sha256': SOURCE_SHA256, 'z3': Z3_VERSION}
+        graph = {'dialect': 'nnsmith-aten/2', 'sampling': asdict(config), 'nodes': nodes,
+                 'outputs': [t.name for t in outputs], 'reduce_axis': None,
+                 'generator': evidence['generator'], 'source_sha256': SOURCE_SHA256,
+                 'z3': Z3_VERSION, 'aten_rules': 'elementwise-comparison-reduce-view/v1',
+                 'torch': '2.10.0+cpu'}
         spec = CaseSpec(seed, canonical_json(graph), tuple(inputs), tuple(weights), (tuple(inputs),), (outputs,))
-        if seed.version == 6:
+        if seed.dynamic:
             from .nnsmith_dynamic import variants
             spec = variants(spec, max_elements=config.max_elem_per_tensor,
-                            dim_range=(config.dim_min, config.dim_max), rng=random.Random(random_seed))
+                            count=config.dynamic_variants, rng=random.Random(random_seed ^ 0xD1A5E))
+        from ..case_spec import encode
+        encode(spec)  # Reject oversized graphs before CPU/NPU execution.
         return spec
     finally:
         for op, ins, outs in original:
@@ -159,7 +158,7 @@ def _canonical_storage(dtype, values):
             low, high = 0, 2 ** bits - 1
         else:
             low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
-        values = [max(low, min(high, int(v))) for v in values]
+        values = [max(low, min(high, round(v))) for v in values]
     return struct.pack('<' + fmt * len(values), *values)
 
 
@@ -173,7 +172,7 @@ def materialize_spec(spec):
                    *(t for sample in spec.shape_samples for t in sample))
                    if t.alias_group == tensor.alias_group)
         rng = random.Random(int.from_bytes(hashlib.sha256(
-            f'nnsmith-sampled/5/{spec.seed}/{tensor.name}'.encode()).digest(), 'little'))
+            f'nnsmith-aten/2/{spec.seed}/{tensor.name}'.encode()).digest(), 'little'))
         weight = tensor in spec.weights
         mode = config.value_dist_mode
         def value():
@@ -190,7 +189,7 @@ def materialize_spec(spec):
                 amplification = 100 + 9900 * rng.random()
                 return base * (amplification if outlier else 1)
             return rng.gauss(0, 1 / math.sqrt(size)) if weight else rng.random()
-        values = [value() for _ in range(size)]
+        values = [complex(value(), value()) if tensor.dtype.startswith('complex') else value() for _ in range(size)]
         storages[tensor.alias_group] = _canonical_storage(tensor.dtype, values)
     return CaseBundle(spec, tuple(storages))
 

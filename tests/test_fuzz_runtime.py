@@ -133,7 +133,7 @@ def test_reporter_counts_each_shape_not_whole_attempt(tmp_path):
     assert reporter.case_errors==1
 
 
-def test_sampled_case_metadata_roundtrip():
+def test_retired_sampled_metadata_cannot_be_attached_to_current_seed():
     from dataclasses import replace, asdict
     from autofusedebugger.fuzz.case_spec import decode, encode
     from autofusedebugger.fuzz.generation.sampling import SamplingConfig
@@ -141,7 +141,8 @@ def test_sampled_case_metadata_roundtrip():
     spec=three_shapes_spec();config=SamplingConfig();graph=json.loads(spec.graph_json)
     graph.update(dialect='nnsmith-sampled/5',sampling=asdict(config))
     spec=replace(spec,seed=config.seed(42,True),graph_json=json.dumps(graph,sort_keys=True,separators=(',',':')))
-    assert decode(encode(spec))==spec
+    with pytest.raises(ValueError,match='current graph metadata differs from seed'):
+        decode(encode(spec))
     graph['sampling']['dim_max']=2
     with pytest.raises(ValueError):decode(encode(replace(spec,graph_json=json.dumps(graph,sort_keys=True,separators=(',',':')))))
 

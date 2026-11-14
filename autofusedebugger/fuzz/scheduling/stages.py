@@ -31,6 +31,8 @@ class Case:
     stages: dict = field(default_factory=dict)
     bundle: dict = None
     reference: dict = None
+    skip_reason: str = None
+    skip_finalized: bool = False
 
 
 @dataclass

@@ -3,6 +3,16 @@
 Backend is a member of a round, never part of the outer grouping key. Newest
 means first database arrival, not client timestamps or retest submission order.
 """
+import sqlite3
+
+
+def compatible_ctes(sql):
+    # Retain the optimization fence on servers whose SQLite supports it.
+    if sqlite3.sqlite_version_info < (3, 35, 0):
+        return sql.replace(' AS MATERIALIZED (', ' AS (')
+    return sql
+
+
 PRIMARY_BACKEND = 'af-mlir'
 
 
@@ -124,7 +134,7 @@ def rollup(seed=None, status=None, user_id=None, q=None, *, rowid_window=None, c
             predicate,args=condition(q)
             sql+=' AND EXISTS (SELECT 1 FROM projection p WHERE p.record_id=c.record_id AND p.shape_index=c.shape_index AND ('+predicate+'))'
             values.extend(args)
-    return sql+') ',values
+    return compatible_ctes(sql+') '),values
 
 
 def summary(database, **params):
@@ -148,8 +158,8 @@ def page_keys(conn, *, limit, after=0, seed=None, status=None, user_id=None, q=N
 
 
 def reuse_latest(sql):
-    start=sql.index('latest AS MATERIALIZED (',sql.index('unfiltered_cases AS'));end=sql.index('), projection AS (',start)
-    return sql[:start]+'latest AS MATERIALIZED (SELECT * FROM selected_latest'+sql[end:]
+    start=sql.index('latest AS ',sql.index('unfiltered_cases AS'));end=sql.index('), projection AS (',start)
+    return sql[:start]+compatible_ctes('latest AS MATERIALIZED (SELECT * FROM selected_latest')+sql[end:]
 
 
 def has_retests(conn):

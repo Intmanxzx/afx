@@ -15,6 +15,7 @@ from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
 from autofusedebugger.fuzz.scheduling.ownership import own_queue
 from autofusedebugger.fuzz.scheduling import supervisor
 from autofusedebugger.fuzz.storage import ResultRepository
+from fuzz_fixtures import CURRENT_SEED, SECOND_CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='managed execution currently POSIX only')
 EX = ExecutionConfig('cpu-eager', 'cpu', 1)
@@ -31,7 +32,7 @@ def saved_result(task):
 
 def setup(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('C16', EX, EV)
+    identity = ledger.enqueue(CURRENT_SEED, EX, EV)
     return ledger, identity, tmp_path/'results.sqlite'
 
 
@@ -139,7 +140,7 @@ def test_worker_spawn_failure_releases_claim(tmp_path, monkeypatch):
 
 def test_npu_and_invalid_timeout_never_claim(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue('C16', ExecutionConfig('ascendc','npu:0'), EvaluationConfig(performance=True))
+    identity = ledger.enqueue(CURRENT_SEED, ExecutionConfig('ascendc','npu:0'), EvaluationConfig(performance=True))
     with pytest.raises(ValueError, match='strict NPU performance'):
         supervisor.drain(ledger, tmp_path/'result.sqlite')
     assert ledger.get(identity)['state'] == 'pending'
@@ -183,7 +184,7 @@ with own_queue(TaskLedger(sys.argv[1])) as fd:
 def test_cli_rejects_npu_and_exposes_lightweight_status(tmp_path, capsys):
     from autofusedebugger.fuzz.cli import main
     with pytest.raises(SystemExit):
-        main(['run', 'C16', '--backend', 'invalid'])
+        main(['run', CURRENT_SEED, '--backend', 'invalid'])
     ledger, identity, _ = setup(tmp_path)
     assert main(['status', identity, '--queue', str(ledger.path)]) == 0
     assert main(['stop', identity, '--queue', str(ledger.path)]) == 0
@@ -207,7 +208,7 @@ os._exit(82)
 
 def test_task_pagination_and_validation(tmp_path):
     ledger, first, _ = setup(tmp_path)
-    second = ledger.enqueue('C17', EX, EV)
+    second = ledger.enqueue(SECOND_CURRENT_SEED, EX, EV)
     page = ledger.page(limit=1)
     assert page['items'][0]['id'] == first
     assert ledger.page(limit=1, after=page['next_cursor'])['items'][0]['id'] == second
@@ -283,20 +284,20 @@ def test_unsaved_worker_completes_without_result_or_outbox(tmp_path):
     # Use a fresh queue so each task's persisted save policy is unambiguous.
     from autofusedebugger.fuzz.contracts import ExecutionConfig, EvaluationConfig
     ephemeral = TaskLedger(tmp_path/'ephemeral.sqlite')
-    identity = ephemeral.enqueue('C16', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EvaluationConfig())
+    identity = ephemeral.enqueue(CURRENT_SEED, ExecutionConfig('cpu', 'cpu', 1, save_results=False), EvaluationConfig())
     summary = supervisor.drain(ephemeral, database)
     assert summary['completed'] == 1
     assert ephemeral.get(identity)['state'] == 'completed'
     assert not database.exists()
     # A later saved task on the same queue still works.
-    saved = ephemeral.enqueue('C17', ExecutionConfig('cpu', 'cpu', 1, save_results=True), EvaluationConfig())
+    saved = ephemeral.enqueue(CURRENT_SEED, ExecutionConfig('cpu', 'cpu', 1, save_results=True), EvaluationConfig())
     assert supervisor.drain(ephemeral, database)['completed'] == 1
-    assert ResultRepository(database).detail(ephemeral.get(saved)['attempt_id'])['seed'] == str(2*2**128+43)
+    assert ResultRepository(database).detail(ephemeral.get(saved)['attempt_id'])['seed'] == CURRENT_SEED
 
 
 def test_unsaved_failure_does_not_archive(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
-    identity = ledger.enqueue('C16', ExecutionConfig('cpu', 'cpu', 1, save_results=False), EV)
+    identity = ledger.enqueue(CURRENT_SEED, ExecutionConfig('cpu', 'cpu', 1, save_results=False), EV)
     task = ledger.claim()
     database = tmp_path/'results.sqlite'
     supervisor._save_worker_failure(ledger, database, task, 'timeout', 'should not persist')

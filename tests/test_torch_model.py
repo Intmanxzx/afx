@@ -414,7 +414,7 @@ def test_capture_prefusion_graphs_skips_cpu_replay_by_default(tmp_path: Path) ->
 
     model = torch.nn.Linear(4, 5, bias=False).eval()
     inputs = (torch.ones(2, 3, 4),)
-    spec = {"gm": model, "example_inputs": inputs}
+    spec = {"gm": torch.fx.symbolic_trace(model), "example_inputs": inputs}
 
     cpu_graph, cpu_outputs, eager_graph, eager_outputs = torch_model.capture_prefusion_graphs(
         [spec],
@@ -438,7 +438,7 @@ def test_capture_prefusion_graphs_with_cpu_captures_both_sides(tmp_path: Path) -
 
     model = torch.nn.Linear(4, 5, bias=False).eval()
     inputs = (torch.ones(2, 3, 4),)
-    spec = {"gm": model, "example_inputs": inputs}
+    spec = {"gm": torch.fx.symbolic_trace(model), "example_inputs": inputs}
 
     cpu_graph, cpu_outputs, eager_graph, eager_outputs = torch_model.capture_prefusion_graphs(
         [spec],

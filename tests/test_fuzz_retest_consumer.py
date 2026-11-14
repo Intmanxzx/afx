@@ -1,4 +1,5 @@
 """Consumer uses stable local IDs and a common scheduler, never shell commands."""
+from autofusedebugger.fuzz.generation.sampling import SamplingConfig
 import copy
 from dataclasses import asdict
 import json
@@ -13,7 +14,7 @@ from autofusedebugger.fuzz.contracts import EvaluationConfig
 
 def lease():
     return dict(task_id=str(uuid.uuid4()),lease_id=str(uuid.uuid4()),generation=1,expires=100,repetition=0,
-        spec=dict(seed=str(3*2**128+16),backend='af-mlir',workload_id='a'*64,oracle_id='cpu/1',
+        spec=dict(seed=str(SamplingConfig().seed(16, dynamic=True)),backend='af-mlir',workload_id='a'*64,oracle_id='cpu/1',
                   execution={'static_only':False},evaluation=asdict(EvaluationConfig())))
 
 
@@ -29,7 +30,7 @@ def test_local_admission_idempotence_and_fixed_seed(tmp_path):
     assert expected_workload(ledger,tasks)=='a'*64
     with ledger._connection() as conn:
         assert json.loads(conn.execute('SELECT devices FROM task_devices').fetchone()[0])==['npu:0','npu:1']
-    changed=copy.deepcopy(item);changed['spec']['seed']=str(3*2**128+17)
+    changed=copy.deepcopy(item);changed['spec']['seed']=str(SamplingConfig().seed(17, dynamic=True))
     with pytest.raises(ValueError):accept(ledger,changed,['npu:0'],budget)
 
 

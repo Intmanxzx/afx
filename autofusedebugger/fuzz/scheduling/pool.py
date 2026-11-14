@@ -167,7 +167,9 @@ class Pool:
             # Missing capability reports retain the conservative isolation policy.
             isolated_session = (job['kind']=='first_call_combined' and
                                 not response.get('value',{}).get('persistent_runtime', False))
-            recycle = (isolated_session or not response['ok'] or response.get('value',{}).get('result',{}).get('status') in {'error','unsupported'} or worker['count']>=self.max_tasks or
+            case_skipped = response.get('value', {}).get('case_skipped', False)
+            recycle = (isolated_session or (not response['ok'] and job['kind'] != 'generate') or
+                       (not case_skipped and response.get('value',{}).get('result',{}).get('status') in {'error','unsupported'}) or worker['count']>=self.max_tasks or
                        rss > worker['rss_floor']+256*1024**2 or device_resident > 16*1024**2 or
                        scratch_size(worker['scratch'].name) > self.cache_capacity//max(1,self.budget.cpu_workers))
             with self.lock:
