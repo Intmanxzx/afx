@@ -6,33 +6,6 @@ from unittest.mock import patch
 import pytest
 
 
-def test_registered_torch_catalog_is_complete():
-    pytest.importorskip('nnsmith')
-    from nnsmith.materialize.torch.forward import ALL_TORCH_OPS
-    from nnsmith.abstract import op
-    from autofusedebugger.fuzz.generation.operator_catalog import full_operator_classes
-    catalog = full_operator_classes(op)
-    assert set(catalog) == {x for x in ALL_TORCH_OPS if x.__name__ not in {'ConcreteOp', 'Input', 'Constant'}}
-    assert len(catalog) == 79
-    assert {'Flatten', 'Linear', 'PTMatMul', 'TorchReduceSum'} <= {x.__name__ for x in catalog}
-
-
-def test_registered_materializer_preserves_constructor_state():
-    torch = pytest.importorskip('torch')
-    pytest.importorskip('nnsmith')
-    from nnsmith.abstract.op import Reshape, ExpandLast1
-    from autofusedebugger.fuzz.generation.torch_dialect import capture, execute_graph
-    for op, expected in [(Reshape(2, 2), (2, 2)), (ExpandLast1(4), (4,))]:
-        shape = (4,) if isinstance(op, Reshape) else (1,)
-        from nnsmith.abstract.tensor import AbsTensor
-        from nnsmith.abstract.dtype import DType
-        op.bind_input_like([AbsTensor(list(shape), DType.float32)])
-        op.bind_output_like([AbsTensor(list(expected), DType.float32)])
-        node = dict(op='test', inputs=['x'], output='y', materializer=capture(op))
-        fn = execute_graph(torch, dict(nodes=[node], outputs=['y']), {}, ['x'], 'cpu')
-        assert tuple(fn(torch.ones(shape))[0].shape) == expected
-
-
 def test_fixed_full_range_seed_replays_without_global_rng_changes():
     pytest.importorskip('nnsmith')
     import random
@@ -40,7 +13,7 @@ def test_fixed_full_range_seed_replays_without_global_rng_changes():
     from autofusedebugger.fuzz.generation.sampling import SamplingConfig
     config = SamplingConfig.profile('small', dtype_mode='float32', max_nodes=3)
     for i in (0, 1, 2, 10):
-        seed = config.seed(i, full_range=True)
+        seed = config.seed(i)
         state = random.getstate()
         first = materialize(seed)
         assert random.getstate() == state
@@ -116,7 +89,8 @@ def test_all_target_publish_barrier(tmp_path, monkeypatch, late_kind):
     monkeypatch.setattr(stage_facts,'finish_window',lambda *args:None)
     ledger=TaskLedger(tmp_path/'queue')
     for backend in ['cpu','npu-eager','cpu-compile']:
-        ledger.enqueue('C16',ExecutionConfig(backend,'npu:0' if backend=='npu-eager' else 'cpu',1,scheduling='staged',batch_id='test'),EvaluationConfig())
+        from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+        ledger.enqueue(str(SamplingConfig.profile('small').seed(3)),ExecutionConfig(backend,'npu:0' if backend=='npu-eager' else 'cpu',1,scheduling='staged',batch_id='test'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=4))
     summary=staged.drain(ledger,tmp_path/'results')
     if late_kind in {'noaf','cpu_failure'}:
@@ -131,18 +105,20 @@ def test_generation_failure_reuses_worker(tmp_path):
     from autofusedebugger.fuzz.generation import materialize
     from autofusedebugger.fuzz.generation.sampling import SamplingConfig
     config = SamplingConfig.profile('small', dtype_mode='float32', max_nodes=3)
-    job = dict(kind='generate', directory=str(tmp_path), seed=str(config.seed(0, full_range=True)), config={})
+    job = dict(kind='generate', directory=str(tmp_path), seed=str(config.seed(0)), config={})
     with patch('autofusedebugger.fuzz.generation.materialize', side_effect=ValueError('unsupported op parameters')):
         result = perform(job)
     assert result['skipped'] and result['reason'] == 'generation_failed'
     assert perform(job)['workload_id']  # same process succeeds on next job
-    with patch('autofusedebugger.fuzz.generation.nnsmith_v3.source_evidence', side_effect=ValueError('source mismatch')):
+    with patch('autofusedebugger.fuzz.generation.runtime.source_evidence', side_effect=ValueError('source mismatch')):
         with pytest.raises(ValueError, match='source mismatch'): perform(job)
 
 
 def test_noaf_stops_remaining_dynamic_samples():
     from test_fuzz_precise_metrics import Adapter
-    from fuzz_fixtures import bundle
+    from autofusedebugger.fuzz.generation import materialize as bundle
+    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    current=str(SamplingConfig.profile('small',max_nodes=1,dtype_mode='float32').seed(3))
     from autofusedebugger.fuzz.execution import execute
     from autofusedebugger.fuzz.contracts import EvaluationConfig
     from autofusedebugger.fuzz.backends.autofuse_coverage import NoAutofuseCoverage
@@ -156,7 +132,7 @@ def test_noaf_stops_remaining_dynamic_samples():
             raise RuntimeError('wrapped backend failure') from cause
     adapter.invoke = invoke
     from dataclasses import replace
-    original = bundle('C16')
+    original = bundle(current)
     dynamic = replace(original, spec=replace(original.spec,
         shape_samples=original.spec.shape_samples * 3, output_samples=original.spec.output_samples * 3))
     result = execute(dynamic, adapter, EvaluationConfig())
@@ -165,12 +141,14 @@ def test_noaf_stops_remaining_dynamic_samples():
 
 def test_coverage_diagnostics_repository_roundtrip(tmp_path):
     from test_fuzz_precise_metrics import Adapter
-    from fuzz_fixtures import bundle
+    from autofusedebugger.fuzz.generation import materialize as bundle
+    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+    current=str(SamplingConfig.profile('small',max_nodes=1,dtype_mode='float32').seed(3))
     from autofusedebugger.fuzz.execution import execute
     from autofusedebugger.fuzz.contracts import EvaluationConfig
     from autofusedebugger.fuzz.backends.autofuse_coverage import Coverage
     from autofusedebugger.fuzz.storage import ResultRepository
-    result = execute(bundle('C16'), Adapter(), EvaluationConfig())
+    result = execute(bundle(current), Adapter(), EvaluationConfig())
     coverage = asdict(Coverage(candidates=1, installed=True, events=['AF_CANDIDATE']))
     diag = json.loads(result['execution']['diagnostics'])
     diag['autofuse_coverage'] = coverage
@@ -180,10 +158,10 @@ def test_coverage_diagnostics_repository_roundtrip(tmp_path):
     assert json.loads(repo.detail(identity)['contexts']['execution']['diagnostics'])['autofuse_coverage'] == coverage
 
 
-def test_missing_historical_op_fails_closed():
-    from autofusedebugger.fuzz.generation.operator_catalog import operator_classes
-    with pytest.raises(RuntimeError, match='Linear'):
-        operator_classes(SimpleNamespace(), ('Linear',))
+def test_retired_graph_never_falls_back_to_interpreter():
+    from autofusedebugger.fuzz.generation.torch_dialect import execute_graph
+    with pytest.raises(ValueError,match='retired graph dialect'):
+        execute_graph(None,{'dialect':'nnsmith-sampled/5'}, {}, [], 'cpu')
 
 
 def test_skips_have_bounded_audit_without_attempts(tmp_path):

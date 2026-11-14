@@ -1,3 +1,5 @@
+from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 """Current production CLI -> supervisor -> NNSmith -> execution -> storage tests."""
 import json
 import subprocess
@@ -46,13 +48,13 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
         tasks=ledger.page()['items']
         assert len(tasks)==2
         for task in tasks:
-            seed=Seed.parse(task['seed']);assert seed.short.startswith(('I','J')) and Seed.parse(seed.short)==seed
+            seed=Seed.parse(task['seed']);assert seed.short.startswith(('C2-','D2-')) and Seed.parse(seed.short)==seed
             assert json.loads(materialize(seed).spec.graph_json)['generator']=='nnsmith.graph_gen.model_gen'
         return {'verified':True}
     monkeypatch.setattr(hosting,'launch',launch)
     assert main(['run','--count','1','--save','--fg'])==0
     capsys.readouterr()
-    assert main(['replay','C16','--backend','cpu','--save','--scheduling','combined'])==0
+    assert main(['replay',CURRENT_SEED,'--backend','cpu','--save','--scheduling','combined'])==0
     result=json.loads(capsys.readouterr().out)
     assert result['status']=='ok'
     assert json.loads(json.loads(result['execution']['case_spec'])['graph_json'])['generator']=='nnsmith.graph_gen.model_gen'
@@ -67,7 +69,7 @@ def test_real_supervisor_worker_uses_nnsmith(tmp_path):
     from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig
     from autofusedebugger.fuzz.storage import ResultRepository
     ledger=TaskLedger(tmp_path/'tasks.sqlite');database=tmp_path/'results.sqlite'
-    identity=ledger.enqueue('C16',ExecutionConfig('cpu','cpu',1),EvaluationConfig())
+    identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1),EvaluationConfig())
     assert drain(ledger,database)['completed']==1
     result=ResultRepository(database).detail(ledger.get(identity)['attempt_id'])
     assert result['status']=='ok'

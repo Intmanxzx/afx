@@ -6,18 +6,11 @@ are resolved exclusively from the installed, source-pinned Torch registry.
 import hashlib
 import json
 import math
-from functools import lru_cache
 
 
-@lru_cache(maxsize=4)
-def classes(protocol=7):
-    if protocol in {9, 10}:
-        from autofusedebugger.nnsmith_integration.aten_dialect import classes as aten_classes
-        return aten_classes()
-    from nnsmith.materialize.torch.forward import ALL_TORCH_OPS
-    return sorted({op for op in ALL_TORCH_OPS
-                   if op.__name__ not in {'ConcreteOp', 'Input', 'Constant'}},
-                  key=lambda op: (op.__module__, op.__name__))
+def classes():
+    from autofusedebugger.nnsmith_integration.aten_dialect import classes
+    return classes()
 
 
 def key(cls):
@@ -60,16 +53,16 @@ def decode(value):
     return value
 
 
-def capture(op, protocol=7):
-    if type(op) not in classes(protocol):
+def capture(op):
+    if type(op) not in classes():
         raise ValueError('unregistered Torch operator')
     return {'class': key(type(op)), 'state': encode(vars(op))}
 
 
 def execute_graph(torch, graph, weights, names, device):
-    from nnsmith.materialize.torch.forward import forward_fn
-    protocol = 9 if graph.get('dialect') == 'nnsmith-sampled/9' else 7
-    registry = {key(cls): cls for cls in classes(protocol)}
+    if graph.get('dialect') != 'nnsmith-aten/2':
+        raise ValueError('retired graph dialect; replay unsupported')
+    registry = {key(cls): cls for cls in classes()}
     functions = []
     for node in graph['nodes']:
         data = node['materializer']
@@ -86,11 +79,8 @@ def execute_graph(torch, graph, weights, names, device):
         seed = int.from_bytes(hashlib.sha256(json.dumps(node, sort_keys=True, separators=(',', ':')).encode()).digest()[:8], 'little')
         with torch.random.fork_rng(devices=[]):
             torch.random.default_generator.manual_seed(seed)
-            if protocol == 9:
-                from autofusedebugger.nnsmith_integration.aten_dialect import materialize
-                function = materialize(op)
-            else:
-                function = forward_fn(op)
+            from autofusedebugger.nnsmith_integration.aten_dialect import materialize
+            function = materialize(op)
         if isinstance(function, torch.nn.Module):
             function = function.to(device).eval()
         functions.append(function)
@@ -100,13 +90,10 @@ def execute_graph(torch, graph, weights, names, device):
         values.update(zip(names, inputs))
         for node, function in zip(graph['nodes'], functions):
             output = function(*(values[name] for name in node['inputs']))
-            if protocol == 9:
-                outputs = node['outputs']
-                actual = (output,) if len(outputs) == 1 else output
-                if not isinstance(actual, (tuple, list)) or len(actual) != len(outputs):
-                    raise ValueError('ATen return arity differs from NNSmith model')
-                values.update(zip(outputs, actual))
-            else:
-                values[node['output']] = output
+            outputs = node['outputs']
+            actual = (output,) if len(outputs) == 1 else output
+            if not isinstance(actual, (tuple, list)) or len(actual) != len(outputs):
+                raise ValueError('ATen return arity differs from NNSmith model')
+            values.update(zip(outputs, actual))
         return tuple(values[name] for name in graph['outputs'])
     return forward

@@ -13,6 +13,7 @@ class TorchAdapter:
         self.capabilities = self.Capabilities(persistent_runtime=self.name in {'cpu','cpu-eager','eager-npu','npu-eager','af-mlir'})
 
     def check(self, bundle, evaluation):
+        bundle.spec.seed.require_current()
         from ..generation import plan
         if not getattr(self, 'validated_shared_case', False) and bundle.spec != plan(bundle.spec.seed):
             raise UnsupportedBackend("bundle does not match NNSmith seed regeneration")
@@ -87,21 +88,14 @@ class TorchAdapter:
         import json
         torch = self.torch
         graph = json.loads(bundle.spec.graph_json)
-        if graph.get('dialect') not in {'nnsmith-ert/3', 'nnsmith-sampled/5', 'nnsmith-sampled/7', 'nnsmith-sampled/9'}:
-            raise UnsupportedBackend('only NNSmith graphs are supported')
-        from ..generation.nnsmith_v3 import execute_graph
-        if graph.get('dialect') in {'nnsmith-sampled/7', 'nnsmith-sampled/9'}:
-            if graph.get('dialect') == 'nnsmith-sampled/9':
-                from autofusedebugger.nnsmith_integration.aten_dialect import validate_runtime
-                validate_runtime()
-            from ..generation.torch_dialect import execute_graph as execute_registered
-            return self._compile(execute_registered(torch, graph,
-                {t.name: self._tensor(bundle, t) for t in bundle.spec.weights},
-                [t.name for t in bundle.spec.inputs], self.device), bundle)
-        forward = execute_graph(torch, graph,
+        if graph.get('dialect') != 'nnsmith-aten/2':
+            raise UnsupportedBackend('retired graph dialect; replay unsupported')
+        from autofusedebugger.nnsmith_integration.aten_dialect import validate_runtime
+        validate_runtime()
+        from ..generation.torch_dialect import execute_graph
+        return self._compile(execute_graph(torch, graph,
             {t.name: self._tensor(bundle, t) for t in bundle.spec.weights},
-            [t.name for t in bundle.spec.inputs])
-        return self._compile(forward, bundle)
+            [t.name for t in bundle.spec.inputs], self.device), bundle)
 
     def _compile(self, forward, bundle):
         torch = self.torch
@@ -117,7 +111,7 @@ class TorchAdapter:
         # If a dynamic variant cannot be faithfully materialized, the shared
         # CPU reference rejects it rather than comparing a different program.
         self.expected_outputs = (bundle.spec.output_samples[index]
-                                 if bundle.spec.seed.version in {7, 8, 9, 10} else None)
+                                 if bundle.spec.seed.current else None)
         tensors=tuple(self._tensor(bundle, spec) for spec in bundle.spec.shape_samples[index])
         if not self.config.static_only and len(bundle.spec.shape_samples)>1 and self.name not in {'cpu','cpu-eager','npu-eager','eager-npu'}:
             for position,tensor in enumerate(tensors):

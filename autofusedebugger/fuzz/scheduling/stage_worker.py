@@ -45,7 +45,7 @@ def perform(job):
     kind = job['kind']
     if kind == 'generate':
         from ..generation import materialize, workload_id
-        from ..generation.nnsmith_v3 import source_evidence
+        from ..generation.runtime import source_evidence
         # Broken/mismatched runtime is not a property of the generated case.
         # Fail the stage instead of silently skipping the whole campaign.
         source_evidence()

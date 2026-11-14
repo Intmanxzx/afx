@@ -7,29 +7,30 @@ import pytest
 
 from autofusedebugger.fuzz.contracts import Seed, ExecutionConfig, EvaluationConfig
 from autofusedebugger.fuzz.generation.nnsmith_dynamic import variants, output_shapes
-from autofusedebugger.fuzz.generation.nnsmith_v3 import materialize_spec
-from fuzz_fixtures import bundle
+from autofusedebugger.fuzz.generation.nnsmith_sampled import materialize_spec
+from test_fuzz_current_contract import build_spec
+from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+import random
+CURRENT_SEED=str(SamplingConfig.profile("small").seed(3))
 
 
-def test_dynamic_seed_and_legal_variants_preserve_c():
-    original=bundle().spec
-    spec=variants(replace(original,seed=Seed.parse('D16')))
-    assert Seed.parse(str(spec.seed)).short=='D000000016'
-    assert len(original.shape_samples)==1 and len(spec.shape_samples)==3
+def test_dynamic_variants_are_reproducible():
+    original=build_spec(3)
+    spec=variants(original,65536,3,random.Random(42))
+    assert spec==variants(original,65536,3,random.Random(42))
+    assert len(spec.shape_samples)==3
     assert len({tuple(t.shape for t in sample) for sample in spec.shape_samples})==3
     graph=json.loads(spec.graph_json)
     for inputs,outputs in zip(spec.shape_samples,spec.output_samples):
-        assert output_shapes(graph,inputs,spec.weights)==[t.shape for t in outputs]
-    materialize_spec(spec)  # All views fit canonical storage.
-    from autofusedebugger.fuzz.case_spec import decode,encode
-    assert decode(encode(spec))==spec
+        assert output_shapes(graph,inputs,spec.weights,65536)==[t.shape for t in outputs]
+    materialize_spec(spec)
 
 
 def test_dynamic_no_legal_extent_is_not_silently_static():
-    spec=bundle().spec
+    spec=build_spec()
     scalar=replace(spec.inputs[0],shape=(),stride=())
-    with pytest.raises(ValueError,match='no three legal'):
-        variants(replace(spec,inputs=(scalar,)))
+    with pytest.raises(ValueError,match='no 3 legal'):
+        variants(replace(spec,inputs=(scalar,)),65536,3,random.Random(42))
 
 
 def test_campaign_mix_and_round_robin(tmp_path,monkeypatch):
@@ -42,7 +43,7 @@ def test_campaign_mix_and_round_robin(tmp_path,monkeypatch):
     assert campaign.refill(ledger,target_pending=4)
     assert campaign.refill(ledger,target_pending=4)
     tasks=ledger.page()['items']
-    assert [Seed.parse(t['seed']).version for t in tasks]==[5,5,6,6]
+    assert [Seed.parse(t['seed']).version for t in tasks]==[11,11,12,12]
     assert [json.loads(t['execution'])['device'] for t in tasks]==['cpu','npu:0','cpu','npu:1']
     assert [json.loads(t['execution'])['static_only'] for t in tasks]==[True,True,False,False]
 
@@ -56,7 +57,7 @@ def test_parallel_cpu_and_distinct_devices_not_same_device(tmp_path,monkeypatch)
              ExecutionConfig('af-mlir','npu:0',1,save_results=False),
              ExecutionConfig('af-mlir','npu:0',1,save_results=False),
              ExecutionConfig('af-mlir','npu:1',1,save_results=False)]
-    for c in configs:ledger.enqueue('C16',c,EvaluationConfig())
+    for c in configs:ledger.enqueue(CURRENT_SEED,c,EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=3))
     monkeypatch.setattr(Budget,'admit',lambda *a:None)
     def command(l,d,t):
@@ -84,34 +85,16 @@ def test_device_discovery_honors_logical_count(monkeypatch):
     with pytest.raises(ValueError):select_devices(['12'])
 
 
-def test_canonical_c_bytes_unchanged():
-    import hashlib,struct
-    original=bundle().spec
-    actual=materialize_spec(original)
-    for tensor in (*original.inputs,*original.weights):
-        values=[]
-        import math
-        for index in range(math.prod(tensor.shape)):
-            raw=hashlib.sha256(f'nnsmith-v3/{original.seed}/{tensor.name}/{index}'.encode()).digest()
-            values.append((int.from_bytes(raw[:4],'little')%65-32)/16)
-        assert actual.storages[tensor.alias_group]==struct.pack('<'+'f'*len(values),*values)
-
-
-def test_cpu_outputs_match_saved_dynamic_shapes():
-    torch=pytest.importorskip('torch')
-    from autofusedebugger.fuzz.generation.nnsmith_v3 import execute_graph
-    spec=variants(replace(bundle().spec,seed=Seed.parse('D16')))
-    forward=execute_graph(torch,json.loads(spec.graph_json),{},[t.name for t in spec.inputs])
-    for sample,outputs in zip(spec.shape_samples,spec.output_samples):
-        result=forward(*(torch.ones(t.shape) for t in sample))
-        assert [tuple(t.shape) for t in result]==[t.shape for t in outputs]
+def test_canonical_values_repeat_exactly():
+    spec=variants(build_spec(),65536,3,random.Random(42))
+    assert materialize_spec(spec)==materialize_spec(spec)
 
 
 def test_generation_failure_is_completed_without_regeneration(tmp_path,monkeypatch):
     from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
     from autofusedebugger.fuzz.scheduling.worker import run
     from autofusedebugger.fuzz.scheduling.supervisor import _has_result
-    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue('D16',ExecutionConfig('cpu','cpu',1),EvaluationConfig())
+    ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1),EvaluationConfig())
     task=ledger.claim();db=tmp_path/'results'
     def failed(*a):raise ValueError('no legal dynamic shapes')
     monkeypatch.setattr('autofusedebugger.fuzz.generation.materialize',failed)

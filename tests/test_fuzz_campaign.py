@@ -1,3 +1,5 @@
+from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 from dataclasses import asdict
 import json
 import pytest
@@ -84,7 +86,7 @@ def test_torch_cpu_reference_and_error_metrics():
     from fuzz_fixtures import bundle as materialize
     from autofusedebugger.fuzz.generation import materialize
     adapter=TorchAdapter(ExecutionConfig('cpu','cpu'))
-    bundle=materialize('C000000016')
+    bundle=materialize(CURRENT_SEED)
     try:
         adapter.check(bundle, EvaluationConfig())
         expected=adapter.cpu_reference(bundle, 0)
@@ -102,7 +104,7 @@ def test_default_replay_uses_both_mandatory_backends(monkeypatch):
     from autofusedebugger.fuzz import cli
     seen=[]
     monkeypatch.setattr(cli,'execute_args',lambda args: seen.append((args.backend,args.device)) or 0)
-    assert cli.replay(['C000000016','--scheduling','combined'])==0
+    assert cli.replay([CURRENT_SEED,'--scheduling','combined'])==0
     assert seen==[('cpu','cpu'),('af-mlir','npu:0')]
 
 

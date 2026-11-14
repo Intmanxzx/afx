@@ -14,12 +14,13 @@ def test_fuzz_does_not_import_legacy_debugger_or_nnsmith():
             if isinstance(node, ast.ImportFrom):
                 assert node.level <= 2, path
                 module = node.module or ""
-                assert not module.startswith("nnsmith") or path.name in {"nnsmith_v3.py", "nnsmith_sampled.py"}, path
+                assert not module.startswith("nnsmith") or path.name in {"__init__.py", "runtime.py", "nnsmith_sampled.py", "nnsmith_dynamic.py", "torch_dialect.py"}, path
                 if module.startswith("autofusedebugger"):
-                    assert module.startswith("autofusedebugger.fuzz"), path
+                    assert (module.startswith(("autofusedebugger.fuzz", "autofusedebugger.nnsmith_integration.aten_")) or
+                            (module == "autofusedebugger.compare" and path == ROOT / "backends/torch.py")), path
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("nnsmith") or path.name in {"nnsmith_v3.py", "nnsmith_sampled.py"}, path
+                    assert not alias.name.startswith("nnsmith") or path.name in {"__init__.py", "runtime.py", "nnsmith_sampled.py", "nnsmith_dynamic.py", "torch_dialect.py"}, path
 
 
 def test_generation_and_contracts_do_not_depend_on_outer_layers():
@@ -42,7 +43,7 @@ runpy.run_module('autofusedebugger.fuzz',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert 'NNSmith C/D replay' in result.stdout
+    assert 'Single NNSmith ATen C2/D2 protocol' in result.stdout
 
 
 def test_view_and_storage_do_not_depend_on_execution_layers():

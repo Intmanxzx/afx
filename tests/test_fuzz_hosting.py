@@ -13,6 +13,7 @@ from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
 from autofusedebugger.fuzz.scheduling.ownership import own_queue
 from autofusedebugger.fuzz.scheduling import hosting
 from autofusedebugger.fuzz.storage import ResultRepository
+from fuzz_fixtures import CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='POSIX process hosting')
 EX, EV = ExecutionConfig('cpu-eager','cpu',1), EvaluationConfig()
@@ -30,7 +31,7 @@ def wait_finished(ledger, timeout=30):
 
 def test_detached_run_finishes_after_launcher_exits(tmp_path):
     pytest.importorskip("torch")
-    output = subprocess.run([sys.executable, '-m', 'autofusedebugger.fuzz', 'run', 'C16', '--save',
+    output = subprocess.run([sys.executable, '-m', 'autofusedebugger.fuzz', 'run', CURRENT_SEED, '--save',
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
     response = json.loads(output.stdout)
@@ -49,7 +50,7 @@ def test_failed_spawn_keeps_batch_pending(tmp_path, monkeypatch):
     ledger = TaskLedger(tmp_path/'queue')
     monkeypatch.setattr(hosting, '_command', lambda *a: ['/nonexistent/supervisor'])
     with pytest.raises(OSError):
-        hosting.launch(ledger, tmp_path/'results', [('C16',EX,EV,None)])
+        hosting.launch(ledger, tmp_path/'results', [(CURRENT_SEED,EX,EV,None)])
     assert ledger.page()['items'][0]['state'] == 'pending'
     assert hosting.status(ledger)['state'] == 'startup_failed'
     with own_queue(ledger):
@@ -60,7 +61,7 @@ def test_startup_timeout_does_not_claim_and_releases_lock(tmp_path, monkeypatch)
     ledger = TaskLedger(tmp_path/'queue')
     monkeypatch.setattr(hosting, '_command', lambda *a: [sys.executable,'-c','import time;time.sleep(60)'])
     with pytest.raises(TimeoutError):
-        hosting.launch(ledger, tmp_path/'results', [('C16',EX,EV,None)], startup_timeout=.2)
+        hosting.launch(ledger, tmp_path/'results', [(CURRENT_SEED,EX,EV,None)], startup_timeout=.2)
     assert ledger.page()['items'][0]['state'] == 'pending'
     with own_queue(ledger):
         pass
@@ -70,11 +71,11 @@ def test_wrong_binding_or_owned_queue_does_not_enqueue(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
     hosting.launch(ledger, tmp_path/'results', [], foreground=True)
     with pytest.raises(ValueError, match='different result database'):
-        hosting.launch(ledger, tmp_path/'wrong', [('C16',EX,EV,None)])
+        hosting.launch(ledger, tmp_path/'wrong', [(CURRENT_SEED,EX,EV,None)])
     assert ledger.page()['items'] == []
     with own_queue(ledger):
         with pytest.raises(ValueError, match='still owned'):
-            hosting.launch(ledger, tmp_path/'results', [('C16',EX,EV,None)])
+            hosting.launch(ledger, tmp_path/'results', [(CURRENT_SEED,EX,EV,None)])
     assert ledger.page()['items'] == []
 
 
@@ -88,7 +89,7 @@ def test_stale_metadata_never_claims_process_liveness(tmp_path):
 def test_child_never_claims_without_start_authorization(tmp_path):
     import socket
     ledger = TaskLedger(tmp_path/'queue')
-    identity = ledger.enqueue('C16',EX,EV)
+    identity = ledger.enqueue(CURRENT_SEED,EX,EV)
     with own_queue(ledger) as fd:
         parent, child_socket = socket.socketpair()
         child = subprocess.Popen(hosting._command(ledger, tmp_path/'results',120,fd,child_socket.fileno(),'test'),
@@ -143,7 +144,7 @@ sys.exit(hosting._child(*sys.argv[1:-1]))
 def test_background_rejects_npu_before_enqueue(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
     with pytest.raises(ValueError, match='strict NPU performance'):
-        hosting.launch(ledger,tmp_path/'results',[('C16',ExecutionConfig('ascendc','npu:0'),EvaluationConfig(performance=True),None)])
+        hosting.launch(ledger,tmp_path/'results',[(CURRENT_SEED,ExecutionConfig('ascendc','npu:0'),EvaluationConfig(performance=True),None)])
     assert ledger.page()['items'] == []
 
 

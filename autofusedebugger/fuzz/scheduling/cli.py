@@ -24,7 +24,10 @@ def register(sub, maintenance):
             parser.add_argument('--value-dist-mode', choices=VALUE_MODES)
             parser.add_argument('--max-elem-per-tensor', type=int)
             parser.add_argument('--max-nodes', type=int)
-            parser.add_argument('--generation-timeout', type=int, help='solver timeout in seconds; recorded in E/F seed')
+            parser.add_argument('--generation-timeout', type=int, help='solver timeout in seconds; embedded in seed')
+            parser.add_argument('--dynamic-variants', type=int, choices=range(2,9))
+            from ..generation.sampling import METHODS
+            parser.add_argument('--method', choices=METHODS)
             parser.add_argument('--exclude-op', action='append', choices=('transpose',), help='skip random candidates containing this op; seed semantics are unchanged')
             parser.add_argument('--ops', help='comma-separated OP whitelist; generation remains full-range and filtering happens after seed replay')
             resources = parser.add_mutually_exclusive_group()
@@ -82,11 +85,11 @@ def dispatch(args):
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError('timeout must be finite and positive')
     parsed = [Seed.parse(s) for s in args.seeds]
-    if any(seed.version not in {3,4,5,6,7,8,9,10} for seed in parsed):
-        raise ValueError('only NNSmith C/D/E/F/G/H/I/J seeds can run; retired template seeds are not regenerated')
+    for seed in parsed:
+        seed.require_current()
     from ..generation.sampling import SamplingConfig
     sampling_keys = ('tensor_scale', 'dim_range', 'dim_dist_mode', 'value_dist_mode',
-                     'max_elem_per_tensor', 'max_nodes', 'generation_timeout', 'dtype_mode')
+                     'max_elem_per_tensor', 'max_nodes', 'generation_timeout', 'dtype_mode', 'dynamic_variants', 'method')
     if parsed and any(getattr(args, key, None) is not None for key in sampling_keys):
         raise ValueError('sampling options only apply to new random cases; replay uses seed configuration')
     dim_range = getattr(args, 'dim_range', None)
@@ -97,12 +100,12 @@ def dispatch(args):
         value_dist_mode=getattr(args, 'value_dist_mode', None),
         max_elem_per_tensor=getattr(args, 'max_elem_per_tensor', None),
         max_nodes=getattr(args, 'max_nodes', None),
-        timeout_seconds=getattr(args, 'generation_timeout', None))
-    from ..generation.nnsmith_v3 import source_evidence
+        timeout_seconds=getattr(args, 'generation_timeout', None),
+        dynamic_variants=getattr(args,'dynamic_variants',None), method=getattr(args,'method',None))
+    from ..generation.runtime import source_evidence
     source_evidence()  # Fail before creating a campaign if the dependency is absent/wrong.
-    if not parsed or any(seed.version in {9, 10} for seed in parsed):
-        from autofusedebugger.nnsmith_integration.aten_dialect import validate_runtime
-        validate_runtime()
+    from autofusedebugger.nnsmith_integration.aten_dialect import validate_runtime
+    validate_runtime()
     seeds = [str(seed) for seed in parsed]
     count = getattr(args, 'count', None)
     if count is not None:
@@ -144,10 +147,10 @@ def dispatch(args):
         import json
         import sys
         print(json.dumps({'resource_plan': resource_plan}), file=sys.stderr, flush=True)
-    result = launch(ledger, database, ((seed, replace(config,static_only=args.static_only or Seed.parse(seed).version in {3,5,7,9},device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
+    result = launch(ledger, database, ((seed, replace(config,static_only=args.static_only or not Seed.parse(seed).dynamic,device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
                   timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
                   campaign=(configs,evaluation,0 if seeds and ops else count,devices,
-                            getattr(args,'exclude_op',None),asdict(sampling),ops,True) if (not seeds or ops) else None)
+                            getattr(args,'exclude_op',None),asdict(sampling),ops) if (not seeds or ops) else None)
 
     if resource_plan is not None:
         result["resource_plan"] = resource_plan

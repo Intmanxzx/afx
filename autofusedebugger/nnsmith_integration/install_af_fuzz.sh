@@ -14,7 +14,7 @@
 #
 # 指纹与补丁顺序强绑定：多个补丁修改同一文件的相邻区域，应用顺序不同
 # 会导致最终文件内容不同、指纹不同。不要调整 PATCH_ORDER，除非同时
-# 重新生成指纹并同步修改 nnsmith_v3.py / nnsmith_sampled.py。
+# 重新生成指纹并同步修改 runtime.py / nnsmith_sampled.py。
 #
 # 环境变量：
 #   NNSMITH_REPO               覆盖克隆源（默认 GitHub；网络受限时可换镜像）
@@ -55,9 +55,9 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 command -v git >/dev/null || die "需要 git"
 command -v patch >/dev/null || die "需要 GNU patch（apt install patch）"
 
-# 期望指纹：唯一事实来源是 nnsmith_v3.py 里的 SOURCE_SHA256 常量。
+# 期望指纹：唯一事实来源是 runtime.py 里的 SOURCE_SHA256 常量。
 expected_hash() {
-  python3 - "${REPO_ROOT}/autofusedebugger/fuzz/generation/nnsmith_v3.py" <<'PY'
+  python3 - "${REPO_ROOT}/autofusedebugger/fuzz/generation/runtime.py" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 m = re.search(r"SOURCE_SHA256\s*=\s*'([0-9a-f]{64})'", text)
@@ -65,7 +65,7 @@ print(m.group(1) if m else "")
 PY
 }
 
-# 与 fuzz/generation/nnsmith_v3.py source_evidence() 完全相同的算法：
+# 与 fuzz/generation/runtime.py source_evidence() 完全相同的算法：
 # 对 nnsmith 包目录下全部 .py（按相对路径排序）逐个 path\0+bytes 拼接计算。
 tree_hash() {
   python3 - "${NNSMITH_DIR}/nnsmith" <<'PY'
@@ -80,7 +80,7 @@ PY
 }
 
 EXPECTED="$(expected_hash)"
-[ -n "$EXPECTED" ] || die "无法从 nnsmith_v3.py 读取 SOURCE_SHA256"
+[ -n "$EXPECTED" ] || die "无法从 runtime.py 读取 SOURCE_SHA256"
 
 if [ -d "${NNSMITH_DIR}/nnsmith" ] && [ "$(tree_hash)" = "$EXPECTED" ]; then
   echo "== nnsmith 环境已就绪且指纹匹配，跳过 clone/打补丁 =="
@@ -132,4 +132,4 @@ fi
 echo
 echo "完成。NPU Pod 上每次使用前先加载运行环境："
 echo "  source ${SCRIPT_DIR}/npu_env.sh"
-echo "  autofusedbg fuzz replay C000000016        # 冒烟验证"
+echo "  autofusedbg fuzz replay C2-<seed>        # 冒烟验证"

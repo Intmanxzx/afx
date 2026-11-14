@@ -68,7 +68,7 @@ def test_every_overload_cpu_signatures(runtime, rule):
                 successful += 1
                 actual = [result] if rule.outputs==1 else result
                 assert [(list(x.shape),str(x.dtype)) for x in actual] == [(x.shape,'torch.'+str(x.dtype)) for x in expected]
-                loaded = cls.__new__(cls); loaded.__dict__.update(decode(capture(op,9)['state']))
+                loaded = cls.__new__(cls); loaded.__dict__.update(decode(capture(op)['state']))
                 restored = materialize(loaded)(*inputs)
                 restored = [restored] if rule.outputs==1 else restored
                 for a,b in zip(actual,restored): torch.testing.assert_close(a,b,equal_nan=True)
@@ -77,36 +77,33 @@ def test_every_overload_cpu_signatures(runtime, rule):
     assert successful > 0
 
 
-def test_new_protocol_roundtrip_and_frozen_catalog(runtime):
+def test_current_protocol_roundtrip_and_catalog(runtime):
     from autofusedebugger.fuzz.contracts import Seed
     from autofusedebugger.fuzz.generation.sampling import SamplingConfig,decode
     from autofusedebugger.fuzz.generation.torch_dialect import classes
-    old = tuple(classes())
-    from autofusedebugger.nnsmith_integration.aten_dialect import classes as aten_classes
-    assert len(aten_classes()) == len(RULES)
-    assert tuple(classes()) == old and len(old)==79
+    assert len(classes()) == len(RULES) == 368
     for dynamic in [False,True]:
-        s=SamplingConfig.profile('small').seed(42,dynamic=dynamic,aten=True)
-        assert s.version == (10 if dynamic else 9)
+        s=SamplingConfig.profile('small').seed(42,dynamic=dynamic)
+        assert s.current and s.dynamic==dynamic
+        assert s.short.startswith('D2-' if dynamic else 'C2-')
         assert Seed.parse(s.short)==s==Seed.parse(str(s))
         assert decode(s)[1]==42
     assert all(not any(x in r.target for x in ['conv','matmul','addmm','bmm']) for r in RULES)
 
 
-def test_new_campaign_keeps_persisted_old_campaigns(tmp_path):
-    from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
+def test_retired_campaign_is_stopped_not_migrated(tmp_path):
     from autofusedebugger.fuzz.scheduling.campaign import initialize,refill
-    from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig,Seed
+    from autofusedebugger.fuzz.scheduling.ledger import TaskLedger
+    from autofusedebugger.fuzz.contracts import ExecutionConfig,EvaluationConfig
     l=TaskLedger(tmp_path/'queue')
-    initialize(l,[ExecutionConfig('cpu','cpu',static_only=True)],EvaluationConfig(),2)
-    assert refill(l)
-    t=l.claim(); assert Seed.parse(t['seed']).version==9
-    l.complete(t['id'],t['claim'])
+    initialize(l,[ExecutionConfig('cpu','cpu')],EvaluationConfig(),2)
     with l._connection() as db:
-        p=json.loads(db.execute('select payload from campaign').fetchone()[0]);del p['aten_protocol']
+        p=json.loads(db.execute('select payload from campaign').fetchone()[0])
+        del p['generation_protocol']
         db.execute('update campaign set payload=?',(json.dumps(p),))
-    assert refill(l)
-    assert Seed.parse(l.claim()['seed']).version==7
+    assert not refill(l)
+    with l._connection() as db:
+        assert db.execute('select stopped from campaign').fetchone()[0]==1
 
 
 def test_exact_and_family_post_filter():
@@ -127,7 +124,7 @@ def test_random_graph_replay_cpu_and_multiple_outputs(runtime):
     config=SamplingConfig.profile('small',dtype_mode='float32',max_nodes=4)
     successes=0
     for entropy in range(12):
-        bundle=materialize(config.seed(entropy,aten=True))
+        bundle=materialize(config.seed(entropy))
         nnsmith_sampled.plan.cache_clear()
         assert materialize(bundle.spec.seed)==bundle
         assert decode(encode(bundle.spec))==bundle.spec
@@ -139,17 +136,6 @@ def test_random_graph_replay_cpu_and_multiple_outputs(runtime):
         successes+=1
     assert successes==12
 
-
-def test_g_seed_fingerprints_unchanged(runtime):
-    from autofusedebugger.fuzz.generation import materialize,workload_id
-    from autofusedebugger.fuzz.generation.sampling import SamplingConfig
-    expected={0:'524d1e4ca94e8b4a15716d39fc55bdb3f2f5cd83a2e5e228494c3e598938c152',
-              1:'c9020025ed25c7b7939cbec0ba9cfd60a73aeb0881a283786645731d1ff1bb33',
-              2:'c2089257446a184b0ca161a7b29b8c8a6d9884a3ffc6f94e1fab2d0487affeec',
-              10:'a6ef3ece4465d063fa18a391f8d90827fff994375e26d340536c1421f305945c'}
-    config=SamplingConfig.profile('small',dtype_mode='float32',max_nodes=3)
-    for entropy,digest in expected.items():
-        assert workload_id(materialize(config.seed(entropy,full_range=True)))==digest
 
 
 def test_invalid_symbolic_shapes_are_rejected(runtime):
@@ -195,7 +181,7 @@ def test_tuple_results_feed_downstream_nodes_and_repository(runtime,tmp_path):
     from autofusedebugger.fuzz.execution import execute
     from autofusedebugger.fuzz.storage import ResultRepository
     config=SamplingConfig.profile('small',max_nodes=5,dtype_mode='all')
-    bundle=materialize(config.seed(6,aten=True))
+    bundle=materialize(config.seed(6))
     graph=json.loads(bundle.spec.graph_json)
     multi=[n for n in graph['nodes'] if len(n['outputs'])==2]
     assert multi
@@ -215,7 +201,7 @@ def test_tuple_results_feed_downstream_nodes_and_repository(runtime,tmp_path):
     op.bind_input_like([tensor,tensor]);op.bind_output_like([tensor])
     graph['nodes'].append(dict(op='aten.add.Tensor',inputs=[index,index],
         output='index_twice',outputs=['index_twice'],attrs=op.extra_attrs,
-        materializer=capture(op,9)))
+        materializer=capture(op)))
     graph['outputs']=['index_twice']
     adapter=create_backend(ExecutionConfig('cpu','cpu',1))
     adapter.check(bundle,EvaluationConfig(correctness=False))
@@ -248,9 +234,9 @@ def test_j_dynamic_variants_execute_and_replay(runtime):
     # to a static graph. Specific qualified seeds are pinned after validation.
     successes=[]
     for entropy in (0,1,2,3):
-        try: bundle=materialize(config.seed(entropy,dynamic=True,aten=True))
+        try: bundle=materialize(config.seed(entropy,dynamic=True))
         except ValueError as exc:
-            assert 'no three legal bounded shapes' in str(exc)
+            assert 'no 3 legal bounded shapes' in str(exc)
             continue
         assert len(bundle.spec.shape_samples)==3
         result=execute(bundle,create_backend(ExecutionConfig('cpu','cpu',1)),EvaluationConfig(correctness=False))

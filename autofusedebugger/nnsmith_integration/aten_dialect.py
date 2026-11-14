@@ -1,7 +1,7 @@
 """NNSmith plugin for functional ATen operators; no installed files are patched.
 
 Every class participates in the usual NNSmith symbolic solver and type transfer.
-The registry is private so importing it cannot change frozen core/Torch catalogs.
+The registry is private; no installed NNSmith files or core registry are patched.
 """
 import random
 from functools import lru_cache
@@ -240,12 +240,12 @@ def resolve_target(target):
 
 def validate_runtime():
     import torch
-    from ..fuzz.generation.nnsmith_v3 import source_evidence
+    from ..fuzz.generation.runtime import source_evidence
     evidence = source_evidence()
     if str(torch.__version__) != '2.10.0+cpu':
-        raise RuntimeError('I/J requires pinned torch 2.10.0+cpu; no catalog fallback')
+        raise RuntimeError('C2/D2 requires pinned torch 2.10.0+cpu; no catalog fallback')
     if torch.get_default_dtype() != torch.float32:
-        raise RuntimeError('I/J requires default float32 dtype')
+        raise RuntimeError('C2/D2 requires default float32 dtype')
     for rule in RULES: resolve_target(rule.target)
     return evidence
 

@@ -5,6 +5,7 @@ accidental corruption, not authenticity: only accept snapshots from trusted peer
 """
 from contextlib import closing
 from datetime import datetime
+from ..limits import MAX_CONTEXT_BYTES
 import json
 import os
 from pathlib import Path
@@ -26,7 +27,7 @@ def _integrity(conn):
 
 def _context(conn, identity, kind):
     row = conn.execute('SELECT kind,payload FROM contexts WHERE id=?', (identity,)).fetchone()
-    if row is None or row[0] != kind or not isinstance(row[1], str) or len(row[1]) > 16384:
+    if row is None or row[0] != kind or not isinstance(row[1], str) or len(row[1]) > MAX_CONTEXT_BYTES:
         raise ValueError('invalid result context')
     payload = json.loads(row[1])
     if canonical(payload) != row[1] or digest({'kind': kind, 'payload': payload}) != identity:

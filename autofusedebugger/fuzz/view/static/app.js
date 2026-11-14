@@ -82,7 +82,7 @@ async function details(identity, shapeIndex=null) {
     result.created_at = beijing(result.created_at);
     $('detail-content').textContent = '';
     $('detail-content').parentElement.hidden=true;
-    $('detail-message').textContent = ''; $('copy').disabled = false;
+    $('detail-message').textContent = result.replay_supported===false?'内测历史记录：不支持重放，请启动新的 C2/D2 批次。':''; $('copy').disabled = !result.replay_command;
     document.querySelectorAll('.page').forEach(el=>el.hidden=true);
     $('page-title').textContent='用例详情 · '+result.seed_short;
     $('detail').scrollIntoView({behavior:'smooth',block:'start'});

@@ -1,3 +1,5 @@
+from autofusedebugger.fuzz.generation.sampling import SamplingConfig
+CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 """First migration slice: no fictitious split, no inferred historic metrics."""
 import json
 import sqlite3
@@ -35,7 +37,7 @@ def test_idle_device_takes_campaign_task_not_preassigned_card(tmp_path, monkeypa
 @pytest.mark.skipif(sys.platform != 'linux', reason='managed flock/SQLite isolation requires Linux')
 def test_slow_finalizer_does_not_delay_other_timeout(tmp_path, monkeypatch):
     ledger = TaskLedger(tmp_path/'queue')
-    for _ in range(2): ledger.enqueue('C16', ExecutionConfig('cpu', 'cpu', 1), EvaluationConfig())
+    for _ in range(2): ledger.enqueue(CURRENT_SEED, ExecutionConfig('cpu', 'cpu', 1), EvaluationConfig())
     write_policy(ledger, Budget(cpu_workers=2))
     monkeypatch.setattr(Budget, 'admit', lambda *a: None)
     monkeypatch.setattr(supervisor, '_worker_command', lambda *a: [sys.executable, '-c', 'import time;time.sleep(5)'])
@@ -50,7 +52,7 @@ def test_slow_finalizer_does_not_delay_other_timeout(tmp_path, monkeypatch):
 
 def test_worker_failure_never_generates_graph(tmp_path, monkeypatch):
     ledger=TaskLedger(tmp_path/'queue')
-    ledger.enqueue('C16',ExecutionConfig('cpu','cpu',1),EvaluationConfig())
+    ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1),EvaluationConfig())
     task=ledger.claim()
     monkeypatch.setattr('autofusedebugger.fuzz.generation.materialize', lambda *a: (_ for _ in ()).throw(AssertionError('no generation')))
     supervisor._save_worker_failure(ledger,tmp_path/'db',task,'timeout','')
@@ -100,7 +102,7 @@ def test_cpu_refill_not_blocked_by_npu_backlog(tmp_path):
     ledger=TaskLedger(tmp_path/'queue')
     configs=[ExecutionConfig('cpu','cpu',1),ExecutionConfig('af-mlir','npu:0',1)]
     campaign.initialize(ledger,configs,EvaluationConfig(),8,['npu:0','npu:1'])
-    for _ in range(3): ledger.enqueue('C16',configs[1],EvaluationConfig())
+    for _ in range(3): ledger.enqueue(CURRENT_SEED,configs[1],EvaluationConfig())
     assert campaign.refill(ledger,target_pending=3)
     assert any(json.loads(t['execution'])['device']=='cpu' for t in ledger.page()['items'])
     # Even a permanently unavailable device cannot cause unbounded prefetch.

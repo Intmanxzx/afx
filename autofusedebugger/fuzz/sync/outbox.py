@@ -8,6 +8,7 @@ from contextlib import closing
 import json
 import uuid
 
+from ..limits import MAX_SYNC_BYTES
 from ..storage.repository import _connect
 from ..storage.records import canonical, digest, normalize
 
@@ -35,6 +36,7 @@ def pending(path, limit=50):
         rows = conn.execute('SELECT revision,attempt_id FROM sync_outbox WHERE revision>? ORDER BY revision LIMIT ?', (ack,limit)).fetchall()
         conn.row_factory = __import__('sqlite3').Row
         batch=[]
+        encoded_bytes=256
         for revision, identity in rows:
             row = dict(conn.execute('SELECT * FROM attempts WHERE id=?',(identity,)).fetchone())
             contexts={kind:json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?',(row[kind+'_id'],)).fetchone()[0]) for kind in ('execution','evaluation','environment')}
@@ -42,7 +44,13 @@ def pending(path, limit=50):
             record=normalize(dict(row, execution=contexts['execution'],evaluation=contexts['evaluation'],shape_results=shapes),contexts['environment'])
             if digest(record)!=row['result_hash']:
                 raise ValueError('local result corruption; refusing upload')
-            batch.append({'revision':revision,'attempt_id':identity,'created_at':row['created_at'],'record':record})
+            item={'revision':revision,'attempt_id':identity,'created_at':row['created_at'],'record':record}
+            size=len(json.dumps(item,ensure_ascii=True,allow_nan=False).encode())+2
+            if encoded_bytes+size>MAX_SYNC_BYTES:
+                if not batch: raise ValueError('single result exceeds sync body limit')
+                break
+            batch.append(item)
+            encoded_bytes+=size
         return {'protocol':1,'source_id':source,'after':ack,'items':batch}
 
 

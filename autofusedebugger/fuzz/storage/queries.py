@@ -1,5 +1,6 @@
 """Read-only viewer queries shared with future central UI; bounded responses."""
 from contextlib import contextmanager
+from ..limits import MAX_CONTEXT_BYTES
 import json
 import sqlite3
 import time
@@ -119,7 +120,7 @@ class ResultQueries:
             result['contexts'] = {}
             for kind in ('execution','evaluation','environment'):
                 payload = conn.execute('SELECT payload FROM contexts WHERE id=?', (row[kind+'_id'],)).fetchone()
-                if payload is None or len(payload[0]) > 16384:
+                if payload is None or len(payload[0]) > MAX_CONTEXT_BYTES:
                     raise ValueError('invalid context')
                 result['contexts'][kind] = json.loads(payload[0])
         # Copy command is based only on validated decimal seed, never stored shell text.
@@ -128,7 +129,8 @@ class ResultQueries:
         from ..backend_names import display_backend
         result['seed_short'] = Seed.parse(result['seed']).short
         result['backend_display'] = display_backend(result['backend'])
-        result['replay_command'] = 'autofusedbg fuzz replay ' + result['seed_short']
+        result['replay_supported'] = Seed.parse(result['seed']).current
+        result['replay_command'] = ('autofusedbg fuzz replay ' + result['seed_short']) if result['replay_supported'] else ''
         result['shape_count'] = len(result['shape_results'])
         diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
         if shape_index is not None:

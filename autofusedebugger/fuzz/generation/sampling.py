@@ -1,16 +1,9 @@
-"""Frozen E/F sampling configuration, packed into a self-contained 128-bit seed.
-
-Do not change field order, profiles or distribution formulas for this protocol.
-No environment/profile file participates in replay.
-"""
+"""One current C2/D2 sampling contract; old seeds are read-only history."""
 from dataclasses import dataclass, asdict
 from ..contracts import Seed
 
 DIM_MODES = ('uniform', 'half_normal', 'log_normal')
-# Keep the first three values stable: they are already encoded in v5/v6 seeds.
-# `mixed` is the historical fp16/fp32 compatibility mode; `all` restores the
-# pre-refactor behavior (NNSmith's complete generation dtype set intersected
-# with the selected operator signatures).
+# Stable current-protocol values; mixed means fp16/fp32, all uses NNSmith dtypes.
 DTYPE_MODES = ('float32', 'float16', 'mixed', 'all')
 VALUE_MODES = ('uniform', 'log_scale', 'llm', 'recommendation')
 # Historical GenerationConfig profiles, copied rather than importing torch/nnsmith.
@@ -26,7 +19,9 @@ PROFILES = {
 }
 FIELDS = (('random_seed', 32), ('dim_min', 24), ('dim_max', 24),
           ('max_elem_per_tensor', 25), ('dim_mode', 2), ('value_mode', 2),
-          ('max_nodes', 8), ('timeout_seconds', 9), ('dtype_mode', 2))
+          ('max_nodes', 8), ('timeout_seconds', 9), ('dtype_mode', 2), ('dynamic_variants', 3), ('method', 2))
+
+METHODS = ('symbolic-cinit', 'symbolic', 'concolic')
 
 @dataclass(frozen=True)
 class SamplingConfig:
@@ -38,14 +33,23 @@ class SamplingConfig:
     dtype_mode: str = 'all'
     max_nodes: int = 5
     timeout_seconds: int = 300
+    dynamic_variants: int = 3
+    method: str = "symbolic-cinit"
 
     def __post_init__(self):
         for name, bits in FIELDS:
-            if name in {'random_seed', 'dim_mode', 'value_mode', 'dtype_mode'}:
+            if name in {'random_seed', 'dim_mode', 'value_mode', 'dtype_mode', 'dynamic_variants', 'method'}:
                 continue
             value = getattr(self, name)
             if type(value) is not int or not 1 <= value < 2**bits:
                 raise ValueError(f'{name} must be in 1..{2**bits-1}')
+        from ..limits import MAX_NODES
+        if self.max_nodes > MAX_NODES:
+            raise ValueError(f'max_nodes must be at most {MAX_NODES}')
+        if type(self.dynamic_variants) is not int or not 2 <= self.dynamic_variants <= 8:
+            raise ValueError('dynamic_variants must be 2..8')
+        if self.method not in METHODS:
+            raise ValueError('unsupported generation method')
         if self.dim_min > self.dim_max or self.dim_min > self.max_elem_per_tensor:
             raise ValueError('invalid dimension range/element budget')
         if self.dtype_mode not in DTYPE_MODES:
@@ -61,10 +65,11 @@ class SamplingConfig:
         values.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**values)
 
-    def seed(self, random_seed, dynamic=False, full_range=False, aten=False):
+    def seed(self, random_seed, dynamic=False):
         if type(random_seed) is not int or not 0 <= random_seed < 2**32:
             raise ValueError('random_seed must be uint32')
         values = dict(asdict(self), random_seed=random_seed,
+                      dynamic_variants=self.dynamic_variants-2, method=METHODS.index(self.method),
                       dtype_mode=DTYPE_MODES.index(self.dtype_mode),
                       dim_mode=DIM_MODES.index(self.dim_dist_mode),
                       value_mode=VALUE_MODES.index(self.value_dist_mode))
@@ -72,13 +77,12 @@ class SamplingConfig:
         for name, bits in FIELDS:
             entropy |= values[name] << offset
             offset += bits
-        return Seed(((9 if dynamic else 8) if aten else (7 if dynamic else 6) if full_range else (5 if dynamic else 4))*2**128 + entropy)
+        return Seed((11 if dynamic else 10)*2**160 + entropy)
 
 
 def decode(seed):
     seed = Seed.parse(seed)
-    if seed.version not in {5, 6, 7, 8, 9, 10}:
-        raise ValueError('E/F seed required')
+    seed.require_current()
     remaining = seed.entropy
     values = {}
     for name, bits in FIELDS:
@@ -86,6 +90,10 @@ def decode(seed):
         remaining >>= bits
     if remaining or values['dim_mode'] >= len(DIM_MODES) or values['dtype_mode'] >= len(DTYPE_MODES):
         raise ValueError('reserved sampling seed bits')
+    if values['method'] >= len(METHODS):
+        raise ValueError('reserved method bits')
+    values['method'] = METHODS[values['method']]
+    values['dynamic_variants'] += 2
     values['dtype_mode'] = DTYPE_MODES[values['dtype_mode']]
     random_seed = values.pop('random_seed')
     values['dim_dist_mode'] = DIM_MODES[values.pop('dim_mode')]
