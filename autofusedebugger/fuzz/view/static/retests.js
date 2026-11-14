@@ -31,8 +31,13 @@
     return a ? {attempt_id:a.original_attempt_id||a.id,shape_index:item.shape_index} : null;
   };
   const key=t=>t.attempt_id+':'+t.shape_index;
+  function setRetestColumnVisible(visible){
+    window.afFuzzColumns?.setVisibility('retest',visible);
+  }
   function update(){
-    bar.hidden=!window.afSession.authenticated();
+    const authenticated=window.afSession.authenticated();
+    setRetestColumnVisible(authenticated);
+    bar.hidden=!authenticated;
     const visible=new Set(rows.map(target).filter(Boolean).map(key));
     const outside=[...selected.keys()].filter(k=>!visible.has(k)).length;
     count.textContent=`已选 ${selected.size} 条${outside?'（其中 '+outside+' 条不在当前页）':''}`;
@@ -42,14 +47,16 @@
     document.querySelectorAll('.retest-row-control,.retest-provenance').forEach(n=>n.remove());
     const nodes=[...document.getElementById('rows').children].filter(n=>!n.classList.contains('history-footer'));
     rows.forEach((item,i)=>{
-      const cell=nodes[i]?.querySelector('[data-column="seed"]');if(!cell)return;
+      const row=nodes[i];
+      const cell=row?.querySelector('[data-column="retest"]');
+      if(!cell)return;
       if(!window.afSession.authenticated())return;
       const t=target(item);if(!t)return;
       const wrapper=el('span');wrapper.className='retest-row-control';
       const box=el('input');box.type='checkbox';box.checked=selected.has(key(t));box.setAttribute('aria-label',`选择 ${item.seed_short} S${item.shape_index}`);
       box.addEventListener('change',()=>{if(box.checked)selected.set(key(t),t);else selected.delete(key(t));update();});
-      const button=el('button','复测');button.type='button';button.addEventListener('click',()=>open([t]));
-      wrapper.append(box,button);cell.prepend(wrapper);
+      const button=el('button','复测');button.type='button';button.addEventListener('click',event=>{event.stopPropagation();open([t]);});
+      wrapper.append(box,button);cell.append(wrapper);
     });update();
   }
   all.addEventListener('click',()=>{rows.filter(r=>!r.historical).map(target).filter(Boolean).forEach(t=>selected.set(key(t),t));decorate();});

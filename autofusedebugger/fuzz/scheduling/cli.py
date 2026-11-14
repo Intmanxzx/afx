@@ -75,6 +75,14 @@ def dispatch(args):
         from .campaign import stop
         stop(ledger)
         return {'state':'stop_requested'}
+    managed_lock = home / 'managed-task.lock'
+    if managed_lock.exists():
+        import fcntl
+        with managed_lock.open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ValueError('a managed campaign owns this device; control it through task CLI/Web') from None
     database = args.database or home/'results/results.sqlite'
     from .supervisor import resume, _validate_task
     if args.command == 'resume':

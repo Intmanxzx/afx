@@ -307,11 +307,29 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
 
         try:
             while True:
+                control_path = ledger.path.parent / 'control.json'
+                control = json.loads(control_path.read_text()).get('action', 'run') if control_path.exists() else 'run'
+                if control == 'force-stop':
+                    from .campaign import stop
+                    stop(ledger)
+                if control in {'pause', 'stop', 'force-stop'} and not cases:
+                    if control == 'pause':
+                        from ..runtime import atomic
+                        atomic(ledger.path.parent / 'state.json', {'state': 'paused'})
+                        time.sleep(.2)
+                        continue
+                    from .campaign import stop
+                    stop(ledger)
+                    break
+                if control == 'run' and control_path.exists() and (ledger.path.parent / 'state.json').exists() and json.loads((ledger.path.parent / 'state.json').read_text()).get('state') == 'paused':
+                    from ..runtime import atomic
+                    atomic(ledger.path.parent / 'state.json', {'state': 'running'})
                 # Bounded Case window; no infinite queue or unbounded outputs.
-                while len(cases)<budget.cpu_workers and len(completed_attempts)<100:
+                while control in {'run', 'reconfigure'} and len(cases)<budget.cpu_workers and len(completed_attempts)<100:
                     budget.admit(ledger.path.parent)
                     budget.admit(database.parent)
-                    refill(ledger,target_pending=budget.cpu_workers)
+                    if control == 'run':
+                        refill(ledger,target_pending=budget.cpu_workers)
                     pending=[t for t in _tasks(ledger) if t['state']=='pending']
                     if not pending:break
                     # Keep a pinned-card backlog from filling the entire Case
@@ -399,7 +417,10 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 rss=sum(group_rss(w['child'].pid) for w in list(pool.workers))
                 if rss>pool.memory_capacity or scratch_size(scratch)>pool.cache_capacity:
                     for identity in list(pool.leases):pool.cancel(identity)
-                if not cases:
+                if not cases and control == 'reconfigure':
+                    if not any(t['state'] == 'pending' for t in _tasks(ledger)):
+                        break
+                if not cases and control == 'run':
                     if len(completed_attempts)>=100:
                         from ..storage.stage_facts import finish_window
                         finish_window(database,window_id,window_start,pool,{k:v-window_summary.get(k,0) for k,v in summary.items()})

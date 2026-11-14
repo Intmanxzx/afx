@@ -104,14 +104,14 @@ def validate_stamp(value):
 
 
 def ingest(path,key,batch):
-    from ..central.repository import authenticate
+    from ..central.repository import authenticate_upload
     from ..storage.lifecycle import initialize as init_lifecycle, EVENTS
     if not isinstance(batch,dict) or batch.get('version')!=1 or not isinstance(batch.get('items'),list) or not 1<=len(batch['items'])<=25:
         raise ValueError('invalid fact protocol')
     source=str(uuid.UUID(batch['source_id']))
     with closing(_connect(path,writable=True)) as conn,conn:
         conn.execute('BEGIN IMMEDIATE')
-        user=authenticate(conn,key)
+        user=authenticate_upload(conn,key,source)
         if conn.execute('SELECT user_id FROM sources WHERE id=?',(source,)).fetchone()!=(user,):
             raise PermissionError('source ownership mismatch')
         initialize(conn);init_lifecycle(conn)

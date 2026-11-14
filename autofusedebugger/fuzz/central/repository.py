@@ -14,6 +14,7 @@ def initialize(path):
     with closing(_connect(path,writable=True)) as conn,conn:
         from ..reporting.index import initialize as initialize_reporting
         initialize_reporting(conn)
+        conn.execute('CREATE TABLE IF NOT EXISTS managed_sources(source_id TEXT PRIMARY KEY, device_id TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, key_hash TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1)')
         conn.execute('CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ack INTEGER NOT NULL DEFAULT 0)')
         conn.execute('CREATE TABLE IF NOT EXISTS receipts (source_id TEXT NOT NULL, revision INTEGER NOT NULL, payload_hash TEXT NOT NULL, PRIMARY KEY(source_id,revision))')
@@ -55,6 +56,30 @@ def authenticate(conn, key):
     return row[0]
 
 
+
+def authenticate_upload(conn, key, source=None):
+    """Device credentials are accepted only by result/fact upload, never browser login."""
+    try:
+        return authenticate(conn, key)
+    except PermissionError:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='managed_devices'").fetchone():
+            raise
+    row = conn.execute('SELECT d.id,d.user_id FROM managed_devices d JOIN users u ON u.id=d.user_id '
+                       'WHERE d.token_hash=? AND d.active=1 AND u.active=1',
+                       (hashlib.sha256(key.encode()).hexdigest(),)).fetchone()
+    if not row:
+        raise PermissionError('invalid device upload credential')
+    if source is not None:
+        source = str(uuid.UUID(source))
+        owner = conn.execute('SELECT device_id FROM managed_sources WHERE source_id=?',(source,)).fetchone()
+        if owner and owner[0] != row[0]:
+            raise PermissionError('source belongs to another device')
+        if not owner:
+            if conn.execute('SELECT 1 FROM sources WHERE id=?',(source,)).fetchone():
+                raise PermissionError('cannot adopt a pre-existing result source')
+            conn.execute('INSERT INTO managed_sources VALUES (?,?)',(source,row[0]))
+    return row[1]
+
 def ingest(path, key, payload):
     if not isinstance(payload,dict) or payload.get('protocol')!=1:
         raise ValueError('unsupported sync protocol')
@@ -64,7 +89,7 @@ def ingest(path, key, payload):
         raise ValueError('invalid sync batch')
     with closing(_connect(path,writable=True)) as conn,conn:
         conn.execute('BEGIN IMMEDIATE')
-        user=authenticate(conn,key)
+        user=authenticate_upload(conn,key,source)
         conn.execute('INSERT OR IGNORE INTO sources(id,user_id) VALUES (?,?)',(source,user))
         owner,ack=conn.execute('SELECT user_id,ack FROM sources WHERE id=?',(source,)).fetchone()
         if owner!=user:
