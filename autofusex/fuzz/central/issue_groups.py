@@ -315,6 +315,9 @@ def claim(path, user, issue_key):
     with closing(_connect(path, writable=True)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
+        from .repairs import locked_for_agent
+        if locked_for_agent(conn, issue_key):
+            raise PermissionError('issue managed by agent repair lease')
         identity = conn.execute("SELECT id,display_name FROM users WHERE id=? AND active=1", (user,)).fetchone()
         if identity is None:
             raise PermissionError("user not found")
@@ -339,6 +342,9 @@ def mark_retesting(path, user, issue_key, batch_id):
     with closing(_connect(path, writable=True)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
+        from .repairs import locked_for_agent
+        if locked_for_agent(conn, issue_key):
+            raise PermissionError('issue managed by agent repair lease')
         row = conn.execute("SELECT owner_id FROM issue_claims_v1 WHERE issue_key=?", (issue_key,)).fetchone()
         if not row or row["owner_id"] != user:
             raise PermissionError("issue not owned")
@@ -358,6 +364,10 @@ def retest(path, user, issue_key, client_id, repetitions=1, request_key=None):
         raise LookupError("issue not open")
     if group.get("owner_id") != user:
         raise PermissionError("claim the issue first")
+    with closing(_connect(path)) as conn:
+        from .repairs import locked_for_agent
+        if locked_for_agent(conn, issue_key):
+            raise PermissionError('issue managed by agent repair lease')
     targets = group.pop("_targets", [])
     if not targets:
         raise LookupError("issue not open")
@@ -381,6 +391,9 @@ def release(path, user, issue_key):
     with closing(_connect(path, writable=True)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
+        from .repairs import locked_for_agent
+        if locked_for_agent(conn, issue_key):
+            raise PermissionError('issue managed by agent repair lease')
         row = conn.execute("SELECT owner_id FROM issue_claims_v1 WHERE issue_key=?", (issue_key,)).fetchone()
         if not row or row["owner_id"] != user:
             raise PermissionError("issue not owned")

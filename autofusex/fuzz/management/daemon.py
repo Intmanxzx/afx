@@ -1,10 +1,12 @@
 """Small persistent management service with local-only IPC and outbound control."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 import fcntl
 import json
 import os
 from pathlib import Path
 import socket
+import sqlite3
 import socketserver
 import threading
 import time
@@ -122,8 +124,21 @@ class Manager:
     def snapshot(self):
         with self.store.connect() as db:
             runs=[dict(id=r['id'],state=r['state']) for r in db.execute('SELECT id,state FROM runs ORDER BY rowid DESC LIMIT 20')]
+            environments=[dict(id=r['id'],name=r['name']) for r in db.execute("SELECT id,name FROM environments WHERE state='ready' ORDER BY name LIMIT 20")]
+        for run in runs:
+            if run['state'] not in {'completed','failed','stopped','cancelled','interrupted'}:
+                continue
+            path=self.store.home/'runs'/run['id']/'results.sqlite'
+            if not path.exists():
+                run['result_count']=0
+                continue
+            try:
+                with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,timeout=.1)) as results:
+                    run['result_count']=results.execute('SELECT count(*) FROM attempts').fetchone()[0]
+            except sqlite3.Error:
+                pass
         return dict(protocol=1,paired=bool(self.store.get('credential')),config=self.store.get('config_state',{}),
-                    active_operation=self.active[0] if self.active else None,runs=runs)
+                    active_operation=self.active[0] if self.active else None,runs=runs,environments=environments)
 
     def tick(self):
         from .tasks import refresh

@@ -3,7 +3,7 @@
 All ownership checks and lease transitions occur in the same write transaction.
 This module has no model dependencies and does not execute submitted commands.
 """
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 import json
 import sqlite3
 import time
@@ -148,7 +148,7 @@ def _spec(conn, attempt):
                 backend=row['backend'], execution=execution, evaluation=ev)
 
 
-def create(path, user, payload, *, preview=False):
+def create(path, user, payload, *, preview=False, connection=None):
     if not isinstance(payload, dict) or set(payload) != {'client_id', 'request_key', 'targets', 'repetitions'}:
         raise ValueError('invalid batch')
     client, key = identity(payload['client_id']), identity(payload['request_key'])
@@ -157,7 +157,7 @@ def create(path, user, payload, *, preview=False):
     if not isinstance(targets, list) or not 1 <= len(targets) <= BATCH_LIMIT:
         raise ValueError('bounded selection required')
     request_hash = digest(payload)
-    with transaction(path) as conn:
+    with (transaction(path) if connection is None else nullcontext(connection)) as conn:
         existing = conn.execute('SELECT id,request_hash FROM retest_batches_v1 WHERE user_id=? AND request_key=?', (user,key)).fetchone()
         if existing:
             if existing['request_hash'] != request_hash:

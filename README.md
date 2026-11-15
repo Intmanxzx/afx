@@ -16,11 +16,11 @@ Fuzz 实现统一位于 `autofusex/fuzz/`：`nnsmith/` 是内部的 NNSmith 适�
 ```sh
 afx fuzz setup --token "$FUZZ_TOKEN"
 afx fuzz run --count 100 --save
-afx fuzz replay C000000016
+afx fuzz replay SEED  # 使用结果中的当前 E/F seed
 afx fuzz view ./results.sqlite
 ```
 
-[使用说明](docs/fuzz/fuzz_usage.md)：客户端、云端、本地查看、发布。
+[文档入口](docs/fuzz/README.md) · [使用说明](docs/fuzz/fuzz_usage.md) · [Agent 与 API](docs/fuzz/agent_api.md) · [运维说明](docs/fuzz/operations.md)
 
 [设计文档](docs/fuzz/fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
 
@@ -32,7 +32,7 @@ afx fuzz view ./results.sqlite
 
 ### 方式一：wheel 包安装
 
-从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 使用说明](docs/fuzz/fuzz_usage.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
+从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 运维说明](docs/fuzz/operations.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
 
 ```bash
 python3 -m pip install ./autofusex-0.1.2-py3-none-any.whl
