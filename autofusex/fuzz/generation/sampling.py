@@ -6,7 +6,7 @@ DIM_MODES = ('uniform', 'half_normal', 'log_normal')
 # Stable current-protocol values; mixed means fp16/fp32, all uses NNSmith dtypes.
 DTYPE_MODES = ('float32', 'float16', 'mixed', 'all')
 VALUE_MODES = ('uniform', 'log_scale', 'llm', 'recommendation')
-# Historical GenerationConfig profiles, copied rather than importing torch/nnsmith.
+# Seed protocol profiles; keep this metadata independent of torch/nnsmith.
 PROFILES = {
     'small': (1, 64, 2**16, 10, 'uniform'),
     'medium': (8, 4096, 2**20, 30, 'uniform'),

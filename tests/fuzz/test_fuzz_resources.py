@@ -95,13 +95,6 @@ def test_doctor_redacts_invalid_json(tmp_path, capsys):
     assert "my-secret" not in capsys.readouterr().err
 
 
-def test_matching_generation_errors_are_not_replay_passes():
-    from tools.fuzz_replay_audit import classify_pair
-    trace = [{"stage": "error", "payload": {"type": "DynamicShapeError"}}]
-    assert classify_pair(trace, trace, {"status": "error"}, {"status": "error"})["status"] == "matching_errors"
-    assert classify_pair(trace, trace, {"status": "generated"}, {"status": "generated"})["status"] == "replayed"
-
-
 @pytest.mark.parametrize("platform,env,expected", [
     ("win32", {"LOCALAPPDATA": "/windows/local"}, "/windows/local/autofusex"),
     ("darwin", {}, "/mock/home/Library/Application Support/autofusex"),

@@ -13,15 +13,11 @@ def test_fuzz_dependencies_stay_within_module_boundaries():
         ROOT / 'generation' / name for name in
         ('__init__.py', 'runtime.py', 'nnsmith_sampled.py', 'nnsmith_dynamic.py', 'torch_dialect.py')
     }
-    # The retained AscendC integration shares the debugger's backend hooks.
     shared_imports = {
         ROOT / 'backends/torch.py': {'autofusex.compare'},
-        ROOT / 'nnsmith/fuzz_loop.py': {'autofusex.inductor_autofuse', 'autofusex.autofuse_graph'},
-        ROOT / 'nnsmith/ascendc_backend.py': {'autofusex.inductor_autofuse'},
-        ROOT / 'nnsmith/ascendc_opset.py': {'autofusex.inductor_autofuse'},
     }
     for path in ROOT.rglob("*.py"):
-        allows_nnsmith = path in nnsmith_adapters or ROOT / 'nnsmith' in path.parents
+        allows_nnsmith = path in nnsmith_adapters or path == ROOT / 'nnsmith/aten_dialect.py'
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.ImportFrom):
                 assert node.level <= 2, path

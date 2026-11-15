@@ -34,3 +34,11 @@
 远端架构、管理和基础回归：71 passed。远端 validation-report.json 保存运行时来源、各次执行精度与覆盖、上报 ACK；migration-tests.log 保存测试结果。验证使用安装后的 wheel，而非源目录覆盖导入。
 
 托管 NPU 性能任务被现有调度器的外部负载协调门禁拒绝，因此本次不声明性能测量通过。本次为目录迁移的有限用例验证，不代表全算子覆盖或长期稳定性验证。
+
+## 2026-11-15 旧实现清理复验
+
+确认当前 CLI 不再调用旧 NNSmith 生成器、AscendC fuzz 循环和性能 session 后，删除这些实现、专属 HTML 报告、探针及无引用 fixture。NNSmith 子包仅保留 __init__.py、aten_catalog.py、aten_dialect.py；依赖本身的 seed、超时和求解失败测试继续保留。
+
+在上述 mlir 环境重新构建并安装干净 wheel，检查 wheel 和安装目录均不包含已删除实现。相关远端回归 541 passed，本地轻量回归 83 passed。双卡 bounded run 再次完成静态与动态共 4 个 CPU/AF-MLIR 任务：npu:0 的 1 个 Shape 与 npu:1 的 3 个 Shape 精度全部通过，两个 AF-MLIR attempt 均有 AF_CODEGEN_OK，无失败或跳过。结束时无运行中的 NPU 进程。
+
+远端证据位于同一验证目录的 cleanup-tests.log、cleanup-npu.log 和 cleanup-results.json；独立数据目录为 cleanup-home。此轮没有启动上报或更改线上服务。
