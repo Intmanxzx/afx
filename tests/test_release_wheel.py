@@ -51,7 +51,7 @@ def test_plan_is_offline_and_version_checked(artifact, monkeypatch, capsys):
 def test_nnsmith_patches_are_not_bundled(artifact):
     root, wheel = artifact
     with zipfile.ZipFile(wheel, 'a') as archive:
-        archive.writestr('autofusex/nnsmith_integration/patches/old.patch', 'obsolete')
+        archive.writestr('autofusex/fuzz/nnsmith/patches/old.patch', 'obsolete')
     with pytest.raises(ValueError, match='obsolete bundled NNSmith patches'):
         release.validate(root, 'v0.1.2', wheel.parent)
 

@@ -43,7 +43,7 @@ def decode(raw):
         expected_samples = config.dynamic_variants if spec.seed.dynamic else 1
         if len(spec.shape_samples) != expected_samples:
             raise ValueError('shape count differs from seed')
-        from autofusex.nnsmith_integration.aten_catalog import BY_TARGET
+        from autofusex.fuzz.nnsmith.aten_catalog import BY_TARGET
         known = {t.name for t in (*spec.inputs, *spec.weights)}
         if graph.get('aten_rules') != 'elementwise-comparison-reduce-view/v1' or graph.get('torch') != '2.10.0+cpu':
             raise ValueError('ATen protocol metadata mismatch')
@@ -60,7 +60,7 @@ def decode(raw):
                     or len(set(outputs)) != len(outputs)):
                 raise ValueError('invalid ATen outputs')
             data = node.get('materializer', {})
-            expected_class = 'autofusex.nnsmith_integration.aten_dialect.Aten_' + rule.target[5:].replace('.', '_')
+            expected_class = 'autofusex.fuzz.nnsmith.aten_dialect.Aten_' + rule.target[5:].replace('.', '_')
             if data.get('class') != expected_class or data.get('state', {}).get('extra_attrs') != node.get('attrs'):
                 raise ValueError('ATen materializer metadata mismatch')
             known.update(outputs)

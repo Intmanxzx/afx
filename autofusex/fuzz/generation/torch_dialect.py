@@ -9,7 +9,7 @@ import math
 
 
 def classes():
-    from autofusex.nnsmith_integration.aten_dialect import classes
+    from autofusex.fuzz.nnsmith.aten_dialect import classes
     return classes()
 
 
@@ -79,7 +79,7 @@ def execute_graph(torch, graph, weights, names, device):
         seed = int.from_bytes(hashlib.sha256(json.dumps(node, sort_keys=True, separators=(',', ':')).encode()).digest()[:8], 'little')
         with torch.random.fork_rng(devices=[]):
             torch.random.default_generator.manual_seed(seed)
-            from autofusex.nnsmith_integration.aten_dialect import materialize
+            from autofusex.fuzz.nnsmith.aten_dialect import materialize
             function = materialize(op)
         if isinstance(function, torch.nn.Module):
             function = function.to(device).eval()

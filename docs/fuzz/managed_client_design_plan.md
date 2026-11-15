@@ -544,7 +544,7 @@ afx config effective --json
 
 ### 12.1 建议代码职责划分
 
-- 新 `autofusex/management/`：schema/config、daemon、transport、operations、environments、builds、updates、cli。
+- 新 `autofusex/fuzz/management/`：schema/config、daemon、transport、operations、environments、builds、updates、cli。
 - `fuzz/central/`：新增设备/配置/环境/操作仓储和 API；沿用会话、维护限制、备份机制。
 - `fuzz/scheduling/`：只增加管理适配、安全边界和关联元数据，不复制执行引擎。
 - `fuzz/view/static/`：设备、环境、任务、构建和版本页面。

@@ -20,7 +20,7 @@ _OP_CATEGORY = {
     'matmul': 'MatMul', 'linear': 'MatMul',
 }
 # Import-light metadata: never consult device/backend support for categories.
-from autofusex.nnsmith_integration.aten_catalog import RULES
+from autofusex.fuzz.nnsmith.aten_catalog import RULES
 for _rule in RULES:
     _family = _rule.family
     _OP_CATEGORY[_rule.target] = ('Transpose' if _rule.mode in {'transpose', 'permute', 'movedim', 't'} else

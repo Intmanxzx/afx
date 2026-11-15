@@ -37,7 +37,7 @@ AF-MLIR 现在明确声明可复用运行时。成功执行及清理后，worker
 使用目标环境的 Python，分别指定旧/新代码路径，各自在新目录运行：
 
 ```sh
-python tools/fuzz_mlir_reuse_probe.py /path/to/new-private-output
+python tools/fuzz/fuzz_mlir_reuse_probe.py /path/to/new-private-output
 ```
 
 探针在两张卡分别执行目标 E seed、C16、D16、目标 E seed，共 8 个后端 session、

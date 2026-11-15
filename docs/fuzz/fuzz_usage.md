@@ -138,8 +138,9 @@ afx fuzz view ./results.snapshot.sqlite --no-browser --port 8091
 # 在隔离构建环境中；本项目开发测试仍按约定在 mlir 进行
 python -m pip install -r tools/release-requirements.txt
 # x86_64 发布 runner 使用隔离 CPU Torch；NPU 开发环境保留既有 Torch
-python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-python -m pytest -q tests/test_fuzz*.py tests/test_release_wheel.py
+python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -e '.[execution]'
+python -m pytest -q tests/fuzz tests/test_release_wheel.py
 python -m build --wheel --no-isolation
 python -m twine check dist/*.whl
 python tools/release_wheel.py --tag v0.1.2 --repository niuyuhu/Autofuse-Debugger
@@ -218,7 +219,7 @@ afx fuzz run --exclude-op transpose --auto-resources --device npu:0 --device npu
 
 生命周期显示 UTC `HH:mm:ss.SSS`，悬停保留完整日期和时区；用例执行耗时保留一位小数。阶段名称为 CPU 期望结果、CPU 结果校验、NPU首调(惰性编译/执行/同步)。缺失数值仍显示未采集，但删除冗余解释文案。
 
-分布分析工具：`python tools/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 E/F，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前尺寸和动态 Shape 数量均由 seed 编码；若要改变分布，必须同步更新当前协议和重放指纹。
+分布分析工具：`python tools/fuzz/fuzz_shape_distribution.py --count 256 --output distribution.json`。固定随机源逐对分析 E/F，输出每输入位置/rank/轴/Shape 和是否含 Transpose 的计数，不将相关轴当独立随机样本。当前尺寸和动态 Shape 数量均由 seed 编码；若要改变分布，必须同步更新当前协议和重放指纹。
 
 当前 oracle1 环境为 `/home/ubuntu/af-fuzz/venv-continuous-1110`，旧版本/旧备份/旧结果已按要求清除；systemd 主服务直接引用新环境，不再叠加历史 override。身份与 ACK、防旧数据回流的 tombstone 保留。后续自动备份只备份新数据，不再使用已经删除的旧环境。客户端新安装为 `/mnt/workspace/af-fuzz/continuous-1110/installed`。
 

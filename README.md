@@ -3,6 +3,14 @@
 `autofusex` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具，命令简称 `afx`。
 当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
 
+## 模块划分
+
+AFX 按用途划分为精度性能对比定位工具和 fuzz 自动泛化工具。前者负责已有模型的执行、张量对比、图定位和报告；后者负责随机图生成、批量验证、任务调度、结果管理和客户端管理。
+
+Fuzz 实现统一位于 `autofusex/fuzz/`：`nnsmith/` 是内部的 NNSmith 适配层，`management/` 管理 fuzz 客户端、执行环境和任务。NNSmith fork 仍作为独立的可选执行依赖安装，不作为与 fuzz 并列的业务模块。
+
+相关测试、辅助脚本、部署文件和文档分别位于 `tests/fuzz/`、`tools/fuzz/`、`deploy/fuzz/` 和 `docs/fuzz/`。命令继续使用 `afx fuzz`，客户端管理命令保持现有入口。
+
 ## Fuzz 测试平台
 
 ```sh

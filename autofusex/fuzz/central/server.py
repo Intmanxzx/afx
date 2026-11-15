@@ -59,7 +59,7 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
             statistics_cache.clear()
         public_cache.invalidate()
     control_api = ControlAPI(database, on_publish=published_retest, write_allowlist=write_allowlist)
-    from ...management.central import ControlAPI as ManagedAPI
+    from ..management.central import ControlAPI as ManagedAPI
     managed_api = ManagedAPI(database, write_allowlist, control_api)
 
     def cached_statistics(params):

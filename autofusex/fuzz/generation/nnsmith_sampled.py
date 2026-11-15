@@ -32,7 +32,7 @@ def plan(token):
     import z3
     from z3 import z3 as impl
     # All selection is fixed, not filtered by device/backend capabilities.
-    from autofusex.nnsmith_integration.aten_dialect import classes, validate_runtime
+    from autofusex.fuzz.nnsmith.aten_dialect import classes, validate_runtime
     validate_runtime()
     ops = classes()
     original = [(op, op.in_dtypes, op.out_dtypes) for op in ops]

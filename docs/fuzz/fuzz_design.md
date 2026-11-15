@@ -4,7 +4,7 @@
 
 ## 1. 模块与依赖
 
-同一wheel、同一版本线提供NPU客户端、中心服务和个人电脑查看。Fuzz不依赖旧debugger；普通import不初始化NPU或修改依赖。NNSmith是广泛随机图生成的必需组件，不能用有限模板替代。
+同一wheel、同一版本线提供NPU客户端、中心服务和个人电脑查看。Fuzz 实现统一放在 `autofusex/fuzz/`，NNSmith 适配层和客户端管理分别归入其 `nnsmith/` 和 `management/` 子包。普通import不初始化NPU或修改依赖。NNSmith是广泛随机图生成的必需组件，不能用有限模板替代。
 
 ```
 cli / scheduling -> generation -> contracts + tensors
@@ -17,6 +17,8 @@ cli / scheduling -> generation -> contracts + tensors
 |---|---|
 | contracts、tensors | frozen CaseSpec/CaseBundle，规范字节、TensorSpec、执行与评估配置 |
 | generation | 统一生成入口；C2 静态协议与 D2 多 Shape 协议，固定 NNSmith 源码/Z3及 ATen 算子域，无模板回退 |
+| nnsmith | NNSmith ATen 目录与 materializer，以及保留的 AscendC 生成、验证和性能支持 |
+| management | fuzz 客户端 daemon、执行环境、任务控制、工具更新和中心管理接口 |
 | backends | 延迟加载Torch，适配check/prepare/inputs/invoke/synchronize/compare；新增后端不能改变case |
 | execution | 执行保留共用 Shape 循环，支持 C 静态与 D 多 Shape；正确性和可选性能阶段；失败阶段、误差、计时 |
 | scheduling | 持久任务、批次、worker监督、租约、超时/恢复、预算 |
@@ -25,7 +27,9 @@ cli / scheduling -> generation -> contracts + tensors
 | reporting | 持久派生索引、shape级汇总、错误摘要、安全WHERE条件 |
 | view/static | 同一套预构建网页，无Node运行依赖；公开网站与离线view复用 |
 
-架构测试禁止生成/契约反向依赖执行与存储，禁止fuzz引用旧debugger，NNSmith由生成适配层延迟加载。扩展必须补协议golden、adapter能力、存储白名单/迁移及查询测试，不增加第二套执行引擎。
+架构测试禁止生成/契约反向依赖执行与存储，NNSmith只由生成和集成适配层加载。跨模块共用的精度比较与保留 AscendC 集成所需的后端/图采集接口按明确边界引用。扩展必须补协议golden、adapter能力、存储白名单/迁移及查询测试，不增加第二套执行引擎。
+
+本次目录调整按全新数据环境使用；序列化 ATen 类名采用新的 `autofusex.fuzz.nnsmith` 路径，不提供旧模块路径或历史 seed 数据兼容。测试、探针脚本及部署支持分别集中在 `tests/fuzz/`、`tools/fuzz/` 和 `deploy/fuzz/`。
 
 ## 2. NNSmith生成与seed
 

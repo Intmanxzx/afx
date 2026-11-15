@@ -1,5 +1,5 @@
 """Import-light current ATen names; whitelist filtering never changes generation."""
-from autofusex.nnsmith_integration.aten_catalog import RULES
+from autofusex.fuzz.nnsmith.aten_catalog import RULES
 
 OP_ALIASES = {rule.target: rule.target for rule in RULES}
 OP_ALIASES.update({rule.target.split('.')[1]: rule.target.split('.')[1] for rule in RULES})

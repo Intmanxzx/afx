@@ -112,7 +112,7 @@ def dispatch(args):
         dynamic_variants=getattr(args,'dynamic_variants',None), method=getattr(args,'method',None))
     from ..generation.runtime import source_evidence
     source_evidence()  # Fail before creating a campaign if the dependency is absent/wrong.
-    from autofusex.nnsmith_integration.aten_dialect import validate_runtime
+    from autofusex.fuzz.nnsmith.aten_dialect import validate_runtime
     validate_runtime()
     seeds = [str(seed) for seed in parsed]
     count = getattr(args, 'count', None)

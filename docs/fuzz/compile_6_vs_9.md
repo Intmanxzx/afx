@@ -10,7 +10,7 @@ campaign 补充新任务，让已排队任务自然完成；随后在无生产 c
 每轮使用相同已部署代码（资源/复用文件与 a0590cb 一致），4 workers、max_tasks=16、
 RAM 105 GiB、私有缓存预算 8 GiB。每卡依次 E9SQECC3GJ1J8KJBR869MZ1XHC、C16、D16、
 再次 E；两卡共 8 session、12 shape。每轮新建 worker 池和私有缓存，不清理机器全局
-运行时/PCH 缓存。使用 `tools/fuzz_mlir_reuse_probe.py`，仅改变 `--compile-threads`，
+运行时/PCH 缓存。使用 `tools/fuzz/fuzz_mlir_reuse_probe.py`，仅改变 `--compile-threads`，
 并固定 `--workers 4 --worker-max-tasks 16 --memory-gib 105`。
 
 结果写入隔离库，没有加载生产上传凭据或上传测试结果。原始 report、驱动、环境信息、

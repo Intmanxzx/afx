@@ -90,7 +90,7 @@ class TorchAdapter:
         graph = json.loads(bundle.spec.graph_json)
         if graph.get('dialect') != 'nnsmith-aten/2':
             raise UnsupportedBackend('retired graph dialect; replay unsupported')
-        from autofusex.nnsmith_integration.aten_dialect import validate_runtime
+        from autofusex.fuzz.nnsmith.aten_dialect import validate_runtime
         validate_runtime()
         from ..generation.torch_dialect import execute_graph
         return self._compile(execute_graph(torch, graph,
