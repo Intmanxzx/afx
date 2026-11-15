@@ -45,7 +45,7 @@ def validate(root, tag, dist):
         raise ValueError('project name must be autofusex')
     if tag != 'v' + version or not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise ValueError('tag must match the stable project version vX.Y.Z')
-    init = (root / 'autofusedebugger/__init__.py').read_text()
+    init = (root / 'autofusex/__init__.py').read_text()
     if not re.search(r'__version__\s*=\s*[\'"]' + re.escape(version) + r'[\'"]', init):
         raise ValueError('package __version__ differs from project version')
     def git(*args):
@@ -73,16 +73,16 @@ def validate(root, tag, dist):
         if entry_path not in names:
             raise ValueError('wheel lacks afx console entry point')
         entries.read_string(archive.read(entry_path).decode())
-        if not entries.has_section('console_scripts') or dict(entries['console_scripts']) != {'afx': 'autofusedebugger.cli:main'}:
+        if not entries.has_section('console_scripts') or dict(entries['console_scripts']) != {'afx': 'autofusex.cli:main'}:
             raise ValueError('wheel must expose only the afx console command')
         if not {'afx/__init__.py', 'afx/__main__.py'} <= set(names):
             raise ValueError('wheel lacks python -m afx entry point')
         for asset in ('index.html', 'app.js', 'charts.js'):
-            if f'autofusedebugger/fuzz/view/static/{asset}' not in names:
+            if f'autofusex/fuzz/view/static/{asset}' not in names:
                 raise ValueError('wheel lacks viewer assets')
-        if not any(name.startswith('autofusedebugger/nnsmith_integration/patches/') and name.endswith('.patch') for name in names):
-            raise ValueError('wheel lacks NNSmith patches')
-        if archive.read('autofusedebugger/__init__.py').decode() != init:
+        if any(name.startswith('autofusex/fuzz/nnsmith/patches/') for name in names):
+            raise ValueError('wheel contains obsolete bundled NNSmith patches')
+        if archive.read('autofusex/__init__.py').decode() != init:
             raise ValueError('wheel package version source differs')
     return wheel, version
 

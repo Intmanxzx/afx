@@ -3,6 +3,14 @@
 `autofusex` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具，命令简称 `afx`。
 当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
 
+## 模块划分
+
+AFX 按用途划分为精度性能对比定位工具和 fuzz 自动泛化工具。前者负责已有模型的执行、张量对比、图定位和报告；后者负责随机图生成、批量验证、任务调度、结果管理和客户端管理。
+
+Fuzz 实现统一位于 `autofusex/fuzz/`：`nnsmith/` 是内部的 NNSmith 适配层，`management/` 管理 fuzz 客户端、执行环境和任务。NNSmith fork 仍作为独立的可选执行依赖安装，不作为与 fuzz 并列的业务模块。
+
+相关测试、辅助脚本、部署文件和文档分别位于 `tests/fuzz/`、`tools/fuzz/`、`deploy/fuzz/` 和 `docs/fuzz/`。命令继续使用 `afx fuzz`，客户端管理命令保持现有入口。
+
 ## Fuzz 测试平台
 
 ```sh
@@ -31,8 +39,19 @@ python3 -m pip install ./autofusex-0.1.2-py3-none-any.whl
 ```
 
 发行包名称为 `autofusex`，命令为 `afx`，也支持 `python3 -m afx`。
-从旧包切换时，先在同一个 Python 环境执行 `python3 -m pip uninstall autofusedebugger`，再安装新 wheel，避免两个发行包共用文件导致卸载冲突。已有数据目录、环境变量和 Python 内部模块路径保持兼容。
-若安装过本项目改名过渡期间的 `afx` wheel，也应先卸载该发行包再安装 `autofusex`。发布到 PyPI 后可用 `python3 -m pip install autofusex` 安装；尚未发布时使用本项目构建或 Release 提供的 wheel。
+源码包和目录统一为 `autofusex`，环境变量使用 `AUTOFUSEX_*`。此版本按全新数据环境使用，不提供旧包路径或历史数据兼容。
+发布到 PyPI 后可用 `python3 -m pip install autofusex` 安装；尚未发布时使用本项目构建或 Release 提供的 wheel。
+
+执行 fuzz 时安装 execution 扩展，pip 会安装固定提交的 [NNSmith fork](https://github.com/Intmanxzx/nnsmith) 及其依赖：
+
+```bash
+python3 -m pip install './autofusex-0.1.2-py3-none-any.whl[execution]'
+# 源码开发环境
+python3 -m pip install -e '.[execution]'
+```
+
+无法访问 GitHub 时，先从 fork 构建 NNSmith wheel，然后通过 pip 同时安装两个本地 wheel。
+NNSmith 的修改直接维护在 fork 中，本项目不再携带或应用补丁。
 
 ### 方式二：源码安装
 
@@ -62,8 +81,8 @@ afx python3 /path/to/model.py \
 默认输出为：
 
 ```text
-./model_autofusedebugger/
-./model_autofusedebugger.html
+./model_autofusex/
+./model_autofusex.html
 ```
 
 其中 `model` 是脚本文件名（不含 `.py`）。该快捷方式会根据脚本中的框架导入自动选择
@@ -128,8 +147,8 @@ python3 -m afx run-script \
 Agent 只在显式启用归一化或失败诊断时调用：
 
 ```bash
-export AUTOFUSEDEBUGGER_AGENT_NORMALIZE=1
-export AUTOFUSEDEBUGGER_AGENT_RECOVER=1
+export AUTOFUSEX_AGENT_NORMALIZE=1
+export AUTOFUSEX_AGENT_RECOVER=1
 afx python3 /path/to/model.py --device npu
 ```
 
@@ -147,35 +166,35 @@ afx python3 /path/to/model.py --device npu
 HTTP Agent 的通用配置如下，`endpoint`、`model` 的具体值由 Agent 服务提供方决定：
 
 ```bash
-export AUTOFUSEDEBUGGER_AGENT_TRANSPORT=http
-export AUTOFUSEDEBUGGER_AGENT_ENDPOINT=https://agent.example.com/v1/chat/completions
-export AUTOFUSEDEBUGGER_AGENT_API_KEY='your-api-key'
-export AUTOFUSEDEBUGGER_AGENT_MODEL='your-model-name'
+export AUTOFUSEX_AGENT_TRANSPORT=http
+export AUTOFUSEX_AGENT_ENDPOINT=https://agent.example.com/v1/chat/completions
+export AUTOFUSEX_AGENT_API_KEY='your-api-key'
+export AUTOFUSEX_AGENT_MODEL='your-model-name'
 ```
 
 各环境变量的含义如下：
 
 | 环境变量 | 含义 | 默认值 |
 |---|---|---|
-| `AUTOFUSEDEBUGGER_AGENT_TRANSPORT` | Agent 连接通道：`auto`、`http` 或 `cannbot` | `auto` |
-| `AUTOFUSEDEBUGGER_AGENT_ENDPOINT` | OpenAI-compatible HTTP POST 地址；使用 `http` 时必填 | 空 |
-| `AUTOFUSEDEBUGGER_AGENT_API_KEY` | HTTP 请求的 Bearer API key；不需要鉴权时可不设置 | 空 |
-| `AUTOFUSEDEBUGGER_AGENT_MODEL` | 传给 Agent 服务的模型标识，不是工具内部固定枚举 | `default` |
-| `AUTOFUSEDEBUGGER_AGENT_COMMAND` | CANNBot 可执行文件路径；例如 CANNBot 不在 `PATH` 时使用 | 自动查找 `cannbot` |
-| `AUTOFUSEDEBUGGER_AGENT_TIMEOUT` | 单次 Agent 请求超时时间，单位为秒 | `90` |
-| `AUTOFUSEDEBUGGER_AGENT_JSON_MODE` | 是否请求服务端返回 JSON：`1/true` 开启，`0/false` 关闭 | 开启 |
-| `AUTOFUSEDEBUGGER_AGENT_NORMALIZE` | 快捷模式是否执行脚本归一化：`1/true` 开启 | 关闭 |
-| `AUTOFUSEDEBUGGER_AGENT_RECOVER` | 快捷模式失败后是否请求诊断建议：`1/true` 开启 | 关闭 |
+| `AUTOFUSEX_AGENT_TRANSPORT` | Agent 连接通道：`auto`、`http` 或 `cannbot` | `auto` |
+| `AUTOFUSEX_AGENT_ENDPOINT` | OpenAI-compatible HTTP POST 地址；使用 `http` 时必填 | 空 |
+| `AUTOFUSEX_AGENT_API_KEY` | HTTP 请求的 Bearer API key；不需要鉴权时可不设置 | 空 |
+| `AUTOFUSEX_AGENT_MODEL` | 传给 Agent 服务的模型标识，不是工具内部固定枚举 | `default` |
+| `AUTOFUSEX_AGENT_COMMAND` | CANNBot 可执行文件路径；例如 CANNBot 不在 `PATH` 时使用 | 自动查找 `cannbot` |
+| `AUTOFUSEX_AGENT_TIMEOUT` | 单次 Agent 请求超时时间，单位为秒 | `90` |
+| `AUTOFUSEX_AGENT_JSON_MODE` | 是否请求服务端返回 JSON：`1/true` 开启，`0/false` 关闭 | 开启 |
+| `AUTOFUSEX_AGENT_NORMALIZE` | 快捷模式是否执行脚本归一化：`1/true` 开启 | 关闭 |
+| `AUTOFUSEX_AGENT_RECOVER` | 快捷模式失败后是否请求诊断建议：`1/true` 开启 | 关闭 |
 
 如果使用的是 Codex、Claude、OpenCode 等非 CANNBot 工具，有两种方式：
 
 1. 如果它们通过网关或服务提供 OpenAI-compatible HTTP 接口，按上面的 `http` 方式设置
    `ENDPOINT/API_KEY/MODEL`；工具不需要知道 Agent 的品牌名称。
 2. 如果只有本地 CLI，当前版本不能把 `codex`、`claude` 或 `opencode` 直接填入
-   `AUTOFUSEDEBUGGER_AGENT_COMMAND`。该变量当前只适用于内置的 CANNBot 调用格式
+   `AUTOFUSEX_AGENT_COMMAND`。该变量当前只适用于内置的 CANNBot 调用格式
    `cannbot run --format json --model MODEL PROMPT`。此时应提供一个兼容包装器，将工具传入的
    prompt 转交给本地 CLI，并让标准输出只返回一个 JSON 对象；或者将该 CLI 暴露为 HTTP
-   endpoint，再使用 `http` 通道。不能只把 `AUTOFUSEDEBUGGER_AGENT_MODEL` 设置为 `codex` 或
+   endpoint，再使用 `http` 通道。不能只把 `AUTOFUSEX_AGENT_MODEL` 设置为 `codex` 或
    `claude` 来完成切换。
 
 完整的请求格式、归一化 JSON、失败诊断和本地 CLI 包装器约定见

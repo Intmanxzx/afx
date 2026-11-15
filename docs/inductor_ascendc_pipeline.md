@@ -243,11 +243,11 @@ Python: autofused_xxx(tensor, ...)                     ← NpuInductorKernel.__c
 ## 关键结论（精度调试视角）
 
 1. **无 GE 会话**：全链路只在 `aclrtLaunchKernel` 级别下发，kernel 对 CANN 是匿名单次 launch，GE 图 dump / `aclmdlSetDump` / CANN 算子级 datadump 均无受体（实测 `DUMP_GE_GRAPH=2` 零产出）。
-2. **每个融合 kernel 的唯一 Python 观测点**是 `NpuInductorKernel.__call__` / `torch._inductor.hooks.intermediate_hook`（wrapper 的 call 流程上）——AutofuseDebugger 的 npu_dump 采集即挂此处；这也是此路线下唯一的逐 kernel 数据采集方式。
+2. **每个融合 kernel 的唯一 Python 观测点**是 `NpuInductorKernel.__call__` / `torch._inductor.hooks.intermediate_hook`（wrapper 的 call 流程上）——AutofuseX 的 npu_dump 采集即挂此处；这也是此路线下唯一的逐 kernel 数据采集方式。
 3. **GE 图仅存在于编译期 DFX dump**（`AUTOFUSE_DFX_FLAGS`），供离线结构分析，与执行路径无关。
 4. **torchair GE 路线（`get_npu_backend`）与本路线互斥**：前者整图进 GE Session（dump_config → `AclmdlSetDump` → GE 逐节点落 dump，数据可采）；后者如上，图与数据都只能靠 DFX dump + hook。
 
-## 附：与工具（AutofuseDebugger）的衔接点
+## 附：与工具（AutofuseX）的衔接点
 
 | 流程位置 | 工具衔接 |
 |---|---|

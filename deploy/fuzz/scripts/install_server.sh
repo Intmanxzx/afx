@@ -45,8 +45,8 @@ VENV="${VENV:-$ROOT/deployments/server-$DIGEST}"
 # Permit a separate service account to traverse and execute the isolated venv.
 chmod -R a+rX "$VENV"
 (cd / && "$VENV/bin/python" -I - <<'PY'
-import autofusedebugger, importlib.metadata, yaml, jsonschema, cryptography
-print(autofusedebugger.__file__)
+import autofusex, importlib.metadata, yaml, jsonschema, cryptography
+print(autofusex.__file__)
 print(importlib.metadata.version('autofusex'))
 PY
 )
@@ -58,7 +58,7 @@ if [[ -f $DATABASE ]]; then
   # Prove the new code can start against a private copy before opening live data.
   "$VENV/bin/python" - "$PRIVATE/results.sqlite" <<'PY'
 import sys
-from autofusedebugger.fuzz.central.server import create_server
+from autofusex.fuzz.central.server import create_server
 server=create_server(sys.argv[1], port=0)
 server.server_close()
 PY

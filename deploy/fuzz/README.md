@@ -4,7 +4,7 @@
 
 ## 客户端
 
-准备 Python 3.11、venv/pip、Git、patch、binutils、已安装的 CANN toolkit 和同版本 graph-autofusion run 包。SQLite 3.31+ 由 `ensure_sqlite.sh` 自动检测；缺失时使用系统包管理器安装，预编译 Python 若固定加载旧私有库会自动切到系统库，不需要源码编译。Torch 为当前协议要求的 2.10.0+cpu，并配套 torch_npu。脚本支持安装本地 runtime wheel，也支持复用现有 Python 的 Torch；不会升级共享 runtime。
+准备 Python 3.11、venv/pip、Git（通过仓库安装依赖时）、已安装的 CANN toolkit 和同版本 graph-autofusion run 包。SQLite 3.31+ 由 `ensure_sqlite.sh` 自动检测；缺失时使用系统包管理器安装，预编译 Python 若固定加载旧私有库会自动切到系统库，不需要源码编译。Torch 为当前协议要求的 2.10.0+cpu，并配套 torch_npu。脚本支持安装本地 runtime wheel，也支持复用现有 Python 的 Torch；不会升级共享 runtime。
 
 ~~~bash
 # 新环境：换成实际匹配架构和 Python ABI 的 wheel 路径。
@@ -20,9 +20,9 @@ bash install_client.sh \
   --runtime-python /path/to/torch-venv/bin/python
 ~~~
 
-需要 GCC runtime 时传 --library-dir /path/to/gcc/lib64；需要其编译器时传 --compiler-bin /path/to/gcc/bin。--nnsmith-repo 可用镜像 URL 或本地 Git 仓库，基线 commit 不变。网络访问使用执行环境的 pip/Git 配置。
+需要 GCC runtime 时传 --library-dir /path/to/gcc/lib64；需要其编译器时传 --compiler-bin /path/to/gcc/bin。NNSmith 由 pip 安装固定的 AutofuseX fork 版本。无法访问 GitHub 时，传 --nnsmith-wheel /packages/nnsmith-0.1.1+autofusex.2-py3-none-any.whl 安装提前构建的 fork wheel。
 
-每次创建以 wheel 摘要区分的 venv；同一目录已存在则拒绝覆盖，可用 --venv /new/path 指定新目录。脚本依次校验 NNSmith 源码、wheel 内容和实际导入指纹，再验证全部 368 条 ATen 规则、compile_adapter 和实际加载的 MLIR codegen 库。验证成功后才更新 HOME/client-env.sh 和 HOME/bin/afx。切换前用旧入口停止 campaign 和同步进程，再用新入口启动。
+每次创建以 wheel 摘要区分的 venv；同一目录已存在则拒绝覆盖，可用 --venv /new/path 指定新目录。安装后验证 NNSmith fork、全部 368 条 ATen 规则、compile_adapter 和实际加载的 MLIR codegen 库。验证成功后才更新 HOME/client-env.sh 和 HOME/bin/afx。切换前用旧入口停止 campaign 和同步进程，再用新入口启动。
 
 ~~~bash
 # 新身份只在首次部署时 setup；已有 home 不重新 setup 或更换 token。
@@ -33,7 +33,7 @@ bash install_client.sh \
 
 不传 count 为无限运行，不传 ops 使用完整算子目录。安装脚本不修改采样参数，其他范围见 fuzz run -h。
 
-NNSmith 安装器包含在 wheel 内。它从固定 commit 应用固定顺序补丁，在临时副本关闭 SCM 的 _version.py 写入，再构建普通 wheel。源码、wheel 内和安装后的指纹必须一致。不用 editable 安装，不 reset/clean 共享 checkout。Z3 固定 4.12.2，同时固定仍提供 pkg_resources 的 setuptools 75.8.0。运行时门禁保持启用，错误显示实际导入目录、实际/预期指纹和 Z3 版本。
+NNSmith 的 AscendC 修改维护在独立 fork 仓库中；客户端直接通过 pip 安装固定 commit。运行时仍校验源码指纹和 Z3 4.12.2，避免导入到其他 NNSmith。
 
 ## 服务端
 

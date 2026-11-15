@@ -37,7 +37,7 @@ AF-MLIR 现在明确声明可复用运行时。成功执行及清理后，worker
 使用目标环境的 Python，分别指定旧/新代码路径，各自在新目录运行：
 
 ```sh
-python tools/fuzz_mlir_reuse_probe.py /path/to/new-private-output
+python tools/fuzz/fuzz_mlir_reuse_probe.py /path/to/new-private-output
 ```
 
 探针在两张卡分别执行目标 E seed、C16、D16、目标 E seed，共 8 个后端 session、
@@ -69,7 +69,7 @@ python tools/fuzz_mlir_reuse_probe.py /path/to/new-private-output
 ## 回归与部署边界
 
 - 最终 Linux 定向回归：92 passed、1 failed。唯一失败为既有架构门禁：
-  `TorchAdapter._close` 导入 `autofusedebugger.compare`，基线源码已有该依赖；本修改没有新增它。
+  `TorchAdapter._close` 导入 `autofusex.compare`，基线源码已有该依赖；本修改没有新增它。
 - 初次完整测试为 646 passed、17 failed、5 skipped，不能声称全量通过。
   包括传输时的 macOS `._*.py` 元数据（已清理）、远端 Node 10 不支持网页测试依赖、
   旧模型捕获/seed/超时等失败；本任务未顺手修改这些无关代码。

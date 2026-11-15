@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from autofusedebugger.shell_entry import (
+from autofusex.shell_entry import (
     apply_env_overrides,
     is_shell_script_invocation,
     load_env_file,

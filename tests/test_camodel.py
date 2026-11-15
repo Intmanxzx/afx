@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autofusedebugger.camodel import camodel_env, camodel_info, resolve_soc_dir
+from autofusex.camodel import camodel_env, camodel_info, resolve_soc_dir
 
 
 def test_camodel_discovery(tmp_path: Path) -> None:

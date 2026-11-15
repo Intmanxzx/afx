@@ -11,17 +11,18 @@ requires-python = ">=3.9"
 dependencies = ["PyYAML>=6.0,<7", "jsonschema>=4.18,<5", "cryptography>=41"]
 
 [project.optional-dependencies]
-execution = ["numpy"]
-# Execution libraries are installed into managed environments; legacy users can opt in.
-nnsmith = ["multipledispatch"]
+execution = [
+  "numpy",
+  "nnsmith @ git+https://github.com/Intmanxzx/nnsmith.git@9d7f4d16aaeda931e1d79a2f91dbd09d72f86ab3",
+]
 
 [project.scripts]
-afx = "autofusedebugger.cli:main"
+afx = "autofusex.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["afx*", "autofusedebugger*"]
+include = ["afx*", "autofusex*"]
 
 [tool.setuptools.package-data]
 # Offline and cloud viewers share these prebuilt assets.
-autofusedebugger = ["fuzz/view/static/*", "nnsmith_integration/patches/*.patch", "nnsmith_integration/install_af_fuzz.sh"]
+autofusex = ["fuzz/view/static/*"]

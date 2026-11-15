@@ -39,7 +39,7 @@ Autofuse 内部其他线程池不一定受 Inductor 配置限制，不能把公�
 不复用使用 worker_max_tasks=1；复用使用 16。首次冷启动、不同新图和重复 E 分开看。
 日志保存在 mlir `/mnt/workspace/af-fuzz/adaptive-reuse-1112/`。
 
-可通过 `tools/fuzz_mlir_reuse_probe.py` 的 `--workers`、`--compile-threads`、
+可通过 `tools/fuzz/fuzz_mlir_reuse_probe.py` 的 `--workers`、`--compile-threads`、
 `--worker-max-tasks`、`--memory-gib` 复现。显式输出目录必须不存在，避免混入旧记录。
 
 ## 实测结果

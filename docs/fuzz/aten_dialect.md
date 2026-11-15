@@ -13,7 +13,7 @@
 | View 及形状操作 | 54 | reshape/view、transpose/permute、squeeze、expand、slice、split/chunk/unbind、diagonal、unfold、复数视图 |
 | 合计 | **368** | 按 overload 计数，不是 368 个不同的算子名 |
 
-精确目录是 `autofusedebugger/nnsmith_integration/aten_catalog.py` 的 `RULES`。`aten_dialect.py` 为每条规则提供 NNSmith `AbsOpBase` 子类、dtype/shape 传递、Z3 约束及 materializer。图仍由 `nnsmith.graph_gen.model_gen` 构造，执行时调用目录中对应的真实 `torch.ops.aten.<name>.<overload>`。
+精确目录是 `autofusex/fuzz/nnsmith/aten_catalog.py` 的 `RULES`。`aten_dialect.py` 为每条规则提供 NNSmith `AbsOpBase` 子类、dtype/shape 传递、Z3 约束及 materializer。图仍由 `nnsmith.graph_gen.model_gen` 构造，执行时调用目录中对应的真实 `torch.ops.aten.<name>.<overload>`。
 
 逐个 overload 的可读清单见 [ATen 算子清单](aten_op_list.md)。
 

@@ -2,12 +2,12 @@
 
 - 日期：2026-11-12（America/Phoenix）
 - 状态：设计基线与实现计划；本分支实现了 P1–P3 的本地/服务端控制骨架、环境适配器、安全操作日志和 Docker 验证夹具；真实 CANN/NPU 适配仍需单独验收。
-- 范围：AutofuseDebugger 客户端、中心服务、Web 控制台、CLI、依赖制品与发布流程。
+- 范围：AutofuseX 客户端、中心服务、Web 控制台、CLI、依赖制品与发布流程。
 - 目标平台：首期完整执行与自托管能力针对 Linux NPU 开发机/容器；其他平台提供能力检测和明确的“不支持”提示，不承诺相同的 CANN 安装与 NPU 能力。
 
 ## 1. 目标与核心决策
 
-用户仅需安装 AutofuseDebugger wheel 并启动轻量守护进程，即可绑定设备。此后通过网页准备运行环境、修改参数、控制任务和更新工具；所有主要操作同时提供 CLI，供人工和 Agent 使用。
+用户仅需安装 AutofuseX wheel 并启动轻量守护进程，即可绑定设备。此后通过网页准备运行环境、修改参数、控制任务和更新工具；所有主要操作同时提供 CLI，供人工和 Agent 使用。
 
 核心决策：
 
@@ -45,7 +45,7 @@
 | `fuzz/central/retests.py`、`sync/retests.py` | 复测租约、幂等与结果关联 | 通用控制语义；保持原复测兼容 |
 | `fuzz/scheduling/` | 队列、campaign、staged 调度、资源预算、后台执行 | 管理服务适配、控制动作、配置安全应用 |
 | `scheduling/staged.py` | 启动时读取预算并创建 Pool | 不能靠修改配置文件热调整运行中的 Pool |
-| `nnsmith_integration/install_af_fuzz.sh` | 固定提交、补丁顺序、指纹验证 | 发布端预构建，客户端安装制品而非现场打补丁 |
+| 独立 AutofuseX NNSmith fork | 固定 commit、源码指纹和 Z3 版本 | 由 pip 安装，客户端不再现场打补丁 |
 | `pyproject.toml` | wheel、CLI；基础依赖含 NumPy | 轻量引导依赖和运行依赖拆分、入口惰性导入审计 |
 
 特别注意：当前 campaign 的 stop 会请求中断/取消任务，不能直接作为新设计的“安全排空停止”；现有后台 supervisor 也不是永久进程管理服务，需要新增语义而不是重命名接口。
@@ -544,7 +544,7 @@ afx config effective --json
 
 ### 12.1 建议代码职责划分
 
-- 新 `autofusedebugger/management/`：schema/config、daemon、transport、operations、environments、builds、updates、cli。
+- 新 `autofusex/fuzz/management/`：schema/config、daemon、transport、operations、environments、builds、updates、cli。
 - `fuzz/central/`：新增设备/配置/环境/操作仓储和 API；沿用会话、维护限制、备份机制。
 - `fuzz/scheduling/`：只增加管理适配、安全边界和关联元数据，不复制执行引擎。
 - `fuzz/view/static/`：设备、环境、任务、构建和版本页面。

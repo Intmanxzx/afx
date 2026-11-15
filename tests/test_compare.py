@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from autofusedebugger.compare import (
+from autofusex.compare import (
     TensorRef,
     _metrics,
     compare_manifests,
@@ -24,7 +24,7 @@ def test_compare_fused_output_to_cpu_origin(tmp_path: Path) -> None:
     np.save(tmp_path / "npu_fused.npy", np.array([1.0, 2.001], dtype=np.float32))
 
     cpu = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "side": "cpu",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
@@ -39,7 +39,7 @@ def test_compare_fused_output_to_cpu_origin(tmp_path: Path) -> None:
         "fusions": [],
     }
     npu = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "side": "npu",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
@@ -79,7 +79,7 @@ def test_compare_uses_canonical_prefusion_id_when_backend_name_changes(tmp_path:
     np.save(tmp_path / "prefusion.npy", value)
     np.save(tmp_path / "autofuse.npy", value)
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -131,7 +131,7 @@ def test_fusion_internal_cpu_outputs_are_not_observable(tmp_path: Path) -> None:
     np.save(tmp_path / "npu_fused.npy", np.array([1.0, 2.0], dtype=np.float32))
 
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -185,7 +185,7 @@ def test_shape_mismatch_is_reported(tmp_path: Path) -> None:
     np.save(tmp_path / "cpu.npy", np.array([1.0, 2.0], dtype=np.float32))
     np.save(tmp_path / "npu.npy", np.array([1.0, 2.0, 3.0], dtype=np.float32))
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "nodes": [],
@@ -205,7 +205,7 @@ def test_compiler_origin_shape_conflict_is_not_reported_as_precision_failure(tmp
     np.save(tmp_path / "cpu.npy", np.zeros((2, 3), dtype=np.float32))
     np.save(tmp_path / "npu.npy", np.ones((3, 2), dtype=np.float32))
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -261,7 +261,7 @@ def test_failure_attribution_distinguishes_upstream_failure(tmp_path: Path) -> N
     np.save(tmp_path / "npu_a.npy", np.array([2.0], dtype=np.float32))
     np.save(tmp_path / "npu_b.npy", np.array([3.0], dtype=np.float32))
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "fusions": [],
@@ -303,7 +303,7 @@ def test_compiler_origin_allows_scalar_shape_normalization(tmp_path: Path) -> No
     np.save(tmp_path / "cpu.npy", np.array(1.0, dtype=np.float32))
     np.save(tmp_path / "npu.npy", np.array([1.0], dtype=np.float32))
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -353,7 +353,7 @@ def test_compiler_origin_allows_supported_format_shape_conversion(tmp_path: Path
     np.save(tmp_path / "cpu.npy", np.zeros((1, 2, 2, 4), dtype=np.float32))
     np.save(tmp_path / "npu.npy", np.zeros((1, 1, 2, 2, 4), dtype=np.float32))
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -401,7 +401,7 @@ def test_graph_summary_includes_input_dtype_and_shape(tmp_path: Path) -> None:
     np.save(tmp_path / "a.npy", np.array([1.0, 2.0], dtype=np.float32))
     np.save(tmp_path / "b.npy", np.array([2.0, 3.0], dtype=np.float32))
     manifest = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "side": "cpu",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
@@ -441,7 +441,7 @@ def test_unmatched_npu_output_is_reported_as_incomplete(tmp_path: Path) -> None:
     np.save(tmp_path / "cpu.npy", np.array([1.0], dtype=np.float32))
     np.save(tmp_path / "npu.npy", np.array([1.0], dtype=np.float32))
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -497,7 +497,7 @@ def test_unmatched_npu_output_is_reported_as_incomplete(tmp_path: Path) -> None:
 
 def test_missing_npu_dump_is_distinguished_from_missing_cpu_mapping(tmp_path: Path) -> None:
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "m"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -618,7 +618,7 @@ def test_compare_three_manifests_returns_all_pairwise_results(tmp_path: Path) ->
 
     def manifest(side: str, output: str) -> dict:
         return {
-            "schema": "autofusedebugger-manifest/1",
+            "schema": "autofusex-manifest/1",
             "side": side,
             "model": {"name": "m"},
             "artifacts": {"root": str(tmp_path)},
@@ -655,7 +655,7 @@ def test_three_way_comparison_aligns_shifted_eager_names_and_aliases_compiler_or
     np.save(tmp_path / "eager_view.npy", expected)
     np.save(tmp_path / "autofuse.npy", expected)
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "shifted"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],
@@ -742,7 +742,7 @@ def test_three_way_marks_origin_eliminated_from_eager_as_not_observable(tmp_path
     np.save(tmp_path / "cpu.npy", expected)
     np.save(tmp_path / "autofuse.npy", expected)
     base = {
-        "schema": "autofusedebugger-manifest/1",
+        "schema": "autofusex-manifest/1",
         "model": {"name": "eliminated"},
         "artifacts": {"root": str(tmp_path)},
         "edges": [],

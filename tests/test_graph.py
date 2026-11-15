@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from autofusedebugger.graph import build_manifest
+from autofusex.graph import build_manifest
 
 
 def test_build_manifest_extracts_edges(tmp_path: Path) -> None:
@@ -75,10 +75,10 @@ def test_build_manifest_preserves_ir_mapping_diagnostics(tmp_path: Path) -> None
                                         "shape": {"dim": [2, 4]},
                                         "data_type": "float32",
                                         "attr": [
-                                            {"key": "_autofusedebugger_cpu_origin_name", "value": {"s": "relu"}},
-                                            {"key": "_autofusedebugger_cpu_origin_output_index", "value": {"i": 0}},
-                                            {"key": "_autofusedebugger_mapping_method", "value": {"s": "ir_pre_fusion_canonical_id"}},
-                                            {"key": "_autofusedebugger_prefusion_ir_scheduler_ids", "value": {"s": "op0"}},
+                                            {"key": "_autofusex_cpu_origin_name", "value": {"s": "relu"}},
+                                            {"key": "_autofusex_cpu_origin_output_index", "value": {"i": 0}},
+                                            {"key": "_autofusex_mapping_method", "value": {"s": "ir_pre_fusion_canonical_id"}},
+                                            {"key": "_autofusex_prefusion_ir_scheduler_ids", "value": {"s": "op0"}},
                                         ],
                                     }
                                 ],
@@ -165,15 +165,15 @@ def test_build_manifest_uses_prefusion_origin_id_for_fusion_output(tmp_path: Pat
                                         "data_type": "float32",
                                         "attr": [
                                             {
-                                                "key": "_autofusedebugger_prefusion_origin_id",
+                                                "key": "_autofusex_prefusion_origin_id",
                                                 "value": {"s": "graph0::div"},
                                             },
                                             {
-                                                "key": "_autofusedebugger_cpu_origin_name",
+                                                "key": "_autofusex_cpu_origin_name",
                                                 "value": {"s": "div"},
                                             },
                                             {
-                                                "key": "_autofusedebugger_cpu_origin_output_index",
+                                                "key": "_autofusex_cpu_origin_output_index",
                                                 "value": {"i": 0},
                                             },
                                         ],

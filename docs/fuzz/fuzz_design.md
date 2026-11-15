@@ -1,10 +1,10 @@
 # Fuzz 设计
 
-本文件描述当前 `autofusedebugger/fuzz` 及已确认的演进设计；第 9 节为分期方案，9.10 保留第一切片历史，9.11 记录当前阶段调度、资源池及观测实现与验证边界。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](fuzz_usage.md)。
+本文件描述当前 `autofusex/fuzz` 及已确认的演进设计；第 9 节为分期方案，9.10 保留第一切片历史，9.11 记录当前阶段调度、资源池及观测实现与验证边界。本文取代旧重构方案、开发计划、D0调查、命令草案和旧NNSmith fuzz文档。历史调查/测试日志可从Git历史查阅。命令见[使用说明](fuzz_usage.md)。
 
 ## 1. 模块与依赖
 
-同一wheel、同一版本线提供NPU客户端、中心服务和个人电脑查看。Fuzz不依赖旧debugger；普通import不初始化NPU或修改依赖。NNSmith是广泛随机图生成的必需组件，不能用有限模板替代。
+同一wheel、同一版本线提供NPU客户端、中心服务和个人电脑查看。Fuzz 实现统一放在 `autofusex/fuzz/`，NNSmith 适配层和客户端管理分别归入其 `nnsmith/` 和 `management/` 子包。普通import不初始化NPU或修改依赖。NNSmith是广泛随机图生成的必需组件，不能用有限模板替代。
 
 ```
 cli / scheduling -> generation -> contracts + tensors
@@ -17,6 +17,8 @@ cli / scheduling -> generation -> contracts + tensors
 |---|---|
 | contracts、tensors | frozen CaseSpec/CaseBundle，规范字节、TensorSpec、执行与评估配置 |
 | generation | 统一生成入口；C2 静态协议与 D2 多 Shape 协议，固定 NNSmith 源码/Z3及 ATen 算子域，无模板回退 |
+| nnsmith | ATen 算子目录、NNSmith 算子约束与 materializer；生成与执行由 generation / execution 负责 |
+| management | fuzz 客户端 daemon、执行环境、任务控制、工具更新和中心管理接口 |
 | backends | 延迟加载Torch，适配check/prepare/inputs/invoke/synchronize/compare；新增后端不能改变case |
 | execution | 执行保留共用 Shape 循环，支持 C 静态与 D 多 Shape；正确性和可选性能阶段；失败阶段、误差、计时 |
 | scheduling | 持久任务、批次、worker监督、租约、超时/恢复、预算 |
@@ -25,7 +27,9 @@ cli / scheduling -> generation -> contracts + tensors
 | reporting | 持久派生索引、shape级汇总、错误摘要、安全WHERE条件 |
 | view/static | 同一套预构建网页，无Node运行依赖；公开网站与离线view复用 |
 
-架构测试禁止生成/契约反向依赖执行与存储，禁止fuzz引用旧debugger，NNSmith由生成适配层延迟加载。扩展必须补协议golden、adapter能力、存储白名单/迁移及查询测试，不增加第二套执行引擎。
+架构测试禁止生成/契约反向依赖执行与存储，NNSmith只由生成和 ATen 适配层加载。后端通过明确边界复用精度比较接口。旧 NNSmith 生成器、AscendC fuzz 循环、性能 session 和独立 HTML 报告已删除，当前 run/replay 共用 generation / execution / scheduling。扩展必须补协议golden、adapter能力、存储白名单/迁移及查询测试，不增加第二套执行引擎。
+
+本次目录调整按全新数据环境使用；序列化 ATen 类名采用新的 `autofusex.fuzz.nnsmith` 路径，不提供旧模块路径或历史 seed 数据兼容。测试、探针脚本及部署支持分别集中在 `tests/fuzz/`、`tools/fuzz/` 和 `deploy/fuzz/`。
 
 ## 2. NNSmith生成与seed
 
@@ -35,7 +39,7 @@ run/replay统一使用NNSmith `graph_gen.model_gen`，通过 seed 中编码的�
 
 C2/D2 seed 使用独立的 160-bit entropy 空间；C2 保持单静态 Shape，D2 在同一图和固定权重上构造 2–8 个合法 Shape，数量由 seed 编码，不能构造时显式失败，不退回静态。图由 NNSmith 生成，数据字节由字段寻址 SHA256 和规范小端编码生成，避免 Torch 全局 RNG 影响输入。workload 指纹覆盖完整规格与字节，缓存不参与确定性保证。
 
-依赖要求：源码base commit `bc0af42c7d5fc4fd201efb76e5313f6298c2d573`的已补丁隔离副本，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。环境由 `autofusedebugger/nnsmith_integration/install_af_fuzz.sh` 一键复现：脚本在私有副本按固定顺序应用全部补丁，以普通 wheel 安装，构建前和安装后校验指纹；禁止 SCM 注入额外的 _version.py，补丁顺序与指纹强绑定。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
+依赖要求：AutofuseX NNSmith fork commit `9d7f4d16aaeda931e1d79a2f91dbd09d72f86ab3`，Python源码树SHA256 `c47e5611db39361963be90786c7ea208647df4b6eb9546ce911122b81721cba5`，Z3 4.12.2。实际import来源必须匹配，缺失或不匹配直接报错，无模板fallback。源码修改和补丁历史都在独立 fork 中维护；AutofuseX 通过 pip 固定 commit 安装，不在客户端现场打补丁。该指纹随2026-11-11原件丢失事件重建并转正（原`a1a524...`记录作废）。此门禁只是依赖固定，不等于已证明跨设备/跨时间全域确定性；跨平台验证仍待完成。
 
 图、输入/输出规格作为受限轻量case_spec进入结果和同步协议，云端与离线view直接索引采集数据，不重新生成图、不依赖NNSmith。它不是重放所需的缓存。普通import不加载NNSmith；真正生成时才检查依赖。
 
@@ -101,7 +105,7 @@ POSIX后台启动已实现；容器/主机重启后需由systemd或entrypoint拉
 
 发布版本以pyproject及包版本一致为准；Tag必须精确等于`v<version>`，构建同一个wheel用于GitCode Release和PyPI；网站资源必须入wheel。具体流水线、凭据和演练命令见使用说明。PyPI不允许重用同版本文件。
 
-当前验证见本轮远端日志。历史模板结果不能作为NNSmith能力证据。已实现的阶段调度与资源池见 9.11；未验证边界为编译型后端跨 Case 持久复用、独立编译产物交接及数小时长期稳定性。其他未完成：更广算子和dtype、跨平台全域seed确定性、准确编译/kernel指标、自动重建已补丁依赖与真实发布联调。旧NNSmith代码和patches保留用于依赖准备及迁移，公开执行只有当前统一流程。
+当前验证见本轮远端日志。历史模板结果不能作为NNSmith能力证据。已实现的阶段调度与资源池见 9.11；未验证边界为编译型后端跨 Case 持久复用、独立编译产物交接及数小时长期稳定性。其他未完成：更广算子和dtype、跨平台全域seed确定性、准确编译/kernel指标和真实发布联调。NNSmith 修改已迁移到独立 fork，公开执行只有当前统一流程。
 
 CLI：`--fg`、`--perf`；run/replay默认不保存结果，`--save`才写结果及outbox。setup成功后记住数据目录。C 协议保留单 Shape 静态语义；D 协议使用同一 NNSmith 图的 3 个合法不同 Shape。随机 campaign 按 entropy 奇偶选择 C/D；静态模式不展示 S0，动态样本标签与 seed 分离。
 
