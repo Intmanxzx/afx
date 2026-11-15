@@ -43,6 +43,10 @@ class ControlStore:
               config TEXT NOT NULL,PRIMARY KEY(device_id,revision));
             ''')
 
+        from .agent_api import initialize
+        with self.connect() as db:
+            initialize(db)
+
     @contextmanager
     def connect(self):
         db=sqlite3.connect(self.path,timeout=10);db.row_factory=sqlite3.Row
@@ -150,6 +154,8 @@ class ControlStore:
         if not isinstance(status,dict) or len(canonical(status))>16384: raise ValueError('invalid status')
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            from .agent_api import observe
+            observe(db, device['id'], status)
             db.execute('UPDATE managed_devices SET seen=?,status=? WHERE id=?',(time.time(),canonical(status),device['id']))
             db.execute("UPDATE managed_operations SET state='expired' WHERE device_id=? AND state='queued' AND expires<?",(device['id'],time.time()))
             # Delivered operations keep one generation: no auto retry of uncertain external side effects.

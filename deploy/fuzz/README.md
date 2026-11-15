@@ -56,6 +56,6 @@ bash install_server.sh \
 - Caddyfile：HTTPS 代理；核对域名、80/443 端口和证书持久化目录。
 - systemd 模板及备份 timer：根据安装路径调整 Python、数据库、用户和备份目录。
 
-身份、备份恢复和操作说明见 [Fuzz 使用说明](../../docs/fuzz/fuzz_usage.md)。
+身份、环境准备和备份恢复见 [Fuzz 运维说明](../../docs/fuzz/operations.md)，日常任务见 [Fuzz 使用说明](../../docs/fuzz/fuzz_usage.md)。
 
 开发回归测试另需 Node.js 18+；运行服务使用预构建前端资源，不依赖 Node。请完整复制 scripts 目录，两个安装入口都依赖相邻的 ensure_sqlite.sh。

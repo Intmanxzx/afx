@@ -7,6 +7,9 @@ parsing prose.  Model dependencies are imported only by task workers.
 from __future__ import annotations
 
 import argparse
+import copy
+import math
+import sqlite3
 import json
 from pathlib import Path
 import subprocess
@@ -14,9 +17,11 @@ import sys
 import time
 import uuid
 
-from .config import canonical, load, parse, validate
+from .config import canonical, parse, validate
 from .daemon import Manager, request
-from .store import Store, TERMINAL
+from .store import TERMINAL
+
+RUN_TERMINAL = {"completed", "failed", "stopped", "cancelled", "interrupted", "needs_attention"}
 
 
 class AgentArgumentParser(argparse.ArgumentParser):
@@ -41,7 +46,7 @@ def _common(parent: argparse.ArgumentParser) -> None:
 
 
 def _add_file(parent, name="FILE"):
-    parent.add_argument(name.lower(), metavar=name, help="YAML or JSON specification file")
+    parent.add_argument(name.lower(), metavar=name, help="YAML or JSON specification file; - reads stdin")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -93,16 +98,29 @@ def _build_parser() -> argparse.ArgumentParser:
     action(environment, "status", "Show a managed environment by ID or name.", options=[lambda p: p.add_argument("environment_id", metavar="ENVIRONMENT_ID")])
 
     task = group("task", "Validate, submit, inspect, and control managed fuzz tasks.")
-    action(task, "validate", "Validate task YAML, resolve its environment, and return the effective snapshot.", options=[lambda p: _add_file(p)])
+    action(task, "validate", "Validate task YAML, resolve its environment, and return the effective snapshot.", options=[lambda p: _add_file(p), lambda p: p.add_argument("--wait", action="store_true")])
     action(task, "submit", "Submit a task; returns an operation ID and never waits by default.", options=[
         lambda p: _add_file(p), lambda p: p.add_argument("--workers", type=int),
         lambda p: p.add_argument("--wait", action="store_true", help="wait for terminal operation state")])
+    action(task, "wait", "Wait for task completion, interruption, or attention; does not cancel on timeout.", options=[
+        lambda p: p.add_argument("run_id", metavar="RUN_ID")])
+    action(task, "results", "Read saved attempts for a task, without requiring the execution environment.", options=[
+        lambda p: p.add_argument("run_id", metavar="RUN_ID"),
+        lambda p: p.add_argument("--limit", type=int, default=50),
+        lambda p: p.add_argument("--after", type=int, default=0),
+        lambda p: p.add_argument("--status", choices=("ok", "fail", "error", "unsupported")),
+        lambda p: p.add_argument("--seed"),
+        lambda p: p.add_argument("--attempt", help="read one full attempt instead of a page")])
+    action(task, "replay", "Replay seeds using a prior run's environment and execution/evaluation settings.", options=[
+        lambda p: p.add_argument("seeds", nargs="+", metavar="SEED"),
+        lambda p: p.add_argument("--from-run", required=True, metavar="RUN_ID"),
+        lambda p: p.add_argument("--wait", action="store_true", help="wait for submission, not execution")])
     action(task, "list", "List locally submitted task runs.")
     action(task, "inspect", "Show one task run and its effective immutable snapshot.", options=[lambda p: p.add_argument("run_id", metavar="RUN_ID")])
     action(task, "status", "Alias for task inspect.", options=[lambda p: p.add_argument("run_id", metavar="RUN_ID")])
     for name, help_text in (("pause", "Pause generation and new dispatches at a safe boundary."),
                             ("resume", "Resume a paused task."),
-                            ("stop", "Gracefully stop a task; use --force for owned process termination."),
+                            ("stop", "Gracefully stop a task; use force-stop for owned process termination."),
                             ("force-stop", "Force-stop only processes owned by this managed task.")):
         action(task, name, help_text, options=[lambda p, n=name: p.add_argument("run_id", metavar="RUN_ID"),
                                                lambda p: p.add_argument("--wait", action="store_true"), lambda p: p.add_argument("--graceful", action="store_true", help="explicit alias; graceful is the default")])
@@ -152,7 +170,8 @@ def _read_file(filename):
     if not filename or filename == "-":
         text = sys.stdin.read(65537)
     else:
-        text = Path(filename).read_text(encoding="utf-8")
+        with Path(filename).open(encoding="utf-8") as stream:
+            text = stream.read(65537)
     return parse(text)
 
 
@@ -169,7 +188,7 @@ def _submit(home, args, kind, payload, *, wait=False):
 
 
 def _wait(home, operation_id, timeout):
-    if timeout <= 0:
+    if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("--timeout must be positive")
     started = time.monotonic()
     while True:
@@ -181,13 +200,26 @@ def _wait(home, operation_id, timeout):
         time.sleep(.2)
 
 
+def _wait_run(home, run_id, timeout):
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("--timeout must be positive and finite")
+    started = time.monotonic()
+    while True:
+        result = _local_query(home, "run", run_id)
+        if result["state"] in RUN_TERMINAL:
+            return result
+        if time.monotonic() - started >= timeout:
+            raise TimeoutError("task wait timed out; task remains unchanged; inspect " + run_id)
+        time.sleep(.2)
+
+
 def _local_query(home, query, value=None):
     return request(home, dict(action="query", query=query, value=value))
 
 
 def _task_payload(args):
-    payload = load(args.file)
-    if args.workers is not None:
+    payload = validate(_read_file(args.file))
+    if getattr(args, "workers", None) is not None:
         if payload.get("kind") != "fuzz_task":
             raise ValueError("--workers is valid only for fuzz_task")
         payload.setdefault("execution", {}).setdefault("resources", {}).update(policy="manual", workers=args.workers)
@@ -247,8 +279,24 @@ def _run(args):
             return _submit(home, args, "environment.apply", {"plan_id": plan_id})
 
     if group == "task":
-        if action == "validate": return _submit(home, args, "task.validate", _task_payload(args))
+        if action == "validate": return _submit(home, args, "task.validate", _task_payload(args), wait=args.wait)
         if action == "submit": return _submit(home, args, "task.submit", _task_payload(args), wait=args.wait)
+        if action == "wait": return _wait_run(home, args.run_id, args.timeout)
+        if action == "results":
+            from .results import read
+            run = _local_query(home, "run", args.run_id)
+            return read(home, run, limit=args.limit, after=args.after, status=args.status,
+                        seed=args.seed, attempt=args.attempt)
+        if action == "replay":
+            original = _local_query(home, "run", args.from_run)
+            payload = copy.deepcopy(original["spec"]["spec"])
+            payload["workload"] = {"mode": "replay", "seeds": args.seeds}
+            payload.pop("termination", None)
+            # Stored auto plans contain resolved workers/threads; replay those exact budgets.
+            resources = payload.get("execution", {}).get("resources", {})
+            if any(key in resources for key in ("workers", "compile_threads")):
+                resources["policy"] = "manual"
+            return _submit(home, args, "task.submit", validate(payload), wait=args.wait)
         if action == "list": return _local_query(home, "runs")
         if action in {"inspect", "status"}: return _local_query(home, "run", args.run_id)
         if action in {"pause", "resume", "stop", "force-stop"}:
@@ -282,7 +330,7 @@ def _run(args):
 
 
 def _exit_for_result(result):
-    if isinstance(result, dict) and result.get("state") in {"failed", "needs_attention", "cancelled"}:
+    if isinstance(result, dict) and result.get("state") in {"failed", "needs_attention", "cancelled", "interrupted", "stopped"}:
         return EXIT_OPERATION_FAILED
     return EXIT_OK
 
@@ -293,7 +341,7 @@ def main(argv=None):
         result = _run(args)
         print(canonical(dict(schema_version=1, ok=True, data=result)))
         return _exit_for_result(result)
-    except (ValueError, TypeError, OSError, LookupError, PermissionError, TimeoutError, RuntimeError) as exc:
-        code = EXIT_UNAVAILABLE if isinstance(exc, (OSError, ConnectionError)) else EXIT_USAGE
+    except (ValueError, TypeError, OSError, LookupError, PermissionError, TimeoutError, RuntimeError, sqlite3.Error) as exc:
+        code = EXIT_UNAVAILABLE if isinstance(exc, OSError) and not isinstance(exc, TimeoutError) else EXIT_USAGE
         print(canonical(dict(schema_version=1, ok=False, error={"code": type(exc).__name__, "message": str(exc)[:400]})))
         return code

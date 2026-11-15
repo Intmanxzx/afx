@@ -61,6 +61,8 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
     control_api = ControlAPI(database, on_publish=published_retest, write_allowlist=write_allowlist)
     from ..management.central import ControlAPI as ManagedAPI
     managed_api = ManagedAPI(database, write_allowlist, control_api)
+    from ..management.agent_api import AgentAPI
+    agent_api = AgentAPI(managed_api.store, write_allowlist)
 
     def cached_statistics(params):
         from ..reporting.statistics import statistics
@@ -122,6 +124,7 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
             return self.send(entry.status, entry.body, headers=headers)
 
         def do_GET(self):
+            if agent_api.handle(self, "GET"):return
             if managed_api.handle(self, "GET"):return
             if control_api.handle(self, "GET"):return
             try:
@@ -220,6 +223,7 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
             except (OSError,sqlite3.Error):
                 self.send(503,{'error':'database unavailable'})
         def do_POST(self):
+            if agent_api.handle(self, "POST"):return
             if managed_api.handle(self, "POST"):return
             if control_api.handle(self, "POST"):return
             if self.path not in {'/api/upload','/api/facts','/api/heartbeat'}:return self.send(404,{'error':'not found'})
