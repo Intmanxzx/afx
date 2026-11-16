@@ -3,7 +3,11 @@ import json
 import math
 def spec_metadata(spec):
     graph = json.loads(spec.graph_json)
-    ops = [node['op'] for node in graph['nodes']]
+    from ...client.nnsmith.aten_catalog import rules
+    display = {rule.target: rule.display_name for rule in rules()}
+    for node in graph['nodes']:
+        node.setdefault('display_name', display.get(node['op'], node['op']))
+    ops = [node.get('display_name', node['op']) for node in graph['nodes']]
     if graph['reduce_axis'] is not None:
         ops.append('sum')
     return {'graph': graph, 'weights': [{'name': t.name, 'shape': list(t.shape), 'dtype': t.dtype} for t in spec.weights], 'op_types': ops, 'n_nodes': len(ops),

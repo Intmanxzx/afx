@@ -130,6 +130,8 @@ class ResultQueries:
                 raise LookupError('shape result not found')
             result['shape_index'] = shape_index
             result['shape_results'] = chosen
+            if shape_index >= 0 and not result['contexts']['execution'].get('static_only'):
+                result['seed_shape_short'] = result['seed_short'] + str(shape_index)
             variants = result.get('metadata', {}).get('shape_variants', [])
             result['sample'] = variants[shape_index] if 0 <= shape_index < len(variants) else {}
             if chosen:
@@ -197,6 +199,7 @@ class ResultQueries:
                 index = group['shape_index']
                 item['failure_path'] = group['failure_path']
                 item['shape_index'] = index
+                item['seed_shape_short'] = item['seed_short'] + (str(index) if item['execution'].get('static_only') is not True else '')
                 item['case_id'] += ':' + str(index)
                 variants = item['metadata'].get('shape_variants', [])
                 item['sample'] = variants[index] if 0 <= index < len(variants) else {}

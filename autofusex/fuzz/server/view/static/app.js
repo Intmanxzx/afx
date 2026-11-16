@@ -84,7 +84,7 @@ async function details(identity, shapeIndex=null) {
     $('detail-content').parentElement.hidden=true;
     $('detail-message').textContent = ''; $('copy').disabled = !result.replay_command;
     document.querySelectorAll('.page').forEach(el=>el.hidden=true);
-    $('page-title').textContent='用例详情 · '+result.seed_short;
+    $('page-title').textContent='用例详情 · '+(result.seed_shape_short||result.seed_short);
     $('detail').scrollIntoView({behavior:'smooth',block:'start'});
   } catch(error) {if(request === detailGeneration) $('detail-message').textContent = error.message;}
 }
@@ -187,7 +187,7 @@ function renderRecords(items){
    if(!item.historical&&item.history_count>1){const button=document.createElement('button');button.type='button';button.className='text-link history-toggle';button.textContent=(expandedCases.has(item.case_id)?'▾':'▸')+' '+item.history_count;button.setAttribute('aria-expanded',String(expandedCases.has(item.case_id)));button.setAttribute('aria-label','展开历史 '+item.seed_short+' S'+item.shape_index);button.addEventListener('click',()=>toggleCase(item));td.append(button);}populated=true;
  }
  else if(c.key==='source_label'){td.textContent=item.source_label||'';populated=true;}
- else if(c.key==='seed'){const strong=document.createElement('button');strong.type='button';strong.className='text-link case-seed';strong.textContent=item.seed_short;strong.setAttribute('aria-label','查看用例 '+item.seed_short+' Shape '+item.shape_index+' 详情');strong.addEventListener('click',()=>openRecord(item));td.append(strong);if(item.shape_mode==='dynamic'&&item.shape_index>=0){const tag=document.createElement('small');tag.className='shape-tag';tag.textContent='S'+item.shape_index;td.append(tag);}populated=true;}
+ else if(c.key==='seed'){const strong=document.createElement('button');strong.type='button';strong.className='text-link case-seed';strong.textContent=item.seed_shape_short||item.seed_short;strong.setAttribute('aria-label','查看用例 '+(item.seed_shape_short||item.seed_short)+' 详情');strong.addEventListener('click',()=>openRecord(item));td.append(strong);populated=true;}
  else if(c.key==='ops'){const ops=graphText(item.metadata);if(ops){const text=document.createElement('span');text.className='case-ops';text.textContent=ops;text.title=ops;td.append(text);populated=true;}}
  else if(c.key==='inputs'){td.textContent=tensorText(item.sample?.input_shapes,item.metadata.weights,item.sample?.input_dtypes||item.metadata.input_dtypes);populated=!!td.textContent;}
  else if(c.key==='mode'){td.textContent=item.shape_mode==='static'?'静态':'动态';populated=true;}
@@ -480,7 +480,7 @@ function caseDag(result){
  for(const weight of meta.weights||[])add(weight.name,'Weight',weight,'weight');
  for(const node of graph.nodes){
   const outputs=node.outputs||[node.output];
-  for(const [i,name] of outputs.entries())add(name,outputs.length>1?`${node.op} [${i}]`:node.op,{},'op',node.inputs||[],node.attrs||{});
+  const label=node.display_name||node.op; for(const [i,name] of outputs.entries())add(name,outputs.length>1?`${label} [${i}]`:label,{},'op',node.inputs||[],node.attrs||{});
  }
  for(const node of [...nodes])for(const name of node.inputs)if(!byName.has(name))add(name,'未记录输入',{},'input');
  const pending=new Set(nodes),resolved=new Set();

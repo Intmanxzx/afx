@@ -33,7 +33,7 @@
 
 ## 本地管理契约
 
-入口定义在 [management/cli.py](../../autofusex/fuzz/management/cli.py)。普通请求输出：
+入口定义在 [management/cli.py](../../autofusex/fuzz/daemon/management/cli.py)。普通请求输出：
 
 ~~~json
 {"schema_version":1,"ok":true,"data":{}}
@@ -86,11 +86,11 @@ OP_ID 来自 submit 的 data.id；RUN_ID 来自成功 operation 的 data.result.
 | build submit FILE / build inspect OP_ID | 使用本地受信任 profile 构建制品 |
 | tool stage FILE / tool activate RELEASE_ID | 校验签名版本并在空闲时激活 |
 
-配置 schema 在 [management/config.py](../../autofusex/fuzz/management/config.py)，支持 client_policy、environment、fuzz_task。未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认有限生成 100 例、保存但不上传；资源还受 trust 和 policy 限制。FILE 参数统一支持 - 读取 stdin。
+配置 schema 在 [management/config.py](../../autofusex/fuzz/daemon/management/config.py)，支持 client_policy、environment、fuzz_task。未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认有限生成 100 例、保存但不上传；资源还受 trust 和 policy 限制。FILE 参数统一支持 - 读取 stdin。
 
 ## 中心只读 API
 
-路由定义在 [central/server.py](../../autofusex/fuzz/central/server.py)。以下接口不需要登录：
+路由定义在 [central/server.py](../../autofusex/fuzz/server/central/server.py)。以下接口不需要登录：
 
 | GET 路由 | 用途及主要参数 |
 |---|---|
@@ -124,7 +124,7 @@ OP_ID 来自 submit 的 data.id；RUN_ID 来自成功 operation 的 data.result.
 | /api/issues/claim、/api/issues/release | POST {"issue_key": KEY} | 认领/释放问题 |
 | /api/issues/retest | POST issue_key、client_id，可选 repetitions、request_key | 问题组复测 |
 
-kind 使用本地同一操作白名单，例如 task.submit 的 payload 是任务规格，task.action 是 {"run_id": ID, "action":"stop"}。服务端拒绝跨用户设备操作，本地 trust 仍限制最终权限。详见 [management/central.py](../../autofusex/fuzz/management/central.py)、[central/control_api.py](../../autofusex/fuzz/central/control_api.py) 和 [retests.py](../../autofusex/fuzz/central/retests.py)。
+kind 使用本地同一操作白名单，例如 task.submit 的 payload 是任务规格，task.action 是 {"run_id": ID, "action":"stop"}。服务端拒绝跨用户设备操作，本地 trust 仍限制最终权限。详见 [management/central.py](../../autofusex/fuzz/daemon/management/central.py)、[central/control_api.py](../../autofusex/fuzz/server/central/control_api.py) 和 [retests.py](../../autofusex/fuzz/server/central/retests.py)。
 
 设备使用 Bearer 调用 /api/manage/poll、ack、revoke；注册配对由 enroll/pair/exchange 完成。上传与复测领取有各自协议，交给客户端实现，外部 Agent 无需重写租约或 ACK 逻辑。
 
