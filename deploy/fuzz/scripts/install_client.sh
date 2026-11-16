@@ -8,12 +8,13 @@ Usage: install_client.sh --wheel FILE --cann-root DIR --home DIR [options]
   --runtime-python PATH  Reuse Torch/torch_npu from this existing Python
   --torch-wheel FILE     Install Torch wheel on a fresh environment
   --torch-npu-wheel FILE Install the matching torch_npu wheel
-  --nnsmith-wheel FILE  Install a prebuilt fork wheel (offline/local distribution)
+  --nnsmith-wheel FILE   Use a local NNSmith wheel instead of downloading from PyPI
   --venv DIR             New venv (default: HOME/deployments/client-WHEEL_SHA256)
   --library-dir DIR      Extra compiler runtime library directory
   --compiler-bin DIR     Compiler executables, when needed by the run package
 Creates HOME/client-env.sh and HOME/bin/afx. Does not create/change tokens
 or start a campaign. Requires a matching, installed CANN graph-autofusion run package.
+NNSmith and other execution dependencies use the configured pip index (PyPI by default).
 HELP
 }
 PYTHON_BIN=python3; RUNTIME_PYTHON=; TORCH_WHEEL=; NPU_WHEEL=; WHEEL=; CANN_ROOT=; HOME_DIR=; VENV=; LIBRARY_DIR=; COMPILER_BIN=; NNSMITH_WHEEL=
@@ -31,6 +32,7 @@ while (($#)); do
   shift 2
 done
 [[ -f $WHEEL && -f $CANN_ROOT/set_env.sh && -n $HOME_DIR ]] || { usage >&2; exit 2; }
+[[ -z $NNSMITH_WHEEL || -f $NNSMITH_WHEEL ]] || { echo "NNSmith wheel not found: $NNSMITH_WHEEL" >&2; exit 2; }
 [[ -z $LIBRARY_DIR || -d $LIBRARY_DIR ]] && [[ -z $COMPILER_BIN || -d $COMPILER_BIN ]]
 if [[ -z $RUNTIME_PYTHON && ( ! -f $TORCH_WHEEL || ! -f $NPU_WHEEL ) ]]; then
   echo 'Supply --runtime-python, or both --torch-wheel and --torch-npu-wheel.' >&2; exit 2
@@ -66,7 +68,7 @@ else
 fi
 "$PY" -m pip install 'decorator' 'attrs' 'psutil' 'scipy' 'packaging'
 if [[ -n $NNSMITH_WHEEL ]]; then
-  "$PY" -m pip install --ignore-installed "$WHEEL" "$NNSMITH_WHEEL"
+  "$PY" -m pip install --ignore-installed "$WHEEL[execution]" "$NNSMITH_WHEEL"
 else
   "$PY" -m pip install --ignore-installed "$WHEEL[execution]"
 fi
