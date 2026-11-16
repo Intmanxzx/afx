@@ -58,7 +58,7 @@ if [[ -f $DATABASE ]]; then
   # Prove the new code can start against a private copy before opening live data.
   "$VENV/bin/python" - "$PRIVATE/results.sqlite" <<'PY'
 import sys
-from autofusex.fuzz.central.server import create_server
+from autofusex.fuzz.server.central.server import create_server
 server=create_server(sys.argv[1], port=0)
 server.server_close()
 PY

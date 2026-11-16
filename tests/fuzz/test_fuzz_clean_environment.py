@@ -3,9 +3,9 @@ from contextlib import closing
 import json
 import sqlite3
 import pytest
-from autofusex.fuzz.contracts import Seed
-from autofusex.fuzz.storage.repository import _connect, ResultRepository
-from autofusex.fuzz.central.repository import create_user, initialize, authenticate
+from autofusex.fuzz.client.contracts import Seed
+from autofusex.fuzz.client.storage.repository import _connect, ResultRepository
+from autofusex.fuzz.server.central.repository import create_user, initialize, authenticate
 
 @pytest.mark.parametrize('token', ['C16','D16','C2-16','D2-16',str(2*2**128+42)])
 def test_old_seeds_rejected_before_any_result_write(tmp_path, token):
@@ -36,10 +36,10 @@ def test_only_user_rows_preserve_token_in_empty_center(tmp_path):
             assert target.execute('SELECT count(*) FROM '+table).fetchone()[0]==0
 
 def test_old_telemetry_and_backend_aliases_rejected():
-    from autofusex.fuzz.telemetry import validate
-    from autofusex.fuzz.backends import create_backend
-    from autofusex.fuzz.backends.base import UnsupportedBackend
-    from autofusex.fuzz.contracts import ExecutionConfig
+    from autofusex.fuzz.client.telemetry import validate
+    from autofusex.fuzz.client.backends import create_backend
+    from autofusex.fuzz.client.backends.base import UnsupportedBackend
+    from autofusex.fuzz.client.contracts import ExecutionConfig
     with pytest.raises(ValueError): validate(json.dumps(dict(version=1,stages={},shapes={})))
     for backend in ('cpu-eager','npu-eager','ascendc','triton'):
         with pytest.raises(UnsupportedBackend): create_backend(ExecutionConfig(backend,'cpu'))

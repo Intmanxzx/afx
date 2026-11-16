@@ -564,10 +564,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] in {"daemon", "device", "environment", "task", "operation", "config", "build", "tool", "management"}:
-        from autofusex.fuzz.management.cli import main as management_main
+        from autofusex.fuzz.daemon.management.cli import main as management_main
         return management_main(raw_argv)
     if raw_argv and raw_argv[0] == "fuzz":
-        from autofusex.fuzz.cli import main as fuzz_main
+        from autofusex.fuzz.client.cli import main as fuzz_main
         return fuzz_main(raw_argv[1:])
     from autofusex.script_runner import (
         default_direct_output_paths,

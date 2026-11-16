@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 import pytest
-from autofusex.fuzz.management.daemon import request
+from autofusex.fuzz.daemon.runtime import request
 
 
 def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
@@ -36,5 +36,5 @@ def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
 
 
 def test_management_import_is_lightweight():
-    script='import sys; import autofusex.fuzz.management.cli; assert not any(x in sys.modules for x in ("torch","numpy","nnsmith","torch_npu"))'
+    script='import sys; import autofusex.fuzz.daemon.management.cli; assert not any(x in sys.modules for x in ("torch","numpy","nnsmith","torch_npu"))'
     subprocess.run([sys.executable,'-c',script],check=True)

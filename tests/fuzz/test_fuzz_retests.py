@@ -10,11 +10,11 @@ from urllib.request import Request, build_opener, ProxyHandler
 from urllib.error import HTTPError
 
 import pytest
-from autofusex.fuzz.central import retests, sessions
-from autofusex.fuzz.central.repository import create_user, ingest, rotate_key
-from autofusex.fuzz.central.server import create_server
-from autofusex.fuzz.storage.repository import ResultRepository, _connect
-from autofusex.fuzz.sync.outbox import pending
+from autofusex.fuzz.server.central import retests, sessions
+from autofusex.fuzz.server.central.repository import create_user, ingest, rotate_key
+from autofusex.fuzz.server.central.server import create_server
+from autofusex.fuzz.client.storage.repository import ResultRepository, _connect
+from autofusex.fuzz.client.sync.outbox import pending
 
 
 def uid():
@@ -208,7 +208,7 @@ def test_offline_client_and_limits(setup):
 
 
 def test_login_limit_is_bounded_and_session_expiration(setup):
-    from autofusex.fuzz.central.control_api import ControlAPI
+    from autofusex.fuzz.server.central.control_api import ControlAPI
     database,alice,*_=setup
     api=ControlAPI(database)
     assert all(api._login_limit('loopback') for _ in range(10))

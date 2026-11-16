@@ -9,7 +9,7 @@ import pytest
 def test_refresh_routing_etag_and_inflight_dedup():
     node=shutil.which('node')
     if not node:pytest.skip('node unavailable')
-    source=Path('autofusex/fuzz/view/static/app.js').read_text()
+    source=Path('autofusex/fuzz/server/view/static/app.js').read_text()
     helpers=source[source.index('const responseCache='):source.index('function cell(')]
     script=r'''
 const assert=require('node:assert/strict');

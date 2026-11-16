@@ -5,12 +5,12 @@ from urllib.error import HTTPError
 
 import pytest
 
-from autofusex.fuzz.central.repository import create_user, ingest
-from autofusex.fuzz.central.server import create_server
-from autofusex.fuzz.management.central import ControlStore
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.sync.outbox import pending
-from autofusex.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.server.central.repository import create_user, ingest
+from autofusex.fuzz.server.central.server import create_server
+from autofusex.fuzz.daemon.management.central import ControlStore
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.sync.outbox import pending
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
 
 
 @pytest.fixture
@@ -105,8 +105,8 @@ def test_invalid_requests_and_stale_status(api):
 
 
 def test_maintenance_rejects_writes_but_keeps_reads(api):
-    from autofusex.fuzz.management.agent_api import AgentAPI
-    from autofusex.fuzz.central.maintenance import WriteAllowlist, MaintenanceBlocked
+    from autofusex.fuzz.daemon.management.agent_api import AgentAPI
+    from autofusex.fuzz.server.central.maintenance import WriteAllowlist, MaintenanceBlocked
     call,store,device,credential,user,*_=api
     restricted=AgentAPI(store,WriteAllowlist(enabled=True))
     with pytest.raises(MaintenanceBlocked): restricted.submit(user['user_id'],submit_body(device))

@@ -4,11 +4,11 @@ import sqlite3
 import threading
 import time
 
-from autofusex.fuzz.central.cache import PublicCache, PAGE_SIZES
-from autofusex.fuzz.central.repository import initialize
-from autofusex.fuzz.central.server import create_server
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.server.central.cache import PublicCache, PAGE_SIZES
+from autofusex.fuzz.server.central.repository import initialize
+from autofusex.fuzz.server.central.server import create_server
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.storage.queries import ResultQueries
 from test_fuzz_case_summary import save
 
 
@@ -150,7 +150,7 @@ def test_refresh_rest_backoff_cap_and_recovery(tmp_path, monkeypatch):
     # Simulate an arbitrarily slow build: elapsed time must not shorten rest.
     from itertools import count
     clock = count(0, 100)
-    monkeypatch.setattr('autofusex.fuzz.central.cache.time.monotonic', lambda: next(clock))
+    monkeypatch.setattr('autofusex.fuzz.server.central.cache.time.monotonic', lambda: next(clock))
     cache._run()
     assert waits == [30, 60, 120, 240, 300, 300, 30, 30, 30]
     assert len(builds) == 9
@@ -173,8 +173,8 @@ def test_close_interrupts_long_refresh_wait(tmp_path):
 
 
 def test_incremental_bootstrap_falls_back_to_exact_snapshot(tmp_path,monkeypatch):
-    from autofusex.fuzz.reporting.incremental import IncrementalStatistics
-    from autofusex.fuzz.reporting.statistics import statistics
+    from autofusex.fuzz.server.reporting.incremental import IncrementalStatistics
+    from autofusex.fuzz.server.reporting.statistics import statistics
     db=tmp_path/'db';initialize(db);save(ResultRepository(db),'one','af-mlir','ok')
     def backlog(self):raise TimeoutError('checkpoint saved')
     monkeypatch.setattr(IncrementalStatistics,'refresh',backlog)

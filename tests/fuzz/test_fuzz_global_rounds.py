@@ -3,13 +3,13 @@ from contextlib import closing
 import json
 import uuid
 
-from autofusex.fuzz.storage.repository import ResultRepository,_connect
-from autofusex.fuzz.storage.queries import ResultQueries
-from autofusex.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.client.storage.repository import ResultRepository,_connect
+from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.fuzz.server.reporting.statistics import statistics
 
 
 def save(repo,batch,user,backend,states=('pass','pass','pass'),seed='F0F8A5E5JE7A4QBAOWXZCIT10Y8'):
-    from autofusex.fuzz.contracts import Seed
+    from autofusex.fuzz.client.contracts import Seed
     return repo.save(dict(seed=str(Seed.parse(seed)),workload_id='a'*64,oracle_id='cpu/1',backend=backend,
         status='fail' if 'fail' in states else 'ok',execution=dict(backend=backend,batch_id=batch,static_only=False,
         expected_backends=json.dumps(['cpu','af-mlir'])),evaluation=dict(correctness=True,performance=False,warmup_steps=3,measured_steps=10),
@@ -59,7 +59,7 @@ def test_local_retry_same_id_does_not_move_arrival(tmp_path):
     save(repo,'a','alice','cpu');identity=save(repo,'a','alice','af-mlir')
     with closing(_connect(repo.path)) as conn:
         arrival=conn.execute('SELECT received_at FROM attempt_arrivals_v2 WHERE attempt_id=?',(identity,)).fetchone()[0]
-    from autofusex.fuzz.reporting.index import index_attempt
+    from autofusex.fuzz.server.reporting.index import index_attempt
     with closing(_connect(repo.path,writable=True)) as conn,conn:index_attempt(conn,identity)
     with closing(_connect(repo.path)) as conn:
         assert conn.execute('SELECT received_at FROM attempt_arrivals_v2 WHERE attempt_id=?',(identity,)).fetchone()[0]==arrival
@@ -85,7 +85,7 @@ def test_new_round_id_prevents_crossed_backend_arrivals(tmp_path):
 
 
 def test_arrival_delete_never_reuses_sequence(tmp_path):
-    from autofusex.fuzz.reporting.index import initialize
+    from autofusex.fuzz.server.reporting.index import initialize
     repo=ResultRepository(tmp_path/'db')
     first=save(repo,'first','alice','af-mlir',('pass',))
     second=save(repo,'second','bob','af-mlir',('pass',))
@@ -103,8 +103,8 @@ def test_arrival_delete_never_reuses_sequence(tmp_path):
 
 
 def test_exact_short_seed_search_is_pushed_before_rollup(tmp_path):
-    from autofusex.fuzz.reporting.cases import rollup
-    from autofusex.fuzz.contracts import Seed
+    from autofusex.fuzz.server.reporting.cases import rollup
+    from autofusex.fuzz.client.contracts import Seed
     repo=ResultRepository(tmp_path/'db')
     save(repo,'a','alice','cpu');save(repo,'a','alice','af-mlir')
     q=ResultQueries(repo.path)

@@ -1,5 +1,5 @@
 """Run with an installed wheel in an empty venv, not with the source on PYTHONPATH."""
-from autofusex.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
 import importlib.util
 import importlib.metadata
 from pathlib import Path
@@ -32,9 +32,9 @@ def main():
     for name in ('torch', 'numpy', 'torch_npu', 'nnsmith'):
         if importlib.util.find_spec(name) is not None:
             raise RuntimeError('wheel smoke requires an environment without model dependencies')
-    from autofusex.fuzz.storage import ResultRepository
-    from autofusex.fuzz.view.server import create_server as view
-    from autofusex.fuzz.central.server import create_server as central
+    from autofusex.fuzz.client.storage import ResultRepository
+    from autofusex.fuzz.server.view.server import create_server as view
+    from autofusex.fuzz.server.central.server import create_server as central
     with tempfile.TemporaryDirectory(prefix='fuzz-wheel-smoke-') as root:
         database = Path(root) / 'results.sqlite'
         ResultRepository(database).save({

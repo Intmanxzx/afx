@@ -8,11 +8,11 @@ import time
 
 import pytest
 
-from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
-from autofusex.fuzz.scheduling.ledger import TaskLedger
-from autofusex.fuzz.scheduling.ownership import own_queue
-from autofusex.fuzz.scheduling import hosting
-from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.client.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+from autofusex.fuzz.client.scheduling.ownership import own_queue
+from autofusex.fuzz.client.scheduling import hosting
+from autofusex.fuzz.client.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='POSIX process hosting')
@@ -113,7 +113,7 @@ def test_background_sigterm_cleans_active_worker(tmp_path, monkeypatch):
     # Injection exists only in this test's child process, not a production CLI hook.
     code = '''
 import sys
-from autofusex.fuzz.scheduling import hosting,supervisor
+from autofusex.fuzz.client.scheduling import hosting,supervisor
 worker="import pathlib,os,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)"
 supervisor._worker_command=lambda *a:[sys.executable,'-c',worker,sys.argv[-1]]
 sys.exit(hosting._child(*sys.argv[1:-1]))
@@ -150,8 +150,8 @@ def test_background_rejects_npu_before_enqueue(tmp_path):
 
 def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, tmp_path, capsys):
     import json
-    from autofusex.fuzz.cli import main
-    from autofusex.fuzz.contracts import Seed
+    from autofusex.fuzz.client.cli import main
+    from autofusex.fuzz.client.contracts import Seed
     def launch(ledger, database, specs, **kwargs):
         assert list(specs) == []
         configs, evaluation, count, devices, excluded, sampling, ops = kwargs['campaign']
@@ -165,7 +165,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
 
 
 def test_background_infinite_campaign_stops_without_refilling(tmp_path):
-    from autofusex.fuzz.scheduling.campaign import stop
+    from autofusex.fuzz.client.scheduling.campaign import stop
     ledger = TaskLedger(tmp_path/'queue')
     hosting.launch(ledger, tmp_path/'results', [], campaign=([EX], EV, None))
     deadline = time.monotonic() + 20

@@ -33,7 +33,7 @@
 
 ## 本地管理契约
 
-入口定义在 [management/cli.py](../../autofusex/fuzz/management/cli.py)。普通请求输出：
+入口定义在 [management/cli.py](../../autofusex/fuzz/daemon/management/cli.py)。普通请求输出：
 
 ~~~json
 {"schema_version":1,"ok":true,"data":{}}
@@ -86,11 +86,11 @@ OP_ID 来自 submit 的 data.id；RUN_ID 来自成功 operation 的 data.result.
 | build submit FILE / build inspect OP_ID | 使用本地受信任 profile 构建制品 |
 | tool stage FILE / tool activate RELEASE_ID | 校验签名版本并在空闲时激活 |
 
-配置 schema 在 [management/config.py](../../autofusex/fuzz/management/config.py)，支持 client_policy、environment、fuzz_task。未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认有限生成 100 例、保存但不上传；资源还受 trust 和 policy 限制。FILE 参数统一支持 - 读取 stdin。
+配置 schema 在 [management/config.py](../../autofusex/fuzz/daemon/management/config.py)，支持 client_policy、environment、fuzz_task。未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认有限生成 100 例、保存但不上传；资源还受 trust 和 policy 限制。FILE 参数统一支持 - 读取 stdin。
 
 ## 中心只读 API
 
-路由定义在 [central/server.py](../../autofusex/fuzz/central/server.py)。以下接口不需要登录：
+路由定义在 [central/server.py](../../autofusex/fuzz/server/central/server.py)。以下接口不需要登录：
 
 | GET 路由 | 用途及主要参数 |
 |---|---|
@@ -105,6 +105,8 @@ OP_ID 来自 submit 的 data.id；RUN_ID 来自成功 operation 的 data.result.
 读取返回的游标继续翻页；公共统计可能是带 stale 状态的缓存。503 可带 Retry-After，应退避重试。q 只支持受限 WHERE 表达式，不执行任意 SQL。
 
 ## 远程控制 API
+
+远程操作白名单包含 `client.update`。payload 为 {"version":"0.1.4","package":"autofusex"}，可选 `index_url` 仅用于受控 PyPI 镜像。version 必须是精确版本，daemon 不执行无版本的升级，也不自行探测最新版本。
 
 用户控制接口使用网页登录会话：POST /api/session 提交 {"token":"..."}，需要与站点 Host 一致的 HTTPS Origin；保留返回的会话 Cookie 和 CSRF token。后续写请求带 Origin、Cookie、X-CSRF-Token 与 Content-Type: application/json。管理 POST 必须有 Content-Length，body 最大 64 KiB。设备 Bearer 凭据不能替代用户控制凭据。
 
@@ -122,7 +124,7 @@ OP_ID 来自 submit 的 data.id；RUN_ID 来自成功 operation 的 data.result.
 | /api/issues/claim、/api/issues/release | POST {"issue_key": KEY} | 认领/释放问题 |
 | /api/issues/retest | POST issue_key、client_id，可选 repetitions、request_key | 问题组复测 |
 
-kind 使用本地同一操作白名单，例如 task.submit 的 payload 是任务规格，task.action 是 {"run_id": ID, "action":"stop"}。服务端拒绝跨用户设备操作，本地 trust 仍限制最终权限。详见 [management/central.py](../../autofusex/fuzz/management/central.py)、[central/control_api.py](../../autofusex/fuzz/central/control_api.py) 和 [retests.py](../../autofusex/fuzz/central/retests.py)。
+kind 使用本地同一操作白名单，例如 task.submit 的 payload 是任务规格，task.action 是 {"run_id": ID, "action":"stop"}。服务端拒绝跨用户设备操作，本地 trust 仍限制最终权限。详见 [management/central.py](../../autofusex/fuzz/daemon/management/central.py)、[central/control_api.py](../../autofusex/fuzz/server/central/control_api.py) 和 [retests.py](../../autofusex/fuzz/server/central/retests.py)。
 
 设备使用 Bearer 调用 /api/manage/poll、ack、revoke；注册配对由 enroll/pair/exchange 完成。上传与复测领取有各自协议，交给客户端实现，外部 Agent 无需重写租约或 ACK 逻辑。
 

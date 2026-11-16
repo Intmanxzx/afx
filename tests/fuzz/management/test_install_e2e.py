@@ -4,9 +4,9 @@ import platform
 import sys
 import zipfile
 from pathlib import Path
-from autofusex.fuzz.management.store import Store
-from autofusex.fuzz.management.artifacts import atomic,sha256
-from autofusex.fuzz.management import environments
+from autofusex.fuzz.daemon.management.store import Store
+from autofusex.fuzz.daemon.management.artifacts import atomic,sha256
+from autofusex.fuzz.daemon.management import environments
 
 
 def wheel(path):

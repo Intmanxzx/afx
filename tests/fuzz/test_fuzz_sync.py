@@ -7,11 +7,11 @@ from urllib.request import build_opener, ProxyHandler
 
 import pytest
 
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.sync.outbox import pending, acknowledge
-from autofusex.fuzz.central.repository import create_user, ingest
-from autofusex.fuzz.central.server import create_server
-from autofusex.fuzz.sync.client import once
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.sync.outbox import pending, acknowledge
+from autofusex.fuzz.server.central.repository import create_user, ingest
+from autofusex.fuzz.server.central.server import create_server
+from autofusex.fuzz.client.sync.client import once
 
 
 def result(seed='14615016373650978276328604632813839116929039597610'):
@@ -84,7 +84,7 @@ def test_http_sync_lost_ack_retry_and_public_query(tmp_path):
 
 
 def test_private_backup_preserves_receipts_auth_and_public_snapshot_strips_them(tmp_path):
-    from autofusex.fuzz.central.backup import backup
+    from autofusex.fuzz.server.central.backup import backup
     server=tmp_path/'server';key=tmp_path/'key';create_user(server,'Tester',key)
     repo=ResultRepository(tmp_path/'local');repo.save(result())
     batch=pending(repo.path);secret=key.read_text().strip()
@@ -101,7 +101,7 @@ def test_private_backup_preserves_receipts_auth_and_public_snapshot_strips_them(
 def test_sync_failure_does_not_ack_or_block_new_results(tmp_path):
     repo=ResultRepository(tmp_path/'local');repo.save(result())
     key=tmp_path/'key';key.write_text('dummy-test-key-1234567890');key.chmod(0o600)
-    from autofusex.fuzz.sync.client import configure
+    from autofusex.fuzz.client.sync.client import configure
     configure(tmp_path,'https://example.invalid',key,30)
     before=pending(repo.path)
     def offline(*args,**kwargs):raise OSError('offline')
@@ -112,7 +112,7 @@ def test_sync_failure_does_not_ack_or_block_new_results(tmp_path):
 
 
 def test_sync_configuration_requires_https_private_key_and_valid_interval(tmp_path):
-    from autofusex.fuzz.sync.client import configure
+    from autofusex.fuzz.client.sync.client import configure
     key=tmp_path/'key';key.write_text('dummy-test-key-1234567890');key.chmod(0o600)
     for endpoint,interval in [('http://example.com',30),('https://user:secret@example.com',30),('https://example.com',0)]:
         with pytest.raises(ValueError):configure(tmp_path,endpoint,key,interval)
@@ -120,7 +120,7 @@ def test_sync_configuration_requires_https_private_key_and_valid_interval(tmp_pa
 
 
 def test_central_newest_pagination_and_stable_cursor(tmp_path):
-    from autofusex.fuzz.storage.queries import ResultQueries
+    from autofusex.fuzz.client.storage.queries import ResultQueries
     repo=ResultRepository(tmp_path/'local')
     for seed in ('14615016373650978276328604632813839116929039597569','14615016373650978276328604632813839116929039597570','14615016373650978276328604632813839116929039597571'):repo.save(result(seed))
     query=ResultQueries(repo.path)
@@ -132,7 +132,7 @@ def test_central_newest_pagination_and_stable_cursor(tmp_path):
 
 
 def test_configuration_does_not_echo_admin_key(tmp_path):
-    from autofusex.fuzz.sync.client import configure
+    from autofusex.fuzz.client.sync.client import configure
     key=tmp_path/'key';secret='test-secret-long-value-0123456789'
     key.write_text(secret);key.chmod(0o600)
     answer=configure(tmp_path,'https://example.com',key,30)
@@ -141,8 +141,8 @@ def test_configuration_does_not_echo_admin_key(tmp_path):
 
 
 def test_setup_configures_and_starts_sync_once_with_admin_key(tmp_path,monkeypatch):
-    from autofusex.fuzz.cli import main
-    from autofusex.fuzz.sync import client
+    from autofusex.fuzz.client.cli import main
+    from autofusex.fuzz.client.sync import client
     key=tmp_path/'key';key.write_text('admin-private-key-0123456789');key.chmod(0o600)
     calls=[]
     monkeypatch.setattr(client,'start',lambda *args:calls.append(args) or {'state':'started'})
@@ -157,8 +157,8 @@ def test_setup_configures_and_starts_sync_once_with_admin_key(tmp_path,monkeypat
 
 
 def test_old_server_backup_recovers_with_explicit_epoch_without_duplicates(tmp_path):
-    from autofusex.fuzz.sync.outbox import reset_epoch
-    from autofusex.fuzz.sync.client import status
+    from autofusex.fuzz.client.sync.outbox import reset_epoch
+    from autofusex.fuzz.client.sync.client import status
     server = tmp_path/'server'; key = tmp_path/'key'
     create_user(server, 'Recovery', key)
     repo = ResultRepository(tmp_path/'local')
@@ -183,7 +183,7 @@ def test_old_server_backup_recovers_with_explicit_epoch_without_duplicates(tmp_p
 
 
 def test_offline_rotation_preserves_owner_and_rejects_old_key(tmp_path):
-    from autofusex.fuzz.central.repository import rotate_key
+    from autofusex.fuzz.server.central.repository import rotate_key
     server = tmp_path/'server'; key = tmp_path/'key'; new = tmp_path/'new-key'
     user = create_user(server, 'Rotation', key)
     repo = ResultRepository(tmp_path/'local'); repo.save(result())
@@ -218,8 +218,8 @@ def test_identity_is_authenticated_and_does_not_expose_key(tmp_path):
 
 def test_token_only_setup_resolves_cloud_name(tmp_path, monkeypatch):
     from autofusex.fuzz import onboarding
-    from autofusex.fuzz.central.server import create_server
-    from autofusex.fuzz.central.repository import create_user
+    from autofusex.fuzz.server.central.server import create_server
+    from autofusex.fuzz.server.central.repository import create_user
     import threading
     server_db=tmp_path/'central.sqlite'
     identity=create_user(server_db,'niuyuhu')
@@ -229,7 +229,7 @@ def test_token_only_setup_resolves_cloud_name(tmp_path, monkeypatch):
             monkeypatch.setattr(onboarding,'ENDPOINT',f'http://127.0.0.1:{server.server_port}')
             # Production configure enforces HTTPS; this local fixture only tests
             # real identity authentication and config identity assignment.
-            from autofusex.fuzz.sync import client
+            from autofusex.fuzz.client.sync import client
             monkeypatch.setattr(client,'configure',lambda *args:None)
             home=tmp_path/'client'
             result=onboarding.initialize_user(home,identity['token'],start_sync=False)

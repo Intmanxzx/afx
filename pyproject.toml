@@ -13,7 +13,7 @@ dependencies = ["PyYAML>=6.0,<7", "jsonschema>=4.18,<5", "cryptography>=41"]
 [project.optional-dependencies]
 execution = [
   "numpy",
-  "nnsmith @ git+https://github.com/Intmanxzx/nnsmith.git@9d7f4d16aaeda931e1d79a2f91dbd09d72f86ab3",
+  "nnsmith @ https://github.com/Intmanxzx/nnsmith/releases/download/v0.1.2/nnsmith-0.1.2+autofusex.1-py3-none-any.whl",
 ]
 
 [project.scripts]
@@ -25,4 +25,4 @@ include = ["afx*", "autofusex*"]
 
 [tool.setuptools.package-data]
 # Offline and cloud viewers share these prebuilt assets.
-autofusex = ["fuzz/view/static/*"]
+autofusex = ["fuzz/server/view/static/*"]

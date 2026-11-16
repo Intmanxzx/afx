@@ -5,9 +5,9 @@ import uuid
 
 import pytest
 from test_fuzz_retests import setup
-from autofusex.fuzz.central import repairs,issue_groups,retests
-from autofusex.fuzz.management.central import Conflict
-from autofusex.fuzz.storage.repository import _connect
+from autofusex.fuzz.server.central import repairs,issue_groups,retests
+from autofusex.fuzz.daemon.management.central import Conflict
+from autofusex.fuzz.client.storage.repository import _connect
 
 
 def request(**values):return dict(request_key=str(uuid.uuid4()),**values)
@@ -77,9 +77,9 @@ def test_atomic_retest_and_summary_requires_evidence(setup):
 
 @pytest.mark.parametrize("performance", [False, True])
 def test_verified_summary_is_unique_and_linked(setup, performance):
-    from autofusex.fuzz.storage.repository import ResultRepository
-    from autofusex.fuzz.sync.outbox import pending
-    from autofusex.fuzz.central.repository import ingest
+    from autofusex.fuzz.client.storage.repository import ResultRepository
+    from autofusex.fuzz.client.sync.outbox import pending
+    from autofusex.fuzz.server.central.repository import ingest
     database,alice,bob,attempt,client,_=setup
     if performance:
         with closing(_connect(database,writable=True)) as db,db:
@@ -117,7 +117,7 @@ def test_http_repair_claim_renew_release_and_experience(setup):
     import threading
     from urllib.request import Request,build_opener,ProxyHandler
     from urllib.error import HTTPError
-    from autofusex.fuzz.central.server import create_server
+    from autofusex.fuzz.server.central.server import create_server
     database,_,bob,*_=setup
     server=create_server(database,0)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()

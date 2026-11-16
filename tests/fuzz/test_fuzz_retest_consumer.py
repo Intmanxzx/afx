@@ -1,15 +1,15 @@
 """Consumer uses stable local IDs and a common scheduler, never shell commands."""
-from autofusex.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
 import copy
 from dataclasses import asdict
 import json
 import uuid
 
 import pytest
-from autofusex.fuzz.sync.retests import accept, initialize, expected_workload
-from autofusex.fuzz.scheduling.ledger import TaskLedger
-from autofusex.fuzz.scheduling.budgets import Budget
-from autofusex.fuzz.contracts import EvaluationConfig
+from autofusex.fuzz.client.sync.retests import accept, initialize, expected_workload
+from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+from autofusex.fuzz.client.scheduling.budgets import Budget
+from autofusex.fuzz.client.contracts import EvaluationConfig
 
 
 def lease():
@@ -42,7 +42,7 @@ def test_remote_parameters_do_not_become_commands(tmp_path):
 
 
 def test_reproduction_guard_precedes_backend_execution(tmp_path,monkeypatch):
-    from autofusex.fuzz.scheduling.stage_worker import perform
+    from autofusex.fuzz.client.scheduling.stage_worker import perform
     from autofusex.fuzz import generation
     # Import consumers before patching: execute imports workload_id by value.
     from autofusex.fuzz import execution
@@ -53,10 +53,10 @@ def test_reproduction_guard_precedes_backend_execution(tmp_path,monkeypatch):
 
 
 def test_consumer_does_not_start_unrelated_pending_queue(tmp_path,monkeypatch):
-    from autofusex.fuzz.sync.retests import Consumer
-    from autofusex.fuzz.contracts import ExecutionConfig
-    from autofusex.fuzz.config import setup
-    from autofusex.fuzz.scheduling import hosting
+    from autofusex.fuzz.client.sync.retests import Consumer
+    from autofusex.fuzz.client.contracts import ExecutionConfig
+    from autofusex.fuzz.client.config import setup
+    from autofusex.fuzz.client.scheduling import hosting
     home=tmp_path/'home';setup(home,cpu_workers=1,compile_threads=1)
     consumer=Consumer(home,home/'results/results.sqlite',devices=['npu:0'])
     consumer.ledger.enqueue(str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(16).value),ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
@@ -68,9 +68,9 @@ def test_consumer_does_not_start_unrelated_pending_queue(tmp_path,monkeypatch):
 
 
 def test_consumer_waits_for_combined_queue_before_claiming(tmp_path,monkeypatch):
-    from autofusex.fuzz.sync.retests import Consumer
-    from autofusex.fuzz.contracts import ExecutionConfig
-    from autofusex.fuzz.config import setup
+    from autofusex.fuzz.client.sync.retests import Consumer
+    from autofusex.fuzz.client.contracts import ExecutionConfig
+    from autofusex.fuzz.client.config import setup
     home=tmp_path/'home';setup(home,cpu_workers=1,compile_threads=1)
     consumer=Consumer(home,home/'results/results.sqlite',devices=['npu:0'])
     consumer.ledger.enqueue(str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(16).value),ExecutionConfig('cpu','cpu',1,scheduling='combined'),EvaluationConfig())

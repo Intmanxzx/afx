@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 import time
-from autofusex.fuzz.reporting.shared_content import intern_text
+from autofusex.fuzz.server.reporting.shared_content import intern_text
 
 p = argparse.ArgumentParser()
 p.add_argument('output', type=Path)

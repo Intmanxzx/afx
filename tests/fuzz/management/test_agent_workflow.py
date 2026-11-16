@@ -10,13 +10,13 @@ import time
 
 import pytest
 
-from autofusex.fuzz.management import cli
-from autofusex.fuzz.management.config import canonical
-from autofusex.fuzz.management.daemon import request
-from autofusex.fuzz.management.results import read
-from autofusex.fuzz.management.store import Store
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.daemon.management import cli
+from autofusex.fuzz.daemon.management.config import canonical
+from autofusex.fuzz.daemon.runtime import request
+from autofusex.fuzz.daemon.management.results import read
+from autofusex.fuzz.daemon.management.store import Store
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
 
 
 def spec():
