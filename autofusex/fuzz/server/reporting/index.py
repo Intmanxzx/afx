@@ -142,11 +142,13 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     conn.execute('INSERT INTO case_facts VALUES (?,?,?,?,?,?,?)',(row['workload_id'],row['seed'],canonical(metadata),metadata.get('n_nodes'),max_dim,max_elements,len(metadata.get('shape_variants',[]))))
     conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text))
     dimensions={'op':sorted(set(metadata.get('op_types',[]))),'dtype':sorted(set(metadata.get('input_dtypes',{}).values())|set(metadata.get('output_dtypes',{}).values()))}
-    categories={'Elementwise':{'add','mul','neg','relu'},'Reduce':{'sum','mean','amin','amax'},'Transpose':{'transpose'}}
-    dimensions['category']=[name for name,ops in categories.items() if ops.intersection(dimensions['op'])]
     from ...client.generation.categories import OP_CATEGORY
-    dimensions['category']=sorted(set(dimensions['category']) |
-        {OP_CATEGORY[op] for op in dimensions['op'] if op.startswith('aten.') and op in OP_CATEGORY})
+    # Reporting names can combine overloads; classify the captured ATen targets
+    # so display aliases never discard or misclassify an operator category.
+    graph = metadata.get('graph', {})
+    targets = [node['op'] for node in graph.get('nodes', [])]
+    dimensions['category'] = sorted({OP_CATEGORY[op] for op in targets if op in OP_CATEGORY} |
+        ({'Reduce'} if graph.get('reduce_axis') is not None else set()))
     for dimension,values in dimensions.items():
         conn.executemany('INSERT INTO case_dimensions VALUES (?,?,?)',[(row['workload_id'],dimension,value) for value in values])
 

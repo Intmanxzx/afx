@@ -99,3 +99,22 @@ def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
     assert first['backends']['cpu'][0]['total_ns']==15
     rebuild(central)
     assert ResultQueries(central).case_page()['items'][0]==first
+
+
+def test_categories_follow_targets_when_display_names_differ(tmp_path, monkeypatch):
+    from fuzz_fixtures import bundle
+    from autofusex.fuzz.client.case_spec import encode
+    from autofusex.fuzz.server.reporting import report
+    from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
+    selected = [next(rule for rule in RULES if rule.category == category)
+                for category in ('Reduce', 'Reshape', 'Transpose', 'Broadcast', 'Split')]
+    metadata = {'op_types': [rule.display_name for rule in selected],
+                'graph': {'nodes': [{'op': rule.target} for rule in selected], 'reduce_axis': None}}
+    monkeypatch.setattr(report, 'spec_metadata', lambda _: metadata)
+    spec = bundle().spec
+    item = record(); item['seed'] = str(spec.seed); item['execution']['case_spec'] = encode(spec)
+    repo = ResultRepository(tmp_path/'db'); repo.save(item)
+    for _ in range(2):
+        with sqlite3.connect(repo.path) as conn:
+            assert {row[0] for row in conn.execute("SELECT value FROM case_dimensions WHERE dimension='category'")} == {rule.category for rule in selected}
+        rebuild(repo.path)

@@ -104,7 +104,7 @@ def validate_stamp(value):
 
 
 def ingest(path,key,batch):
-    from ..central.repository import authenticate_upload
+    from ...server.central.repository import authenticate_upload
     from ..storage.lifecycle import initialize as init_lifecycle, EVENTS
     if not isinstance(batch,dict) or batch.get('version')!=1 or not isinstance(batch.get('items'),list) or not 1<=len(batch['items'])<=25:
         raise ValueError('invalid fact protocol')
@@ -172,7 +172,7 @@ def ingest(path,key,batch):
                 old=conn.execute('SELECT payload FROM stage_windows_v1 WHERE window_id=?',(identity,)).fetchone()
                 if old and json.loads(old[0])!=p:raise ValueError('immutable window conflict')
                 conn.execute('INSERT OR IGNORE INTO stage_windows_v1 VALUES (?,?)',(identity,json.dumps(p)))
-                from ..reporting.efficiency import statistics
+                from ...server.reporting.efficiency import statistics
                 aggregates=[r for r in statistics(conn) if r['window_id']==identity]
                 conn.execute('INSERT OR REPLACE INTO stage_window_aggregates_v1 VALUES (?,?)',(identity,json.dumps(aggregates)))
                 from ..storage.stage_facts import retain
