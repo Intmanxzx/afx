@@ -19,8 +19,8 @@ root=Path(sys.argv[1]).resolve();root.mkdir(parents=True,exist_ok=False,mode=0o7
 fixture=setup_fixture.__wrapped__(root)
 database,alice,bob,attempt,client,payload=fixture
 if "--structured" in sys.argv[2:]:
-    from autofusex.fuzz.reporting.materialized import migrate
-    migrate(database)
+    from autofusex.fuzz.reporting.materialized import rebuild
+    rebuild(database)
 server=create_server(database,0,cache_interval=.2)
 subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(root/'key.pem'),
     '-out',str(root/'cert.pem'),'-days','1','-subj','/CN=localhost'],check=True,capture_output=True)

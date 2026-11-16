@@ -8,7 +8,7 @@ from autofusex.fuzz.contracts import Seed
 from autofusex.fuzz.generation import plan
 
 
-def audit(count, versions=(3,4,5,6), config=None):
+def audit(count, versions=(11,12), config=None):
     from autofusex.fuzz.generation.sampling import SamplingConfig
     config = config or SamplingConfig()
     rng=random.Random(20261110)
@@ -16,8 +16,7 @@ def audit(count, versions=(3,4,5,6), config=None):
     for _ in range(count):
         entropy=rng.randrange(36**9)
         for version in versions:
-            seed=(config.seed(entropy % 2**32, dynamic=version==6) if version in {5,6}
-                  else Seed((version-1)*2**128+entropy))
+            seed=config.seed(entropy % 2**32, dynamic=version==12)
             try:spec=plan(seed)
             except Exception as exc:
                 errors[f'{version}:{type(exc).__name__}']+=1
@@ -41,7 +40,7 @@ def audit(count, versions=(3,4,5,6), config=None):
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--count',type=int,default=256)
     parser.add_argument('--output',required=True)
-    parser.add_argument('--versions', nargs='+', type=int, default=[3,4,5,6], choices=[3,4,5,6])
+    parser.add_argument('--versions', nargs='+', type=int, default=[11,12], choices=[11,12])
     args=parser.parse_args()
     if not 1<=args.count<=10000:parser.error('count must be 1..10000')
     result=audit(args.count, tuple(args.versions));Path(args.output).write_text(json.dumps(result,indent=2))

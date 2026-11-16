@@ -121,15 +121,15 @@ def test_local_torch_traceback_outranks_shared_af_failure():
 
 
 @pytest.mark.parametrize('gate,shortfall,expected', [
-    ('lowering', 'yes', 'mlir_failed'),
-    ('lowering', 'no', 'mlir_failed'),
-    ('candidate-preparation', 'yes', 'mlir_failed'),
-    ('artifact-assembly', 'no', 'mlir_failed'),
-    ('exception', 'unknown', 'mlir_failed'),
+    ('lowering', 'yes', 'unconfirmed'),
+    ('lowering', 'no', 'unconfirmed'),
+    ('candidate-preparation', 'yes', 'unconfirmed'),
+    ('artifact-assembly', 'no', 'unconfirmed'),
+    ('exception', 'unknown', 'unconfirmed'),
     ('none', 'no', 'unconfirmed'),
     ('cube-fusion', 'no', 'unconfirmed'),
 ])
-def test_mlir_path_uses_failed_verdict_not_shortfall_alone(gate, shortfall, expected):
+def test_old_debug_gate_is_not_a_producer_verdict(gate, shortfall, expected):
     from autofusex.fuzz.reporting.failure_origin import mlir_failure_evidence
     diag = {'shapes': {'0': {'error':
         f'Codegen generate kernel failed\nAF_MLIR_STRICT gate={gate} shortfall={shortfall}'}}}
@@ -139,7 +139,7 @@ def test_mlir_path_uses_failed_verdict_not_shortfall_alone(gate, shortfall, expe
 
 def test_mlir_shared_log_never_labels_another_shape():
     from autofusex.fuzz.reporting.failure_origin import failure_path
-    diag = {'error': 'AF_MLIR_STRICT gate=lowering shortfall=yes',
+    diag = {'error': 'MLIR Codegen Result: kFailed',
             'shapes': {'0': {'error': 'Codegen generate kernel failed'},
                        '1': {'error': 'Codegen generate kernel failed'}}}
     assert failure_path('af-mlir', 'error', '', '', diag, 0) == 'unconfirmed'
@@ -156,7 +156,7 @@ def test_mlir_failure_path_consistent_across_surfaces(tmp_path):
     repo = ResultRepository(tmp_path/'db')
     row = record('af-mlir', ['error', 'error', 'error'])
     row['execution']['diagnostics'] = json.dumps({'version': 1, 'shapes': {
-        '0': {'error': 'AF_MLIR_STRICT gate=lowering shortfall=no'},
+        '0': {'error': 'MLIR Codegen Result: kFailed'},
         '1': {'error': 'Codegen generate kernel failed'},
         '2': {'error': 'UnsupportedIndexExpr'}}})
     identity = repo.save(row)
@@ -186,7 +186,7 @@ def test_mlir_failure_path_consistent_across_surfaces(tmp_path):
 
 def test_missing_shape_logs_are_not_single_shape_proof():
     from autofusex.fuzz.reporting.failure_origin import failure_path
-    diag = {'error': 'AF_MLIR_STRICT gate=lowering shortfall=yes',
+    diag = {'error': 'MLIR Codegen Result: kFailed',
             'shapes': {'0': {'error': 'Codegen generate kernel failed'}}}
     assert failure_path('af-mlir', 'error', '', '', diag, 0) == 'unconfirmed'
     assert failure_path('af-mlir', 'error', '', '', diag, 0, shape_count=3) == 'unconfirmed'
@@ -197,8 +197,8 @@ def test_missing_shape_logs_are_not_single_shape_proof():
     ('ok', 'RunMlirCodegen failed', 'not_applicable'),
     ('fail', 'RunMlirCodegen failed', 'not_applicable'),
     ('error', 'Codegen generate kernel failed', 'unconfirmed'),
-    ('error', 'RunMlirCodegen failed: bad lowering', 'mlir_failed'),
-    ('error', 'no plan with an MLIR-supported template', 'mlir_failed'),
+    ('error', 'RunMlirCodegen failed: bad lowering', 'unconfirmed'),
+    ('error', 'no plan with an MLIR-supported template', 'unconfirmed'),
 ])
 def test_mlir_path_is_only_a_function_failure_subcategory(status, summary, expected):
     from autofusex.fuzz.reporting.failure_origin import failure_path
@@ -213,7 +213,7 @@ def test_mlir_evidence_http_and_retry_cache(tmp_path):
     repo = ResultRepository(tmp_path/'db')
     row = record('af-mlir', ['error'])
     row['execution']['diagnostics'] = json.dumps({'version': 1, 'error':
-        'AF_MLIR_STRICT gate=lowering shortfall=no', 'shapes': {}})
+        'MLIR Codegen Result: kFailed', 'shapes': {}})
     identity = repo.save(row)
     inc = IncrementalStatistics(repo.path)
     assert inc.refresh()['failure_path'] == [{'label': 'mlir_failed', 'status': 'error', 'count': 1}]
@@ -224,7 +224,7 @@ def test_mlir_evidence_http_and_retry_cache(tmp_path):
             with urlopen(server.viewer_url+'api/attempts/'+identity+'?shape=0') as r:
                 evidence = json.load(r)['mlir_failure']
                 assert evidence == {'path': 'mlir_failed', 'scope': 'run',
-                    'evidence': 'AF_MLIR_STRICT gate=lowering shortfall=no'}
+                    'evidence': 'MLIR Codegen Result: kFailed'}
             query = urlencode({'q': "WHERE failure_path = 'mlir_failed'"})
             with urlopen(server.viewer_url+'api/summary?'+query) as r:
                 assert json.load(r)['total'] == 1
@@ -261,7 +261,7 @@ def test_new_shared_verdict_precedes_local_legacy_evidence():
             'shapes': {'0': {'error': 'RunMlirCodegen failed'}}}
     assert failure_path('af-mlir', 'error', '', '', diag, 0, 1) == 'unconfirmed'
     # The shared verdict cannot be attributed across Shapes.
-    assert failure_path('af-mlir', 'error', '', '', diag, 0, 3) == 'mlir_failed'
+    assert failure_path('af-mlir', 'error', '', '', diag, 0, 3) == 'unconfirmed'
 
 
 def test_debug_result_survives_error_log_tail():

@@ -1,4 +1,5 @@
 """Shape-case UI acceptance, including DAG details and full-value tooltips."""
+from autofusex.fuzz.generation.sampling import SamplingConfig
 import json,sys,threading,re
 from pathlib import Path
 from playwright.sync_api import sync_playwright,expect
@@ -11,8 +12,8 @@ from fuzz_fixtures import bundle, three_shapes_spec
 root=Path(sys.argv[1]);root.mkdir(exist_ok=True);repo=ResultRepository(root/'results.sqlite')
 if not repo.path.exists():
  for backend in ['cpu','af-mlir','triton-npu']:
-  repo.save({'seed':str(2*2**128+42),'workload_id':workload_id(bundle()),'oracle_id':'ref/1','backend':backend,'status':'ok' if backend=='cpu' else 'error',
-   'execution':{'case_spec':encode(three_shapes_spec()),'backend':backend,'batch_id':'probe','diagnostics':json.dumps({'version':1,'error':'error: UnsupportedOperation: '+('long compiler detail '*15),'shapes':{'1':{'error':'selected shape failure'}}}),'telemetry':json.dumps({'version':1,'stages':{'execution_total':9000000000},'shapes':{str(i):{'first_call_combined':1100000000+i} for i in range(3)}})},
+  repo.save({'seed':str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(42).value),'workload_id':workload_id(bundle()),'oracle_id':'ref/1','backend':backend,'status':'ok' if backend=='cpu' else 'error',
+   'execution':{'case_spec':encode(three_shapes_spec()),'backend':backend,'batch_id':'probe','diagnostics':json.dumps({'version':1,'error':'error: UnsupportedOperation: '+('long compiler detail '*15),'shapes':{'1':{'error':'selected shape failure'}}}),'telemetry':json.dumps({'version':2,'stages':{'execution_total':9000000000},'shapes':{str(i):{'first_call_combined':1100000000+i} for i in range(3)}})},
    'shape_results':[{'shape_index':i,'correctness':'error' if i==1 and backend!='cpu' else 'pass','performance':'not_requested'} for i in range(3)]},environment={'device_name':'tester','cann':'9.3'})
 with create_server(repo.path) as server:
  t=threading.Thread(target=server.serve_forever);t.start()

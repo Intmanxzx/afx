@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import time
 
-from autofusex.fuzz.reporting.materialized import migrate
+from autofusex.fuzz.reporting.materialized import rebuild
 from autofusex.fuzz.reporting.cases import rollup
 from autofusex.fuzz.reporting.statistics import statistics
 from autofusex.fuzz.storage.repository import _connect
@@ -21,7 +21,7 @@ with closing(_connect(path)) as c:
 print(json.dumps(report),flush=True)
 t=time.monotonic();old=statistics(path,_timeout=600);report['legacy_statistics_seconds']=time.monotonic()-t
 print(json.dumps(report),flush=True)
-t=time.monotonic();report['migration']=migrate(path);report['migration_seconds']=time.monotonic()-t
+t=time.monotonic();report['migration']=rebuild(path);report['migration_seconds']=time.monotonic()-t
 print(json.dumps(report),flush=True)
 with closing(_connect(path)) as c:
     c.row_factory=__import__('sqlite3').Row

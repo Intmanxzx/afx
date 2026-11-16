@@ -1,5 +1,5 @@
 """Owned result schema; unknown versions are rejected, never silently migrated."""
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 APPLICATION_ID = 0x4146465A
 DDL = """
 CREATE TABLE contexts (

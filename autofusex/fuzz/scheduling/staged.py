@@ -155,10 +155,10 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             # The CPU reference is shared by all target sessions and is
             # recorded exactly once, after the target verdict is durable in the
             # stage DAG (the record workers may run in parallel afterwards).
-            if any(json.loads(t['execution'])['backend'] in {'cpu','cpu-eager'}
+            if any(json.loads(t['execution'])['backend'] in {'cpu'}
                    for t in case.tasks):
                 cpu_task = next(t for t in case.tasks
-                                if json.loads(t['execution'])['backend'] in {'cpu','cpu-eager'})
+                                if json.loads(t['execution'])['backend'] in {'cpu'})
                 cpu_session = next(x for x in sessions.values() if x.task['id'] == cpu_task['id'])
                 if not has_record(case, cpu_session.identity):
                     result = json.loads(json.dumps(case.reference['result']))
@@ -212,7 +212,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                         wall += timedelta(microseconds=(mono-case.admitted['monotonic_ns'])/1000)
                         events[name] = dict(case.admitted, monotonic_ns=mono, wall_time=wall.isoformat())
                 job['provenance']={'device_uuid':session.uuid,'device_model':next((d.model for d in pool.devices if d.uuid==session.uuid),None)}
-                job.update(result=s.output['result'],save=json.loads(session.task['execution']).get('save_results',True),
+                job.update(result=s.output['result'],save=json.loads(session.task['execution'])['save_results'],
                            database=str(database),attempt_id=session.task['attempt_id'],task=session.task,events=events,home=str(ledger.path.parent.parent))
             return job
 
@@ -242,7 +242,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     # CPU is the once-per-Case reference, not a second target
                     # self-comparison. CPU correctness remains not_checked;
                     # target sessions compare against this shared artifact.
-                    if json.loads(t['execution'])['backend'] in {'cpu','cpu-eager'}:continue
+                    if json.loads(t['execution'])['backend'] in {'cpu'}:continue
                     combined=stage(Kind.COMBINED,case,(s,),ss)
                     stage(Kind.COMPARE,case,(combined,ref),ss)
             elif s.kind==Kind.REFERENCE:

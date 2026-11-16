@@ -4,7 +4,7 @@ from autofusex.fuzz.reporting.statistics import statistics
 
 
 def save(repo, batch, backend, status, *, user='alice'):
-    return repo.save({'seed':'680564733841876926926749214863536422954','workload_id':'a'*64,'oracle_id':'ref/1','backend':backend,
+    return repo.save({'seed':'14615016373650978276328604632813839116929039597610','workload_id':'a'*64,'oracle_id':'ref/1','backend':backend,
         'status':status,'execution':{'backend':backend,'batch_id':batch},'shape_results':[{'shape_index':0,'correctness':{'ok':'pass','error':'error','fail':'fail'}[status],'performance':'not_requested','error_summary':'Codegen generate kernel failed' if status=='error' else ''}]},
         environment={'installation_id':user,'user_id':user,'device_name':user})
 

@@ -1,4 +1,4 @@
-"""Captured NNSmith metadata for unit tests, never a runtime replay cache."""
+"""Synthetic current-protocol metadata for unit tests, never a runtime replay cache."""
 from pathlib import Path
 from dataclasses import replace
 from autofusex.fuzz.case_spec import decode
@@ -10,8 +10,8 @@ CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='floa
 SECOND_CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(4))
 
 
-def bundle(seed='C16'):
-    spec=decode((Path(__file__).parent/'fixtures/nnsmith-c16.json').read_text())
+def bundle(seed=None):
+    spec=decode((Path(__file__).parent/'fixtures/current-query.json').read_text())
     tensors=(*spec.inputs,*spec.weights)
     raw=[b'']*len(tensors)
     for tensor in tensors:raw[tensor.alias_group]=bytes(4*math.prod(tensor.shape))
@@ -22,4 +22,7 @@ def three_shapes_spec():
     spec=bundle().spec
     # Query-only fixture: distinct shapes test projection, not graph validity.
     samples=tuple(tuple(replace(t,shape=(i+1,*t.shape[1:])) if t.shape else t for t in spec.inputs) for i in range(3))
-    return replace(spec,shape_samples=samples,output_samples=spec.output_samples*3)
+    graph=__import__('json').loads(spec.graph_json)
+    config=SamplingConfig(**dict(graph['sampling'],dynamic_variants=3))
+    graph['sampling']=__import__('dataclasses').asdict(config)
+    return replace(spec,seed=config.seed(42,dynamic=True),graph_json=__import__('json').dumps(graph,sort_keys=True,separators=(',',':')),shape_samples=samples,output_samples=spec.output_samples*3)

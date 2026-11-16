@@ -1,4 +1,4 @@
-"""Current C2/D2 NNSmith ATen generation and canonical values."""
+"""Current E/F NNSmith ATen generation and canonical values."""
 from functools import lru_cache
 import hashlib
 import math
@@ -20,12 +20,11 @@ def _tensor(name, abstract, alias=0):
 @lru_cache(maxsize=8)
 def plan(token):
     seed = Seed.parse(token)
-    seed.require_current()
     config, random_seed = decode(seed)
     evidence = source_evidence()
     from nnsmith.abstract import op as pinned_ops
     if pinned_ops.__MAX_RANK__ != 5:
-        raise ValueError('C2/D2 requires default NNSMITH_MAX_RANK=5; environment must not alter replay')
+        raise ValueError('E/F requires default NNSMITH_MAX_RANK=5; environment must not alter replay')
     from nnsmith.abstract.dtype import DType
     from nnsmith.graph_gen import model_gen
     import random

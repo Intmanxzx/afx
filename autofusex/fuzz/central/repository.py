@@ -22,6 +22,9 @@ def initialize(path):
         conn.execute('CREATE TABLE IF NOT EXISTS owners (attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), user_id TEXT NOT NULL REFERENCES users(id))')
         from .issue_groups import initialize as initialize_issues
         initialize_issues(conn)
+        from ..reporting.materialized import installed, refresh
+        if not installed(conn):
+            refresh(conn)
 
 
 def create_user(path, display_name, key_file=None):

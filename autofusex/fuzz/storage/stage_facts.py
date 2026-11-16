@@ -36,7 +36,7 @@ def publish(conn,kind,identity,payload):
 
 
 def save_case(database,case,sessions,window_id,start,pool):
-    saved=[t for t in case.tasks if json.loads(t['execution']).get('save_results',True)]
+    saved=[t for t in case.tasks if json.loads(t['execution'])['save_results']]
     if not saved:return
     with closing(_connect(database,writable=True)) as conn,conn:
         initialize(conn)

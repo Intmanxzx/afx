@@ -82,7 +82,7 @@ async function details(identity, shapeIndex=null) {
     result.created_at = beijing(result.created_at);
     $('detail-content').textContent = '';
     $('detail-content').parentElement.hidden=true;
-    $('detail-message').textContent = result.replay_supported===false?'内测历史记录：不支持重放，请启动新的 C2/D2 批次。':''; $('copy').disabled = !result.replay_command;
+    $('detail-message').textContent = ''; $('copy').disabled = !result.replay_command;
     document.querySelectorAll('.page').forEach(el=>el.hidden=true);
     $('page-title').textContent='用例详情 · '+result.seed_short;
     $('detail').scrollIntoView({behavior:'smooth',block:'start'});
@@ -124,7 +124,7 @@ function seconds(ns){return ns==null?null:(ns/1e9).toFixed(1)+' s';}
 function recordAttempt(item, column=''){
  const backend=column.includes(':')?column.split(':')[0]:null;
  return (backend&&item.backends[backend]?.[0])||item.backends['af-mlir']?.[0]||
-  Object.entries(item.backends).find(([name,attempts])=>!['cpu','cpu-eager'].includes(name)&&attempts.length)?.[1][0]||
+  Object.entries(item.backends).find(([name,attempts])=>name!=='cpu'&&attempts.length)?.[1][0]||
   Object.values(item.backends).find(attempts=>attempts.length)?.[0];
 }
 function openRecord(item, column=''){
@@ -192,7 +192,7 @@ function renderRecords(items){
  else if(c.key==='inputs'){td.textContent=tensorText(item.sample?.input_shapes,item.metadata.weights,item.sample?.input_dtypes||item.metadata.input_dtypes);populated=!!td.textContent;}
  else if(c.key==='mode'){td.textContent=item.shape_mode==='static'?'静态':'动态';populated=true;}
  else if(c.key==='user_name'){if(item.user_name&&item.user_name!=='设备未记录'){const button=document.createElement('button');button.type='button';button.className='text-link record-user';button.textContent=item.user_name;button.addEventListener('click',()=>openRecord(item));td.append(button);populated=true;}}
- else if(c.key==='time'){td.textContent=beijing(item.created_at);td.title=item.time_basis==='server_received'?'服务器首次入库时间':'旧记录：客户端保存时间（服务器入库时间未记录）';populated=true;}
+ else if(c.key==='time'){td.textContent=beijing(item.created_at);td.title='服务器首次入库时间';populated=true;}
  else if(c.key.includes(':')){const [b,kind]=c.key.split(':'),attempts=item.backends[b]||[],latest=attempts[0];
  if(latest){let text=null,state='';const log=b==='af-mlir'?(latest.run_log||''):latest.core_error;if(kind==='accuracy'){state=latest.correctness_status==='pass'?'pass':latest.correctness_status==='fail'?'accuracy-failed':'';text=state==='pass'?'Pass':state==='accuracy-failed'?'精度Failed':null;}
  if(kind==='function'){const category=latest.function_status||'unknown';state=category==='gen_failed'?'graph-failed':category==='function_failed'?'failed':category==='pass'?'pass':'';text=state==='pass'?'Pass':state==='graph-failed'?'构图Failed':state==='failed'?(latest.mlir_failure?.path==='mlir_failed'?'功能Failed · MLIR':'功能Failed · 路径未确认'):null;}
@@ -204,7 +204,7 @@ function renderRecords(items){
  if(text!==null){const button=document.createElement('button');button.className='text-link outcome-button '+state;button.textContent=text;if(kind==='total')button.title='当前 Shape 处理开始至要求的评估结束的墙钟跨度；不含共享准备，不等于 Kernel 耗时';if(kind==='logs'){button.title=log||text;button.classList.add('error-preview');}button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(latest.id)+'&shape='+item.shape_index;});td.append(button);populated=true;}
  if(attempts.length>1&&kind==='total'){const history=document.createElement('details'),summary=document.createElement('summary');history.className='history';summary.textContent=attempts.length+' 次运行';history.append(summary);for(const attempt of attempts){const button=document.createElement('button');button.className='text-link';button.textContent=beijing(attempt.created_at)+' · '+(seconds(attempt.total_ns)||'Unknown');button.addEventListener('click',()=>{location.hash='attempt='+encodeURIComponent(attempt.id)+'&shape='+item.shape_index;});history.append(button);}td.append(history);}
  caseMetadata.set(latest.id,item.metadata);}}
- else {const value=item.versions[c.key]??item[c.key];if(value&&value!=='historical-unrecorded'){td.textContent=value;populated=true;}}
+ else {const value=item.versions[c.key]??item[c.key];if(value){td.textContent=value;populated=true;}}
  if(!populated)td.append(unknown());if(populated)c.populated=true;
  }fragment.append(tr);
  const parent=item.historical?currentCaseItems.find(i=>i.case_id===item.case_id):item;

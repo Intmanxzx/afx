@@ -16,7 +16,7 @@ from autofusex.fuzz.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='POSIX process hosting')
-EX, EV = ExecutionConfig('cpu-eager','cpu',1), EvaluationConfig()
+EX, EV = ExecutionConfig('cpu','cpu',1), EvaluationConfig()
 
 
 def wait_finished(ledger, timeout=30):
@@ -144,7 +144,7 @@ sys.exit(hosting._child(*sys.argv[1:-1]))
 def test_background_rejects_npu_before_enqueue(tmp_path):
     ledger = TaskLedger(tmp_path/'queue')
     with pytest.raises(ValueError, match='strict NPU performance'):
-        hosting.launch(ledger,tmp_path/'results',[(CURRENT_SEED,ExecutionConfig('ascendc','npu:0'),EvaluationConfig(performance=True),None)])
+        hosting.launch(ledger,tmp_path/'results',[(CURRENT_SEED,ExecutionConfig('af-mlir','npu:0'),EvaluationConfig(performance=True),None)])
     assert ledger.page()['items'] == []
 
 

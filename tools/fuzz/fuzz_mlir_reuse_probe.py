@@ -5,6 +5,7 @@ Run with the installed NPU Python environment:
 Run baseline and candidate separately, with no competing managed NPU jobs.
 Timings include compilation/dispatch and are NOT kernel-only measurements.
 """
+from autofusex.fuzz.generation.sampling import SamplingConfig
 import argparse
 import json
 import time
@@ -37,7 +38,7 @@ def main():
     budget.admit(root)
     write_policy(ledger, budget)
     target = 'E9SQECC3GJ1J8KJBR869MZ1XHC'
-    for short in [target, 'C16', 'D16', target]:
+    for short in [target, SamplingConfig.profile('small',max_nodes=3,dtype_mode='float32').seed(42).short, SamplingConfig.profile('small',max_nodes=3,dtype_mode='float32').seed(42,True).short, target]:
         seed = Seed.parse(short)
         for device in ['npu:0', 'npu:1']:
             ledger.enqueue(seed, ExecutionConfig('af-mlir', device, args.compile_threads,

@@ -15,6 +15,7 @@ from ..storage.queries import ResultQueries
 
 
 class Server(HTTPServer):
+    request_queue_size = 128
     def __init__(self,*args,**kwargs):
         self.pool=ThreadPoolExecutor(max_workers=4)
         self.slots=threading.BoundedSemaphore(12)
@@ -22,8 +23,10 @@ class Server(HTTPServer):
     def get_request(self):
         conn,addr=super().get_request();conn.settimeout(15);return conn,addr
     def process_request(self,request,address):
-        if not self.slots.acquire(blocking=False):
-            self.shutdown_request(request);return
+        # Apply bounded backpressure at accept rather than dropping accepted
+        # requests. The executor has at most twelve admitted sockets; further
+        # connections wait in the kernel backlog without allocating workers.
+        self.slots.acquire()
         self.pool.submit(self.work,request,address)
     def work(self,request,address):
         try:
@@ -41,17 +44,23 @@ def create_server(database,port=8090, *, cache_interval=INTERVAL):
     from .maintenance import WriteAllowlist, MaintenanceBlocked, reject
     write_allowlist = WriteAllowlist.environment()
     database=Path(database).resolve();initialize(database);queries=ResultQueries(database)
+    from ..reporting.materialized import rebuild, ready
     from contextlib import closing
     from ..storage.repository import _connect
+    with closing(_connect(database)) as conn:
+        indexed = ready(conn)
+    if not indexed:
+        rebuild(database)
     from .runtime import initialize as initialize_runtime, connect as runtime_connect
     with closing(runtime_connect(database)) as conn,conn:initialize_runtime(conn)
     from .cache import PublicCache, PAGE_SIZES
     public_cache = PublicCache(database, interval=cache_interval)
     from .control_api import ControlAPI
-    from . import sessions, retests
+    from . import sessions, retests, repairs
     with closing(_connect(database, writable=True)) as conn, conn:
         sessions.initialize(conn)
         retests.initialize(conn)
+        repairs.initialize(conn)
     statistics_lock = threading.Lock()
     statistics_cache = {}
     def published_retest():

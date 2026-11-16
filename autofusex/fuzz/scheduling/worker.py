@@ -18,7 +18,7 @@ def run(queue, database, identity, claim):
     if task['state'] not in {'running', 'stop_requested'} or task['claim'] != claim:
         raise ValueError('worker claim is stale')
     from ..storage.lifecycle import append
-    if json.loads(task['execution']).get('save_results', True):
+    if json.loads(task['execution'])['save_results']:
         append(database, task['attempt_id'], 'started')
     config = ExecutionConfig(**json.loads(task['execution']))
     evaluation = EvaluationConfig(**json.loads(task['evaluation']))

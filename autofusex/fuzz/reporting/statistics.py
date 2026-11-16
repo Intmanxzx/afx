@@ -81,7 +81,7 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
         from .efficiency import statistics as efficiency
         selected_ids={r[0] for r in conn.execute(cte+'SELECT a.id'+base+where,values)} if any((seed,status,user_id,q)) else None
         result['tool_efficiency']['windows']=efficiency(conn,selected_ids,use_cached=True) if _group is None else []
-        result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
+        result['precise_metrics']=[r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu'})]
         result['errors']=[dict(r) for r in conn.execute(cte+"SELECT a.backend,a.error_stage,count(*) AS count"+base+where+' GROUP BY a.backend,a.error_stage',values) if r['error_stage']]
         result['case_groups']=conn.execute(cte+'SELECT count(DISTINCT a.group_id)'+base+where,values).fetchone()[0]
         result['attempts']=conn.execute(cte+'SELECT count(*)'+base+where,values).fetchone()[0]
@@ -96,7 +96,7 @@ def statistics(database, *, seed=None, status=None, user_id=None, q=None, _timeo
         result['failure_path'] = [dict(r) for r in conn.execute(cte +
             "SELECT failure_path AS label,status,count(*) AS count FROM cases "
             "WHERE status IN ('error','unsupported') GROUP BY failure_path,status", values)]
-        result['backend']=[dict(r) for r in conn.execute(cte+"SELECT backend AS label,CASE WHEN status IN ('error','unsupported') AND failure_path='mlir_failed' THEN 'mlir_failed' ELSE status END AS status,count(*) AS count FROM latest l WHERE EXISTS (SELECT 1 FROM cases c WHERE c.record_id=l.record_id AND c.shape_index=l.shape_index) AND backend NOT IN ('cpu','cpu-eager') GROUP BY backend,2",case_values)]
+        result['backend']=[dict(r) for r in conn.execute(cte+"SELECT backend AS label,CASE WHEN status IN ('error','unsupported') AND failure_path='mlir_failed' THEN 'mlir_failed' ELSE status END AS status,count(*) AS count FROM latest l WHERE EXISTS (SELECT 1 FROM cases c WHERE c.record_id=l.record_id AND c.shape_index=l.shape_index) AND backend != 'cpu' GROUP BY backend,2",case_values)]
         if _group is None:
             for row in result['backend']:row['label']=display_backend(row['label'])
         result['op']=case_grouped('d.value'," JOIN case_dimensions d ON d.workload_id=a.workload_id AND d.dimension='op'")

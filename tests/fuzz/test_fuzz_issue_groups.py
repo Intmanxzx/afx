@@ -15,10 +15,25 @@ def row(error, *, status='error', correctness='error', performance='skipped', fu
         measurement_status='not_requested', op_types=op_types)
 
 
+def install_rows(database, rows):
+    from contextlib import closing
+    from autofusex.fuzz.storage.repository import _connect
+    import json
+    with closing(_connect(database, writable=True)) as conn, conn:
+        conn.execute('DELETE FROM issue_cases_v1')
+        for row in rows:
+            dimension, category, message = issue_groups._dimension(row)
+            key, title = issue_groups._issue(dimension, category, message)
+            conn.execute('INSERT INTO issue_cases_v1 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (row['seed'],row['shape_index'],row['id'],row['status'],row['function_status'],
+                 row['core_error'],row['correctness'],row['performance'],row['error_summary'],
+                 json.dumps(row['op_types']),dimension,category,title,key))
+
+
 def groups(monkeypatch, tmp_path, rows):
     database = tmp_path / 'central.sqlite'
     create_user(database, 'Alice')
-    monkeypatch.setattr(issue_groups, '_rows', lambda path, limit=issue_groups.MAX_CASES: rows)
+    install_rows(database, rows)
     return issue_groups.list_groups(database)['items']
 
 
@@ -49,7 +64,7 @@ def test_claim_is_exclusive_and_can_be_released(monkeypatch, tmp_path):
     database = tmp_path / 'central.sqlite'
     alice = create_user(database, 'Alice')
     bob = create_user(database, 'Bob')
-    monkeypatch.setattr(issue_groups, '_rows', lambda path, limit=issue_groups.MAX_CASES: [row('same failure')])
+    install_rows(database, [row('same failure')])
     key = issue_groups.list_groups(database)['items'][0]['issue_key']
     assert issue_groups.claim(database, alice['user_id'], key)['owner_name'] == 'Alice'
     with pytest.raises(PermissionError):
@@ -61,7 +76,7 @@ def test_claim_is_exclusive_and_can_be_released(monkeypatch, tmp_path):
 def test_concurrent_claims_have_one_owner(monkeypatch, tmp_path):
     database = tmp_path / 'central.sqlite'
     users = [create_user(database, f'User {index}') for index in range(8)]
-    monkeypatch.setattr(issue_groups, '_rows', lambda path, limit=issue_groups.MAX_CASES: [row('same failure')])
+    install_rows(database, [row('same failure')])
     key = issue_groups.list_groups(database)['items'][0]['issue_key']
     def attempt(user):
         try:
@@ -92,18 +107,17 @@ def test_materialized_issue_index_is_used(tmp_path, monkeypatch):
         sessions.initialize(conn)
         retests.initialize(conn)
     local = ResultRepository(tmp_path / 'local.sqlite')
-    local.save(dict(seed=str(3 * 2**128 + 16), workload_id='a' * 64, oracle_id='cpu/1',
+    local.save(dict(seed=str(16076518010981881194532289465530122136584972140560), workload_id='a' * 64, oracle_id='cpu/1',
         backend='af-mlir', status='fail', execution=dict(backend='af-mlir', static_only=False),
         evaluation=dict(correctness=True, performance=False, warmup_steps=1, measured_steps=1),
         shape_results=[dict(shape_index=0, correctness='fail', performance='not_requested')]))
     ingest(database, alice['token'], pending(local.path))
-    materialized.migrate(database)
+    materialized.rebuild(database)
     with closing(_connect(database)) as conn:
         assert conn.execute('SELECT count(*) FROM issue_cases_v1').fetchone()[0] == 1
 
     def forbidden(*args, **kwargs):
         raise AssertionError('materialized issue index must be used')
-    monkeypatch.setattr(issue_groups, '_rows', forbidden)
     groups = issue_groups.list_groups(database, 'accuracy')['items']
     assert len(groups) == 1 and groups[0]['count'] == 1
 
@@ -122,9 +136,9 @@ def test_ingest_refreshes_materialized_issue_index(tmp_path, monkeypatch):
     with closing(_connect(database, writable=True)) as conn, conn:
         sessions.initialize(conn)
         retests.initialize(conn)
-    materialized.migrate(database)
+    materialized.rebuild(database)
     local = ResultRepository(tmp_path / 'local.sqlite')
-    local.save(dict(seed=str(3 * 2**128 + 16), workload_id='a' * 64, oracle_id='cpu/1',
+    local.save(dict(seed=str(16076518010981881194532289465530122136584972140560), workload_id='a' * 64, oracle_id='cpu/1',
         backend='af-mlir', status='fail', execution=dict(backend='af-mlir', static_only=False),
         evaluation=dict(correctness=True, performance=False, warmup_steps=1, measured_steps=1),
         shape_results=[dict(shape_index=0, correctness='fail', performance='not_requested')]))
@@ -134,7 +148,6 @@ def test_ingest_refreshes_materialized_issue_index(tmp_path, monkeypatch):
 
     def forbidden(*args, **kwargs):
         raise AssertionError('ingest must refresh the materialized issue index')
-    monkeypatch.setattr(issue_groups, '_rows', forbidden)
     assert len(issue_groups.list_groups(database, 'accuracy')['items']) == 1
 
 
@@ -148,7 +161,7 @@ def test_issue_retest_reuses_existing_control_plane(setup):
     from autofusex.fuzz.storage.repository import _connect
 
     database, _, bob, _, client, _ = setup
-    materialized.migrate(database)
+    materialized.rebuild(database)
     group = issue_groups.list_groups(database, 'accuracy')['items'][0]
     issue_groups.claim(database, bob['user_id'], group['issue_key'])
     answer = issue_groups.retest(database, bob['user_id'], group['issue_key'], client, 1, str(uuid.uuid4()))

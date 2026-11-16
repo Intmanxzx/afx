@@ -131,9 +131,9 @@ class Consumer:
             assigned=json.loads(policy[0]).get('devices') if policy else None
             self.devices=assigned or select_devices()
         with self.ledger._connection() as conn:
-            legacy=conn.execute("SELECT 1 FROM tasks WHERE state IN ('pending','running','stop_requested') AND json_extract(execution,'$.scheduling')!='staged' LIMIT 1").fetchone()
-        if legacy:
-            return {'state':'waiting_for_legacy_queue'}
+            standalone=conn.execute("SELECT 1 FROM tasks WHERE state IN ('pending','running','stop_requested') AND json_extract(execution,'$.scheduling')!='staged' LIMIT 1").fetchone()
+        if standalone:
+            return {'state':'waiting_for_combined_queue'}
         # Sync source, not installation identity: completion checks its actual
         # uploader provenance. Register even before any local result exists.
         from .outbox import pending

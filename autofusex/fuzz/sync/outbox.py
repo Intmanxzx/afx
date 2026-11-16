@@ -30,7 +30,7 @@ def pending(path, limit=50):
     with closing(_connect(path, writable=True)) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
         initialize(conn)
-        # Backfill results created before sync support or restored from snapshots.
+        # Enqueue current-format snapshots restored without private sync state.
         conn.execute('INSERT INTO sync_outbox(attempt_id) SELECT id FROM attempts WHERE NOT EXISTS (SELECT 1 FROM sync_outbox WHERE attempt_id=attempts.id) ORDER BY rowid')
         source, ack = conn.execute('SELECT source_id,ack FROM sync_identity WHERE id=1').fetchone()
         rows = conn.execute('SELECT revision,attempt_id FROM sync_outbox WHERE revision>? ORDER BY revision LIMIT ?', (ack,limit)).fetchall()

@@ -1,7 +1,7 @@
 """Isolated real-NPU retest API probe; never use production credentials/homes.
 
 Run in the configured mlir runtime: python tools/fuzz/fuzz_retest_e2e.py NEW_DIRECTORY
-Creates private users/database, replays D16, then validates cross-user retests on
+Creates private users/database, replays a current seed, then validates cross-user retests on
 both logical devices using the same scheduler. It does not stop existing work.
 """
 import argparse
@@ -32,8 +32,8 @@ def main():
     database=root/'central.sqlite'
     users=[create_user(database,name) for name in ('Original','Retester')]
     if args.structured:
-        from autofusex.fuzz.reporting.materialized import migrate
-        migrate(database)
+        from autofusex.fuzz.reporting.materialized import rebuild
+        rebuild(database)
     server=create_server(database,0,cache_interval=.5)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     endpoint=f'http://127.0.0.1:{server.server_port}'
@@ -54,7 +54,7 @@ def main():
             archive=original/f'baseline-{trial}.sqlite'
             with (root/f'baseline-{trial}.log').open('w') as log:
                 env=dict(os.environ,AUTOFUSEX_HOME=str(original))
-                completed=subprocess.run([sys.executable,'-m','autofusex.fuzz','replay','D00000000G',
+                completed=subprocess.run([sys.executable,'-m','autofusex.fuzz','replay','F0F8A5E5JE7A4QBAOWXZCIT10Y8',
                     '--backend','af-mlir','--device',f'npu:{trial%2}','--save','--database',str(archive),'--compile-threads','1'],
                     env=env,stdout=log,stderr=subprocess.STDOUT,timeout=240)
             if not completed.returncode:break

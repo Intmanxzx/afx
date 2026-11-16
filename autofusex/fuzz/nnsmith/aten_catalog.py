@@ -1,4 +1,4 @@
-"""Current C2/D2 catalog: functional ATen elementwise, comparison, reduction and views.
+"""Current E/F catalog: functional ATen elementwise, comparison, reduction and views.
 
 Import-light, ordered specifications; never discover a different random catalog
 from the local device or silently omit unavailable overloads. New rules require

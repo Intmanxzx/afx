@@ -31,6 +31,18 @@ def test_exclusive_same_user_agents_and_retries(setup):
     with pytest.raises(Conflict):repairs.mutate(database,bob['user_id'],'claim',dict(payload,agent_id='changed'))
 
 
+def test_committed_claim_retry_does_not_rebuild_current_issues(setup, monkeypatch):
+    database,_,bob,*_=setup
+    payload=request(agent_id='retry')
+    first=repairs.mutate(database,bob['user_id'],'claim',payload)
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('current issue projection unavailable')
+    monkeypatch.setattr(issue_groups,'_current',unavailable)
+    assert repairs.mutate(database,bob['user_id'],'claim',payload)==first
+    with pytest.raises(Conflict):
+        repairs.mutate(database,bob['user_id'],'claim',dict(payload,agent_id='changed'))
+
+
 def test_expiration_fences_old_owner_and_preserves_snapshot(setup):
     database,alice,bob,*_=setup
     first=claim(database,bob['user_id'])

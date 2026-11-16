@@ -84,6 +84,6 @@ def test_no_ab_seed_compatibility(value):
 
 def test_only_current_seed_roundtrip():
     from autofusex.fuzz.contracts import Seed
-    seed=Seed.parse('C000000016')
+    seed=Seed.parse('E0F8A5E5JE7A4QBAOWXZCIT10YY')
     assert Seed.parse(str(seed))==seed
-    assert seed.short=='C000000016'
+    assert seed.short=='E0F8A5E5JE7A4QBAOWXZCIT10YY'

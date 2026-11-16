@@ -47,10 +47,10 @@ def _tasks(ledger):
 def _validate_task(task):
     config = ExecutionConfig(**json.loads(task['execution']))
     evaluation = EvaluationConfig(**json.loads(task['evaluation']))
-    if config.backend in {'cpu', 'cpu-eager', 'cpu-compile'}:
+    if config.backend in {'cpu', 'cpu-compile'}:
         if config.device != 'cpu':
             raise ValueError('backend/device mismatch')
-    elif config.backend in {'ascendc', 'triton', 'npu-eager', 'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'}:
+    elif config.backend in {'eager-npu', 'triton-npu', 'af-legacy', 'af-mlir'}:
         import re
         if not re.fullmatch(r'npu:[0-9]+', config.device):
             raise ValueError('NPU requires explicit logical npu:index')
@@ -59,8 +59,8 @@ def _validate_task(task):
     else:
         raise ValueError('unsupported managed backend')
     from ..contracts import Seed
-    if 'seed' in task and not Seed.parse(task['seed']).current:
-        raise ValueError('retired template task; cannot resume with NNSmith')
+    if 'seed' in task:
+        Seed.parse(task['seed'])
     if type(config.compile_threads) is not int or not 1 <= config.compile_threads <= (os.cpu_count() or 1):
         raise ValueError('compile thread budget exceeds available CPU count')
 
@@ -70,7 +70,7 @@ def _has_result(database, task):
     from ..storage.transfer import _record
     from ..generation import materialize, workload_id, oracle_id
     import sqlite3
-    if not json.loads(task['execution']).get('save_results', True):
+    if not json.loads(task['execution'])['save_results']:
         return False
     if not database.exists():
         return False
@@ -154,7 +154,7 @@ def _worker_command(ledger, database, task):
 
 def _save_worker_failure(ledger, database, task, reason, log):
     """Persist a terminated attempt, but keep its task explicitly resumable."""
-    if not json.loads(task['execution']).get('save_results', True):
+    if not json.loads(task['execution'])['save_results']:
         return
     from ..storage import ResultRepository
     from ..environment import collect
@@ -185,7 +185,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 if row:staged_tasks=[c.get('scheduling') for c in json.loads(row[0])['configs']]
     if 'staged' in staged_tasks:
         if any(x != 'staged' for x in staged_tasks):
-            raise ValueError('cannot mix staged and legacy queued tasks; drain or stop existing queue first')
+            raise ValueError('cannot mix staged and combined queued tasks; drain or stop existing queue first')
         from .staged import drain as drain_staged
         return drain_staged(ledger,database,timeout=timeout,_owned_fd=_owned_fd,_ready=_ready)
     database = Path(database).expanduser().resolve()
@@ -219,7 +219,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             if child is not None: _terminate_group(child)
             log=state['tail'].finish() if state['tail'] is not None else ''
             state['scratch'].cleanup()
-            ephemeral_done=(not json.loads(task['execution']).get('save_results',True)
+            ephemeral_done=(not json.loads(task['execution'])['save_results']
                             and reason=='worker_exit:0:without_result')
             if ephemeral_done or _has_result(database,task):
                 ledger.complete(task['id'],task['claim']); return 'completed'
@@ -254,7 +254,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     state={'task':task,'scratch':scratch,'child':None,'tail':None,'deadline':time.monotonic()+timeout}
                     active[task['id']]=state
                     database.parent.mkdir(parents=True,exist_ok=True)
-                    if execution.get('save_results', True):
+                    if execution['save_results']:
                         observed = admission(ledger, task['id'])
                         if observed is not None:
                             append(database, task['attempt_id'], 'admitted', observed)

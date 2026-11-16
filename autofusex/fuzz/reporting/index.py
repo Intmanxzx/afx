@@ -2,10 +2,9 @@
 
 Additive extension: core result hashes and replication IDs never change. All facts
 are derived from frozen case protocol or recorded execution data, never today's
-machine versions. Rebuild only on explicit migration or insertion, not on reads.
+machine versions. Rebuild only on explicit rebuild or insertion, not on reads.
 """
 import json
-import re
 from contextlib import closing
 from ..storage.records import canonical, digest
 
@@ -15,13 +14,15 @@ CREATE TABLE IF NOT EXISTS report_schema(version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS case_facts(
  workload_id TEXT PRIMARY KEY, seed TEXT NOT NULL, metadata TEXT NOT NULL,
  nodes INTEGER, max_dim INTEGER, max_elements INTEGER, shape_count INTEGER);
-CREATE TABLE IF NOT EXISTS attempt_facts(
+CREATE TABLE IF NOT EXISTS report_versions(
+ id INTEGER PRIMARY KEY, payload TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS attempt_provenance(
  attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), group_id TEXT NOT NULL,
  source_id TEXT NOT NULL, device_name TEXT, user_id TEXT, batch_id TEXT,
- versions TEXT NOT NULL, execution TEXT NOT NULL, evaluation TEXT NOT NULL,
+ version_id INTEGER NOT NULL REFERENCES report_versions(id),
  total_ns INTEGER, duration_scope TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS report_groups ON attempt_facts(group_id);
-CREATE INDEX IF NOT EXISTS report_group_attempt ON attempt_facts(group_id,attempt_id);
+CREATE INDEX IF NOT EXISTS report_group_attempt ON attempt_provenance(group_id,attempt_id);
+CREATE INDEX IF NOT EXISTS agent_result_batch ON attempt_provenance(batch_id,attempt_id);
 CREATE TABLE IF NOT EXISTS stage_metrics(
  attempt_id TEXT NOT NULL REFERENCES attempts(id), shape_index INTEGER NOT NULL,
  stage TEXT NOT NULL, duration_ns INTEGER NOT NULL,
@@ -42,28 +43,36 @@ def initialize(conn):
     # execute individually: executescript would commit caller's ingestion transaction.
     for statement in DDL.split(';'):
         if statement.strip(): conn.execute(statement)
-    # A separate AUTOINCREMENT sequence cannot be reused after deleting the last
-    # attempt. Existing timestamps are unknown; preserve their original order.
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
-        conn.execute('CREATE TABLE attempt_arrivals_v2 (sequence INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(id) ON DELETE CASCADE, received_at TEXT)')
-        legacy = conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v1'").fetchone()
-        if legacy:
-            conn.execute('INSERT INTO attempt_arrivals_v2(attempt_id,received_at) SELECT a.id,r.received_at FROM attempts a LEFT JOIN attempt_arrivals_v1 r ON r.attempt_id=a.id ORDER BY a.rowid')
-        else:
-            conn.execute('INSERT INTO attempt_arrivals_v2(attempt_id) SELECT id FROM attempts ORDER BY rowid')
-    conn.execute('DROP TRIGGER IF EXISTS attempt_first_arrival_v1')
+    # Join shared immutable contexts without copying large JSON per attempt.
+    conn.execute('''CREATE VIEW IF NOT EXISTS attempt_facts AS
+        SELECT p.attempt_id,p.group_id,p.source_id,p.device_name,p.user_id,p.batch_id,
+               v.payload AS versions,e.payload AS execution,q.payload AS evaluation,
+               p.total_ns,p.duration_scope
+        FROM attempt_provenance p JOIN attempts a ON a.id=p.attempt_id
+        JOIN report_versions v ON v.id=p.version_id
+        JOIN contexts e ON e.id=a.execution_id JOIN contexts q ON q.id=a.evaluation_id''')
+    conn.execute('''CREATE TRIGGER IF NOT EXISTS report_facts_insert INSTEAD OF INSERT ON attempt_facts BEGIN
+        INSERT INTO report_versions(payload) VALUES (NEW.versions) ON CONFLICT(payload) DO NOTHING;
+        INSERT OR REPLACE INTO attempt_provenance VALUES
+        (NEW.attempt_id,NEW.group_id,NEW.source_id,NEW.device_name,NEW.user_id,NEW.batch_id,
+         (SELECT id FROM report_versions WHERE payload=NEW.versions),NEW.total_ns,NEW.duration_scope);
+        END''')
+    conn.execute('''CREATE TRIGGER IF NOT EXISTS report_facts_delete INSTEAD OF DELETE ON attempt_facts BEGIN
+        DELETE FROM attempt_provenance WHERE attempt_id=OLD.attempt_id; END''')
+    conn.execute('''CREATE TRIGGER IF NOT EXISTS report_facts_update INSTEAD OF UPDATE ON attempt_facts BEGIN
+        SELECT CASE WHEN NEW.execution IS NOT OLD.execution OR NEW.evaluation IS NOT OLD.evaluation
+          OR NEW.attempt_id IS NOT OLD.attempt_id THEN RAISE(ABORT,'immutable facts require original context') END;
+        INSERT INTO report_versions(payload) VALUES (NEW.versions) ON CONFLICT(payload) DO NOTHING;
+        UPDATE attempt_provenance SET group_id=NEW.group_id,source_id=NEW.source_id,
+        device_name=NEW.device_name,user_id=NEW.user_id,batch_id=NEW.batch_id,
+        version_id=(SELECT id FROM report_versions WHERE payload=NEW.versions),
+        total_ns=NEW.total_ns,duration_scope=NEW.duration_scope WHERE attempt_id=OLD.attempt_id; END''')
+    conn.execute('CREATE TABLE IF NOT EXISTS attempt_arrivals_v2 (sequence INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(id) ON DELETE CASCADE, received_at TEXT NOT NULL)')
     conn.execute(ARRIVAL_TRIGGER.replace('CREATE TRIGGER ', 'CREATE TRIGGER IF NOT EXISTS ',1))
     conn.execute('CREATE TABLE IF NOT EXISTS invalid_replays_v1 (attempt_id TEXT PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE, reason TEXT NOT NULL)')
     row=conn.execute('SELECT version FROM report_schema').fetchone()
-    if row is None: conn.execute('INSERT INTO report_schema VALUES (1)')
-    elif row[0]!=1: raise ValueError('unsupported reporting index version')
-
-
-def canonical_cann_version(value):
-    """Compatibility for old runtime spellings; never rewrite stored contexts."""
-    if not isinstance(value, str):
-        return value
-    return re.sub(r'^(\d+\.\d+\.\d+)\.beta(\d+)$', r'\1-beta.\2', value)
+    if row is None: conn.execute('INSERT INTO report_schema VALUES (2)')
+    elif row[0]!=2: raise ValueError('unsupported reporting index version')
 
 
 def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None):
@@ -73,9 +82,6 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     contexts={k:json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?',(row[k+'_id'],)).fetchone()[0])
               for k in ('environment','execution','evaluation')}
     env,ex,ev=(contexts[k] for k in ('environment','execution','evaluation'))
-    # Normalize both occurrences in the grouping key, not just versions.
-    if 'cann' in env:
-        env = dict(env, cann=canonical_cann_version(env['cann']))
     existing=conn.execute('SELECT source_id,device_name,user_id FROM attempt_facts WHERE attempt_id=?',(identity,)).fetchone()
     source_id=source_id or (existing[0] if existing else None) or env.get('installation_id') or 'unrecorded'
     device_name=device_name or (existing[1] if existing else None) or env.get('device_name') or '设备未记录'
@@ -83,7 +89,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     conn.execute('INSERT OR REPLACE INTO report_devices VALUES (?,?,?)',(source_id,user_id,device_name))
     versions={key:env.get(key) for key in ('python','platform','machine','torch','torch_npu','triton','package_version','cann','autofuse_commit','autofuse_binary')}
     config={key:value for key,value in ex.items() if key not in {'backend','device','telemetry','diagnostics','batch_id','expected_backends'}}
-    batch=ex.get('batch_id') or 'historical-unrecorded'
+    batch=ex.get('batch_id') or 'unbatched'
     group=digest({'workload':row['workload_id'],'oracle':row['oracle_id'],'source':source_id,
                   'versions':versions,'config':config,'evaluation':ev,'batch':batch,'environment':{k:v for k,v in env.items() if k not in {'device_uuid','device_model'}}})
     telemetry=json.loads(ex['telemetry']) if ex.get('telemetry') else {}
@@ -117,7 +123,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     if 'fail' in states or 'error' in states:text+=' Failed'
     if any(value is None for value in versions.values()):text+=' Unkown'
     if metadata:
-        conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text+' '+metadata[0]))
+        conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text))
         return
     try:
         if ex.get('case_spec'):
@@ -134,7 +140,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
     except (ValueError,KeyError):
         metadata={};max_dim=max_elements=None
     conn.execute('INSERT INTO case_facts VALUES (?,?,?,?,?,?,?)',(row['workload_id'],row['seed'],canonical(metadata),metadata.get('n_nodes'),max_dim,max_elements,len(metadata.get('shape_variants',[]))))
-    conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text+' '+canonical(metadata)))
+    conn.execute('INSERT OR REPLACE INTO report_search VALUES (?,?)',(identity,text))
     dimensions={'op':sorted(set(metadata.get('op_types',[]))),'dtype':sorted(set(metadata.get('input_dtypes',{}).values())|set(metadata.get('output_dtypes',{}).values()))}
     categories={'Elementwise':{'add','mul','neg','relu'},'Reduce':{'sum','mean','amin','amax'},'Transpose':{'transpose'}}
     dimensions['category']=[name for name,ops in categories.items() if ops.intersection(dimensions['op'])]
@@ -146,7 +152,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
 
 
 def rebuild(path):
-    """Explicit additive migration; callers back up first. Atomic rollback on error."""
+    """Rebuild derived reporting facts atomically from current records."""
     from ..storage.repository import _connect
     with closing(_connect(path,writable=True)) as conn,conn:
         conn.execute('BEGIN IMMEDIATE');initialize(conn)
@@ -154,33 +160,8 @@ def rebuild(path):
         # per-input dtypes added by newer viewers. Immutable attempts stay intact.
         conn.execute('DELETE FROM case_dimensions')
         conn.execute('DELETE FROM case_facts')
-        central=conn.execute("SELECT 1 FROM sqlite_master WHERE name='owners'").fetchone()
         for identity, in conn.execute('SELECT id FROM attempts ORDER BY rowid').fetchall():
-            source=name=user=None
-            if central and not conn.execute('SELECT 1 FROM attempt_facts WHERE attempt_id=?',(identity,)).fetchone():
-                owner=conn.execute('SELECT u.id,u.display_name FROM owners o JOIN users u ON u.id=o.user_id WHERE o.attempt_id=?',(identity,)).fetchone()
-                if owner:user,name=owner
-                # Historical central did not retain attempt -> source mapping.
-                # Do not infer source when a user has more than one installation.
-                sources=conn.execute('SELECT id FROM sources WHERE user_id=?',(user,)).fetchall() if user else []
-                source=sources[0][0] if len(sources)==1 else 'historical-user:'+str(user)
-            index_attempt(conn,identity,source,name,user)
-        from .materialized import refresh_if_installed
-        refresh_if_installed(conn)
-        return {'indexed':conn.execute('SELECT count(*) FROM attempt_facts').fetchone()[0],'report_schema':1}
-
-
-def migrate_cann_versions(path):
-    """Explicit, atomic repair of legacy derived facts; back up before calling."""
-    from ..storage.repository import _connect
-    with closing(_connect(path, writable=True)) as conn, conn:
-        conn.execute('BEGIN IMMEDIATE')
-        initialize(conn)
-        identities = [identity for identity, versions in conn.execute(
-            'SELECT attempt_id,versions FROM attempt_facts').fetchall()
-            if (value := json.loads(versions).get('cann')) != canonical_cann_version(value)]
-        for identity in identities:
             index_attempt(conn, identity)
         from .materialized import refresh_if_installed
         refresh_if_installed(conn)
-        return {'reindexed': len(identities)}
+        return {'indexed':conn.execute('SELECT count(*) FROM attempt_facts').fetchone()[0],'report_schema':2}

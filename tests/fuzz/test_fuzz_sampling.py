@@ -19,12 +19,9 @@ def test_sampling_roundtrip(dynamic,count,method):
 
 
 @pytest.mark.parametrize('short',['C16','D16','E16','F16','G16','H16','I16','J16'])
-def test_retired_seed_is_readable_but_never_executable(short):
-    from autofusex.fuzz.generation import materialize
-    seed=Seed.parse(short)
-    assert Seed.parse(seed.short)==seed and not seed.current
-    with pytest.raises(ValueError,match='retired internal-test seed'):
-        materialize(seed)
+def test_retired_seed_is_rejected(short):
+    with pytest.raises(ValueError):
+        Seed.parse(short)
 
 
 @pytest.mark.parametrize('kwargs',[{'max_nodes':65},{'dynamic_variants':1},{'dynamic_variants':9},{'method':'auto'}, {'dim_max':2**24},{'max_elem_per_tensor':2**25},{'timeout_seconds':512}])
@@ -72,7 +69,7 @@ def test_current_campaign_embeds_all_factors(tmp_path):
     initialize(ledger,[ExecutionConfig('cpu','cpu')],EvaluationConfig(),1,sampling=asdict(config))
     assert refill(ledger)
     seed=Seed.parse(ledger.claim()['seed'])
-    assert seed.current and decode(seed)[0]==config
+    assert decode(seed)[0]==config
 
 
 def test_ops_post_filter_does_not_change_seed():
@@ -94,4 +91,4 @@ def test_legacy_space_cannot_alias_current_protocol():
 def test_cli_retired_replay_is_clear_error_without_runtime(scheduling,capsys):
     from autofusex.fuzz.cli import main
     assert main(['replay','C16','--scheduling',scheduling])==2
-    assert 'retired internal-test seed' in capsys.readouterr().err
+    assert 'seed must be canonical decimal digits' in capsys.readouterr().err

@@ -30,7 +30,7 @@ def setup(tmp_path):
         sessions.initialize(conn)
         retests.initialize(conn)
     local = ResultRepository(tmp_path/'local.sqlite')
-    attempt = local.save(dict(seed=str(3*2**128+16),workload_id='a'*64,oracle_id='cpu/1',
+    attempt = local.save(dict(seed=str(16076518010981881194532289465530122136584972140560),workload_id='a'*64,oracle_id='cpu/1',
         backend='af-mlir',status='fail',execution=dict(backend='af-mlir',static_only=False),
         evaluation=dict(correctness=True,performance=False,warmup_steps=1,measured_steps=1),
         shape_results=[dict(shape_index=i,correctness='fail' if i==1 else 'pass',performance='not_requested') for i in range(3)]))

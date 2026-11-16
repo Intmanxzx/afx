@@ -30,6 +30,8 @@ def dag():
 
 def test_captured_dag_infers_intermediates_and_keeps_outputs(dag):
     meta = spec_metadata(bundle().spec)
+    for node in meta['graph']['nodes']:
+        node['op'] = node['op'].split('.')[1]
     graph = dag({'metadata': meta, 'sample': meta['shape_variants'][0]})
     nodes = {n['name']: n for n in graph['nodes']}
     assert len(nodes) == 10 and len(graph['edges']) == 11

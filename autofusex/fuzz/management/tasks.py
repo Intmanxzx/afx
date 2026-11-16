@@ -43,9 +43,9 @@ def start(store,spec,operation_id,processes):
     prepared=prepare(store,spec)
     from ..scheduling.hosting import status
     from ..scheduling.ledger import TaskLedger
-    legacy=store.home/'tasks/tasks.sqlite'
-    if legacy.exists() and status(TaskLedger(legacy)).get('ownership')=='owned_by_supervisor_or_worker':
-        raise ValueError('legacy fuzz/retest supervisor owns the shared device')
+    standalone=store.home/'tasks/tasks.sqlite'
+    if standalone.exists() and status(TaskLedger(standalone)).get('ownership')=='owned_by_supervisor_or_worker':
+        raise ValueError('standalone fuzz/retest supervisor owns the shared device')
     with store.connect() as db:
         if db.execute("SELECT 1 FROM runs WHERE state IN ('running','paused','pausing','draining','preparing','cancelling','needs_attention')").fetchone():
             raise ValueError('another managed campaign owns this device')

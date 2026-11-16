@@ -243,9 +243,9 @@ def validate_runtime():
     from ..generation.runtime import source_evidence
     evidence = source_evidence()
     if str(torch.__version__) != '2.10.0+cpu':
-        raise RuntimeError('C2/D2 requires pinned torch 2.10.0+cpu; no catalog fallback')
+        raise RuntimeError('E/F requires pinned torch 2.10.0+cpu; no catalog fallback')
     if torch.get_default_dtype() != torch.float32:
-        raise RuntimeError('C2/D2 requires default float32 dtype')
+        raise RuntimeError('E/F requires default float32 dtype')
     for rule in RULES: resolve_target(rule.target)
     return evidence
 

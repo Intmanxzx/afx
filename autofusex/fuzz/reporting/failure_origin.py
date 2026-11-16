@@ -115,7 +115,7 @@ def classify(backend, status, stage='', summary='', diagnostics=None, index=-1):
     if shared_applies and torch_failure(shared):
         return 'gen_failed'
     # Unambiguous eager/CPU or preparation Torch errors, not an AF code wrapper.
-    if (stage == 'prepare' or backend in {'cpu', 'cpu-eager'}) and re.search(
+    if (stage == 'prepare' or backend in {'cpu'}) and re.search(
             r'(?:RuntimeError|TypeError|ValueError|NotImplementedError):', evidence) and not re.search(
                 r'autofuse|autofuser|ascir', evidence, re.I):
         return 'gen_failed'
@@ -133,9 +133,7 @@ MLIR_FAILED_GATE = re.compile(
     r'\bAF_MLIR_STRICT\s+gate=(?:soc-version|candidate-preparation|'
     r'pipeline-session|lowering|artifact-assembly|exception)\s+'
     r'shortfall=(?:yes|no|unknown)\b', re.I)
-MLIR_ERROR = re.compile(
-    r'no plan with an MLIR-supported template|'
-    r'\b(?:RunMlirCodegen|MLIR codegen|MLIR lowering)\b[^\n]*(?:failed|failure|error:)', re.I)
+
 
 
 def mlir_failure_evidence(backend, status, stage='', summary='', diagnostics=None, index=-1, shape_count=None):
@@ -163,7 +161,7 @@ def mlir_failure_evidence(backend, status, stage='', summary='', diagnostics=Non
              (index >= 0 and shape_count == 1))):
         sources.append(('run', diagnostics.get('error', '')))
     from ..failure_details import redact
-    # Scan all attributable sources before consulting the legacy heuristics.
+    # Require a producer verdict from an attributable source.
     explicit = [(scope, state, line) for scope, text in sources
                 for state, line in explicit_mlir_results(text)]
     if explicit:
@@ -171,13 +169,6 @@ def mlir_failure_evidence(backend, status, stage='', summary='', diagnostics=Non
         scope, line = failed or (explicit[0][0], explicit[0][2])
         return {'path': 'mlir_failed' if failed else 'unconfirmed',
                 'scope': scope, 'evidence': redact(line.strip())[:1600]}
-    # Compatibility only: remove once all producers emit MLIR Codegen Result.
-    for scope, text in sources:
-        for line in text.splitlines():
-            if 'Failed to execute graph code:' in line:
-                continue  # Generated source in an exception is not a verdict.
-            if MLIR_FAILED_GATE.search(line) or MLIR_ERROR.search(line):
-                return {'path': 'mlir_failed', 'scope': scope, 'evidence': redact(line.strip())[:1600]}
     return {'path': 'unconfirmed', 'scope': '', 'evidence': ''}
 
 

@@ -14,9 +14,9 @@ from autofusex.fuzz.central.server import create_server
 from autofusex.fuzz.sync.client import once
 
 
-def result(seed='680564733841876926926749214863536422954'):
-    return {'seed':seed,'workload_id':'a'*64,'oracle_id':'ref/1','backend':'cpu-eager','status':'ok',
-            'execution':{'backend':'cpu-eager','device':'cpu'},'shape_results':[{'shape_index':0,'correctness':'pass','performance':'not_requested'}]}
+def result(seed='14615016373650978276328604632813839116929039597610'):
+    return {'seed':seed,'workload_id':'a'*64,'oracle_id':'ref/1','backend':'cpu','status':'ok',
+            'execution':{'backend':'cpu','device':'cpu'},'shape_results':[{'shape_index':0,'correctness':'pass','performance':'not_requested'}]}
 
 
 def test_outbox_atomic_with_save_and_ack(tmp_path):
@@ -35,7 +35,7 @@ def test_outbox_atomic_with_save_and_ack(tmp_path):
 def test_ingest_idempotence_conflict_identity_and_atomicity(tmp_path):
     server=tmp_path/'server';key=tmp_path/'key'
     create_user(server,'Tester',key)
-    repo=ResultRepository(tmp_path/'local');repo.save(result());repo.save(result('680564733841876926926749214863536422955'))
+    repo=ResultRepository(tmp_path/'local');repo.save(result());repo.save(result('14615016373650978276328604632813839116929039597611'))
     batch=pending(repo.path);secret=key.read_text().strip()
     answer=ingest(server,secret,batch)
     assert ingest(server,secret,batch)==answer
@@ -45,7 +45,7 @@ def test_ingest_idempotence_conflict_identity_and_atomicity(tmp_path):
     other=tmp_path/'other-key';create_user(server,'Other',other)
     with pytest.raises(PermissionError):ingest(server,other.read_text().strip(),batch)
     with pytest.raises(PermissionError):ingest(server,'wrong',batch)
-    repo.save(result('680564733841876926926749214863536422956'));repo.save(result('680564733841876926926749214863536422957')); acknowledge(repo.path,batch['source_id'],answer['ack'])
+    repo.save(result('14615016373650978276328604632813839116929039597612'));repo.save(result('14615016373650978276328604632813839116929039597613')); acknowledge(repo.path,batch['source_id'],answer['ack'])
     later=pending(repo.path);later['items'][-1]['record']['attempt']['status']='not-valid'
     with pytest.raises(ValueError):ingest(server,secret,later)
     assert len(ResultRepository(server).list()['items'])==2
@@ -72,7 +72,7 @@ def test_http_sync_lost_ack_retry_and_public_query(tmp_path):
                    json.loads(server.public_cache.get('summary')[0].body)['total']==1)
         with opener(endpoint+'/api/summary') as response:assert json.load(response)['total']==1
         with opener(endpoint+'/') as response:assert '主导航' in response.read().decode()
-        repo.save(result('680564733841876926926749214863536422955'))
+        repo.save(result('14615016373650978276328604632813839116929039597611'))
         def lost(request,**kw):
             response=opener(request,**kw);response.read();response.close()
             raise OSError('ACK lost')
@@ -107,7 +107,7 @@ def test_sync_failure_does_not_ack_or_block_new_results(tmp_path):
     def offline(*args,**kwargs):raise OSError('offline')
     with pytest.raises(OSError):once(tmp_path,repo.path,opener=offline)
     assert pending(repo.path)==before
-    repo.save(result('680564733841876926926749214863536422955'))
+    repo.save(result('14615016373650978276328604632813839116929039597611'))
     assert len(pending(repo.path)['items'])==2
 
 
@@ -122,13 +122,13 @@ def test_sync_configuration_requires_https_private_key_and_valid_interval(tmp_pa
 def test_central_newest_pagination_and_stable_cursor(tmp_path):
     from autofusex.fuzz.storage.queries import ResultQueries
     repo=ResultRepository(tmp_path/'local')
-    for seed in ('680564733841876926926749214863536422913','680564733841876926926749214863536422914','680564733841876926926749214863536422915'):repo.save(result(seed))
+    for seed in ('14615016373650978276328604632813839116929039597569','14615016373650978276328604632813839116929039597570','14615016373650978276328604632813839116929039597571'):repo.save(result(seed))
     query=ResultQueries(repo.path)
     first=query.page(limit=2,newest=True)
-    assert [r['seed'] for r in first['items']]==['680564733841876926926749214863536422915','680564733841876926926749214863536422914']
-    repo.save(result('680564733841876926926749214863536422916'))
-    assert [r['seed'] for r in query.page(limit=2,after=first['next_cursor'],newest=True)['items']]==['680564733841876926926749214863536422913']
-    assert query.page(limit=1,newest=True)['items'][0]['seed']=='680564733841876926926749214863536422916'
+    assert [r['seed'] for r in first['items']]==['14615016373650978276328604632813839116929039597571','14615016373650978276328604632813839116929039597570']
+    repo.save(result('14615016373650978276328604632813839116929039597572'))
+    assert [r['seed'] for r in query.page(limit=2,after=first['next_cursor'],newest=True)['items']]==['14615016373650978276328604632813839116929039597569']
+    assert query.page(limit=1,newest=True)['items'][0]['seed']=='14615016373650978276328604632813839116929039597572'
 
 
 def test_configuration_does_not_echo_admin_key(tmp_path):
@@ -166,11 +166,11 @@ def test_old_server_backup_recovers_with_explicit_epoch_without_duplicates(tmp_p
     first = pending(repo.path)
     ingest(server, key.read_text().strip(), first)
     acknowledge(repo.path, first['source_id'], first['items'][-1]['revision'])
-    repo.save(result('680564733841876926926749214863536422955'))
+    repo.save(result('14615016373650978276328604632813839116929039597611'))
     second = pending(repo.path)
     # Client has ACK for a record lost by a stale server restore.
     acknowledge(repo.path, second['source_id'], second['items'][-1]['revision'])
-    repo.save(result('680564733841876926926749214863536422956'))
+    repo.save(result('14615016373650978276328604632813839116929039597612'))
     with pytest.raises(ValueError, match='ahead'):
         ingest(server, key.read_text().strip(), pending(repo.path))
     reset_epoch(repo.path)
