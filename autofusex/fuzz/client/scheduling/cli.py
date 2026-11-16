@@ -25,7 +25,7 @@ def register(sub, maintenance):
             from ..generation.sampling import METHODS
             parser.add_argument('--method', choices=METHODS)
             parser.add_argument('--exclude-op', action='append', choices=('transpose',), help='skip random candidates containing this op; seed semantics are unchanged')
-            parser.add_argument('--ops', help='comma-separated OP whitelist; generation remains full-range and filtering happens after seed replay')
+            parser.add_argument('--ops', help='comma-separated OP targets, display names or categories (Elementwise, Broadcast, Reduce, Reshape, Transpose, Split); generation remains full-range and filtering happens after seed replay')
             resources = parser.add_mutually_exclusive_group()
             resources.add_argument('--auto-resources', action='store_true', default=None, help='recompute resource budget at startup (default for new setups)')
             resources.add_argument('--fixed-resources', dest='auto_resources', action='store_false', help='use saved fixed resource budget')

@@ -6,7 +6,7 @@ def spec_metadata(spec):
     from ...client.nnsmith.aten_catalog import RULES
     display = {rule.target: rule.display_name for rule in RULES}
     for node in graph['nodes']:
-        node.setdefault('display_name', display.get(node['op'], node['op']))
+        node['display_name'] = display.get(node['op'], node.get('display_name', node['op']))
     ops = [node.get('display_name', node['op']) for node in graph['nodes']]
     if graph['reduce_axis'] is not None:
         ops.append('sum')

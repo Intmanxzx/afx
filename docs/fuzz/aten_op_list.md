@@ -4,373 +4,379 @@
 
 源代码定义：[aten_catalog.py](../../autofusex/fuzz/client/nnsmith/aten_catalog.py)。每个 overload 独占一行，展示名称可用于黑名单和报告。
 
-| # | ATen target | display name | family | dtype | result | arity | outputs | mode |
-|---:|---|---|---|---|---|---:|---:|---|
-| 1 | `aten.__lshift__.Scalar` | `__lshift__` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 2 | `aten.__lshift__.Tensor` | `__lshift__` | `binary` | `integral` | `same` | 2 | 1 | `` |
-| 3 | `aten.__rshift__.Scalar` | `__rshift__` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 4 | `aten.__rshift__.Tensor` | `__rshift__` | `binary` | `integral` | `same` | 2 | 1 | `` |
-| 5 | `aten.__xor__.Scalar` | `__xor__` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 6 | `aten.__xor__.Tensor` | `__xor__` | `binary` | `integral` | `same` | 2 | 1 | `` |
-| 7 | `aten._log_softmax.default` | `logsoftmax` | `scan` | `float` | `same` | 1 | 1 | `` |
-| 8 | `aten._softmax.default` | `softmax` | `scan` | `float` | `same` | 1 | 1 | `` |
-| 9 | `aten._unsafe_view.default` | `reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
-| 10 | `aten.abs.default` | `abs` | `unary` | `number` | `abs` | 1 | 1 | `` |
-| 11 | `aten.absolute.default` | `abs` | `unary` | `number` | `abs` | 1 | 1 | `` |
-| 12 | `aten.acos.default` | `acos` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 13 | `aten.acosh.default` | `acosh` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 14 | `aten.add.Scalar` | `add` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 15 | `aten.add.Tensor` | `add` | `binary` | `number` | `same` | 2 | 1 | `` |
-| 16 | `aten.addcdiv.default` | `addcdiv` | `ternary` | `float` | `same` | 3 | 1 | `` |
-| 17 | `aten.addcmul.default` | `addcmul` | `ternary` | `float` | `same` | 3 | 1 | `` |
-| 18 | `aten.alias.default` | `alias` | `view` | `all` | `same` | 1 | 1 | `identity` |
-| 19 | `aten.all.default` | `all` | `reduce_all` | `all` | `logical_reduce` | 1 | 1 | `` |
-| 20 | `aten.all.dim` | `all` | `reduce_one` | `all` | `logical_reduce` | 1 | 1 | `` |
-| 21 | `aten.all.dims` | `all` | `reduce` | `all` | `logical_reduce` | 1 | 1 | `` |
-| 22 | `aten.amax.default` | `reducemax` | `reduce` | `real_bool` | `same` | 1 | 1 | `` |
-| 23 | `aten.amin.default` | `reducemin` | `reduce` | `real_bool` | `same` | 1 | 1 | `` |
-| 24 | `aten.aminmax.default` | `aminmax` | `reduce_optional` | `real_bool` | `same` | 1 | 2 | `` |
-| 25 | `aten.angle.default` | `angle` | `unary` | `inexact` | `real` | 1 | 1 | `` |
-| 26 | `aten.any.default` | `any` | `reduce_all` | `all` | `logical_reduce` | 1 | 1 | `` |
-| 27 | `aten.any.dim` | `any` | `reduce_one` | `all` | `logical_reduce` | 1 | 1 | `` |
-| 28 | `aten.any.dims` | `any` | `reduce` | `all` | `logical_reduce` | 1 | 1 | `` |
-| 29 | `aten.argmax.default` | `argmax` | `reduce_optional` | `real` | `int64` | 1 | 1 | `` |
-| 30 | `aten.argmin.default` | `argmin` | `reduce_optional` | `real` | `int64` | 1 | 1 | `` |
-| 31 | `aten.asin.default` | `asin` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 32 | `aten.asinh.default` | `asinh` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 33 | `aten.atan.default` | `atan` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 34 | `aten.atan2.default` | `atan2` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 35 | `aten.atanh.default` | `atanh` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 36 | `aten.bitwise_and.Scalar` | `bitwise_and` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 37 | `aten.bitwise_and.Scalar_Tensor` | `bitwise_and` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
-| 38 | `aten.bitwise_and.Tensor` | `bitwise_and` | `binary` | `integral_bool` | `same` | 2 | 1 | `` |
-| 39 | `aten.bitwise_left_shift.Scalar_Tensor` | `bitwise_lshift` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
-| 40 | `aten.bitwise_left_shift.Tensor` | `bitwise_lshift` | `binary` | `integral` | `same` | 2 | 1 | `` |
-| 41 | `aten.bitwise_left_shift.Tensor_Scalar` | `bitwise_lshift` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 42 | `aten.bitwise_not.default` | `bitwise_not` | `unary` | `integral_bool` | `same` | 1 | 1 | `` |
-| 43 | `aten.bitwise_or.Scalar` | `bitwise_or` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 44 | `aten.bitwise_or.Scalar_Tensor` | `bitwise_or` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
-| 45 | `aten.bitwise_or.Tensor` | `bitwise_or` | `binary` | `integral_bool` | `same` | 2 | 1 | `` |
-| 46 | `aten.bitwise_right_shift.Scalar_Tensor` | `bitwise_rshift` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
-| 47 | `aten.bitwise_right_shift.Tensor` | `bitwise_rshift` | `binary` | `integral` | `same` | 2 | 1 | `` |
-| 48 | `aten.bitwise_right_shift.Tensor_Scalar` | `bitwise_rshift` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 49 | `aten.bitwise_xor.Scalar` | `bitwise_xor` | `scalar` | `integral` | `same` | 1 | 1 | `` |
-| 50 | `aten.bitwise_xor.Scalar_Tensor` | `bitwise_xor` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
-| 51 | `aten.bitwise_xor.Tensor` | `bitwise_xor` | `binary` | `integral_bool` | `same` | 2 | 1 | `` |
-| 52 | `aten.broadcast_tensors.default` | `broadcast_tensors` | `view_pair` | `all` | `same` | 2 | 2 | `broadcast` |
-| 53 | `aten.broadcast_to.default` | `broadcast_to` | `view` | `all` | `same` | 1 | 1 | `expand` |
-| 54 | `aten.ceil.default` | `ceil` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 55 | `aten.celu.default` | `celu` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 56 | `aten.chunk.default` | `split` | `view` | `all` | `same` | 1 | 2 | `split` |
-| 57 | `aten.clamp.Tensor` | `clamp` | `ternary` | `real` | `same` | 3 | 1 | `` |
-| 58 | `aten.clamp.default` | `clamp` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 59 | `aten.clamp_max.Tensor` | `clamp_max` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 60 | `aten.clamp_max.default` | `clamp_max` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 61 | `aten.clamp_min.Tensor` | `clamp_min` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 62 | `aten.clamp_min.default` | `clamp_min` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 63 | `aten.clip.Tensor` | `clip` | `ternary` | `real` | `same` | 3 | 1 | `` |
-| 64 | `aten.clip.default` | `clip` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 65 | `aten.clone.default` | `clone` | `view` | `all` | `same` | 1 | 1 | `identity` |
-| 66 | `aten.conj.default` | `conj` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 67 | `aten.conj_physical.default` | `conj_physical` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 68 | `aten.contiguous.default` | `contiguous` | `view` | `all` | `same` | 1 | 1 | `identity` |
-| 69 | `aten.copysign.Scalar` | `copysign` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 70 | `aten.copysign.Tensor` | `copysign` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 71 | `aten.cos.default` | `cos` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 72 | `aten.cosh.default` | `cosh` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 73 | `aten.count_nonzero.default` | `count_nonzero` | `reduce_optional` | `all` | `int64` | 1 | 1 | `` |
-| 74 | `aten.count_nonzero.dim_IntList` | `count_nonzero` | `reduce` | `all` | `int64` | 1 | 1 | `` |
-| 75 | `aten.cummax.default` | `cummax` | `scan` | `real_bool` | `same` | 1 | 2 | `indices` |
-| 76 | `aten.cummin.default` | `cummin` | `scan` | `real_bool` | `same` | 1 | 2 | `indices` |
-| 77 | `aten.cumprod.default` | `cumprod` | `scan` | `real_bool` | `promote_int` | 1 | 1 | `` |
-| 78 | `aten.cumsum.default` | `cumsum` | `scan` | `real_bool` | `promote_int` | 1 | 1 | `` |
-| 79 | `aten.deg2rad.default` | `deg2rad` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 80 | `aten.detach.default` | `detach` | `view` | `all` | `same` | 1 | 1 | `identity` |
-| 81 | `aten.detach_copy.default` | `detach_copy` | `view` | `all` | `same` | 1 | 1 | `identity` |
-| 82 | `aten.diagonal.default` | `diagonal` | `view` | `all` | `same` | 1 | 1 | `diagonal` |
-| 83 | `aten.diagonal_copy.default` | `diagonal_copy` | `view` | `all` | `same` | 1 | 1 | `diagonal` |
-| 84 | `aten.digamma.default` | `digamma` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 85 | `aten.dist.default` | `dist` | `dist` | `float` | `same` | 2 | 1 | `` |
-| 86 | `aten.div.Scalar` | `div` | `scalar` | `real` | `division` | 1 | 1 | `` |
-| 87 | `aten.div.Scalar_mode` | `div` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 88 | `aten.div.Tensor` | `div` | `binary` | `number` | `division` | 2 | 1 | `` |
-| 89 | `aten.div.Tensor_mode` | `div` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 90 | `aten.divide.Scalar` | `divide` | `scalar` | `real` | `division` | 1 | 1 | `` |
-| 91 | `aten.divide.Tensor` | `divide` | `binary` | `number` | `division` | 2 | 1 | `` |
-| 92 | `aten.elu.default` | `elu` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 93 | `aten.eq.Scalar` | `eq` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
-| 94 | `aten.eq.Tensor` | `eq` | `binary` | `all` | `bool` | 2 | 1 | `` |
-| 95 | `aten.erf.default` | `erf` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 96 | `aten.erfc.default` | `erfc` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 97 | `aten.erfinv.default` | `erfinv` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 98 | `aten.exp.default` | `exp` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 99 | `aten.exp2.default` | `exp2` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 100 | `aten.expand.default` | `expand` | `view` | `all` | `same` | 1 | 1 | `expand` |
-| 101 | `aten.expand_as.default` | `expand_as` | `view_pair` | `all` | `same` | 2 | 1 | `expand` |
-| 102 | `aten.expand_copy.default` | `expand_copy` | `view` | `all` | `same` | 1 | 1 | `expand` |
-| 103 | `aten.expm1.default` | `expm1` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 104 | `aten.flatten.using_ints` | `reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
-| 105 | `aten.float_power.Scalar` | `float_power` | `scalar_left` | `number` | `float_power` | 1 | 1 | `` |
-| 106 | `aten.float_power.Tensor_Scalar` | `float_power` | `scalar` | `number` | `float_power` | 1 | 1 | `` |
-| 107 | `aten.float_power.Tensor_Tensor` | `float_power` | `binary` | `number` | `float_power` | 2 | 1 | `` |
-| 108 | `aten.floor.default` | `floor` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 109 | `aten.floor_divide.Scalar` | `floor_divide` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 110 | `aten.floor_divide.default` | `floor_divide` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 111 | `aten.fmax.default` | `fmax` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 112 | `aten.fmin.default` | `fmin` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 113 | `aten.fmod.Scalar` | `fmod` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 114 | `aten.fmod.Tensor` | `fmod` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 115 | `aten.frac.default` | `frac` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 116 | `aten.frexp.Tensor` | `frexp` | `unary` | `float` | `same` | 1 | 2 | `exponent` |
-| 117 | `aten.gcd.default` | `gcd` | `binary` | `integral` | `same` | 2 | 1 | `` |
-| 118 | `aten.ge.Scalar` | `ge` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
-| 119 | `aten.ge.Tensor` | `ge` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
-| 120 | `aten.gelu.default` | `gelu` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 121 | `aten.gelu_backward.default` | `gelu_backward` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 122 | `aten.gt.Scalar` | `gt` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
-| 123 | `aten.gt.Tensor` | `gt` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
-| 124 | `aten.hardshrink.default` | `hardshrink` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 125 | `aten.hardsigmoid.default` | `hardsigmoid` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 126 | `aten.hardswish.default` | `hardswish` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 127 | `aten.hardtanh.default` | `hardtanh` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 128 | `aten.heaviside.default` | `heaviside` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 129 | `aten.hypot.default` | `hypot` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 130 | `aten.i0.default` | `i0` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 131 | `aten.igamma.default` | `igamma` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 132 | `aten.igammac.default` | `igammac` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 133 | `aten.imag.default` | `imag` | `unary` | `complex` | `real` | 1 | 1 | `` |
-| 134 | `aten.isclose.default` | `isclose` | `binary` | `float` | `bool` | 2 | 1 | `` |
-| 135 | `aten.isfinite.default` | `isfinite` | `unary` | `all` | `bool` | 1 | 1 | `` |
-| 136 | `aten.isinf.default` | `isinf` | `unary` | `all` | `bool` | 1 | 1 | `` |
-| 137 | `aten.isnan.default` | `isnan` | `unary` | `all` | `bool` | 1 | 1 | `` |
-| 138 | `aten.isneginf.default` | `isneginf` | `unary` | `real` | `bool` | 1 | 1 | `` |
-| 139 | `aten.isposinf.default` | `isposinf` | `unary` | `real` | `bool` | 1 | 1 | `` |
-| 140 | `aten.isreal.default` | `isreal` | `unary` | `all` | `bool` | 1 | 1 | `` |
-| 141 | `aten.kthvalue.default` | `kthvalue` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
-| 142 | `aten.lcm.default` | `lcm` | `binary` | `integral` | `same` | 2 | 1 | `` |
-| 143 | `aten.le.Scalar` | `le` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
-| 144 | `aten.le.Tensor` | `le` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
-| 145 | `aten.leaky_relu.default` | `leaky_relu` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 146 | `aten.lerp.Scalar` | `lerp` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 147 | `aten.lerp.Tensor` | `lerp` | `ternary` | `float` | `same` | 3 | 1 | `` |
-| 148 | `aten.lgamma.default` | `lgamma` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 149 | `aten.linalg_vector_norm.default` | `vector_norm` | `reduce` | `inexact` | `real` | 1 | 1 | `norm` |
-| 150 | `aten.log.default` | `log` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 151 | `aten.log10.default` | `log10` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 152 | `aten.log1p.default` | `log1p` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 153 | `aten.log2.default` | `log2` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 154 | `aten.log_sigmoid.default` | `logsigmoid` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 155 | `aten.log_softmax.int` | `logsoftmax` | `scan` | `float` | `same` | 1 | 1 | `` |
-| 156 | `aten.logaddexp.default` | `logaddexp` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 157 | `aten.logaddexp2.default` | `logaddexp2` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 158 | `aten.logcumsumexp.default` | `logcumsumexp` | `scan` | `float` | `same` | 1 | 1 | `` |
-| 159 | `aten.logical_and.default` | `logical_and` | `binary` | `all` | `bool` | 2 | 1 | `` |
-| 160 | `aten.logical_not.default` | `logical_not` | `unary` | `all` | `bool` | 1 | 1 | `` |
-| 161 | `aten.logical_or.default` | `logical_or` | `binary` | `all` | `bool` | 2 | 1 | `` |
-| 162 | `aten.logical_xor.default` | `logical_xor` | `binary` | `all` | `bool` | 2 | 1 | `` |
-| 163 | `aten.logit.default` | `logit` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 164 | `aten.logit_backward.default` | `logit_backward` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 165 | `aten.logsumexp.default` | `logsumexp` | `reduce` | `float` | `same` | 1 | 1 | `` |
-| 166 | `aten.lt.Scalar` | `lt` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
-| 167 | `aten.lt.Tensor` | `lt` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
-| 168 | `aten.masked_fill.Scalar` | `masked_fill` | `masked` | `float` | `same` | 2 | 1 | `` |
-| 169 | `aten.max.default` | `max` | `reduce_all` | `real_bool` | `same` | 1 | 1 | `` |
-| 170 | `aten.max.dim` | `max` | `reduce_one` | `real_bool` | `same` | 1 | 2 | `indices` |
-| 171 | `aten.max.other` | `max` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 172 | `aten.maximum.default` | `maximum` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 173 | `aten.mean.default` | `reducemean` | `reduce_all` | `inexact` | `same` | 1 | 1 | `` |
-| 174 | `aten.mean.dim` | `reducemean` | `reduce` | `inexact` | `same` | 1 | 1 | `` |
-| 175 | `aten.median.default` | `median` | `reduce_all` | `real` | `same` | 1 | 1 | `` |
-| 176 | `aten.median.dim` | `median` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
-| 177 | `aten.min.default` | `min` | `reduce_all` | `real_bool` | `same` | 1 | 1 | `` |
-| 178 | `aten.min.dim` | `min` | `reduce_one` | `real_bool` | `same` | 1 | 2 | `indices` |
-| 179 | `aten.min.other` | `min` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 180 | `aten.minimum.default` | `minimum` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 181 | `aten.mish.default` | `mish` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 182 | `aten.mode.default` | `mode` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
-| 183 | `aten.movedim.int` | `transpose` | `view` | `all` | `same` | 1 | 1 | `movedim` |
-| 184 | `aten.movedim.intlist` | `transpose` | `view` | `all` | `same` | 1 | 1 | `movedim` |
-| 185 | `aten.mul.Scalar` | `mul` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 186 | `aten.mul.Tensor` | `mul` | `binary` | `number` | `same` | 2 | 1 | `` |
-| 187 | `aten.multiply.Scalar` | `mul` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 188 | `aten.multiply.Tensor` | `mul` | `binary` | `number` | `same` | 2 | 1 | `` |
-| 189 | `aten.mvlgamma.default` | `mvlgamma` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 190 | `aten.nan_to_num.default` | `nan_to_num` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 191 | `aten.nanmean.default` | `nanmean` | `reduce` | `float` | `same` | 1 | 1 | `` |
-| 192 | `aten.nanmedian.default` | `nanmedian` | `reduce_all` | `real` | `same` | 1 | 1 | `` |
-| 193 | `aten.nanmedian.dim` | `nanmedian` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
-| 194 | `aten.nansum.default` | `nansum` | `reduce` | `real_bool` | `promote_int` | 1 | 1 | `` |
-| 195 | `aten.narrow.default` | `narrow` | `view` | `all` | `same` | 1 | 1 | `narrow` |
-| 196 | `aten.native_dropout_backward.default` | `native_dropout_backward` | `masked` | `float` | `same` | 2 | 1 | `` |
-| 197 | `aten.ne.Scalar` | `ne` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
-| 198 | `aten.ne.Tensor` | `ne` | `binary` | `all` | `bool` | 2 | 1 | `` |
-| 199 | `aten.neg.default` | `neg` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 200 | `aten.negative.default` | `neg` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 201 | `aten.nextafter.default` | `nextafter` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 202 | `aten.norm.Scalar` | `norm` | `reduce_all` | `inexact` | `real` | 1 | 1 | `norm` |
-| 203 | `aten.norm.ScalarOpt_dim` | `norm` | `reduce` | `inexact` | `real` | 1 | 1 | `norm` |
-| 204 | `aten.permute.default` | `permute` | `view` | `all` | `same` | 1 | 1 | `permute` |
-| 205 | `aten.permute_copy.default` | `permute` | `view` | `all` | `same` | 1 | 1 | `permute` |
-| 206 | `aten.polygamma.default` | `polygamma` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 207 | `aten.positive.default` | `positive` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 208 | `aten.pow.Scalar` | `pow` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 209 | `aten.pow.Tensor_Scalar` | `pow` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 210 | `aten.pow.Tensor_Tensor` | `pow` | `binary` | `number` | `same` | 2 | 1 | `` |
-| 211 | `aten.prod.default` | `prod` | `reduce_all` | `real_bool` | `promote_int` | 1 | 1 | `` |
-| 212 | `aten.prod.dim_int` | `prod` | `reduce_one` | `real_bool` | `promote_int` | 1 | 1 | `` |
-| 213 | `aten.rad2deg.default` | `rad2deg` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 214 | `aten.ravel.default` | `reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
-| 215 | `aten.real.default` | `real` | `unary` | `complex` | `real` | 1 | 1 | `` |
-| 216 | `aten.reciprocal.default` | `reciprocal` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 217 | `aten.relu.default` | `relu` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 218 | `aten.relu6.default` | `relu6` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 219 | `aten.remainder.Scalar` | `remainder` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 220 | `aten.remainder.Scalar_Tensor` | `remainder` | `scalar_left` | `real` | `same` | 1 | 1 | `` |
-| 221 | `aten.remainder.Tensor` | `remainder` | `binary` | `real` | `same` | 2 | 1 | `` |
-| 222 | `aten.repeat.default` | `repeat` | `view` | `all` | `same` | 1 | 1 | `repeat` |
-| 223 | `aten.reshape.default` | `reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
-| 224 | `aten.reshape_as.default` | `reshape_as` | `view_pair` | `all` | `same` | 2 | 1 | `reshape` |
-| 225 | `aten.resolve_conj.default` | `resolve_conj` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 226 | `aten.resolve_neg.default` | `resolve_neg` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 227 | `aten.round.decimals` | `round` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 228 | `aten.round.default` | `round` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 229 | `aten.rrelu.default` | `rrelu` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 230 | `aten.rsqrt.default` | `rsqrt` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 231 | `aten.rsub.Scalar` | `rsub` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 232 | `aten.select.int` | `select` | `view` | `all` | `same` | 1 | 1 | `select` |
-| 233 | `aten.select_copy.int` | `select_copy` | `view` | `all` | `same` | 1 | 1 | `select` |
-| 234 | `aten.selu.default` | `selu` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 235 | `aten.sgn.default` | `sgn` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 236 | `aten.sigmoid.default` | `sigmoid` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 237 | `aten.sigmoid_backward.default` | `sigmoid_backward` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 238 | `aten.sign.default` | `sign` | `unary` | `real` | `same` | 1 | 1 | `` |
-| 239 | `aten.signbit.default` | `signbit` | `unary` | `real` | `bool` | 1 | 1 | `` |
-| 240 | `aten.silu.default` | `silu` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 241 | `aten.silu_backward.default` | `silu_backward` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 242 | `aten.sin.default` | `sin` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 243 | `aten.sinc.default` | `sinc` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 244 | `aten.sinh.default` | `sinh` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 245 | `aten.slice.Tensor` | `slice` | `view` | `all` | `same` | 1 | 1 | `slice` |
-| 246 | `aten.slice_copy.Tensor` | `slice_copy` | `view` | `all` | `same` | 1 | 1 | `slice` |
-| 247 | `aten.softmax.int` | `softmax` | `scan` | `float` | `same` | 1 | 1 | `` |
-| 248 | `aten.softplus.default` | `softplus` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 249 | `aten.softshrink.default` | `softshrink` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 250 | `aten.special_airy_ai.default` | `special_airy_ai` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 251 | `aten.special_bessel_j0.default` | `special_bessel_j0` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 252 | `aten.special_bessel_j1.default` | `special_bessel_j1` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 253 | `aten.special_bessel_y0.default` | `special_bessel_y0` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 254 | `aten.special_bessel_y1.default` | `special_bessel_y1` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 255 | `aten.special_chebyshev_polynomial_t.default` | `special_chebyshev_polynomial_t` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 256 | `aten.special_chebyshev_polynomial_t.n_scalar` | `special_chebyshev_polynomial_t` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 257 | `aten.special_chebyshev_polynomial_t.x_scalar` | `special_chebyshev_polynomial_t` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 258 | `aten.special_chebyshev_polynomial_u.default` | `special_chebyshev_polynomial_u` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 259 | `aten.special_chebyshev_polynomial_u.n_scalar` | `special_chebyshev_polynomial_u` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 260 | `aten.special_chebyshev_polynomial_u.x_scalar` | `special_chebyshev_polynomial_u` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 261 | `aten.special_chebyshev_polynomial_v.default` | `special_chebyshev_polynomial_v` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 262 | `aten.special_chebyshev_polynomial_v.n_scalar` | `special_chebyshev_polynomial_v` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 263 | `aten.special_chebyshev_polynomial_v.x_scalar` | `special_chebyshev_polynomial_v` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 264 | `aten.special_chebyshev_polynomial_w.default` | `special_chebyshev_polynomial_w` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 265 | `aten.special_chebyshev_polynomial_w.n_scalar` | `special_chebyshev_polynomial_w` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 266 | `aten.special_chebyshev_polynomial_w.x_scalar` | `special_chebyshev_polynomial_w` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 267 | `aten.special_entr.default` | `special_entr` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 268 | `aten.special_erfcx.default` | `special_erfcx` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 269 | `aten.special_hermite_polynomial_h.default` | `special_hermite_polynomial_h` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 270 | `aten.special_hermite_polynomial_h.n_scalar` | `special_hermite_polynomial_h` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 271 | `aten.special_hermite_polynomial_h.x_scalar` | `special_hermite_polynomial_h` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 272 | `aten.special_hermite_polynomial_he.default` | `special_hermite_polynomial_he` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 273 | `aten.special_hermite_polynomial_he.n_scalar` | `special_hermite_polynomial_he` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 274 | `aten.special_hermite_polynomial_he.x_scalar` | `special_hermite_polynomial_he` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 275 | `aten.special_i0e.default` | `special_i0e` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 276 | `aten.special_i1.default` | `special_i1` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 277 | `aten.special_i1e.default` | `special_i1e` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 278 | `aten.special_laguerre_polynomial_l.default` | `special_laguerre_polynomial_l` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 279 | `aten.special_laguerre_polynomial_l.n_scalar` | `special_laguerre_polynomial_l` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 280 | `aten.special_laguerre_polynomial_l.x_scalar` | `special_laguerre_polynomial_l` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 281 | `aten.special_legendre_polynomial_p.default` | `special_legendre_polynomial_p` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 282 | `aten.special_legendre_polynomial_p.n_scalar` | `special_legendre_polynomial_p` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 283 | `aten.special_legendre_polynomial_p.x_scalar` | `special_legendre_polynomial_p` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 284 | `aten.special_log_ndtr.default` | `special_log_ndtr` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 285 | `aten.special_modified_bessel_i0.default` | `special_modified_bessel_i0` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 286 | `aten.special_modified_bessel_i1.default` | `special_modified_bessel_i1` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 287 | `aten.special_modified_bessel_k0.default` | `special_modified_bessel_k0` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 288 | `aten.special_modified_bessel_k1.default` | `special_modified_bessel_k1` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 289 | `aten.special_ndtr.default` | `special_ndtr` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 290 | `aten.special_ndtri.default` | `special_ndtri` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 291 | `aten.special_scaled_modified_bessel_k0.default` | `special_scaled_modified_bessel_k0` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 292 | `aten.special_scaled_modified_bessel_k1.default` | `special_scaled_modified_bessel_k1` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 293 | `aten.special_shifted_chebyshev_polynomial_t.default` | `special_shifted_chebyshev_polynomial_t` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 294 | `aten.special_shifted_chebyshev_polynomial_t.n_scalar` | `special_shifted_chebyshev_polynomial_t` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 295 | `aten.special_shifted_chebyshev_polynomial_t.x_scalar` | `special_shifted_chebyshev_polynomial_t` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 296 | `aten.special_shifted_chebyshev_polynomial_u.default` | `special_shifted_chebyshev_polynomial_u` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 297 | `aten.special_shifted_chebyshev_polynomial_u.n_scalar` | `special_shifted_chebyshev_polynomial_u` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 298 | `aten.special_shifted_chebyshev_polynomial_u.x_scalar` | `special_shifted_chebyshev_polynomial_u` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 299 | `aten.special_shifted_chebyshev_polynomial_v.default` | `special_shifted_chebyshev_polynomial_v` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 300 | `aten.special_shifted_chebyshev_polynomial_v.n_scalar` | `special_shifted_chebyshev_polynomial_v` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 301 | `aten.special_shifted_chebyshev_polynomial_v.x_scalar` | `special_shifted_chebyshev_polynomial_v` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 302 | `aten.special_shifted_chebyshev_polynomial_w.default` | `special_shifted_chebyshev_polynomial_w` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 303 | `aten.special_shifted_chebyshev_polynomial_w.n_scalar` | `special_shifted_chebyshev_polynomial_w` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 304 | `aten.special_shifted_chebyshev_polynomial_w.x_scalar` | `special_shifted_chebyshev_polynomial_w` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 305 | `aten.special_spherical_bessel_j0.default` | `special_spherical_bessel_j0` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 306 | `aten.special_xlog1py.default` | `special_xlog1py` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 307 | `aten.special_xlog1py.other_scalar` | `special_xlog1py` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 308 | `aten.special_xlog1py.self_scalar` | `special_xlog1py` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 309 | `aten.special_zeta.default` | `special_zeta` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 310 | `aten.special_zeta.other_scalar` | `special_zeta` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 311 | `aten.special_zeta.self_scalar` | `special_zeta` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 312 | `aten.split.Tensor` | `split` | `view` | `all` | `same` | 1 | 2 | `split` |
-| 313 | `aten.split_with_sizes.default` | `split` | `view` | `all` | `same` | 1 | 2 | `split` |
-| 314 | `aten.sqrt.default` | `sqrt` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 315 | `aten.square.default` | `square` | `unary` | `number` | `same` | 1 | 1 | `` |
-| 316 | `aten.squeeze.default` | `squeeze` | `view` | `all` | `same` | 1 | 1 | `squeeze_all` |
-| 317 | `aten.squeeze.dim` | `squeeze` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
-| 318 | `aten.squeeze.dims` | `squeeze` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
-| 319 | `aten.squeeze_copy.default` | `squeeze_copy` | `view` | `all` | `same` | 1 | 1 | `squeeze_all` |
-| 320 | `aten.squeeze_copy.dim` | `squeeze_copy` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
-| 321 | `aten.squeeze_copy.dims` | `squeeze_copy` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
-| 322 | `aten.std.correction` | `std` | `reduce` | `float` | `same` | 1 | 1 | `` |
-| 323 | `aten.std.default` | `std` | `reduce_all` | `float` | `same` | 1 | 1 | `` |
-| 324 | `aten.std.dim` | `std` | `reduce` | `float` | `same` | 1 | 1 | `` |
-| 325 | `aten.std_mean.correction` | `std_mean` | `reduce` | `float` | `same` | 1 | 2 | `` |
-| 326 | `aten.std_mean.default` | `std_mean` | `reduce_all` | `float` | `same` | 1 | 2 | `` |
-| 327 | `aten.std_mean.dim` | `std_mean` | `reduce` | `float` | `same` | 1 | 2 | `` |
-| 328 | `aten.sub.Scalar` | `sub` | `scalar` | `real` | `same` | 1 | 1 | `` |
-| 329 | `aten.sub.Tensor` | `sub` | `binary` | `number` | `same` | 2 | 1 | `` |
-| 330 | `aten.sum.default` | `reducesum` | `reduce_all` | `real_bool` | `promote_int` | 1 | 1 | `` |
-| 331 | `aten.sum.dim_IntList` | `reducesum` | `reduce` | `real_bool` | `promote_int` | 1 | 1 | `` |
-| 332 | `aten.swapaxes.default` | `transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
-| 333 | `aten.swapdims.default` | `transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
-| 334 | `aten.t.default` | `transpose` | `view` | `all` | `same` | 1 | 1 | `t` |
-| 335 | `aten.t_copy.default` | `transpose` | `view` | `all` | `same` | 1 | 1 | `t` |
-| 336 | `aten.tan.default` | `tan` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 337 | `aten.tanh.default` | `tanh` | `unary` | `inexact` | `same` | 1 | 1 | `` |
-| 338 | `aten.tanh_backward.default` | `tanh_backward` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 339 | `aten.threshold.default` | `threshold` | `unary_param` | `float` | `same` | 1 | 1 | `` |
-| 340 | `aten.threshold_backward.default` | `threshold_backward` | `binary` | `float` | `same` | 2 | 1 | `` |
-| 341 | `aten.tile.default` | `tile` | `view` | `all` | `same` | 1 | 1 | `repeat` |
-| 342 | `aten.topk.default` | `topk` | `topk` | `real` | `same` | 1 | 2 | `indices` |
-| 343 | `aten.transpose.int` | `transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
-| 344 | `aten.transpose_copy.int` | `transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
-| 345 | `aten.true_divide.Scalar` | `div` | `scalar` | `real` | `division` | 1 | 1 | `` |
-| 346 | `aten.true_divide.Tensor` | `div` | `binary` | `number` | `division` | 2 | 1 | `` |
-| 347 | `aten.trunc.default` | `trunc` | `unary` | `float` | `same` | 1 | 1 | `` |
-| 348 | `aten.unbind.int` | `unbind` | `view` | `all` | `same` | 1 | 2 | `unbind` |
-| 349 | `aten.unflatten.int` | `unflatten` | `view` | `all` | `same` | 1 | 1 | `unflatten` |
-| 350 | `aten.unfold.default` | `unfold` | `view` | `all` | `same` | 1 | 1 | `unfold` |
-| 351 | `aten.unfold_copy.default` | `unfold_copy` | `view` | `all` | `same` | 1 | 1 | `unfold` |
-| 352 | `aten.unsqueeze.default` | `unsqueeze` | `view` | `all` | `same` | 1 | 1 | `unsqueeze` |
-| 353 | `aten.unsqueeze_copy.default` | `unsqueeze_copy` | `view` | `all` | `same` | 1 | 1 | `unsqueeze` |
-| 354 | `aten.var.correction` | `var` | `reduce` | `float` | `same` | 1 | 1 | `` |
-| 355 | `aten.var.default` | `var` | `reduce_all` | `float` | `same` | 1 | 1 | `` |
-| 356 | `aten.var.dim` | `var` | `reduce` | `float` | `same` | 1 | 1 | `` |
-| 357 | `aten.var_mean.correction` | `var_mean` | `reduce` | `float` | `same` | 1 | 2 | `` |
-| 358 | `aten.var_mean.default` | `var_mean` | `reduce_all` | `float` | `same` | 1 | 2 | `` |
-| 359 | `aten.var_mean.dim` | `var_mean` | `reduce` | `float` | `same` | 1 | 2 | `` |
-| 360 | `aten.view.default` | `reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
-| 361 | `aten.view_as.default` | `view_as` | `view_pair` | `all` | `same` | 2 | 1 | `reshape` |
-| 362 | `aten.view_as_complex.default` | `view_as_complex` | `view` | `float_complex_view` | `complex` | 1 | 1 | `real_complex` |
-| 363 | `aten.view_as_real.default` | `view_as_real` | `view` | `complex` | `real` | 1 | 1 | `complex_real` |
-| 364 | `aten.view_copy.default` | `reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
-| 365 | `aten.where.self` | `where` | `where` | `all` | `same` | 3 | 1 | `` |
-| 366 | `aten.xlogy.Scalar_Other` | `xlogy` | `scalar` | `float` | `same` | 1 | 1 | `` |
-| 367 | `aten.xlogy.Scalar_Self` | `xlogy` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
-| 368 | `aten.xlogy.Tensor` | `xlogy` | `binary` | `float` | `same` | 2 | 1 | `` |
+工具分类（category）可直接填写到命令的 `--ops` 中，大小写不敏感；原始 family 保留用于构图。
+
+例如：`--ops Elementwise,broadcast,reduce,transpose,split`。也支持展示名、原始 packet 和完整 ATen target；完整 target 可精确选择 overload。同一展示名会匹配所有对应条目。
+
+当前目录包含 Elementwise、Broadcast、Reduce、Reshape、Transpose、Split、View；Concat、Gather、Scatter 在加入对应算子后使用各自分类。
+
+| # | ATen target | display name | category (--ops) | family (original type) | dtype | result | arity | outputs | mode |
+|---:|---|---|---|---|---|---|---:|---:|---|
+| 1 | `aten.__lshift__.Scalar` | `lshift` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 2 | `aten.__lshift__.Tensor` | `lshift` | `Elementwise` | `binary` | `integral` | `same` | 2 | 1 | `` |
+| 3 | `aten.__rshift__.Scalar` | `rshift` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 4 | `aten.__rshift__.Tensor` | `rshift` | `Elementwise` | `binary` | `integral` | `same` | 2 | 1 | `` |
+| 5 | `aten.__xor__.Scalar` | `xor` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 6 | `aten.__xor__.Tensor` | `xor` | `Elementwise` | `binary` | `integral` | `same` | 2 | 1 | `` |
+| 7 | `aten._log_softmax.default` | `logsoftmax` | `Reduce` | `scan` | `float` | `same` | 1 | 1 | `` |
+| 8 | `aten._softmax.default` | `softmax` | `Reduce` | `scan` | `float` | `same` | 1 | 1 | `` |
+| 9 | `aten._unsafe_view.default` | `reshape` | `Reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
+| 10 | `aten.abs.default` | `abs` | `Elementwise` | `unary` | `number` | `abs` | 1 | 1 | `` |
+| 11 | `aten.absolute.default` | `abs` | `Elementwise` | `unary` | `number` | `abs` | 1 | 1 | `` |
+| 12 | `aten.acos.default` | `acos` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 13 | `aten.acosh.default` | `acosh` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 14 | `aten.add.Scalar` | `add` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 15 | `aten.add.Tensor` | `add` | `Elementwise` | `binary` | `number` | `same` | 2 | 1 | `` |
+| 16 | `aten.addcdiv.default` | `addcdiv` | `Elementwise` | `ternary` | `float` | `same` | 3 | 1 | `` |
+| 17 | `aten.addcmul.default` | `addcmul` | `Elementwise` | `ternary` | `float` | `same` | 3 | 1 | `` |
+| 18 | `aten.alias.default` | `alias` | `View` | `view` | `all` | `same` | 1 | 1 | `identity` |
+| 19 | `aten.all.default` | `reduceall` | `Reduce` | `reduce_all` | `all` | `logical_reduce` | 1 | 1 | `` |
+| 20 | `aten.all.dim` | `reduceall` | `Reduce` | `reduce_one` | `all` | `logical_reduce` | 1 | 1 | `` |
+| 21 | `aten.all.dims` | `reduceall` | `Reduce` | `reduce` | `all` | `logical_reduce` | 1 | 1 | `` |
+| 22 | `aten.amax.default` | `reducemax` | `Reduce` | `reduce` | `real_bool` | `same` | 1 | 1 | `` |
+| 23 | `aten.amin.default` | `reducemin` | `Reduce` | `reduce` | `real_bool` | `same` | 1 | 1 | `` |
+| 24 | `aten.aminmax.default` | `aminmax` | `Reduce` | `reduce_optional` | `real_bool` | `same` | 1 | 2 | `` |
+| 25 | `aten.angle.default` | `angle` | `Elementwise` | `unary` | `inexact` | `real` | 1 | 1 | `` |
+| 26 | `aten.any.default` | `reduceany` | `Reduce` | `reduce_all` | `all` | `logical_reduce` | 1 | 1 | `` |
+| 27 | `aten.any.dim` | `reduceany` | `Reduce` | `reduce_one` | `all` | `logical_reduce` | 1 | 1 | `` |
+| 28 | `aten.any.dims` | `reduceany` | `Reduce` | `reduce` | `all` | `logical_reduce` | 1 | 1 | `` |
+| 29 | `aten.argmax.default` | `argmax` | `Reduce` | `reduce_optional` | `real` | `int64` | 1 | 1 | `` |
+| 30 | `aten.argmin.default` | `argmin` | `Reduce` | `reduce_optional` | `real` | `int64` | 1 | 1 | `` |
+| 31 | `aten.asin.default` | `asin` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 32 | `aten.asinh.default` | `asinh` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 33 | `aten.atan.default` | `atan` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 34 | `aten.atan2.default` | `atan2` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 35 | `aten.atanh.default` | `atanh` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 36 | `aten.bitwise_and.Scalar` | `bitwise_and` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 37 | `aten.bitwise_and.Scalar_Tensor` | `bitwise_and` | `Elementwise` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
+| 38 | `aten.bitwise_and.Tensor` | `bitwise_and` | `Elementwise` | `binary` | `integral_bool` | `same` | 2 | 1 | `` |
+| 39 | `aten.bitwise_left_shift.Scalar_Tensor` | `bitwise_lshift` | `Elementwise` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
+| 40 | `aten.bitwise_left_shift.Tensor` | `bitwise_lshift` | `Elementwise` | `binary` | `integral` | `same` | 2 | 1 | `` |
+| 41 | `aten.bitwise_left_shift.Tensor_Scalar` | `bitwise_lshift` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 42 | `aten.bitwise_not.default` | `bitwise_not` | `Elementwise` | `unary` | `integral_bool` | `same` | 1 | 1 | `` |
+| 43 | `aten.bitwise_or.Scalar` | `bitwise_or` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 44 | `aten.bitwise_or.Scalar_Tensor` | `bitwise_or` | `Elementwise` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
+| 45 | `aten.bitwise_or.Tensor` | `bitwise_or` | `Elementwise` | `binary` | `integral_bool` | `same` | 2 | 1 | `` |
+| 46 | `aten.bitwise_right_shift.Scalar_Tensor` | `bitwise_rshift` | `Elementwise` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
+| 47 | `aten.bitwise_right_shift.Tensor` | `bitwise_rshift` | `Elementwise` | `binary` | `integral` | `same` | 2 | 1 | `` |
+| 48 | `aten.bitwise_right_shift.Tensor_Scalar` | `bitwise_rshift` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 49 | `aten.bitwise_xor.Scalar` | `bitwise_xor` | `Elementwise` | `scalar` | `integral` | `same` | 1 | 1 | `` |
+| 50 | `aten.bitwise_xor.Scalar_Tensor` | `bitwise_xor` | `Elementwise` | `scalar_left` | `integral` | `same` | 1 | 1 | `` |
+| 51 | `aten.bitwise_xor.Tensor` | `bitwise_xor` | `Elementwise` | `binary` | `integral_bool` | `same` | 2 | 1 | `` |
+| 52 | `aten.broadcast_tensors.default` | `broadcast` | `Broadcast` | `view_pair` | `all` | `same` | 2 | 2 | `broadcast` |
+| 53 | `aten.broadcast_to.default` | `broadcast` | `Broadcast` | `view` | `all` | `same` | 1 | 1 | `expand` |
+| 54 | `aten.ceil.default` | `ceil` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 55 | `aten.celu.default` | `celu` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 56 | `aten.chunk.default` | `split` | `Split` | `view` | `all` | `same` | 1 | 2 | `split` |
+| 57 | `aten.clamp.Tensor` | `clamp` | `Elementwise` | `ternary` | `real` | `same` | 3 | 1 | `` |
+| 58 | `aten.clamp.default` | `clamp` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 59 | `aten.clamp_max.Tensor` | `clamp_max` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 60 | `aten.clamp_max.default` | `clamp_max` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 61 | `aten.clamp_min.Tensor` | `clamp_min` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 62 | `aten.clamp_min.default` | `clamp_min` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 63 | `aten.clip.Tensor` | `clip` | `Elementwise` | `ternary` | `real` | `same` | 3 | 1 | `` |
+| 64 | `aten.clip.default` | `clip` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 65 | `aten.clone.default` | `clone` | `View` | `view` | `all` | `same` | 1 | 1 | `identity` |
+| 66 | `aten.conj.default` | `conj` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 67 | `aten.conj_physical.default` | `conj_physical` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 68 | `aten.contiguous.default` | `contiguous` | `View` | `view` | `all` | `same` | 1 | 1 | `identity` |
+| 69 | `aten.copysign.Scalar` | `copysign` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 70 | `aten.copysign.Tensor` | `copysign` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 71 | `aten.cos.default` | `cos` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 72 | `aten.cosh.default` | `cosh` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 73 | `aten.count_nonzero.default` | `count_nonzero` | `Reduce` | `reduce_optional` | `all` | `int64` | 1 | 1 | `` |
+| 74 | `aten.count_nonzero.dim_IntList` | `count_nonzero` | `Reduce` | `reduce` | `all` | `int64` | 1 | 1 | `` |
+| 75 | `aten.cummax.default` | `cummax` | `Reduce` | `scan` | `real_bool` | `same` | 1 | 2 | `indices` |
+| 76 | `aten.cummin.default` | `cummin` | `Reduce` | `scan` | `real_bool` | `same` | 1 | 2 | `indices` |
+| 77 | `aten.cumprod.default` | `cumprod` | `Reduce` | `scan` | `real_bool` | `promote_int` | 1 | 1 | `` |
+| 78 | `aten.cumsum.default` | `cumsum` | `Reduce` | `scan` | `real_bool` | `promote_int` | 1 | 1 | `` |
+| 79 | `aten.deg2rad.default` | `deg2rad` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 80 | `aten.detach.default` | `detach` | `View` | `view` | `all` | `same` | 1 | 1 | `identity` |
+| 81 | `aten.detach_copy.default` | `detach_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `identity` |
+| 82 | `aten.diagonal.default` | `diagonal` | `View` | `view` | `all` | `same` | 1 | 1 | `diagonal` |
+| 83 | `aten.diagonal_copy.default` | `diagonal_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `diagonal` |
+| 84 | `aten.digamma.default` | `digamma` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 85 | `aten.dist.default` | `dist` | `Reduce` | `dist` | `float` | `same` | 2 | 1 | `` |
+| 86 | `aten.div.Scalar` | `div` | `Elementwise` | `scalar` | `real` | `division` | 1 | 1 | `` |
+| 87 | `aten.div.Scalar_mode` | `div` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 88 | `aten.div.Tensor` | `div` | `Elementwise` | `binary` | `number` | `division` | 2 | 1 | `` |
+| 89 | `aten.div.Tensor_mode` | `div` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 90 | `aten.divide.Scalar` | `divide` | `Elementwise` | `scalar` | `real` | `division` | 1 | 1 | `` |
+| 91 | `aten.divide.Tensor` | `divide` | `Elementwise` | `binary` | `number` | `division` | 2 | 1 | `` |
+| 92 | `aten.elu.default` | `elu` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 93 | `aten.eq.Scalar` | `eq` | `Elementwise` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
+| 94 | `aten.eq.Tensor` | `eq` | `Elementwise` | `binary` | `all` | `bool` | 2 | 1 | `` |
+| 95 | `aten.erf.default` | `erf` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 96 | `aten.erfc.default` | `erfc` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 97 | `aten.erfinv.default` | `erfinv` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 98 | `aten.exp.default` | `exp` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 99 | `aten.exp2.default` | `exp2` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 100 | `aten.expand.default` | `expand` | `Broadcast` | `view` | `all` | `same` | 1 | 1 | `expand` |
+| 101 | `aten.expand_as.default` | `expand_as` | `Broadcast` | `view_pair` | `all` | `same` | 2 | 1 | `expand` |
+| 102 | `aten.expand_copy.default` | `expand_copy` | `Broadcast` | `view` | `all` | `same` | 1 | 1 | `expand` |
+| 103 | `aten.expm1.default` | `expm1` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 104 | `aten.flatten.using_ints` | `reshape` | `Reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
+| 105 | `aten.float_power.Scalar` | `float_power` | `Elementwise` | `scalar_left` | `number` | `float_power` | 1 | 1 | `` |
+| 106 | `aten.float_power.Tensor_Scalar` | `float_power` | `Elementwise` | `scalar` | `number` | `float_power` | 1 | 1 | `` |
+| 107 | `aten.float_power.Tensor_Tensor` | `float_power` | `Elementwise` | `binary` | `number` | `float_power` | 2 | 1 | `` |
+| 108 | `aten.floor.default` | `floor` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 109 | `aten.floor_divide.Scalar` | `floor_divide` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 110 | `aten.floor_divide.default` | `floor_divide` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 111 | `aten.fmax.default` | `fmax` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 112 | `aten.fmin.default` | `fmin` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 113 | `aten.fmod.Scalar` | `fmod` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 114 | `aten.fmod.Tensor` | `fmod` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 115 | `aten.frac.default` | `frac` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 116 | `aten.frexp.Tensor` | `frexp` | `Elementwise` | `unary` | `float` | `same` | 1 | 2 | `exponent` |
+| 117 | `aten.gcd.default` | `gcd` | `Elementwise` | `binary` | `integral` | `same` | 2 | 1 | `` |
+| 118 | `aten.ge.Scalar` | `ge` | `Elementwise` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
+| 119 | `aten.ge.Tensor` | `ge` | `Elementwise` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
+| 120 | `aten.gelu.default` | `gelu` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 121 | `aten.gelu_backward.default` | `gelu_backward` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 122 | `aten.gt.Scalar` | `gt` | `Elementwise` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
+| 123 | `aten.gt.Tensor` | `gt` | `Elementwise` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
+| 124 | `aten.hardshrink.default` | `hardshrink` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 125 | `aten.hardsigmoid.default` | `hardsigmoid` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 126 | `aten.hardswish.default` | `hardswish` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 127 | `aten.hardtanh.default` | `hardtanh` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 128 | `aten.heaviside.default` | `heaviside` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 129 | `aten.hypot.default` | `hypot` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 130 | `aten.i0.default` | `i0` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 131 | `aten.igamma.default` | `igamma` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 132 | `aten.igammac.default` | `igammac` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 133 | `aten.imag.default` | `imag` | `Elementwise` | `unary` | `complex` | `real` | 1 | 1 | `` |
+| 134 | `aten.isclose.default` | `isclose` | `Elementwise` | `binary` | `float` | `bool` | 2 | 1 | `` |
+| 135 | `aten.isfinite.default` | `isfinite` | `Elementwise` | `unary` | `all` | `bool` | 1 | 1 | `` |
+| 136 | `aten.isinf.default` | `isinf` | `Elementwise` | `unary` | `all` | `bool` | 1 | 1 | `` |
+| 137 | `aten.isnan.default` | `isnan` | `Elementwise` | `unary` | `all` | `bool` | 1 | 1 | `` |
+| 138 | `aten.isneginf.default` | `isneginf` | `Elementwise` | `unary` | `real` | `bool` | 1 | 1 | `` |
+| 139 | `aten.isposinf.default` | `isposinf` | `Elementwise` | `unary` | `real` | `bool` | 1 | 1 | `` |
+| 140 | `aten.isreal.default` | `isreal` | `Elementwise` | `unary` | `all` | `bool` | 1 | 1 | `` |
+| 141 | `aten.kthvalue.default` | `kthvalue` | `Reduce` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
+| 142 | `aten.lcm.default` | `lcm` | `Elementwise` | `binary` | `integral` | `same` | 2 | 1 | `` |
+| 143 | `aten.le.Scalar` | `le` | `Elementwise` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
+| 144 | `aten.le.Tensor` | `le` | `Elementwise` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
+| 145 | `aten.leaky_relu.default` | `leaky_relu` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 146 | `aten.lerp.Scalar` | `lerp` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 147 | `aten.lerp.Tensor` | `lerp` | `Elementwise` | `ternary` | `float` | `same` | 3 | 1 | `` |
+| 148 | `aten.lgamma.default` | `lgamma` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 149 | `aten.linalg_vector_norm.default` | `vector_norm` | `Reduce` | `reduce` | `inexact` | `real` | 1 | 1 | `norm` |
+| 150 | `aten.log.default` | `log` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 151 | `aten.log10.default` | `log10` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 152 | `aten.log1p.default` | `log1p` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 153 | `aten.log2.default` | `log2` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 154 | `aten.log_sigmoid.default` | `logsigmoid` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 155 | `aten.log_softmax.int` | `logsoftmax` | `Reduce` | `scan` | `float` | `same` | 1 | 1 | `` |
+| 156 | `aten.logaddexp.default` | `logaddexp` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 157 | `aten.logaddexp2.default` | `logaddexp2` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 158 | `aten.logcumsumexp.default` | `logcumsumexp` | `Reduce` | `scan` | `float` | `same` | 1 | 1 | `` |
+| 159 | `aten.logical_and.default` | `logical_and` | `Elementwise` | `binary` | `all` | `bool` | 2 | 1 | `` |
+| 160 | `aten.logical_not.default` | `logical_not` | `Elementwise` | `unary` | `all` | `bool` | 1 | 1 | `` |
+| 161 | `aten.logical_or.default` | `logical_or` | `Elementwise` | `binary` | `all` | `bool` | 2 | 1 | `` |
+| 162 | `aten.logical_xor.default` | `logical_xor` | `Elementwise` | `binary` | `all` | `bool` | 2 | 1 | `` |
+| 163 | `aten.logit.default` | `logit` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 164 | `aten.logit_backward.default` | `logit_backward` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 165 | `aten.logsumexp.default` | `logsumexp` | `Reduce` | `reduce` | `float` | `same` | 1 | 1 | `` |
+| 166 | `aten.lt.Scalar` | `lt` | `Elementwise` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
+| 167 | `aten.lt.Tensor` | `lt` | `Elementwise` | `binary` | `real_bool` | `bool` | 2 | 1 | `` |
+| 168 | `aten.masked_fill.Scalar` | `masked_fill` | `Elementwise` | `masked` | `float` | `same` | 2 | 1 | `` |
+| 169 | `aten.max.default` | `max` | `Reduce` | `reduce_all` | `real_bool` | `same` | 1 | 1 | `` |
+| 170 | `aten.max.dim` | `max` | `Reduce` | `reduce_one` | `real_bool` | `same` | 1 | 2 | `indices` |
+| 171 | `aten.max.other` | `max` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 172 | `aten.maximum.default` | `maximum` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 173 | `aten.mean.default` | `reducemean` | `Reduce` | `reduce_all` | `inexact` | `same` | 1 | 1 | `` |
+| 174 | `aten.mean.dim` | `reducemean` | `Reduce` | `reduce` | `inexact` | `same` | 1 | 1 | `` |
+| 175 | `aten.median.default` | `median` | `Reduce` | `reduce_all` | `real` | `same` | 1 | 1 | `` |
+| 176 | `aten.median.dim` | `median` | `Reduce` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
+| 177 | `aten.min.default` | `min` | `Reduce` | `reduce_all` | `real_bool` | `same` | 1 | 1 | `` |
+| 178 | `aten.min.dim` | `min` | `Reduce` | `reduce_one` | `real_bool` | `same` | 1 | 2 | `indices` |
+| 179 | `aten.min.other` | `min` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 180 | `aten.minimum.default` | `minimum` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 181 | `aten.mish.default` | `mish` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 182 | `aten.mode.default` | `mode` | `Reduce` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
+| 183 | `aten.movedim.int` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `movedim` |
+| 184 | `aten.movedim.intlist` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `movedim` |
+| 185 | `aten.mul.Scalar` | `mul` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 186 | `aten.mul.Tensor` | `mul` | `Elementwise` | `binary` | `number` | `same` | 2 | 1 | `` |
+| 187 | `aten.multiply.Scalar` | `mul` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 188 | `aten.multiply.Tensor` | `mul` | `Elementwise` | `binary` | `number` | `same` | 2 | 1 | `` |
+| 189 | `aten.mvlgamma.default` | `mvlgamma` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 190 | `aten.nan_to_num.default` | `nan_to_num` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 191 | `aten.nanmean.default` | `nanmean` | `Reduce` | `reduce` | `float` | `same` | 1 | 1 | `` |
+| 192 | `aten.nanmedian.default` | `nanmedian` | `Reduce` | `reduce_all` | `real` | `same` | 1 | 1 | `` |
+| 193 | `aten.nanmedian.dim` | `nanmedian` | `Reduce` | `reduce_one` | `real` | `same` | 1 | 2 | `indices` |
+| 194 | `aten.nansum.default` | `nansum` | `Reduce` | `reduce` | `real_bool` | `promote_int` | 1 | 1 | `` |
+| 195 | `aten.narrow.default` | `narrow` | `View` | `view` | `all` | `same` | 1 | 1 | `narrow` |
+| 196 | `aten.native_dropout_backward.default` | `native_dropout_backward` | `Elementwise` | `masked` | `float` | `same` | 2 | 1 | `` |
+| 197 | `aten.ne.Scalar` | `ne` | `Elementwise` | `scalar` | `real_bool` | `bool` | 1 | 1 | `` |
+| 198 | `aten.ne.Tensor` | `ne` | `Elementwise` | `binary` | `all` | `bool` | 2 | 1 | `` |
+| 199 | `aten.neg.default` | `neg` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 200 | `aten.negative.default` | `neg` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 201 | `aten.nextafter.default` | `nextafter` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 202 | `aten.norm.Scalar` | `norm` | `Reduce` | `reduce_all` | `inexact` | `real` | 1 | 1 | `norm` |
+| 203 | `aten.norm.ScalarOpt_dim` | `norm` | `Reduce` | `reduce` | `inexact` | `real` | 1 | 1 | `norm` |
+| 204 | `aten.permute.default` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `permute` |
+| 205 | `aten.permute_copy.default` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `permute` |
+| 206 | `aten.polygamma.default` | `polygamma` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 207 | `aten.positive.default` | `positive` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 208 | `aten.pow.Scalar` | `pow` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 209 | `aten.pow.Tensor_Scalar` | `pow` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 210 | `aten.pow.Tensor_Tensor` | `pow` | `Elementwise` | `binary` | `number` | `same` | 2 | 1 | `` |
+| 211 | `aten.prod.default` | `prod` | `Reduce` | `reduce_all` | `real_bool` | `promote_int` | 1 | 1 | `` |
+| 212 | `aten.prod.dim_int` | `prod` | `Reduce` | `reduce_one` | `real_bool` | `promote_int` | 1 | 1 | `` |
+| 213 | `aten.rad2deg.default` | `rad2deg` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 214 | `aten.ravel.default` | `reshape` | `Reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
+| 215 | `aten.real.default` | `real` | `Elementwise` | `unary` | `complex` | `real` | 1 | 1 | `` |
+| 216 | `aten.reciprocal.default` | `reciprocal` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 217 | `aten.relu.default` | `relu` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 218 | `aten.relu6.default` | `relu6` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 219 | `aten.remainder.Scalar` | `remainder` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 220 | `aten.remainder.Scalar_Tensor` | `remainder` | `Elementwise` | `scalar_left` | `real` | `same` | 1 | 1 | `` |
+| 221 | `aten.remainder.Tensor` | `remainder` | `Elementwise` | `binary` | `real` | `same` | 2 | 1 | `` |
+| 222 | `aten.repeat.default` | `repeat` | `View` | `view` | `all` | `same` | 1 | 1 | `repeat` |
+| 223 | `aten.reshape.default` | `reshape` | `Reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
+| 224 | `aten.reshape_as.default` | `reshape_as` | `Reshape` | `view_pair` | `all` | `same` | 2 | 1 | `reshape` |
+| 225 | `aten.resolve_conj.default` | `resolve_conj` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 226 | `aten.resolve_neg.default` | `resolve_neg` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 227 | `aten.round.decimals` | `round` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 228 | `aten.round.default` | `round` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 229 | `aten.rrelu.default` | `rrelu` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 230 | `aten.rsqrt.default` | `rsqrt` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 231 | `aten.rsub.Scalar` | `rsub` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 232 | `aten.select.int` | `select` | `View` | `view` | `all` | `same` | 1 | 1 | `select` |
+| 233 | `aten.select_copy.int` | `select_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `select` |
+| 234 | `aten.selu.default` | `selu` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 235 | `aten.sgn.default` | `sgn` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 236 | `aten.sigmoid.default` | `sigmoid` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 237 | `aten.sigmoid_backward.default` | `sigmoid_backward` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 238 | `aten.sign.default` | `sign` | `Elementwise` | `unary` | `real` | `same` | 1 | 1 | `` |
+| 239 | `aten.signbit.default` | `signbit` | `Elementwise` | `unary` | `real` | `bool` | 1 | 1 | `` |
+| 240 | `aten.silu.default` | `silu` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 241 | `aten.silu_backward.default` | `silu_backward` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 242 | `aten.sin.default` | `sin` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 243 | `aten.sinc.default` | `sinc` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 244 | `aten.sinh.default` | `sinh` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 245 | `aten.slice.Tensor` | `slice` | `View` | `view` | `all` | `same` | 1 | 1 | `slice` |
+| 246 | `aten.slice_copy.Tensor` | `slice_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `slice` |
+| 247 | `aten.softmax.int` | `softmax` | `Reduce` | `scan` | `float` | `same` | 1 | 1 | `` |
+| 248 | `aten.softplus.default` | `softplus` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 249 | `aten.softshrink.default` | `softshrink` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 250 | `aten.special_airy_ai.default` | `special_airy_ai` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 251 | `aten.special_bessel_j0.default` | `special_bessel_j0` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 252 | `aten.special_bessel_j1.default` | `special_bessel_j1` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 253 | `aten.special_bessel_y0.default` | `special_bessel_y0` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 254 | `aten.special_bessel_y1.default` | `special_bessel_y1` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 255 | `aten.special_chebyshev_polynomial_t.default` | `special_chebyshev_polynomial_t` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 256 | `aten.special_chebyshev_polynomial_t.n_scalar` | `special_chebyshev_polynomial_t` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 257 | `aten.special_chebyshev_polynomial_t.x_scalar` | `special_chebyshev_polynomial_t` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 258 | `aten.special_chebyshev_polynomial_u.default` | `special_chebyshev_polynomial_u` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 259 | `aten.special_chebyshev_polynomial_u.n_scalar` | `special_chebyshev_polynomial_u` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 260 | `aten.special_chebyshev_polynomial_u.x_scalar` | `special_chebyshev_polynomial_u` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 261 | `aten.special_chebyshev_polynomial_v.default` | `special_chebyshev_polynomial_v` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 262 | `aten.special_chebyshev_polynomial_v.n_scalar` | `special_chebyshev_polynomial_v` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 263 | `aten.special_chebyshev_polynomial_v.x_scalar` | `special_chebyshev_polynomial_v` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 264 | `aten.special_chebyshev_polynomial_w.default` | `special_chebyshev_polynomial_w` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 265 | `aten.special_chebyshev_polynomial_w.n_scalar` | `special_chebyshev_polynomial_w` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 266 | `aten.special_chebyshev_polynomial_w.x_scalar` | `special_chebyshev_polynomial_w` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 267 | `aten.special_entr.default` | `special_entr` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 268 | `aten.special_erfcx.default` | `special_erfcx` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 269 | `aten.special_hermite_polynomial_h.default` | `special_hermite_polynomial_h` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 270 | `aten.special_hermite_polynomial_h.n_scalar` | `special_hermite_polynomial_h` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 271 | `aten.special_hermite_polynomial_h.x_scalar` | `special_hermite_polynomial_h` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 272 | `aten.special_hermite_polynomial_he.default` | `special_hermite_polynomial_he` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 273 | `aten.special_hermite_polynomial_he.n_scalar` | `special_hermite_polynomial_he` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 274 | `aten.special_hermite_polynomial_he.x_scalar` | `special_hermite_polynomial_he` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 275 | `aten.special_i0e.default` | `special_i0e` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 276 | `aten.special_i1.default` | `special_i1` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 277 | `aten.special_i1e.default` | `special_i1e` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 278 | `aten.special_laguerre_polynomial_l.default` | `special_laguerre_polynomial_l` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 279 | `aten.special_laguerre_polynomial_l.n_scalar` | `special_laguerre_polynomial_l` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 280 | `aten.special_laguerre_polynomial_l.x_scalar` | `special_laguerre_polynomial_l` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 281 | `aten.special_legendre_polynomial_p.default` | `special_legendre_polynomial_p` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 282 | `aten.special_legendre_polynomial_p.n_scalar` | `special_legendre_polynomial_p` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 283 | `aten.special_legendre_polynomial_p.x_scalar` | `special_legendre_polynomial_p` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 284 | `aten.special_log_ndtr.default` | `special_log_ndtr` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 285 | `aten.special_modified_bessel_i0.default` | `special_modified_bessel_i0` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 286 | `aten.special_modified_bessel_i1.default` | `special_modified_bessel_i1` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 287 | `aten.special_modified_bessel_k0.default` | `special_modified_bessel_k0` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 288 | `aten.special_modified_bessel_k1.default` | `special_modified_bessel_k1` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 289 | `aten.special_ndtr.default` | `special_ndtr` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 290 | `aten.special_ndtri.default` | `special_ndtri` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 291 | `aten.special_scaled_modified_bessel_k0.default` | `special_scaled_modified_bessel_k0` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 292 | `aten.special_scaled_modified_bessel_k1.default` | `special_scaled_modified_bessel_k1` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 293 | `aten.special_shifted_chebyshev_polynomial_t.default` | `special_shifted_chebyshev_polynomial_t` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 294 | `aten.special_shifted_chebyshev_polynomial_t.n_scalar` | `special_shifted_chebyshev_polynomial_t` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 295 | `aten.special_shifted_chebyshev_polynomial_t.x_scalar` | `special_shifted_chebyshev_polynomial_t` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 296 | `aten.special_shifted_chebyshev_polynomial_u.default` | `special_shifted_chebyshev_polynomial_u` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 297 | `aten.special_shifted_chebyshev_polynomial_u.n_scalar` | `special_shifted_chebyshev_polynomial_u` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 298 | `aten.special_shifted_chebyshev_polynomial_u.x_scalar` | `special_shifted_chebyshev_polynomial_u` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 299 | `aten.special_shifted_chebyshev_polynomial_v.default` | `special_shifted_chebyshev_polynomial_v` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 300 | `aten.special_shifted_chebyshev_polynomial_v.n_scalar` | `special_shifted_chebyshev_polynomial_v` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 301 | `aten.special_shifted_chebyshev_polynomial_v.x_scalar` | `special_shifted_chebyshev_polynomial_v` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 302 | `aten.special_shifted_chebyshev_polynomial_w.default` | `special_shifted_chebyshev_polynomial_w` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 303 | `aten.special_shifted_chebyshev_polynomial_w.n_scalar` | `special_shifted_chebyshev_polynomial_w` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 304 | `aten.special_shifted_chebyshev_polynomial_w.x_scalar` | `special_shifted_chebyshev_polynomial_w` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 305 | `aten.special_spherical_bessel_j0.default` | `special_spherical_bessel_j0` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 306 | `aten.special_xlog1py.default` | `special_xlog1py` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 307 | `aten.special_xlog1py.other_scalar` | `special_xlog1py` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 308 | `aten.special_xlog1py.self_scalar` | `special_xlog1py` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 309 | `aten.special_zeta.default` | `special_zeta` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 310 | `aten.special_zeta.other_scalar` | `special_zeta` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 311 | `aten.special_zeta.self_scalar` | `special_zeta` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 312 | `aten.split.Tensor` | `split` | `Split` | `view` | `all` | `same` | 1 | 2 | `split` |
+| 313 | `aten.split_with_sizes.default` | `split` | `Split` | `view` | `all` | `same` | 1 | 2 | `split` |
+| 314 | `aten.sqrt.default` | `sqrt` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 315 | `aten.square.default` | `square` | `Elementwise` | `unary` | `number` | `same` | 1 | 1 | `` |
+| 316 | `aten.squeeze.default` | `squeeze` | `View` | `view` | `all` | `same` | 1 | 1 | `squeeze_all` |
+| 317 | `aten.squeeze.dim` | `squeeze` | `View` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
+| 318 | `aten.squeeze.dims` | `squeeze` | `View` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
+| 319 | `aten.squeeze_copy.default` | `squeeze_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `squeeze_all` |
+| 320 | `aten.squeeze_copy.dim` | `squeeze_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
+| 321 | `aten.squeeze_copy.dims` | `squeeze_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `squeeze` |
+| 322 | `aten.std.correction` | `std` | `Reduce` | `reduce` | `float` | `same` | 1 | 1 | `` |
+| 323 | `aten.std.default` | `std` | `Reduce` | `reduce_all` | `float` | `same` | 1 | 1 | `` |
+| 324 | `aten.std.dim` | `std` | `Reduce` | `reduce` | `float` | `same` | 1 | 1 | `` |
+| 325 | `aten.std_mean.correction` | `std_mean` | `Reduce` | `reduce` | `float` | `same` | 1 | 2 | `` |
+| 326 | `aten.std_mean.default` | `std_mean` | `Reduce` | `reduce_all` | `float` | `same` | 1 | 2 | `` |
+| 327 | `aten.std_mean.dim` | `std_mean` | `Reduce` | `reduce` | `float` | `same` | 1 | 2 | `` |
+| 328 | `aten.sub.Scalar` | `sub` | `Elementwise` | `scalar` | `real` | `same` | 1 | 1 | `` |
+| 329 | `aten.sub.Tensor` | `sub` | `Elementwise` | `binary` | `number` | `same` | 2 | 1 | `` |
+| 330 | `aten.sum.default` | `reducesum` | `Reduce` | `reduce_all` | `real_bool` | `promote_int` | 1 | 1 | `` |
+| 331 | `aten.sum.dim_IntList` | `reducesum` | `Reduce` | `reduce` | `real_bool` | `promote_int` | 1 | 1 | `` |
+| 332 | `aten.swapaxes.default` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
+| 333 | `aten.swapdims.default` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
+| 334 | `aten.t.default` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `t` |
+| 335 | `aten.t_copy.default` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `t` |
+| 336 | `aten.tan.default` | `tan` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 337 | `aten.tanh.default` | `tanh` | `Elementwise` | `unary` | `inexact` | `same` | 1 | 1 | `` |
+| 338 | `aten.tanh_backward.default` | `tanh_backward` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 339 | `aten.threshold.default` | `threshold` | `Elementwise` | `unary_param` | `float` | `same` | 1 | 1 | `` |
+| 340 | `aten.threshold_backward.default` | `threshold_backward` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |
+| 341 | `aten.tile.default` | `tile` | `View` | `view` | `all` | `same` | 1 | 1 | `repeat` |
+| 342 | `aten.topk.default` | `topk` | `Reduce` | `topk` | `real` | `same` | 1 | 2 | `indices` |
+| 343 | `aten.transpose.int` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
+| 344 | `aten.transpose_copy.int` | `permute` | `Transpose` | `view` | `all` | `same` | 1 | 1 | `transpose` |
+| 345 | `aten.true_divide.Scalar` | `div` | `Elementwise` | `scalar` | `real` | `division` | 1 | 1 | `` |
+| 346 | `aten.true_divide.Tensor` | `div` | `Elementwise` | `binary` | `number` | `division` | 2 | 1 | `` |
+| 347 | `aten.trunc.default` | `trunc` | `Elementwise` | `unary` | `float` | `same` | 1 | 1 | `` |
+| 348 | `aten.unbind.int` | `unbind` | `Split` | `view` | `all` | `same` | 1 | 2 | `unbind` |
+| 349 | `aten.unflatten.int` | `unflatten` | `Reshape` | `view` | `all` | `same` | 1 | 1 | `unflatten` |
+| 350 | `aten.unfold.default` | `unfold` | `View` | `view` | `all` | `same` | 1 | 1 | `unfold` |
+| 351 | `aten.unfold_copy.default` | `unfold_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `unfold` |
+| 352 | `aten.unsqueeze.default` | `unsqueeze` | `View` | `view` | `all` | `same` | 1 | 1 | `unsqueeze` |
+| 353 | `aten.unsqueeze_copy.default` | `unsqueeze_copy` | `View` | `view` | `all` | `same` | 1 | 1 | `unsqueeze` |
+| 354 | `aten.var.correction` | `var` | `Reduce` | `reduce` | `float` | `same` | 1 | 1 | `` |
+| 355 | `aten.var.default` | `var` | `Reduce` | `reduce_all` | `float` | `same` | 1 | 1 | `` |
+| 356 | `aten.var.dim` | `var` | `Reduce` | `reduce` | `float` | `same` | 1 | 1 | `` |
+| 357 | `aten.var_mean.correction` | `var_mean` | `Reduce` | `reduce` | `float` | `same` | 1 | 2 | `` |
+| 358 | `aten.var_mean.default` | `var_mean` | `Reduce` | `reduce_all` | `float` | `same` | 1 | 2 | `` |
+| 359 | `aten.var_mean.dim` | `var_mean` | `Reduce` | `reduce` | `float` | `same` | 1 | 2 | `` |
+| 360 | `aten.view.default` | `reshape` | `Reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
+| 361 | `aten.view_as.default` | `view_as` | `Reshape` | `view_pair` | `all` | `same` | 2 | 1 | `reshape` |
+| 362 | `aten.view_as_complex.default` | `view_as_complex` | `View` | `view` | `float_complex_view` | `complex` | 1 | 1 | `real_complex` |
+| 363 | `aten.view_as_real.default` | `view_as_real` | `View` | `view` | `complex` | `real` | 1 | 1 | `complex_real` |
+| 364 | `aten.view_copy.default` | `reshape` | `Reshape` | `view` | `all` | `same` | 1 | 1 | `flatten` |
+| 365 | `aten.where.self` | `where` | `Elementwise` | `where` | `all` | `same` | 3 | 1 | `` |
+| 366 | `aten.xlogy.Scalar_Other` | `xlogy` | `Elementwise` | `scalar` | `float` | `same` | 1 | 1 | `` |
+| 367 | `aten.xlogy.Scalar_Self` | `xlogy` | `Elementwise` | `scalar_left` | `float` | `same` | 1 | 1 | `` |
+| 368 | `aten.xlogy.Tensor` | `xlogy` | `Elementwise` | `binary` | `float` | `same` | 2 | 1 | `` |

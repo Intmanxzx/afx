@@ -52,7 +52,15 @@ def decode(raw):
         rule = BY_TARGET.get(node.get('op'))
         if rule is None or len(node.get('inputs', [])) != rule.arity or any(n not in known for n in node['inputs']):
             raise ValueError('invalid ATen inputs/target')
-        if 'display_name' in node and node.get('display_name') != rule.display_name:
+        # Display labels are not executable identities. Keep accepting labels
+        # emitted before the catalog rename so stored cases remain readable.
+        legacy_name = {
+            'lshift': '__lshift__', 'rshift': '__rshift__', 'xor': '__xor__',
+            'reduceall': 'all', 'reduceany': 'any',
+            'broadcast': rule.target.split('.')[1],
+            'permute': 'permute' if rule.mode == 'permute' else 'transpose',
+        }.get(rule.display_name, rule.display_name)
+        if 'display_name' in node and node.get('display_name') not in {rule.display_name, legacy_name}:
             raise ValueError('invalid ATen display name')
         outputs = node.get('outputs')
         if (not isinstance(outputs, list) or len(outputs) != rule.outputs
