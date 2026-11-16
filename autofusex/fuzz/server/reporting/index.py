@@ -127,7 +127,7 @@ def index_attempt(conn, identity, source_id=None, device_name=None, user_id=None
         return
     try:
         if ex.get('case_spec'):
-            from ..case_spec import decode
+            from ...client.case_spec import decode
             from .report import spec_metadata
             spec=decode(ex['case_spec'])
             metadata=spec_metadata(spec)
