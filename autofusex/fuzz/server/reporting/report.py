@@ -3,8 +3,8 @@ import json
 import math
 def spec_metadata(spec):
     graph = json.loads(spec.graph_json)
-    from ...client.nnsmith.aten_catalog import rules
-    display = {rule.target: rule.display_name for rule in rules()}
+    from ...client.nnsmith.aten_catalog import RULES
+    display = {rule.target: rule.display_name for rule in RULES}
     for node in graph['nodes']:
         node.setdefault('display_name', display.get(node['op'], node['op']))
     ops = [node.get('display_name', node['op']) for node in graph['nodes']]
