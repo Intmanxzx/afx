@@ -22,15 +22,7 @@ _OP_CATEGORY = {
 # Import-light metadata: never consult device/backend support for categories.
 from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
 for _rule in RULES:
-    _family = _rule.family
-    _OP_CATEGORY[_rule.target] = ('Transpose' if _rule.mode in {'transpose', 'permute', 'movedim', 't'} else
-        'Transpose' if _rule.display_name == 'transpose' else
-        'Split' if _rule.display_name == 'split' else
-        'Gather' if _rule.display_name in {'gather', 'index_select'} else
-        'Scatter' if _rule.display_name in {'scatter', 'index_put'} else
-        'Concat' if _rule.display_name in {'cat', 'concat', 'stack'} else
-        'View' if _family.startswith('view') else
-        'Reduce' if _family.startswith('reduce') or _family in {'scan', 'topk', 'dist'} else 'Elementwise')
+    _OP_CATEGORY[_rule.target] = _rule.category
 
 OP_CATEGORY = _OP_CATEGORY
 SUPPORTED_CATEGORIES = tuple(sorted(set(_OP_CATEGORY.values())))

@@ -263,4 +263,4 @@ def test_aten_reporting_categories():
     assert set(r.target for r in RULES)<=set(OP_CATEGORY)
     graph={'nodes':[{'op':t} for t in ('aten.add.Tensor','aten.topk.default',
                                      'aten.permute.default','aten.reshape.default')]}
-    assert categories(SimpleNamespace(graph_json=json.dumps(graph)))==('Elementwise','Reduce','Transpose','View')
+    assert categories(SimpleNamespace(graph_json=json.dumps(graph)))==('Elementwise','Reduce','Reshape','Transpose')

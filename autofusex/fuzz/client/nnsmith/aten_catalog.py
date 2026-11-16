@@ -8,6 +8,9 @@ from dataclasses import dataclass
 
 
 _DISPLAY_OVERRIDES = {
+    '__lshift__': 'lshift', '__rshift__': 'rshift', '__xor__': 'xor',
+    'all': 'reduceall', 'any': 'reduceany',
+    'broadcast_tensors': 'broadcast', 'broadcast_to': 'broadcast',
     'absolute': 'abs', 'negative': 'neg', 'multiply': 'mul',
     'true_divide': 'div', 'log_sigmoid': 'logsigmoid',
     'logical_and': 'logical_and', 'logical_or': 'logical_or',
@@ -26,7 +29,7 @@ def _display_name(packet, family='', mode=''):
         return {'sum': 'reducesum', 'mean': 'reducemean', 'amax': 'reducemax',
                 'amin': 'reducemin', 'argmax': 'argmax', 'argmin': 'argmin'}.get(packet, packet)
     if mode in {'transpose', 'permute', 'movedim', 't'}:
-        return 'transpose' if mode != 'permute' else 'permute'
+        return 'permute'
     if mode == 'split':
         return 'split'
     if mode == 'flatten':
@@ -46,6 +49,29 @@ class Rule:
     # Short, stable name used by reports and operator allow/deny lists.
     # ``target`` remains the executable ATen overload identity.
     display_name: str = ''
+
+    @property
+    def category(self):
+        """Tool category; family remains the original generation type."""
+        if self.mode in {'transpose', 'permute', 'movedim', 't'}:
+            return 'Transpose'
+        if self.mode in {'flatten', 'unflatten', 'reshape'}:
+            return 'Reshape'
+        if self.mode in {'expand', 'broadcast'}:
+            return 'Broadcast'
+        if self.mode in {'split', 'unbind'}:
+            return 'Split'
+        if self.display_name in {'cat', 'concat', 'stack'}:
+            return 'Concat'
+        if self.display_name in {'gather', 'index_select'}:
+            return 'Gather'
+        if self.display_name in {'scatter', 'index_put'}:
+            return 'Scatter'
+        if self.family.startswith('reduce') or self.family in {'scan', 'topk', 'dist'}:
+            return 'Reduce'
+        if self.family.startswith('view'):
+            return 'View'
+        return 'Elementwise'
 
 
 def _build():
