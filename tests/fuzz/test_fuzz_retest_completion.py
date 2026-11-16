@@ -5,11 +5,11 @@ import json
 
 import pytest
 from test_fuzz_retests import setup, uid
-from autofusex.fuzz.central import retests
-from autofusex.fuzz.central.repository import ingest
-from autofusex.fuzz.storage.repository import ResultRepository, _connect
-from autofusex.fuzz.storage.queries import ResultQueries
-from autofusex.fuzz.sync.outbox import pending, acknowledge
+from autofusex.fuzz.server.central import retests
+from autofusex.fuzz.server.central.repository import ingest
+from autofusex.fuzz.client.storage.repository import ResultRepository, _connect
+from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.fuzz.client.sync.outbox import pending, acknowledge
 
 
 def execute(setup,tmp_path,statuses=('pass','pass','pass'),payload=None):
@@ -105,7 +105,7 @@ def test_source_and_lease_binding(setup,tmp_path):
 
 
 def test_partial_shapes_preserve_unverified_and_statistics(setup,tmp_path):
-    from autofusex.fuzz.reporting.statistics import statistics
+    from autofusex.fuzz.server.reporting.statistics import statistics
     database,_,bob,_,_,_=setup
     job=execute(setup,tmp_path)
     payload=upload(setup,tmp_path,job,('fail',))
@@ -117,7 +117,7 @@ def test_partial_shapes_preserve_unverified_and_statistics(setup,tmp_path):
 
 
 def test_cache_refresh_after_publication(setup,tmp_path):
-    from autofusex.fuzz.central.cache import PublicCache
+    from autofusex.fuzz.server.central.cache import PublicCache
     database,_,bob,_,_,_=setup
     cache=PublicCache(database,interval=30)
     first=cache.build()

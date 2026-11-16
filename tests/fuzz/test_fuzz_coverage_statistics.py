@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from autofusex.fuzz.case_spec import encode
-from autofusex.fuzz.contracts import canonical_json
-from autofusex.fuzz.reporting.incremental import IncrementalStatistics
-from autofusex.fuzz.reporting.statistics import statistics
-from autofusex.fuzz.storage import ResultRepository
+from autofusex.fuzz.client.case_spec import encode
+from autofusex.fuzz.client.contracts import canonical_json
+from autofusex.fuzz.server.reporting.incremental import IncrementalStatistics
+from autofusex.fuzz.server.reporting.statistics import statistics
+from autofusex.fuzz.client.storage import ResultRepository
 from fuzz_fixtures import bundle
 
 
@@ -35,7 +35,7 @@ def save_shapes(repo, sizes, *, backend='af-mlir', mixed=False):
         'backend': backend, 'status': 'ok', 'execution': {'backend': backend},
         'shape_results': [{'shape_index': i, 'correctness': 'pass', 'performance': 'not_requested'}
                           for i in range(len(sizes))]})
-    from autofusex.fuzz.reporting.report import spec_metadata
+    from autofusex.fuzz.server.reporting.report import spec_metadata
     with sqlite3.connect(repo.path) as conn:
         conn.execute('UPDATE case_facts SET metadata=?', (canonical_json(spec_metadata(spec)),))
         conn.executemany('INSERT OR IGNORE INTO case_dimensions VALUES (?,?,?)',
@@ -88,7 +88,7 @@ def test_shape_sizes_include_outputs_and_use_product_not_sum(tmp_path):
     with sqlite3.connect(repo.path) as conn:
         metadata = json.loads(conn.execute('SELECT metadata FROM case_facts').fetchone()[0])
         # Exercise the metadata producer independently of statistics.
-        from autofusex.fuzz.reporting.report import spec_metadata
+        from autofusex.fuzz.server.reporting.report import spec_metadata
         spec = bundle().spec
         t = spec.inputs[0]
         spec = replace(spec, shape_samples=((replace(t, shape=(2,3), stride=(3,1)),),),
@@ -106,7 +106,7 @@ def test_numeric_chart_order_not_lexicographic():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/fuzz/view/static/charts.js').read_text()
+    source = Path('autofusex/fuzz/server/view/static/charts.js').read_text()
     helpers = source[source.index('const SHAPE_BUCKET_ORDER'):source.index('const legendHidden')]
     subprocess.run([node, '-e', "const assert=require('assert'); const STATUS_KEYS=['gen_failed','gen_error','mlir_failed','fail','pass','unknown'];\n"+helpers+"""
 for (const id of ['ShapeDim','ShapeElem']) {
@@ -122,4 +122,4 @@ for (const id of ['ShapeDim','ShapeElem']) {
     assert 'return orderChartRows([...groups.values()],id)' in source
 
     assert 'displayChartRows(convert(result[key],id),id)' in source
-    assert '独立区间，K=1024' in Path('autofusex/fuzz/view/static/index.html').read_text()
+    assert '独立区间，K=1024' in Path('autofusex/fuzz/server/view/static/index.html').read_text()

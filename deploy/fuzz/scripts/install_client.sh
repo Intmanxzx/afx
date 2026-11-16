@@ -75,10 +75,10 @@ fi
 import json, sys
 from pathlib import Path
 import torch, torch_npu, autofuse
-from autofusex.fuzz.generation.runtime import source_evidence
-from autofusex.fuzz.nnsmith.aten_dialect import validate_runtime
-from autofusex.fuzz.backends.mlir_capability import verify_compile_adapter, verify_runtime
-from autofusex.fuzz.environment import collect
+from autofusex.fuzz.client.generation.runtime import source_evidence
+from autofusex.fuzz.client.nnsmith.aten_dialect import validate_runtime
+from autofusex.fuzz.client.backends.mlir_capability import verify_compile_adapter, verify_runtime
+from autofusex.fuzz.client.environment import collect
 root=Path(sys.argv[1]).resolve()
 assert root in Path(autofuse.__file__).resolve().parents, autofuse.__file__
 validate_runtime()

@@ -15,15 +15,15 @@ import threading
 import time
 from urllib.request import build_opener, ProxyHandler
 
-from autofusex.fuzz.central.server import create_server
-from autofusex.fuzz.central.repository import create_user
-from autofusex.fuzz.central import retests
-from autofusex.fuzz.config import setup
-from autofusex.fuzz.storage.repository import _connect
-from autofusex.fuzz.storage.queries import ResultQueries
-from autofusex.fuzz.sync.client import once
-from autofusex.fuzz.sync.retests import Consumer
-from autofusex.fuzz.sync.outbox import pending
+from autofusex.fuzz.server.central.server import create_server
+from autofusex.fuzz.server.central.repository import create_user
+from autofusex.fuzz.server.central import retests
+from autofusex.fuzz.daemon.management.config import setup
+from autofusex.fuzz.client.storage.repository import _connect
+from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.fuzz.client.sync.client import once
+from autofusex.fuzz.client.sync.retests import Consumer
+from autofusex.fuzz.client.sync.outbox import pending
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     database=root/'central.sqlite'
     users=[create_user(database,name) for name in ('Original','Retester')]
     if args.structured:
-        from autofusex.fuzz.reporting.materialized import rebuild
+        from autofusex.fuzz.server.reporting.materialized import rebuild
         rebuild(database)
     server=create_server(database,0,cache_interval=.5)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()

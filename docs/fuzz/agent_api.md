@@ -106,6 +106,8 @@ OP_ID 来自 submit 的 data.id；RUN_ID 来自成功 operation 的 data.result.
 
 ## 远程控制 API
 
+远程操作白名单包含 `client.update`。payload 为 {"version":"0.1.4","package":"autofusex"}，可选 `index_url` 仅用于受控 PyPI 镜像。version 必须是精确版本，daemon 不执行无版本的升级，也不自行探测最新版本。
+
 用户控制接口使用网页登录会话：POST /api/session 提交 {"token":"..."}，需要与站点 Host 一致的 HTTPS Origin；保留返回的会话 Cookie 和 CSRF token。后续写请求带 Origin、Cookie、X-CSRF-Token 与 Content-Type: application/json。管理 POST 必须有 Content-Length，body 最大 64 KiB。设备 Bearer 凭据不能替代用户控制凭据。
 
 | 路由 | 方法 / body | 作用 |

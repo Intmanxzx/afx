@@ -7,12 +7,12 @@ from urllib.request import Request, build_opener, ProxyHandler
 
 import pytest
 from test_fuzz_retests import setup, uid
-from autofusex.fuzz.central.maintenance import WriteAllowlist, MaintenanceBlocked, ENVIRONMENT
-from autofusex.fuzz.central.server import create_server
-from autofusex.fuzz.central import sessions, retests
-from autofusex.fuzz.storage.repository import _connect, ResultRepository
-from autofusex.fuzz.sync.client import once
-from autofusex.fuzz.sync.outbox import pending
+from autofusex.fuzz.server.central.maintenance import WriteAllowlist, MaintenanceBlocked, ENVIRONMENT
+from autofusex.fuzz.server.central.server import create_server
+from autofusex.fuzz.server.central import sessions, retests
+from autofusex.fuzz.client.storage.repository import _connect, ResultRepository
+from autofusex.fuzz.client.sync.client import once
+from autofusex.fuzz.client.sync.outbox import pending
 
 
 def policy(tmp_path, monkeypatch, bob, client):
@@ -44,7 +44,7 @@ def running(database):
 
 
 def test_issue_retest_respects_browser_and_client_allowlist(setup,tmp_path,monkeypatch):
-    from autofusex.fuzz.central import issue_groups
+    from autofusex.fuzz.server.central import issue_groups
     database,alice,bob,attempt,client,_=setup
     policy(tmp_path,monkeypatch,bob,client)
     from test_fuzz_issue_groups import install_rows
@@ -162,7 +162,7 @@ def test_allowed_result_facts_and_heartbeat(setup,tmp_path,monkeypatch):
     with running(database) as (call,_,__):
         assert call('/api/upload',package,bob['token'])[0]==200
         assert call('/api/upload',package,bob['token'])[2]['ack']==1
-        from autofusex.fuzz.storage.lifecycle import stamp
+        from autofusex.fuzz.client.storage.lifecycle import stamp
         facts=dict(version=1,source_id=client,items=[dict(revision=1,kind='lifecycle',
             identity=package['items'][0]['attempt_id']+':admitted',payload=stamp())])
         assert call('/api/facts',facts,bob['token'])[0]==200
@@ -171,11 +171,11 @@ def test_allowed_result_facts_and_heartbeat(setup,tmp_path,monkeypatch):
 
 
 def test_consumer_503_does_not_retire_or_cancel_lease(tmp_path,monkeypatch):
-    from autofusex.fuzz.sync.retests import Consumer, accept, initialize
-    from autofusex.fuzz.scheduling.budgets import Budget
-    from autofusex.fuzz.config import setup as configure
+    from autofusex.fuzz.client.sync.retests import Consumer, accept, initialize
+    from autofusex.fuzz.client.scheduling.budgets import Budget
+    from autofusex.fuzz.client.config import setup as configure
     from test_fuzz_retest_consumer import lease
-    from autofusex.fuzz.scheduling import hosting
+    from autofusex.fuzz.client.scheduling import hosting
     home=tmp_path/'consumer';configure(home,cpu_workers=1,compile_threads=1)
     consumer=Consumer(home,home/'results/results.sqlite',devices=['npu:0'])
     initialize(consumer.ledger)

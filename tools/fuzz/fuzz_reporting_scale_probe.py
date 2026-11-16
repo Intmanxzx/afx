@@ -5,11 +5,11 @@ import sqlite3
 import sys
 import time
 import uuid
-from autofusex.fuzz.storage.repository import _initialize
-from autofusex.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.client.storage.repository import _initialize
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
 sampling=SamplingConfig()
-from autofusex.fuzz.storage.queries import ResultQueries
-from autofusex.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.fuzz.server.reporting.statistics import statistics
 
 rows=int(sys.argv[2]) if len(sys.argv)>2 else 100000
 path=Path(sys.argv[1])
@@ -26,7 +26,7 @@ with sqlite3.connect(path) as conn:
         conn.execute('INSERT INTO attempt_facts VALUES (?,?,?,?,?,?,?,?,?,?,?)',(identity,group,'source','device','owner','batch','{}','{}','{}',1000,'partial_recorded_only'))
         conn.execute('INSERT INTO stage_metrics VALUES (?,?,?,?)',(identity,-1,'prepare',1000))
         conn.execute('INSERT INTO shapes VALUES (?,?,?,?,?,?,?,?,?,?)',(identity,0,'pass','not_requested',1000,None,None,None,'',''))
-from autofusex.fuzz.reporting.materialized import rebuild
+from autofusex.fuzz.server.reporting.materialized import rebuild
 start=time.perf_counter(); rebuild(path)
 q=ResultQueries(path);results={'rows':rows,'build_seconds':time.perf_counter()-start,'bytes':path.stat().st_size}
 for name,call in [('cases',q.case_page),('statistics',lambda:statistics(path)),('seed',lambda:q.case_page(seed=str(sampling.seed(42,True))))]:

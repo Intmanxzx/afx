@@ -1,15 +1,15 @@
 import uuid
 import pytest
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.sync.outbox import pending
-from autofusex.fuzz.central.repository import create_user, ingest
-from autofusex.fuzz.storage.queries import ResultQueries
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.sync.outbox import pending
+from autofusex.fuzz.server.central.repository import create_user, ingest
+from autofusex.fuzz.client.storage.queries import ResultQueries
 
 
 
 
 def test_full_reset_retains_auth_and_tombstones(tmp_path):
-    from autofusex.fuzz.central.cleanup import purge_all_results
+    from autofusex.fuzz.server.central.cleanup import purge_all_results
     central=tmp_path/'central'; key=tmp_path/'key'; create_user(central,'Tester',key)
     local=ResultRepository(tmp_path/'local')
     local.save({'seed':'14615016373650978276328604632813839116929039597610','workload_id':'a'*64,'oracle_id':'ref/1','backend':'cpu','status':'ok','shape_results':[]},environment={'cann':'9.3'})
@@ -21,7 +21,7 @@ def test_full_reset_retains_auth_and_tombstones(tmp_path):
 
 
 def test_exact_id_cleanup_does_not_delete_peers(tmp_path):
-    from autofusex.fuzz.central.cleanup import purge_attempts
+    from autofusex.fuzz.server.central.cleanup import purge_attempts
     central=tmp_path/'central';key=tmp_path/'key';create_user(central,'Tester',key)
     local=ResultRepository(tmp_path/'local')
     record={'seed':'14615016373650978276328604632813839116929039597610','workload_id':'a'*64,'oracle_id':'ref/1','backend':'cpu','status':'ok','shape_results':[]}

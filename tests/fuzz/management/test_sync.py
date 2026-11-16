@@ -1,6 +1,7 @@
-from autofusex.fuzz.management import daemon
-from autofusex.fuzz.management.central import ControlStore
-from autofusex.fuzz.central.repository import create_user
+from autofusex.fuzz import daemon
+from autofusex.fuzz.daemon import runtime
+from autofusex.fuzz.daemon.management.central import ControlStore
+from autofusex.fuzz.server.central.repository import create_user
 
 
 def test_manager_center_flow_retries_lost_ack_without_duplicate_effect(tmp_path,monkeypatch):
@@ -20,7 +21,7 @@ def test_manager_center_flow_retries_lost_ack_without_duplicate_effect(tmp_path,
             if calls['ack']==1:raise OSError('simulated dropped ACK response')
             return result
         raise AssertionError(route)
-    monkeypatch.setattr(daemon,'remote',transport)
+    monkeypatch.setattr(runtime,'remote',transport)
     manager.synchronize();manager.synchronize()
     with manager.store.connect() as db:assert db.execute('SELECT count(*) FROM operations').fetchone()[0]==1
     manager.store.state(identity,'succeeded',dict(state='fixture-ok',secret='must not upload'))

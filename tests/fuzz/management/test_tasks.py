@@ -3,10 +3,10 @@ import sys
 import time
 from pathlib import Path
 import pytest
-from autofusex.fuzz.management import tasks
-from autofusex.fuzz.management.artifacts import atomic
-from autofusex.fuzz.management.config import canonical,validate
-from autofusex.fuzz.management.store import Store
+from autofusex.fuzz.daemon.management import tasks
+from autofusex.fuzz.daemon.management.artifacts import atomic
+from autofusex.fuzz.daemon.management.config import canonical,validate
+from autofusex.fuzz.daemon.management.store import Store
 
 
 def prepared(tmp_path):

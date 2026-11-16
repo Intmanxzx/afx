@@ -2,10 +2,10 @@ import base64
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
-from autofusex.fuzz.management.artifacts import atomic
-from autofusex.fuzz.management.config import canonical
-from autofusex.fuzz.management.updates import verify_manifest,activate
-from autofusex.fuzz.management.store import Store
+from autofusex.fuzz.daemon.management.artifacts import atomic
+from autofusex.fuzz.daemon.management.config import canonical
+from autofusex.fuzz.daemon.management.updates import verify_manifest,activate
+from autofusex.fuzz.daemon.management.store import Store
 
 
 def signed(tmp_path, wheels=None):
@@ -18,7 +18,7 @@ def signed(tmp_path, wheels=None):
 
 
 def test_stage_accepts_signed_autofusex_wheel(tmp_path, monkeypatch):
-    from autofusex.fuzz.management import updates
+    from autofusex.fuzz.daemon.management import updates
     artifact = tmp_path/'artifact.whl'
     artifact.write_bytes(b'wheel')
     envelope = signed(tmp_path, [dict(name='autofusex', version='0.1.2',
@@ -59,7 +59,7 @@ def test_launcher_failed_release_rolls_back_without_database_restore(tmp_path):
     import subprocess
     import sys
     import time
-    from autofusex.fuzz.management.daemon import request
+    from autofusex.fuzz.daemon.runtime import request
     home=tmp_path/'home';store=Store(home)
     envelope=signed(home)
     identity='a'*64;directory=home/'tools'/identity;directory.mkdir(parents=True)

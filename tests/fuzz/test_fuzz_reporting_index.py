@@ -3,11 +3,11 @@ import sqlite3
 
 import pytest
 
-from autofusex.fuzz.reporting.index import rebuild
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.storage.queries import ResultQueries
-from autofusex.fuzz.storage.transfer import restore
-from autofusex.fuzz.telemetry import validate
+from autofusex.fuzz.server.reporting.index import rebuild
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.fuzz.client.storage.transfer import restore
+from autofusex.fuzz.client.telemetry import validate
 
 
 def record(backend='cpu', batch='run1'):
@@ -45,8 +45,8 @@ def test_invalid_telemetry(raw):
 
 
 def test_environment_is_lightweight_and_never_reads_key(tmp_path):
-    from autofusex.fuzz.config import setup
-    from autofusex.fuzz.environment import collect
+    from autofusex.fuzz.client.config import setup
+    from autofusex.fuzz.client.environment import collect
     setup(tmp_path,display_name='设备A',user_id='owner')
     result=collect(tmp_path)
     assert result['device_name']=='设备A' and result['user_id']=='owner'
@@ -61,8 +61,8 @@ def test_failed_filter_keeps_peer_backend(tmp_path):
 
 
 def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
-    from autofusex.fuzz.reporting.statistics import statistics
-    from autofusex.fuzz.reporting import report
+    from autofusex.fuzz.server.reporting.statistics import statistics
+    from autofusex.fuzz.server.reporting import report
     repo=ResultRepository(tmp_path/'db');repo.save(record());repo.save(record('af-mlir'))
     monkeypatch.setattr(report,'spec_metadata',lambda *args:pytest.fail('must not regenerate during query'))
     result=statistics(repo.path)
@@ -77,7 +77,7 @@ def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
 def test_new_http_endpoints_and_snapshot(tmp_path):
     import threading
     from urllib.request import urlopen
-    from autofusex.fuzz.view.server import create_server
+    from autofusex.fuzz.server.view.server import create_server
     repo=ResultRepository(tmp_path/'db');repo.save(record())
     with create_server(repo.path) as server:
         thread=threading.Thread(target=server.serve_forever);thread.start()
@@ -88,8 +88,8 @@ def test_new_http_endpoints_and_snapshot(tmp_path):
 
 
 def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
-    from autofusex.fuzz.central.repository import create_user, ingest
-    from autofusex.fuzz.sync.outbox import pending
+    from autofusex.fuzz.server.central.repository import create_user, ingest
+    from autofusex.fuzz.client.sync.outbox import pending
     central=tmp_path/'central';key=tmp_path/'key';create_user(central,'管理员命名的设备',key)
     repo=ResultRepository(tmp_path/'local');repo.save(record(),environment={'device_name':'untrusted','torch_npu':'2.10'})
     repo.save(record('af-mlir'),environment={'device_name':'untrusted','torch_npu':'2.10'})

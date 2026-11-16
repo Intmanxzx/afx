@@ -2,6 +2,18 @@
 
 平台由中心服务、客户端管理进程和执行引擎组成。中心管理身份、设备、操作和结果，NPU 客户端执行任务。Agent 与网页共用管理配置和操作类型。代码集中在 [autofusex/fuzz](../../autofusex/fuzz/)，NNSmith fork 是独立执行依赖。
 
+## 三个运行模块
+
+当前部署边界明确为三个进程/模块：
+
+| 模块 | 运行职责 | 更新方式 |
+|---|---|---|
+| `daemon` | 常驻控制面、watchdog、本地 IPC、client 生命周期、优雅停止、版本切换和回滚 | 由系统服务或 bootstrap 维护，保持稳定 |
+| `client` | 领取任务、生成 Case、CPU/NPU 执行、精度验证、本地保存和上报 | 服务端下发精确版本，daemon 在独立 venv 中执行 pip install autofusex==VERSION |
+| `server` | 用户/设备、任务下发、结果接收、统计、问题和复测 | 服务端独立发布 |
+
+daemon 不主动检查 PyPI 最新版本。管理员在中心端提交 `client.update` 操作，通知中必须包含精确版本号；daemon 收到后请求 client graceful stop，等待有限时间，安装新版本并健康检查，失败时保留旧 client 并回执失败。无限制任务不会阻塞更新：client 进入 draining，在当前 case/stage 安全边界停止，结果先写入本地 outbox。
+
 ## 组件与数据流
 
 ~~~mermaid

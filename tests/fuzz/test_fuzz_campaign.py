@@ -1,11 +1,11 @@
-from autofusex.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
 CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 from dataclasses import asdict
 import json
 import pytest
-from autofusex.fuzz.scheduling.ledger import TaskLedger
-from autofusex.fuzz.scheduling.campaign import initialize,refill,stop
-from autofusex.fuzz.contracts import ExecutionConfig,EvaluationConfig
+from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+from autofusex.fuzz.client.scheduling.campaign import initialize,refill,stop
+from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
 
 
 def test_finite_campaign_bounded_queue(tmp_path):
@@ -29,7 +29,7 @@ def test_infinite_refill_stopped_atomically(tmp_path):
 
 
 def test_cpu_disagreement_never_triggers_secondary_or_changes_to_pass():
-    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.client.execution import execute
     from fuzz_fixtures import bundle as materialize
     class Adapter:
         name='af-mlir'
@@ -62,7 +62,7 @@ def test_bounded_redacted_failure_excerpt():
 
 def test_native_core_log_is_bounded_and_redacted():
     import os
-    from autofusex.fuzz.core_logs import capture_tail
+    from autofusex.fuzz.client.core_logs import capture_tail
     with capture_tail() as tail:
         os.write(2, b'x' * 40000 + b'\ncompiler error token=private-value\n')
     assert len(tail()) <= 1600
@@ -71,9 +71,9 @@ def test_native_core_log_is_bounded_and_redacted():
 
 def test_campaign_capacity_is_enforced(tmp_path):
     import pytest
-    from autofusex.fuzz.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.scheduling.campaign import initialize
-    from autofusex.fuzz.contracts import ExecutionConfig, EvaluationConfig
+    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+    from autofusex.fuzz.client.scheduling.campaign import initialize
+    from autofusex.fuzz.client.contracts import ExecutionConfig, EvaluationConfig
     with pytest.raises(ValueError, match='capacity'):
         initialize(TaskLedger(tmp_path/'queue', max_active=1),
                    [ExecutionConfig('cpu','cpu'), ExecutionConfig('af-mlir','npu:0')],
@@ -82,9 +82,9 @@ def test_campaign_capacity_is_enforced(tmp_path):
 
 def test_torch_cpu_reference_and_error_metrics():
     pytest.importorskip("torch")
-    from autofusex.fuzz.backends.torch import TorchAdapter
+    from autofusex.fuzz.client.backends.torch import TorchAdapter
     from fuzz_fixtures import bundle as materialize
-    from autofusex.fuzz.generation import materialize
+    from autofusex.fuzz.client.generation import materialize
     adapter=TorchAdapter(ExecutionConfig('cpu','cpu'))
     bundle=materialize(CURRENT_SEED)
     try:
@@ -109,7 +109,7 @@ def test_default_replay_uses_both_mandatory_backends(monkeypatch):
 
 
 def test_secondary_disagreement_stays_failed_and_cpu_uses_actual_reference():
-    from autofusex.fuzz.execution import execute
+    from autofusex.fuzz.client.execution import execute
     from fuzz_fixtures import bundle as materialize
     class Adapter:
         name = 'af-mlir'

@@ -1,10 +1,10 @@
 import json
-from autofusex.fuzz.execution import execute
-from autofusex.fuzz.contracts import EvaluationConfig
+from autofusex.fuzz.client.execution import execute
+from autofusex.fuzz.client.contracts import EvaluationConfig
 from fuzz_fixtures import bundle as materialize
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.storage.queries import ResultQueries
-from autofusex.fuzz.reporting.statistics import statistics
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.fuzz.server.reporting.statistics import statistics
 
 
 class Adapter:

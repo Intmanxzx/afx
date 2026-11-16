@@ -1,11 +1,11 @@
-from autofusex.fuzz.generation.sampling import SamplingConfig
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
 import json
-from autofusex.fuzz.storage import ResultRepository
-from autofusex.fuzz.storage.queries import ResultQueries
-from autofusex.fuzz.reporting.statistics import statistics
-from autofusex.fuzz.generation import workload_id
+from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.fuzz.server.reporting.statistics import statistics
+from autofusex.fuzz.client.generation import workload_id
 from fuzz_fixtures import bundle, three_shapes_spec
-from autofusex.fuzz.case_spec import encode
+from autofusex.fuzz.client.case_spec import encode
 
 
 def record(backend, states):
@@ -59,7 +59,7 @@ def test_early_failure_remains_one_unassigned_record(tmp_path):
 
 def test_split_error_line_retains_context():
     import os
-    from autofusex.fuzz.core_logs import capture_tail
+    from autofusex.fuzz.client.core_logs import capture_tail
     with capture_tail() as tail:
         os.write(2,b'error: Unsupport')
         os.write(2,b'edOperation: missing lowering\nsource location detail\n')
@@ -88,7 +88,7 @@ def test_shape_search_and_sql_consistent_across_summary_charts_and_rows(tmp_path
 
 def test_sql_rejects_arbitrary_statements():
     import pytest
-    from autofusex.fuzz.reporting.search import compile_where
+    from autofusex.fuzz.server.reporting.search import compile_where
     for expression in ["status='Pass'; DELETE FROM attempts", "secret='x'", "status IN (SELECT status FROM attempts)",
                        "status='Pass' -- comment", "random() > 0", "status=Pass", "("*20+"status='Pass'"+")"*20]:
         with pytest.raises(ValueError): compile_where(expression)
@@ -97,7 +97,7 @@ def test_sql_rejects_arbitrary_statements():
 
 
 def test_short_seed_search_and_current_shape_metadata(tmp_path):
-    from autofusex.fuzz.contracts import Seed
+    from autofusex.fuzz.client.contracts import Seed
     repo=ResultRepository(tmp_path/'db')
     value=record('af-mlir',['pass','error','pass']);repo.save(value)
     q=ResultQueries(repo.path);short=Seed.parse(value['seed']).short

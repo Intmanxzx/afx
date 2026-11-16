@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from autofusex.fuzz.config import load_config, setup
-from autofusex.fuzz.resources import cgroup_limits, resource_inventory, budget_warnings
+from autofusex.fuzz.client.config import load_config, setup
+from autofusex.fuzz.client.resources import cgroup_limits, resource_inventory, budget_warnings
 
 
 def test_nested_v2_limits_include_parent_constraints():
@@ -89,7 +89,7 @@ def test_invalid_identity_and_empty_key_preserve_config(tmp_path):
 
 
 def test_doctor_redacts_invalid_json(tmp_path, capsys):
-    from autofusex.fuzz.cli import main
+    from autofusex.fuzz.client.cli import main
     (tmp_path / "config.json").write_text("my-secret-is-not-json")
     assert main(["maintenance", "doctor", "--data-dir", str(tmp_path)]) == 2
     assert "my-secret" not in capsys.readouterr().err
@@ -156,12 +156,12 @@ def test_npu_auto_budget_respects_smaller_configured_memory(monkeypatch):
     ({'cpu_workers': 6}, True, None, None, True),
 ])
 def test_auto_policy_preserves_explicit_and_legacy_settings(config, requested, workers, threads, expected):
-    from autofusex.fuzz.resources import use_auto_resources
+    from autofusex.fuzz.client.resources import use_auto_resources
     assert use_auto_resources(config, requested, workers, threads) is expected
 
 
 def test_auto_policy_rejects_conflicting_overrides():
-    from autofusex.fuzz.resources import use_auto_resources
+    from autofusex.fuzz.client.resources import use_auto_resources
     with pytest.raises(ValueError, match='cannot be combined'):
         use_auto_resources(None, True, 4, None)
 
