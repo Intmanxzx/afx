@@ -4,7 +4,7 @@
 
 ## 安装与准备
 
-安装包含当前功能的 wheel；执行端需匹配的 Torch、torch_npu、CANN 和固定 NNSmith fork。已有 NPU 环境按[部署说明](../../deploy/fuzz/README.md)安装；中心和本地查看器只需基础 wheel。源码安装执行依赖：
+安装包含当前功能的 wheel；执行端需匹配的 Torch、torch_npu、CANN 和固定版本的 `nnsmith-autofusex`（由 pip 从 PyPI 安装）。已有 NPU 环境按[部署说明](../../deploy/fuzz/README.md)安装；中心和本地查看器只需基础 wheel。源码安装执行依赖：
 
 ~~~sh
 python -m pip install -e '.[execution]'
