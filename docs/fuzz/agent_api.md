@@ -170,4 +170,4 @@ artifact 格式：
 
 经验总结必须由当前租约持有者提交，且最新复测通过。每个修复记录只能有一份总结；相同请求返回同一份记录，新 key 重复归档返回 409。总结关联复测结果的 summary_id，原始执行事实不改写。可通过修复详情及 experience 查询背景、方案、备注和复测证据。
 
-本地 skill：autofuse-repair，覆盖领取/续租 → npussh 调试 → 仓库原生构建 → 隔离安装 RUN 包 → 中心复测 → 经验归档。中心不提供任意构建命令或任意安装命令的远程执行接口。
+本地 skill：[afx-repair](../../skills/afx-repair/SKILL.md)。将仓库中的 `skills/afx-repair` 目录复制到 `~/.codex/skills/` 后，可在对话中用 `$afx-repair` 调用，覆盖领取/续租 → npussh 调试 → 仓库原生构建 → 隔离安装 RUN 包 → 中心复测 → 经验归档。中心不提供任意构建命令或任意安装命令的远程执行接口。
