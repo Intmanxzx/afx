@@ -1,3 +1,4 @@
+from autofusex.fuzz.generation.sampling import SamplingConfig
 import json
 from autofusex.fuzz.storage import ResultRepository
 from autofusex.fuzz.storage.queries import ResultQueries
@@ -8,9 +9,9 @@ from autofusex.fuzz.case_spec import encode
 
 
 def record(backend, states):
-    return {'seed':str(2*2**128+42),'workload_id':workload_id(bundle()),
+    return {'seed':str(three_shapes_spec().seed),'workload_id':workload_id(bundle()),
       'oracle_id':'ref/1','backend':backend,'status':'error' if 'error' in states else 'ok',
-      'execution':{'case_spec':encode(three_shapes_spec()),'backend':backend,'batch_id':'batch','telemetry':json.dumps({'version':1,'stages':{'execution_total':900},'shapes':{str(i):{'first_call_combined':100+i} for i in range(len(states))}}),
+      'execution':{'case_spec':encode(three_shapes_spec()),'backend':backend,'batch_id':'batch','telemetry':json.dumps({'version':2,'stages':{'execution_total':900},'shapes':{str(i):{'first_call_combined':100+i} for i in range(len(states))}}),
         'diagnostics':json.dumps({'version':1,'error':'error: Autofuse native lowering failed','shapes':{'1':{'error':'shape one only'}}})},
       'shape_results':[{'shape_index':i,'correctness':state,'performance':'not_requested','error_summary':'bad' if state=='error' else ''} for i,state in enumerate(states)]}
 

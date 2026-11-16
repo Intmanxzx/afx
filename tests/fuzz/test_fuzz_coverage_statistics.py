@@ -29,10 +29,19 @@ def save_shapes(repo, sizes, *, backend='af-mlir', mixed=False):
     graph['nodes'] = [{'op': op} for op in ('add', 'add', 'transpose', 'sum')]
     spec = replace(spec, graph_json=canonical_json(graph), inputs=inputs[0],
                    shape_samples=inputs, output_samples=outputs)
-    return repo.save({'seed': str(spec.seed), 'workload_id': 'a'*64, 'oracle_id': 'ref/1',
-        'backend': backend, 'status': 'ok', 'execution': {'backend': backend, 'case_spec': encode(spec)},
+    # Exercise arbitrary reporting bins without pretending this synthetic
+    # 15-shape population is a replayable generation payload (maximum 8).
+    identity = repo.save({'seed': str(spec.seed), 'workload_id': 'a'*64, 'oracle_id': 'ref/1',
+        'backend': backend, 'status': 'ok', 'execution': {'backend': backend},
         'shape_results': [{'shape_index': i, 'correctness': 'pass', 'performance': 'not_requested'}
                           for i in range(len(sizes))]})
+    from autofusex.fuzz.reporting.report import spec_metadata
+    with sqlite3.connect(repo.path) as conn:
+        conn.execute('UPDATE case_facts SET metadata=?', (canonical_json(spec_metadata(spec)),))
+        conn.executemany('INSERT OR IGNORE INTO case_dimensions VALUES (?,?,?)',
+                        [('a'*64, 'category', v) for v in ('Elementwise','Reduce','Transpose')])
+    return identity
+
 
 
 def counts(result, name):

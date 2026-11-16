@@ -10,15 +10,14 @@ class TorchAdapter:
     def __init__(self, config):
         self.config = config
         self.name = config.backend
-        self.capabilities = self.Capabilities(persistent_runtime=self.name in {'cpu','cpu-eager','eager-npu','npu-eager','af-mlir'})
+        self.capabilities = self.Capabilities(persistent_runtime=self.name in {'cpu','eager-npu','af-mlir'})
 
     def check(self, bundle, evaluation):
-        bundle.spec.seed.require_current()
         from ..generation import plan
         if not getattr(self, 'validated_shared_case', False) and bundle.spec != plan(bundle.spec.seed):
             raise UnsupportedBackend("bundle does not match NNSmith seed regeneration")
-        from . import BACKEND_NAMES, HISTORICAL_NAMES, NPU_BACKENDS
-        if self.name not in BACKEND_NAMES + HISTORICAL_NAMES:
+        from . import BACKEND_NAMES, NPU_BACKENDS
+        if self.name not in BACKEND_NAMES:
             raise UnsupportedBackend("unknown backend")
         npu = self.name in NPU_BACKENDS
         device_type = self.config.device.split(":", 1)[0]
@@ -99,7 +98,7 @@ class TorchAdapter:
 
     def _compile(self, forward, bundle):
         torch = self.torch
-        if self.name in {"cpu", "cpu-eager", "npu-eager", "eager-npu"}:
+        if self.name in {"cpu", "eager-npu"}:
             return forward
         target = {'af-legacy': 'ascendc', 'af-mlir': 'ascendc', 'triton-npu': 'triton'}.get(self.name, self.name)
         options = {"npu_backend": target} if target in {"ascendc", "triton"} else {}
@@ -110,10 +109,9 @@ class TorchAdapter:
         # New full-range graphs must preserve NNSmith's declared outputs.
         # If a dynamic variant cannot be faithfully materialized, the shared
         # CPU reference rejects it rather than comparing a different program.
-        self.expected_outputs = (bundle.spec.output_samples[index]
-                                 if bundle.spec.seed.current else None)
+        self.expected_outputs = bundle.spec.output_samples[index]
         tensors=tuple(self._tensor(bundle, spec) for spec in bundle.spec.shape_samples[index])
-        if not self.config.static_only and len(bundle.spec.shape_samples)>1 and self.name not in {'cpu','cpu-eager','npu-eager','eager-npu'}:
+        if not self.config.static_only and len(bundle.spec.shape_samples)>1 and self.name not in {'cpu','eager-npu'}:
             for position,tensor in enumerate(tensors):
                 for axis in range(tensor.ndim):
                     if len({sample[position].shape[axis] for sample in bundle.spec.shape_samples})>1:

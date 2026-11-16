@@ -170,17 +170,6 @@ def test_machine_display_names_are_persistent_and_options_deduplicated(central):
     assert names(user_id=a['user_id'])==dict(expected,**{'host-0':'Alice-npu2'})
 
 
-def test_existing_hosts_get_stable_machine_names_on_upgrade(central):
-    db,a,b=central
-    for machine in ['host-z','host-a','host-z']:
-        ingest(db,a['token'],sample(machine=machine),now=100)
-    with closing(connect(db)) as conn,conn:
-        conn.execute('DROP TABLE runtime_machine_names_v1')
-        init_runtime(conn)
-    data=snapshot(db,now=100)
-    assert {m['machine_id']:m['display_name'] for m in data['machines']}=={
-        'host-a':'Alice-npu0','host-z':'Alice-npu1'}
-    assert len(data['machine_options'])==2
 
 
 def test_terminal_runs_keep_known_end_state_after_observations_expire(central):

@@ -88,15 +88,15 @@ def test_all_target_publish_barrier(tmp_path, monkeypatch, late_kind):
     monkeypatch.setattr(stage_facts,'save_case',lambda *args:None)
     monkeypatch.setattr(stage_facts,'finish_window',lambda *args:None)
     ledger=TaskLedger(tmp_path/'queue')
-    for backend in ['cpu','npu-eager','cpu-compile']:
+    for backend in ['cpu','eager-npu','cpu-compile']:
         from autofusex.fuzz.generation.sampling import SamplingConfig
-        ledger.enqueue(str(SamplingConfig.profile('small').seed(3)),ExecutionConfig(backend,'npu:0' if backend=='npu-eager' else 'cpu',1,scheduling='staged',batch_id='test'),EvaluationConfig())
+        ledger.enqueue(str(SamplingConfig.profile('small').seed(3)),ExecutionConfig(backend,'npu:0' if backend=='eager-npu' else 'cpu',1,scheduling='staged',batch_id='test'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=4))
     summary=staged.drain(ledger,tmp_path/'results')
     if late_kind in {'noaf','cpu_failure'}:
         assert recorded==[] and summary['skipped']==3 and summary['completed']==0
     else:
-        assert sorted(recorded)==['cpu','cpu-compile','npu-eager'] and summary['completed']==3
+        assert sorted(recorded)==['cpu','cpu-compile','eager-npu'] and summary['completed']==3
 
 
 def test_generation_failure_reuses_worker(tmp_path):

@@ -34,13 +34,6 @@ def initialize(conn):
       success INTEGER, case_errors INTEGER, PRIMARY KEY(run_id,sequence));
     CREATE INDEX IF NOT EXISTS runtime_rates_time ON runtime_rates_v1(time);
     ''')
-    # Backfill old hosts once, deterministically. Heartbeat names/timestamps can
-    # change; the persisted ordinal must never be recomputed or reused.
-    conn.execute('BEGIN IMMEDIATE')
-    for user, machine in conn.execute(
-            'SELECT user_id,machine_id FROM runtime_hosts_v1 '
-            'GROUP BY user_id,machine_id ORDER BY user_id,machine_id').fetchall():
-        ensure_machine_name(conn, user, machine)
 
 
 def ensure_machine_name(conn, user, machine):

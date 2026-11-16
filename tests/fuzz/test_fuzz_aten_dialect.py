@@ -93,7 +93,7 @@ def test_current_protocol_roundtrip_and_catalog(runtime):
     assert len(classes()) == len(RULES) == 368
     for dynamic in [False,True]:
         s=SamplingConfig.profile('small').seed(42,dynamic=dynamic)
-        assert s.current and s.dynamic==dynamic
+        assert s.dynamic==dynamic
         assert s.short.startswith('F' if dynamic else 'E')
         assert len(s.short)==27 and len(s.short[1:])==26
         assert Seed.parse(s.short)==s==Seed.parse(str(s))

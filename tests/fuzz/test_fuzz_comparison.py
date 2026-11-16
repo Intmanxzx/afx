@@ -2,8 +2,8 @@ from autofusex.fuzz.storage import ResultRepository
 from autofusex.fuzz.storage.comparison import compare
 
 
-def result(backend='cpu-eager',duration=100):
-    return {'seed':'680564733841876926926749214863536422954','workload_id':'a'*64,'oracle_id':'ref/1','backend':backend,'status':'ok',
+def result(backend='cpu',duration=100):
+    return {'seed':'14615016373650978276328604632813839116929039597610','workload_id':'a'*64,'oracle_id':'ref/1','backend':backend,'status':'ok',
             'execution':{'backend':backend,'device':'cpu','static_only':False},
             'evaluation':{'correctness':True,'performance':True},
             'shape_results':[{'shape_index':0,'correctness':'pass','performance':'measured',

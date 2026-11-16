@@ -167,10 +167,7 @@ def restore(source, destination):
         result = merge(source, temporary)
         with closing(_connect(source)) as src, closing(_connect(temporary,writable=True)) as dst, dst:
             dst.execute('DELETE FROM attempt_arrivals_v2')
-            if src.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
-                dst.executemany('INSERT INTO attempt_arrivals_v2 VALUES (?,?,?)',src.execute('SELECT * FROM attempt_arrivals_v2 ORDER BY sequence'))
-            else:
-                dst.execute('INSERT INTO attempt_arrivals_v2(attempt_id) SELECT id FROM attempts ORDER BY rowid')
+            dst.executemany('INSERT INTO attempt_arrivals_v2 VALUES (?,?,?)',src.execute('SELECT * FROM attempt_arrivals_v2 ORDER BY sequence'))
         with temporary.open('rb') as stream:
             os.fsync(stream.fileno())
         os.link(temporary, destination)

@@ -1,3 +1,4 @@
+from autofusex.fuzz.generation.sampling import SamplingConfig
 import re
 import json
 import sqlite3
@@ -151,7 +152,7 @@ def test_bootstrap_batches_resume(tmp_path,monkeypatch):
     import autofusex.fuzz.reporting.incremental as module
     db=tmp_path/'db';initialize(db);repo=ResultRepository(db)
     for i in range(5):
-        value=record('af-mlir',['pass']);value['seed']=str(2*2**128+42+i)
+        value=record('af-mlir',['pass']);value['seed']=str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(42+i).value)
         value['execution'].pop('case_spec');value['execution']['batch_id']=str(i)
         repo.save(value)
     monkeypatch.setattr(module,'BATCH',2)
@@ -169,7 +170,7 @@ def test_bootstrap_batches_resume(tmp_path,monkeypatch):
 
 def test_backend_aliases_preserve_full_statistics_rows(tmp_path):
     db=tmp_path/'db';initialize(db);repo=ResultRepository(db)
-    for b in ('triton','triton-npu','npu-eager','eager-npu'):
+    for b in ('triton','triton-npu','eager-npu','eager-npu'):
         save(repo,b,b,'ok')
     same(db,IncrementalStatistics(db))
 

@@ -1,4 +1,4 @@
-"""Explicit administrative deletion of incomplete legacy result records.
+"""Explicit administrative result deletion.
 
 Keep identities, receipts and ACKs. Tombstones prevent restored local archives
 from uploading the same attempts under a new replication source.
@@ -7,32 +7,24 @@ from contextlib import closing
 from ..storage.repository import _connect
 
 
-def purge_incomplete(path, *, expected_count):
-    return _purge(path, expected_count=expected_count, incomplete=True)
-
-
 def purge_all_results(path, *, expected_count):
     """Explicit reviewed reset; caller must take a private central backup first."""
-    return _purge(path, expected_count=expected_count, incomplete=False)
+    return _purge(path, expected_count=expected_count)
 
 
 def purge_attempts(path, identities):
     """Reviewed exact-ID cleanup, retaining the same anti-resurrection guards."""
     if not identities or len(set(identities)) != len(identities):
         raise ValueError('nonempty unique attempt IDs required')
-    return _purge(path, expected_count=len(identities), incomplete=False, identities=identities)
+    return _purge(path, expected_count=len(identities), identities=identities)
 
 
-def _purge(path, *, expected_count, incomplete, identities=None):
+def _purge(path, *, expected_count, identities=None):
     with closing(_connect(path, writable=True)) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
         query="""SELECT a.id,a.seed,a.result_hash,o.user_id FROM attempts a
             JOIN owners o ON o.attempt_id=a.id JOIN contexts c ON c.id=a.environment_id
             """
-        if incomplete:
-            query += """WHERE json_extract(c.payload,'$.cann') IS NULL
-            AND json_extract(c.payload,'$.autofuse_binary') IS NULL
-            AND json_extract(c.payload,'$.autofuse_commit') IS NULL"""
         if identities:
             query += ' WHERE a.id IN (' + ','.join('?' for _ in identities) + ')'
         rows=conn.execute(query, identities or ()).fetchall()

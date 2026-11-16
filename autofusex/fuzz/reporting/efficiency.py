@@ -49,7 +49,7 @@ def statistics(conn,selected_ids=None, *, use_cached=False, window_id=None):
         attempts=conn.execute('SELECT a.id,a.backend,a.status,a.workload_id,a.evaluation_id,a.environment_id,a.execution_id FROM stage_attempts_v1 x JOIN attempts a ON a.id=x.attempt_id WHERE x.window_id=?',(window_id,)).fetchall()
         by_backend={}
         for identity,backend,status,workload,ev_id,env_id,ex_id in attempts:
-            if backend in {'cpu','cpu-eager'} or identity in incomplete:continue
+            if backend in {'cpu'} or identity in incomplete:continue
             if selected_ids is not None and identity not in selected_ids:continue
             ev=json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?',(ev_id,)).fetchone()[0])
             ex=json.loads(conn.execute('SELECT payload FROM contexts WHERE id=?',(ex_id,)).fetchone()[0])

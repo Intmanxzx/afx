@@ -8,7 +8,7 @@ from autofusex.fuzz.storage.queries import ResultQueries
 from autofusex.fuzz.reporting.statistics import statistics
 
 
-def save(repo,batch,user,backend,states=('pass','pass','pass'),seed='D00000000G'):
+def save(repo,batch,user,backend,states=('pass','pass','pass'),seed='F0F8A5E5JE7A4QBAOWXZCIT10Y8'):
     from autofusex.fuzz.contracts import Seed
     return repo.save(dict(seed=str(Seed.parse(seed)),workload_id='a'*64,oracle_id='cpu/1',backend=backend,
         status='fail' if 'fail' in states else 'ok',execution=dict(backend=backend,batch_id=batch,static_only=False,
@@ -84,15 +84,10 @@ def test_new_round_id_prevents_crossed_backend_arrivals(tmp_path):
     assert row['status']=='fail'
 
 
-def test_arrival_migration_and_delete_never_reuse_sequence(tmp_path):
+def test_arrival_delete_never_reuses_sequence(tmp_path):
     from autofusex.fuzz.reporting.index import initialize
     repo=ResultRepository(tmp_path/'db')
     first=save(repo,'first','alice','af-mlir',('pass',))
-    with closing(_connect(repo.path,writable=True)) as conn,conn:
-        conn.execute('DROP TRIGGER attempt_first_arrival_v2')
-        conn.execute('DROP TABLE attempt_arrivals_v2')
-        initialize(conn)
-        assert conn.execute('SELECT received_at FROM attempt_arrivals_v2').fetchone()[0] is None
     second=save(repo,'second','bob','af-mlir',('pass',))
     with closing(_connect(repo.path,writable=True)) as conn,conn:
         high=conn.execute('SELECT max(sequence) FROM attempt_arrivals_v2').fetchone()[0]
@@ -106,18 +101,6 @@ def test_arrival_migration_and_delete_never_reuse_sequence(tmp_path):
     assert ResultQueries(repo.path).case_page()['items'][0]['time_basis']=='server_received'
 
 
-def test_old_snapshot_read_is_non_mutating_and_time_is_unknown(tmp_path):
-    repo=ResultRepository(tmp_path/'db')
-    save(repo,'old','alice','cpu',('pass',));save(repo,'old','alice','af-mlir',('pass',))
-    with closing(_connect(repo.path,writable=True)) as conn,conn:
-        conn.execute('DROP TRIGGER attempt_first_arrival_v2')
-        conn.execute('DROP TABLE attempt_arrivals_v2')
-        conn.execute('DROP TABLE invalid_replays_v1')
-    row=ResultQueries(repo.path).case_page()['items'][0]
-    assert row['time_basis']=='client_legacy'
-    with closing(_connect(repo.path)) as conn:
-        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone() is None
-
 
 def test_exact_short_seed_search_is_pushed_before_rollup(tmp_path):
     from autofusex.fuzz.reporting.cases import rollup
@@ -125,8 +108,8 @@ def test_exact_short_seed_search_is_pushed_before_rollup(tmp_path):
     repo=ResultRepository(tmp_path/'db')
     save(repo,'a','alice','cpu');save(repo,'a','alice','af-mlir')
     q=ResultQueries(repo.path)
-    assert q.case_page(q='D00000000G')==q.case_page(seed='D00000000G')
-    sql,values=rollup(q='D00000000G')
+    assert q.case_page(q='F0F8A5E5JE7A4QBAOWXZCIT10Y8')==q.case_page(seed='F0F8A5E5JE7A4QBAOWXZCIT10Y8')
+    sql,values=rollup(q='F0F8A5E5JE7A4QBAOWXZCIT10Y8')
     assert 'WHERE a.seed=? AND NOT EXISTS' in sql
-    assert values[0]==str(Seed.parse('D00000000G'))
+    assert values[0]==str(Seed.parse('F0F8A5E5JE7A4QBAOWXZCIT10Y8'))
     assert 'WHERE a.seed=? AND NOT EXISTS' not in rollup(q='0000')[0]

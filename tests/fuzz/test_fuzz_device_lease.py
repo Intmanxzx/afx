@@ -41,7 +41,7 @@ def test_execution_always_closes_adapter_on_failure():
         closed=False
         def check(self,*args):raise RuntimeError('prepare failure')
         def close(self):self.closed=True
-    adapter=Adapter();result=execute(materialize('680564733841876926926749214863536422954'),adapter,EvaluationConfig())
+    adapter=Adapter();result=execute(materialize('14615016373650978276328604632813839116929039597610'),adapter,EvaluationConfig())
     assert result['status']=='error' and adapter.closed
 
 

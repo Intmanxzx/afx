@@ -5,10 +5,6 @@ from .ledger import TaskLedger
 
 
 def register(sub, maintenance):
-    upgrade = maintenance.add_parser('upgrade-queue', help='offline task schema 1 -> 2 with a required new backup')
-    upgrade.set_defaults(command='upgrade-queue')
-    upgrade.add_argument('queue')
-    upgrade.add_argument('backup')
     for name in ('run', 'status', 'stop', 'resume'):
         parser = (maintenance if name=='resume' else sub).add_parser(name, help='managed case/backend tasks')
         parser.set_defaults(command=name)
@@ -40,7 +36,7 @@ def register(sub, maintenance):
             parser.add_argument('--device', action='append', help='logical npu:index; repeat for multiple cards; default: all visible NPUs')
             parser.add_argument('--device-memory-bytes',type=int,help='per physical NPU admission/peak memory budget')
             parser.add_argument('--worker-max-tasks',type=int,default=16,help='recycle a stage runtime after N stages; 1 disables reuse')
-            parser.add_argument('--scheduling', choices=('combined','staged'), default='staged', help='stage DAG or rollback to legacy whole-worker execution')
+            parser.add_argument('--scheduling', choices=('combined','staged'), default='staged', help='stage DAG or rollback to combined whole-worker execution')
             parser.add_argument('--workers', type=int, help='maximum concurrent workers (CPU and NPU combined)')
             parser.add_argument('--compile-threads', type=int, help=__import__('argparse').SUPPRESS)
             parser.add_argument('--static-only', action='store_true')
@@ -58,9 +54,6 @@ def register(sub, maintenance):
 
 
 def dispatch(args):
-    if args.command == 'upgrade-queue':
-        from .migrations import upgrade_queue
-        return upgrade_queue(args.queue, args.backup)
     home = data_home(args.data_dir)
     ledger = TaskLedger(args.queue or home/'tasks/tasks.sqlite')
     if args.command == 'status':
@@ -93,8 +86,6 @@ def dispatch(args):
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError('timeout must be finite and positive')
     parsed = [Seed.parse(s) for s in args.seeds]
-    for seed in parsed:
-        seed.require_current()
     from ..generation.sampling import SamplingConfig
     sampling_keys = ('tensor_scale', 'dim_range', 'dim_dist_mode', 'value_dist_mode',
                      'max_elem_per_tensor', 'max_nodes', 'generation_timeout', 'dtype_mode', 'dynamic_variants', 'method')
@@ -144,7 +135,7 @@ def dispatch(args):
         budget = replace(budget, **resource_plan['selected'], **resource_plan['budget_limits'])
     import uuid
     batch_id = str(uuid.uuid4())
-    configs = [ExecutionConfig(backend, devices[0] if backend in {'ascendc','triton','eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, scheduling=getattr(args,'scheduling','staged'), static_only=args.static_only, batch_id=batch_id, save_results=args.save)
+    configs = [ExecutionConfig(backend, devices[0] if backend in {'eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, scheduling=getattr(args,'scheduling','staged'), static_only=args.static_only, batch_id=batch_id, save_results=args.save)
                for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})

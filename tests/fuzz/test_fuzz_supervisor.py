@@ -18,7 +18,7 @@ from autofusex.fuzz.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED, SECOND_CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='managed execution currently POSIX only')
-EX = ExecutionConfig('cpu-eager', 'cpu', 1)
+EX = ExecutionConfig('cpu', 'cpu', 1)
 EV = EvaluationConfig()
 
 
@@ -26,7 +26,7 @@ def saved_result(task):
     from autofusex.fuzz.generation import materialize, workload_id, oracle_id
     bundle = materialize(task['seed'])
     return {'seed': task['seed'], 'workload_id': workload_id(bundle), 'oracle_id': oracle_id(bundle),
-            'backend': 'cpu-eager', 'status': 'ok', 'execution': json.loads(task['execution']),
+            'backend': 'cpu', 'status': 'ok', 'execution': json.loads(task['execution']),
             'evaluation': json.loads(task['evaluation']), 'shape_results': []}
 
 
@@ -140,7 +140,7 @@ def test_worker_spawn_failure_releases_claim(tmp_path, monkeypatch):
 
 def test_npu_and_invalid_timeout_never_claim(tmp_path):
     ledger = TaskLedger(tmp_path/'tasks.sqlite')
-    identity = ledger.enqueue(CURRENT_SEED, ExecutionConfig('ascendc','npu:0'), EvaluationConfig(performance=True))
+    identity = ledger.enqueue(CURRENT_SEED, ExecutionConfig('af-mlir','npu:0'), EvaluationConfig(performance=True))
     with pytest.raises(ValueError, match='strict NPU performance'):
         supervisor.drain(ledger, tmp_path/'result.sqlite')
     assert ledger.get(identity)['state'] == 'pending'

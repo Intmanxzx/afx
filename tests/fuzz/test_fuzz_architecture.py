@@ -50,7 +50,7 @@ runpy.run_module('autofusex.fuzz',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert 'Single NNSmith ATen C2/D2 protocol' in result.stdout
+    assert 'Single NNSmith ATen E/F protocol' in result.stdout
 
 
 def test_view_and_storage_do_not_depend_on_execution_layers():

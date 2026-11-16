@@ -1,10 +1,11 @@
-"""Fixed cold-worker C16/D16 probe; run in an isolated CPU/NPU environment.
+"""Fixed cold-worker E/F probe; run in an isolated CPU/NPU environment.
 
 Usage: python tools/fuzz/fuzz_stage_baseline_probe.py NEW_OUTPUT_DIR WORKERS BACKEND
 Never uses production homes or uploader credentials. Run old/new source from
 separate directories with identical runtime paths; each invocation starts fresh
 workers, not a warm-session benchmark. Wall spans are not kernel measurements.
 """
+from autofusex.fuzz.generation.sampling import SamplingConfig
 import json,sys,time
 from pathlib import Path
 from autofusex.fuzz.contracts import ExecutionConfig,EvaluationConfig
@@ -15,7 +16,7 @@ from autofusex.fuzz.storage.queries import ResultQueries
 root=Path(sys.argv[1]);root.mkdir(parents=True,exist_ok=False)
 workers=int(sys.argv[2]);backend=sys.argv[3]
 ledger=TaskLedger(root/'tasks');db=root/'results'
-for seed,device in [('C16','npu:0'),('D16','npu:1'),('C16','npu:0'),('D16','npu:1')]:
+for seed,device in [(SamplingConfig.profile('small',max_nodes=3,dtype_mode='float32').seed(42).short,'npu:0'),(SamplingConfig.profile('small',max_nodes=3,dtype_mode='float32').seed(42,True).short,'npu:1'),(SamplingConfig.profile('small',max_nodes=3,dtype_mode='float32').seed(42).short,'npu:0'),(SamplingConfig.profile('small',max_nodes=3,dtype_mode='float32').seed(42,True).short,'npu:1')]:
  ledger.enqueue(seed,ExecutionConfig(backend,device,1,static_only=seed.startswith('C')),EvaluationConfig())
 write_policy(ledger,Budget(cpu_workers=workers,compile_threads=1))
 intervals=[];starts={}

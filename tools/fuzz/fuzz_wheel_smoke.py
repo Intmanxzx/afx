@@ -1,4 +1,5 @@
 """Run with an installed wheel in an empty venv, not with the source on PYTHONPATH."""
+from autofusex.fuzz.generation.sampling import SamplingConfig
 import importlib.util
 import importlib.metadata
 from pathlib import Path
@@ -37,7 +38,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='fuzz-wheel-smoke-') as root:
         database = Path(root) / 'results.sqlite'
         ResultRepository(database).save({
-            'seed': str(2*2**128+42), 'workload_id': 'a' * 64, 'oracle_id': 'ref/1',
+            'seed': str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(42).value), 'workload_id': 'a' * 64, 'oracle_id': 'ref/1',
             'backend': 'cpu', 'status': 'ok', 'shape_results': [],
         })
         for factory in (view, central):

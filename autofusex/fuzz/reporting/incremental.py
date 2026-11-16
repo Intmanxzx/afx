@@ -18,7 +18,7 @@ from .efficiency import statistics as efficiency
 
 from .failure_origin import VERSION as CLASSIFICATION_VERSION
 
-VERSION = 6
+VERSION = 7
 BATCH = 64
 COUNT_FIELDS = ('overall', 'backend', 'category', 'dtype', 'op', 'dimension', 'elements', 'mode', 'errors', 'failure_path')
 
@@ -45,7 +45,7 @@ def initialize(database):
         def windows(attempt):
             return emit('window', 'SELECT window_id AS identity FROM stage_attempts_v1 WHERE attempt_id='+attempt)
         specs = {}
-        for table in ('attempts', 'shapes', 'stage_metrics', 'attempt_facts', 'lifecycle_v1'):
+        for table in ('attempts', 'shapes', 'stage_metrics', 'attempt_provenance', 'lifecycle_v1'):
             column = 'id' if table == 'attempts' else 'attempt_id'
             specs[table] = lambda row, column=column, table=table: (
                 (groups(row+'.'+column) if table != 'lifecycle_v1' else '') + windows(row+'.'+column))
@@ -58,17 +58,17 @@ def initialize(database):
                 sql = ''.join(body(row) for row in rows)
                 # REPLACE may not fire DELETE triggers: capture previous group
                 # before replacement, as well as the new group after insertion.
-                if table == 'attempt_facts' and event != 'DELETE':
+                if table == 'attempt_provenance' and event != 'DELETE':
                     sql += ''.join(emit('group', 'SELECT seed AS identity FROM attempts WHERE id='+row+'.attempt_id') for row in rows)
                 conn.execute(f'CREATE TRIGGER IF NOT EXISTS public_{table}_{event.lower()}_v1 {timing} {event} ON {table} BEGIN {sql} END')
-        conn.execute('''CREATE TRIGGER IF NOT EXISTS public_facts_replace_v1 BEFORE INSERT ON attempt_facts BEGIN
+        conn.execute('''CREATE TRIGGER IF NOT EXISTS public_facts_replace_v1 BEFORE INSERT ON attempt_provenance BEGIN
             INSERT INTO public_changes_v1(kind,identity) SELECT 'group',seed FROM attempts WHERE id=NEW.attempt_id;
         END''')
         conn.execute('''CREATE TRIGGER IF NOT EXISTS public_attempt_window_replace_v1 BEFORE INSERT ON stage_attempts_v1 BEGIN
             INSERT INTO public_changes_v1(kind,identity) SELECT 'window',window_id FROM stage_attempts_v1 WHERE attempt_id=NEW.attempt_id;
         END''')
         conn.execute("""CREATE TRIGGER IF NOT EXISTS public_completion_windows_v1
-            AFTER INSERT ON attempt_facts BEGIN
+            AFTER INSERT ON attempt_provenance BEGIN
             INSERT INTO public_changes_v1(kind,identity)
             SELECT DISTINCT 'window',s.window_id FROM attempt_facts f
             JOIN stage_attempts_v1 s ON s.attempt_id=f.attempt_id
@@ -86,12 +86,13 @@ def initialize(database):
 DDL = '''
 CREATE TABLE IF NOT EXISTS meta (id INTEGER PRIMARY KEY, source TEXT NOT NULL, checkpoint INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS pending (kind TEXT, identity TEXT, PRIMARY KEY(kind,identity));
+CREATE TABLE IF NOT EXISTS statistic_keys (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(kind,payload));
 CREATE TABLE IF NOT EXISTS contributions (
- kind TEXT, key TEXT, owner TEXT, n INTEGER NOT NULL, total INTEGER, measured INTEGER NOT NULL,
+ kind TEXT, key INTEGER, owner TEXT, n INTEGER NOT NULL, total INTEGER, measured INTEGER NOT NULL,
  lo INTEGER, hi INTEGER, PRIMARY KEY(owner,kind,key));
 CREATE INDEX IF NOT EXISTS contribution_min ON contributions(kind,key,lo);
 CREATE INDEX IF NOT EXISTS contribution_max ON contributions(kind,key,hi);
-CREATE TABLE IF NOT EXISTS totals (kind TEXT,key TEXT,n INTEGER,total INTEGER,measured INTEGER,PRIMARY KEY(kind,key));
+CREATE TABLE IF NOT EXISTS totals (kind TEXT,key INTEGER,n INTEGER,total INTEGER,measured INTEGER,PRIMARY KEY(kind,key));
 CREATE TABLE IF NOT EXISTS windows (identity TEXT PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS template (payload TEXT NOT NULL);
 '''
@@ -122,6 +123,8 @@ def replace_group(conn, group, result):
     conn.execute('DELETE FROM contributions WHERE owner=?',(group,))
     for kind,key,n,total,measured,lo,hi in contributions(result):
         if not n: continue
+        conn.execute('INSERT OR IGNORE INTO statistic_keys(kind,payload) VALUES (?,?)',(kind,key))
+        key=conn.execute('SELECT id FROM statistic_keys WHERE kind=? AND payload=?',(kind,key)).fetchone()[0]
         conn.execute('INSERT INTO contributions VALUES (?,?,?,?,?,?,?,?)',(kind,key,group,n,total,measured,lo,hi))
         conn.execute('''INSERT INTO totals VALUES (?,?,?,?,?) ON CONFLICT(kind,key) DO UPDATE SET
             n=n+excluded.n,total=total+excluded.total,measured=measured+excluded.measured''',(kind,key,n,total,measured))
@@ -165,7 +168,7 @@ class IncrementalStatistics:
                         high = source.execute("SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='public_changes_v1'),0)").fetchone()[0]
                         meta = cache.execute('SELECT source,checkpoint FROM meta WHERE id=1').fetchone()
                         if meta is None or meta[0] != identity or meta[1] > high:
-                            for table in ('meta','pending','contributions','totals','windows','template'):
+                            for table in ('meta','pending','contributions','totals','windows','template','statistic_keys'):
                                 cache.execute('DELETE FROM '+table)
                             # One bootstrap pass. Pending work is durable and bounded
                             # per batch, so restart/failure does not restart bootstrap.
@@ -220,7 +223,7 @@ class IncrementalStatistics:
             result[kind] = []
         result['attempts'] = result['case_groups'] = 0
         for kind,key,n,total,measured in cache.execute('SELECT kind,key,n,total,measured FROM totals'):
-            row = json.loads(key)
+            row = json.loads(cache.execute('SELECT payload FROM statistic_keys WHERE id=?',(key,)).fetchone()[0])
             if kind in ('attempts','case_groups'):
                 result[kind] = n; continue
             if kind in COUNT_FIELDS:
@@ -244,5 +247,5 @@ class IncrementalStatistics:
             if row: windows.extend(json.loads(row[0]))
         result['tool_efficiency']['windows'] = windows
         result['tool_efficiency']['processing'] = [r for r in result['stages'] if r['stage']=='shape_processing']
-        result['precise_metrics'] = [r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu','cpu-eager'})]
+        result['precise_metrics'] = [r for r in result['stages'] if r['stage'] in {'compile','kernel_mean'} and not (r['stage']=='kernel_mean' and r['backend'] in {'cpu'})]
         return result

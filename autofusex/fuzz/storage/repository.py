@@ -55,10 +55,8 @@ def _connect(path, writable=False):
                     pass  # Another writer won; validate its database below.
             finally:
                 temporary.unlink(missing_ok=True)
-        new = False
         conn = sqlite3.connect(str(path), timeout=SQLITE_TIMEOUT_SECONDS)
     else:
-        new = False
         conn = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=SQLITE_TIMEOUT_SECONDS)
     try:
         # Keep the timeout explicit as well as passing it to sqlite3.connect:
@@ -68,8 +66,6 @@ def _connect(path, writable=False):
         conn.execute(f'PRAGMA busy_timeout={SQLITE_TIMEOUT_SECONDS * 1000}')
         conn.execute('PRAGMA trusted_schema=OFF')
         conn.execute('PRAGMA foreign_keys=ON')
-        if new:
-            _initialize(conn)
         _check(conn)
         from ..reporting.failure_origin import sql_status, failure_path
         from functools import lru_cache
@@ -165,23 +161,12 @@ class ResultRepository:
                         if not rows:
                             break
                         target.executemany(f"INSERT INTO {table} VALUES ({','.join('?' for _ in columns)})", rows)
-                if source.execute("SELECT 1 FROM sqlite_master WHERE name='report_schema'").fetchone():
-                    from ..reporting.index import initialize
-                    initialize(target)
-                    for table in ('case_facts','attempt_facts','stage_metrics','case_dimensions','report_devices','report_search'):
-                        if not source.execute('SELECT 1 FROM sqlite_master WHERE name=?',(table,)).fetchone(): continue
-                        rows=source.execute('SELECT * FROM '+table)
-                        for values in rows:
-                            target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in values)+')',tuple(values))
-                # Snapshot is a copy, not a new report arrival. Preserve ordering
-                # and unknown historical timestamps rather than stamping export time.
+                for table in ('case_facts','attempt_facts','stage_metrics','case_dimensions','report_devices','report_search'):
+                    for values in source.execute('SELECT * FROM '+table):
+                        target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in values)+')',tuple(values))
                 target.execute('DELETE FROM attempt_arrivals_v2')
-                if source.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
-                    target.executemany('INSERT INTO attempt_arrivals_v2 VALUES (?,?,?)',source.execute('SELECT * FROM attempt_arrivals_v2 ORDER BY sequence'))
-                else:
-                    target.execute('INSERT INTO attempt_arrivals_v2(attempt_id) SELECT id FROM attempts ORDER BY rowid')
-                if source.execute("SELECT 1 FROM sqlite_master WHERE name='invalid_replays_v1'").fetchone():
-                    target.executemany('INSERT INTO invalid_replays_v1 VALUES (?,?)',source.execute('SELECT * FROM invalid_replays_v1'))
+                target.executemany('INSERT INTO attempt_arrivals_v2 VALUES (?,?,?)',source.execute('SELECT * FROM attempt_arrivals_v2 ORDER BY sequence'))
+                target.executemany('INSERT INTO invalid_replays_v1 VALUES (?,?)',source.execute('SELECT * FROM invalid_replays_v1'))
                 from .stage_facts import copy_public
                 copy_public(source,target)
                 target.commit()

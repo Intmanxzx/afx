@@ -47,7 +47,8 @@ def test_issue_retest_respects_browser_and_client_allowlist(setup,tmp_path,monke
     from autofusex.fuzz.central import issue_groups
     database,alice,bob,attempt,client,_=setup
     policy(tmp_path,monkeypatch,bob,client)
-    monkeypatch.setattr(issue_groups,'_rows',lambda path,limit=issue_groups.MAX_CASES:[dict(
+    from test_fuzz_issue_groups import install_rows
+    install_rows(database,[dict(
         seed='1',shape_index=1,id=attempt,status='fail',function_status='Unknown',
         accuracy_status='Failed',core_error='mismatch',error_summary='mismatch',
         correctness='fail',performance='not_requested',measurement_status='not_requested',
@@ -106,7 +107,7 @@ def test_http_all_write_routes_block_without_mutations(setup,tmp_path,monkeypatc
         assert snapshot()==before
         assert call('/api/upload',{},'not-a-valid-token')[0]==401
         assert call('/healthz')[0]==200
-        assert call('/api/case-history?seed='+str(3*2**128+16)+'&shape=1')[0]==200
+        assert call('/api/case-history?seed='+str(16076518010981881194532289465530122136584972140560)+'&shape=1')[0]==200
         assert call('/api/retest/renew',bodies['/api/retest/renew'],bob['token'])[0]==200
         registration=dict(client_id=client,machine_id='machine-b',name='Bob NPU',backends=['af-mlir'])
         assert call('/api/retest/register',registration,bob['token'])[0]==200

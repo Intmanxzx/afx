@@ -49,7 +49,7 @@ def test_reproduction_guard_precedes_backend_execution(tmp_path,monkeypatch):
     monkeypatch.setattr(generation,'materialize',lambda _:object())
     monkeypatch.setattr(generation,'workload_id',lambda _:'wrong')
     with pytest.raises(ValueError,match='fingerprint mismatch'):
-        perform(dict(kind='generate',seed='D00000000G',expected_workload_id='expected',directory=str(tmp_path)))
+        perform(dict(kind='generate',seed='F0F8A5E5JE7A4QBAOWXZCIT10Y8',expected_workload_id='expected',directory=str(tmp_path)))
 
 
 def test_consumer_does_not_start_unrelated_pending_queue(tmp_path,monkeypatch):
@@ -59,7 +59,7 @@ def test_consumer_does_not_start_unrelated_pending_queue(tmp_path,monkeypatch):
     from autofusex.fuzz.scheduling import hosting
     home=tmp_path/'home';setup(home,cpu_workers=1,compile_threads=1)
     consumer=Consumer(home,home/'results/results.sqlite',devices=['npu:0'])
-    consumer.ledger.enqueue(str(2*2**128+16),ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
+    consumer.ledger.enqueue(str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(16).value),ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
     calls=[]
     monkeypatch.setattr(consumer,'api',lambda route,payload:(calls.append(route) or {'items':[]}))
     monkeypatch.setattr(hosting,'launch',lambda *a,**kw:pytest.fail('must not start unrelated queue'))
@@ -67,12 +67,12 @@ def test_consumer_does_not_start_unrelated_pending_queue(tmp_path,monkeypatch):
     assert calls==['register','claim']
 
 
-def test_consumer_waits_for_legacy_queue_before_claiming(tmp_path,monkeypatch):
+def test_consumer_waits_for_combined_queue_before_claiming(tmp_path,monkeypatch):
     from autofusex.fuzz.sync.retests import Consumer
     from autofusex.fuzz.contracts import ExecutionConfig
     from autofusex.fuzz.config import setup
     home=tmp_path/'home';setup(home,cpu_workers=1,compile_threads=1)
     consumer=Consumer(home,home/'results/results.sqlite',devices=['npu:0'])
-    consumer.ledger.enqueue(str(2*2**128+16),ExecutionConfig('cpu','cpu',1,scheduling='combined'),EvaluationConfig())
+    consumer.ledger.enqueue(str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(16).value),ExecutionConfig('cpu','cpu',1,scheduling='combined'),EvaluationConfig())
     monkeypatch.setattr(consumer,'api',lambda *args:pytest.fail('must not claim into legacy queue'))
-    assert consumer.tick()['state']=='waiting_for_legacy_queue'
+    assert consumer.tick()['state']=='waiting_for_combined_queue'

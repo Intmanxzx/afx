@@ -11,7 +11,7 @@ from autofusex.fuzz.storage import ResultRepository
 from autofusex.fuzz.storage.transfer import check_database, merge, restore
 
 
-def record(seed='680564733841876926926749214863536422954'):
+def record(seed='14615016373650978276328604632813839116929039597610'):
     return {'seed': seed, 'workload_id': 'a'*64, 'oracle_id': 'ref/1',
             'backend': 'test', 'status': 'ok',
             'execution': {'backend': 'test', 'device': 'cpu'},
@@ -82,9 +82,9 @@ def test_corrupt_contract_rejected_without_publication(source, tmp_path, mutatio
 def test_conflict_rolls_back_prior_inserts(source, tmp_path):
     # Insert a new row before the conflicting one to exercise transaction rollback.
     other = ResultRepository(tmp_path/'other.sqlite')
-    other.save(record('680564733841876926926749214863536422955'))
+    other.save(record('14615016373650978276328604632813839116929039597611'))
     identity = source.list()['items'][0]['id']
-    other.save(record('680564733841876926926749214863536423011'), attempt_id=identity)
+    other.save(record('14615016373650978276328604632813839116929039597667'), attempt_id=identity)
     before = rows(source.path)
     with pytest.raises(ValueError, match='conflict'):
         merge(other.path, source.path)
@@ -112,7 +112,7 @@ def test_disk_write_failure_rolls_back_and_cleans(source, tmp_path, monkeypatch)
         restore(source.path, target)
     assert not target.exists() and not list(tmp_path.glob('.fuzz-restore-*'))
     existing = ResultRepository(tmp_path/'existing.sqlite')
-    existing.save(record('680564733841876926926749214863536423911'))
+    existing.save(record('14615016373650978276328604632813839116929039598567'))
     before = rows(existing.path)
     with pytest.raises(sqlite3.OperationalError):
         merge(source.path, existing.path)
@@ -134,7 +134,7 @@ def test_atomic_publication_failure_and_no_overwrite(source, tmp_path, monkeypat
         restore(source.path, target)
 
 
-@pytest.mark.parametrize('version', [0, 2, 999])
+@pytest.mark.parametrize('version', [0, 1, 999])
 def test_unknown_schema_never_migrated_or_rewritten(source, version):
     with sqlite3.connect(source.path) as conn:
         conn.execute(f'PRAGMA user_version={version}')
@@ -158,7 +158,7 @@ def test_destination_trigger_never_executes(source, tmp_path):
     restore(source.path, target)
     with sqlite3.connect(target) as conn:
         conn.executescript('CREATE TABLE effects(value); CREATE TRIGGER surprise AFTER INSERT ON attempts BEGIN INSERT INTO effects VALUES (1); END;')
-    source.save(record('680564733841876926926749214863536422956'))
+    source.save(record('14615016373650978276328604632813839116929039597612'))
     with pytest.raises(ValueError, match='triggers'):
         merge(source.path, target)
     with sqlite3.connect(target) as conn:
@@ -187,7 +187,7 @@ def test_killed_import_rolls_back_transaction(source, tmp_path):
     # Kill after actual SQL writes, before commit; SQLite must recover on reopen.
     target = tmp_path/'target.sqlite'
     restore(source.path, target)
-    source.save(record('680564733841876926926749214863536422955'))
+    source.save(record('14615016373650978276328604632813839116929039597611'))
     before = rows(target)
     code = '''
 import os,sys

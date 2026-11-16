@@ -43,6 +43,8 @@ def normalize(result, environment):
     seed = result['seed']
     if not isinstance(seed, str) or len(seed) > 128 or not re.fullmatch(r'0|[1-9][0-9]*', seed):
         raise ValueError('result seed must be canonical decimal text')
+    from ..contracts import Seed
+    Seed.parse(seed)
     workload = result['workload_id']
     if not isinstance(workload, str) or not re.fullmatch(r'[0-9a-f]{64}', workload):
         raise ValueError('invalid workload fingerprint')

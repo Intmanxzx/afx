@@ -27,7 +27,7 @@ def doctor(home):
             "python": platform.python_version(), "platform": platform.platform(),
             "sqlite": sqlite3.sqlite_version, "home": str(data_home(home)),
             "packages": versions, "device_probe": "not_run", "split_execution": "unverified",
-            "generation": "Single NNSmith ATen C2/D2 protocol; historical seeds are read-only; pinned source/Z3/catalog; generation and CPU skips are excluded", "sync": "independent_outbox_daemon"}
+            "generation": "Single NNSmith ATen E/F protocol; pinned source/Z3/catalog; generation and CPU skips are excluded", "sync": "independent_outbox_daemon"}
 
 
 def main(argv=None):
@@ -110,8 +110,8 @@ def main(argv=None):
             from .reporting.index import rebuild
             result = rebuild(args.database)
         elif args.command == 'index-cases':
-            from .reporting.materialized import migrate
-            result = migrate(args.database)
+            from .reporting.materialized import rebuild
+            result = rebuild(args.database)
         elif args.command == "serve":
             from .central.server import serve
             return serve(args.database, args.port)
@@ -135,7 +135,7 @@ def main(argv=None):
             else:
                 database = args.database or home / "results/results.sqlite"
                 result = {"once": once, "run": run, "start": start, "reset-epoch": reset}[args.action](home, database)
-        elif args.command in {"run", "status", "stop", "resume", "upgrade-queue"}:
+        elif args.command in {"run", "status", "stop", "resume"}:
             from .scheduling.cli import dispatch
             result = dispatch(args)
         elif args.command == "admin-rotate-key":
@@ -205,7 +205,7 @@ def replay(argv):
     args = parser.parse_args(argv)
     try:
         from .contracts import Seed
-        Seed.parse(args.seed).require_current()
+        Seed.parse(args.seed)
     except (ValueError, TypeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -250,7 +250,7 @@ def execute_args(args):
         from .backends import create_backend
         from .resources import adaptive_defaults
         threads = args.compile_threads or adaptive_defaults(data_home())["compile_threads"]
-        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"ascendc", "triton", "eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only or not Seed.parse(args.seed).dynamic, save_results=args.save)
+        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only or not Seed.parse(args.seed).dynamic, save_results=args.save)
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         import time
         generation_start = time.perf_counter_ns()

@@ -3,9 +3,9 @@ import pytest
 from autofusex.fuzz.contracts import Seed
 
 
-def test_c_seed_is_self_contained():
-    assert Seed.parse('C000000016').value==2*2**128+42
-    assert Seed.parse('C16').short=='C000000016'
+def test_retired_c_seed_is_rejected():
+    with pytest.raises(ValueError):
+        Seed.parse('C16')
 
 
 def test_actual_nnsmith_graph_and_cpu(tmp_path):

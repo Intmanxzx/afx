@@ -1,4 +1,4 @@
-"""One current C2/D2 sampling contract; old seeds are read-only history."""
+"""E/F sampling contract encoded in each seed."""
 from dataclasses import dataclass, asdict
 from ..contracts import Seed
 
@@ -82,7 +82,6 @@ class SamplingConfig:
 
 def decode(seed):
     seed = Seed.parse(seed)
-    seed.require_current()
     remaining = seed.entropy
     values = {}
     for name, bits in FIELDS:

@@ -141,9 +141,14 @@ def summary(database, **params):
     from ..storage.queries import reading
     with reading(database,timeout=30) as conn:
         conn.execute('BEGIN')
-        from .materialized import rollup as indexed_rollup
-        sql,values=indexed_rollup(conn, **params)
-        rows=conn.execute(sql+"SELECT status,count(*) AS count,sum(CASE WHEN failure_path='mlir_failed' THEN 1 ELSE 0 END) AS mlir FROM cases GROUP BY status",values).fetchall()
+        from .materialized import rollup as indexed_rollup, ready
+        # Unfiltered status totals need only the narrow current-head rows.
+        # Avoid joining every historical payload to count scalar states.
+        if not any(params.values()) and ready(conn):
+            rows = conn.execute("SELECT status,count(*) AS count,sum(CASE WHEN failure_path='mlir_failed' THEN 1 ELSE 0 END) AS mlir FROM case_head_refs_v2 GROUP BY status").fetchall()
+        else:
+            sql,values=indexed_rollup(conn, **params)
+            rows=conn.execute(sql+"SELECT status,count(*) AS count,sum(CASE WHEN failure_path='mlir_failed' THEN 1 ELSE 0 END) AS mlir FROM cases GROUP BY status",values).fetchall()
     counts={r['status']:r['count'] for r in rows}
     return {'total':sum(counts.values()),'by_status':counts,'mlir_failed':sum(r['mlir'] for r in rows),'unit':'shape_case'}
 

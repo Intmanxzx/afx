@@ -12,7 +12,7 @@ from autofusex.fuzz.storage import ResultRepository
 
 
 def result():
-    return {'seed':'680564733841876926926749214863536422954','workload_id':'a'*64,'oracle_id':'ref/1','backend':'test','status':'ok',
+    return {'seed':'14615016373650978276328604632813839116929039597610','workload_id':'a'*64,'oracle_id':'ref/1','backend':'test','status':'ok',
             'execution':{'backend':'test','device':'cpu','static_only':False},
             'evaluation':{'correctness':True,'performance':False},
             'shape_results':[{'shape_index':0,'correctness':'pass','performance':'not_requested'}]}
@@ -74,7 +74,7 @@ def test_bounded_pagination_seed_filter_and_missing_detail(tmp_path):
     for _ in range(7): repo.save(result())
     first = repo.list(limit=3); second = repo.list(limit=3, after=first['next_cursor'])
     assert not {x['id'] for x in first['items']} & {x['id'] for x in second['items']}
-    assert repo.list(seed='680564733841876926926749214863536422955')['items'] == []
+    assert repo.list(seed='14615016373650978276328604632813839116929039597611')['items'] == []
     with pytest.raises(ValueError): repo.list(limit=201)
     with pytest.raises(ValueError): repo.detail('missing')
 
@@ -137,7 +137,7 @@ assert main(['maintenance', 'results',sys.argv[1]])==0
 '''
     out = subprocess.run([sys.executable,'-c',code,str(repo.path)],capture_output=True,text=True)
     assert out.returncode == 0, out.stderr
-    assert json.loads(out.stdout)['items'][0]['seed'] == '680564733841876926926749214863536422954'
+    assert json.loads(out.stdout)['items'][0]['seed'] == '14615016373650978276328604632813839116929039597610'
 
 
 def test_concurrent_first_writers_publish_only_complete_schema(tmp_path):

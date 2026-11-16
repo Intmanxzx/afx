@@ -87,7 +87,7 @@ def verification(db, identity):
                 artifact=json.loads(record['artifact']))
 
 
-def detail(db,user,identity):
+def detail(db,user,identity,*,persist=True):
     row=owned(db,user,identity)
     result={k:row[k] for k in ('id','issue_key','agent_id','state','expires','created','updated')}
     result['snapshot']=json.loads(row['snapshot'])
@@ -97,7 +97,7 @@ def detail(db,user,identity):
     result['events']=[dict(e) for e in db.execute('SELECT seq,event,agent_id,time FROM repair_events_v1 WHERE repair_id=? ORDER BY seq DESC LIMIT 50',(identity,))]
     if result['state'] != 'resolved' and result['retest'] and result['retest']['terminal']:
         result['state'] = 'verified' if result['retest']['passed'] else 'fixing'
-        if row['state'] != result['state']:
+        if persist and row['state'] != result['state']:
             db.execute('UPDATE repairs_v1 SET state=?,updated=? WHERE id=?',(result['state'],time.time(),identity))
             event(db,row,result['state'])
     return result
@@ -118,6 +118,16 @@ def mutate(path,user,action,body,identity=None,allowlist=None):
         if not isinstance(body['issue_key'],str) or not re.fullmatch('[0-9a-f]{24}',body['issue_key']):
             raise ValueError('invalid issue key')
     key=text(body['request_key']);hashed=hashlib.sha256(canonical(dict(action=action,id=identity,body=body)).encode()).hexdigest()
+    # A committed retry needs no current-issue aggregation or writer lock.
+    # Keep the transactional check below for concurrently arriving first calls.
+    from contextlib import closing
+    from ..storage.repository import _connect
+    with closing(_connect(path)) as read:
+        if read.execute("SELECT 1 FROM sqlite_master WHERE name='repair_requests_v1'").fetchone():
+            prior=read.execute('SELECT hash,response FROM repair_requests_v1 WHERE user_id=? AND request_key=?',(user,key)).fetchone()
+            if prior:
+                if prior[0]!=hashed: raise Conflict('request key conflict')
+                return json.loads(prior[1])
     candidates=issue_groups._current(path,include_targets=True) if action=='claim' else None
     with retests.transaction(path) as db:
         initialize(db)
@@ -211,6 +221,10 @@ def mutate(path,user,action,body,identity=None,allowlist=None):
 
 
 def get(path,user,identity):
-    with retests.transaction(path) as db:
-        initialize(db)
-        return detail(db,user,identity)
+    from contextlib import closing
+    import sqlite3
+    from ..storage.repository import _connect
+    with closing(_connect(path)) as db:
+        db.row_factory=sqlite3.Row
+        db.execute('BEGIN')
+        return detail(db,user,identity,persist=False)

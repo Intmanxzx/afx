@@ -99,14 +99,6 @@ def test_64_nodes_survive_artifacts_database_snapshot_and_upload(tmp_path):
     assert ResultQueries(central).page()['items']
 
 
-def test_old_history_has_no_replay_command(tmp_path):
-    from autofusex.fuzz.storage import ResultRepository
-    from autofusex.fuzz.storage.queries import ResultQueries
-    from autofusex.fuzz.contracts import Seed
-    repo=ResultRepository(tmp_path/'results')
-    identity=repo.save(dict(seed=str(Seed.parse('C16')),workload_id='a'*64,oracle_id='old',backend='cpu',status='ok',shape_results=[]))
-    detail=ResultQueries(repo.path).detail(identity)
-    assert detail['replay_supported'] is False and detail['replay_command']==''
 
 
 @pytest.mark.parametrize('name',['Reshape','ExpandLast1','ExpandLast2','ExpandLast3','ExpandLast4','Slice','Squeeze'])

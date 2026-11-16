@@ -34,9 +34,8 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
               "_timings": {}, "_diagnostics": {"version":1,"shapes":{}}, "compile_mode": "combined", "preview": True, "evaluation": asdict(evaluation)}
     if hasattr(adapter, "config"):
         result["execution"] = asdict(adapter.config)
-    if bundle.spec.seed.current:
-        from .case_spec import encode
-        result.setdefault('execution', {})['case_spec'] = encode(bundle.spec)
+    from .case_spec import encode
+    result.setdefault('execution', {})['case_spec'] = encode(bundle.spec)
     if hasattr(adapter, 'cpu_reference'):
         result['oracle_id'] = 'torch-eager-cpu/1'
     stage = "capability"
@@ -107,7 +106,7 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
                 # Only explicit device-profiler measurements qualify. Wall time
                 # and first invocation cannot stand in for kernel or compile time.
                 measure = getattr(adapter, 'measure_kernel', None)
-                if callable(measure) and adapter.name not in {'cpu', 'cpu-eager'}:
+                if callable(measure) and adapter.name not in {'cpu'}:
                     stage = 'measurement'
                     started = time.perf_counter_ns()
                     value = measure(prepared, inputs, evaluation)

@@ -3,11 +3,11 @@ from autofusex.fuzz.management.config import parse,validate,fingerprint,merge,qu
 
 
 def task():
-    return dict(schema_version=1,kind='fuzz_task',environment='dev',workload=dict(mode='replay',seeds=['C000000016']))
+    return dict(schema_version=1,kind='fuzz_task',environment='dev',workload=dict(mode='replay',seeds=['E0F8A5E5JE7A4QBAOWXZCIT10YY']))
 
 
 def test_yaml_json_same_defaults():
-    a=validate(parse('schema_version: 1\nkind: fuzz_task\nenvironment: dev\nworkload:\n  mode: replay\n  seeds: [C000000016]\n'))
+    a=validate(parse('schema_version: 1\nkind: fuzz_task\nenvironment: dev\nworkload:\n  mode: replay\n  seeds: [E0F8A5E5JE7A4QBAOWXZCIT10YY]\n'))
     b=validate(task())
     assert fingerprint(a)==fingerprint(b)
     assert a['execution']['timeout']=='120s'

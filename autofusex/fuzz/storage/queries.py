@@ -16,16 +16,6 @@ def reading(path, *, timeout=3):
         deadline = time.monotonic() + timeout
         conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
         conn.row_factory = sqlite3.Row
-        # Old read-only exports have no arrival index. A connection-local view
-        # preserves their order without modifying the snapshot or inventing time.
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
-            conn.execute('PRAGMA query_only=OFF')
-            conn.execute('CREATE TEMP VIEW attempt_arrivals_v2 AS SELECT rowid AS sequence,id AS attempt_id,NULL AS received_at FROM main.attempts')
-            conn.execute('PRAGMA query_only=ON')
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='invalid_replays_v1'").fetchone():
-            conn.execute('PRAGMA query_only=OFF')
-            conn.execute('CREATE TEMP VIEW invalid_replays_v1 AS SELECT id AS attempt_id FROM main.attempts WHERE 0')
-            conn.execute('PRAGMA query_only=ON')
         yield conn
     finally:
         conn.close()
@@ -51,8 +41,8 @@ def filters(seed=None, status=None, user_id=None, q=None):
     if q:
         if not isinstance(q, str) or len(q)>256:
             raise ValueError('invalid search')
-        clauses.append('id IN (SELECT attempt_id FROM report_search WHERE instr(lower(content),lower(?))>0)')
-        values.append(q)
+        clauses.append('(id IN (SELECT attempt_id FROM report_search WHERE instr(lower(content),lower(?))>0) OR workload_id IN (SELECT workload_id FROM case_facts WHERE instr(lower(metadata),lower(?))>0))')
+        values.extend((q,q))
     return clauses, values
 
 
@@ -129,8 +119,7 @@ class ResultQueries:
         from ..backend_names import display_backend
         result['seed_short'] = Seed.parse(result['seed']).short
         result['backend_display'] = display_backend(result['backend'])
-        result['replay_supported'] = Seed.parse(result['seed']).current
-        result['replay_command'] = ('afx fuzz replay ' + result['seed_short']) if result['replay_supported'] else ''
+        result['replay_command'] = 'afx fuzz replay ' + result['seed_short']
         result['shape_count'] = len(result['shape_results'])
         diagnostics = json.loads(result['contexts']['execution'].get('diagnostics', '{}'))
         if shape_index is not None:
@@ -204,7 +193,7 @@ class ResultQueries:
                             versions=json.loads(first['versions']), metadata=json.loads(meta[0]) if meta else {}, backends={})
                 # List pages carry only previews. Full logs/timing payloads are
                 # fetched on detail navigation, not repeated for every shape.
-                item['execution'] = {k:v for k,v in item['execution'].items() if k not in {'diagnostics','telemetry'}}
+                item['execution'] = {k:v for k,v in item['execution'].items() if k not in {'diagnostics','telemetry','case_spec'}}
                 index = group['shape_index']
                 item['failure_path'] = group['failure_path']
                 item['shape_index'] = index
@@ -222,11 +211,9 @@ class ResultQueries:
                     if conn.execute('SELECT 1 FROM retest_lease_history_v1 WHERE lease_id=?',(first['batch_id'],)).fetchone():
                         item['source_label']='复测'
                 item['client_created_at']=item['created_at']
-                item['time_basis']='client_legacy'
-                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_arrivals_v2'").fetchone():
-                    received=conn.execute('SELECT received_at FROM attempt_arrivals_v2 WHERE sequence=?',(group['attempt_cursor'],)).fetchone()
-                    if received and received[0]:
-                        item['created_at']=received[0];item['time_basis']='server_received'
+                received=conn.execute('SELECT received_at FROM attempt_arrivals_v2 WHERE sequence=?',(group['attempt_cursor'],)).fetchone()
+                item['created_at']=received[0]
+                item['time_basis']='server_received'
                 current_rows=rows
                 for row in current_rows:
                     backend = display_backend(row['backend'])
@@ -250,7 +237,7 @@ class ResultQueries:
                     member['processing_ns'] = next((m['duration_ns'] for m in member['stages'] if m['stage']=='shape_processing'), None)
                     from .lifecycle import read, elapsed
                     member['end_to_end_ns'] = elapsed(read(conn, row['id']), 'admitted', 'persisted') if index >= 0 else None
-                    member['duration_scope'] = 'legacy_shape_stage_sum'
+                    member['duration_scope'] = 'shape_stage_sum'
                     if member['shapes']:
                         shape = member['shapes'][0]
                         member['status'] = {'pass':'ok','fail':'fail','error':'error'}.get(shape['correctness'], 'unknown')

@@ -13,7 +13,7 @@ from autofusex.fuzz.scheduling.ledger import TaskLedger
 from autofusex.fuzz.scheduling import supervisor, hosting, budgets
 from fuzz_fixtures import CURRENT_SEED
 
-EX, EV = ExecutionConfig('cpu-eager','cpu',1), EvaluationConfig()
+EX, EV = ExecutionConfig('cpu','cpu',1), EvaluationConfig()
 
 
 def inventory(**overrides):

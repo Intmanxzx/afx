@@ -76,8 +76,8 @@ def test_seed_rejects_ambiguous_or_unknown_protocol(token):
 
 
 def test_contracts_are_immutable_and_do_not_pretend_generator_exists():
-    seed = Seed.parse("680564733841876926926749214863536422954")
-    assert str(seed) == "680564733841876926926749214863536422954"
+    seed = Seed.parse("14615016373650978276328604632813839116929039597610")
+    assert str(seed) == "14615016373650978276328604632813839116929039597610"
     spec = TensorSpec("x", "float32", (2, 3), (3, 1))
     bundle = CaseBundle(CaseSpec(seed, canonical_json({"ops": ["add"]}), (spec,), ()), (bytes(24),))
     with pytest.raises(FrozenInstanceError):

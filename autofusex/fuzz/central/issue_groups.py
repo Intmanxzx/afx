@@ -98,55 +98,6 @@ def _dimension(row):
     return None
 
 
-def _page_rows(path, status, *, limit=MAX_CASES):
-    """Fallback for databases without the materialized issue index."""
-    from ..storage.queries import ResultQueries
-    rows = []
-    after = 0
-    while len(rows) < limit:
-        page = ResultQueries(path).case_page(limit=200, after=after, status=status)
-        items = page.get("items", [])
-        for item in items:
-            members = item.get("backends", {})
-            af = (members.get("af-mlir") or [None])[0]
-            if not af:
-                continue
-            shape = (af.get("shapes") or [{}])[0]
-            rows.append(dict(seed=item.get("seed"), shape_index=item.get("shape_index"),
-                id=af.get("original_attempt_id") or af.get("id"), status=af.get("status") or item.get("status"),
-                function_status=af.get("function_status") or item.get("function_status"),
-                accuracy_status=item.get("accuracy_status"), core_error=af.get("core_error", ""),
-                error_summary=af.get("error_summary", ""), correctness=shape.get("correctness", ""),
-                performance=shape.get("performance", ""), measurement_status=af.get("measurement_status", ""),
-                op_types=(item.get("metadata") or {}).get("op_types") or []))
-        if page.get("next_cursor") is None or not items:
-            break
-        after = page["next_cursor"]
-    return rows
-
-
-def _rows(path, *, limit=MAX_CASES):
-    rows = []
-    seen = set()
-    for status in ("fail", "error", "gen_failed"):
-        for row in _page_rows(path, status, limit=limit):
-            key = (row["id"], row["shape_index"])
-            if key in seen:
-                continue
-            seen.add(key)
-            rows.append(row)
-            if len(rows) >= limit:
-                return rows
-    return rows
-
-
-def _index_ready(conn):
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='issue_cases_v1'").fetchone():
-        return False
-    from ..reporting.materialized import ready
-    return ready(conn)
-
-
 def _source_rows(conn, seeds=None):
     where = '''cp.backend='af-mlir' AND (
         cp.function_status IN ('function_failed','gen_failed','error','Failed','构图Failed') OR
@@ -175,6 +126,9 @@ def refresh_index(conn, seeds=None):
     conn.row_factory = sqlite3.Row
     initialize(conn)
     seeds = None if seeds is None else tuple(dict.fromkeys(seeds))
+    if seeds == ():
+        return {'cases': conn.execute('SELECT count(*) FROM issue_cases_v1').fetchone()[0],
+                'groups': conn.execute('SELECT count(*) FROM issue_groups_v1').fetchone()[0]}
     if seeds is None:
         conn.execute('DELETE FROM issue_cases_v1')
     elif seeds:
@@ -204,7 +158,7 @@ def refresh_index(conn, seeds=None):
 
 
 def rebuild(path):
-    """Explicit additive migration; callers must back up first."""
+    """Rebuild the current issue index atomically."""
     from ..reporting.materialized import refresh as refresh_cases
     with closing(_connect(path, writable=True)) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
@@ -235,10 +189,7 @@ def _index_current(conn, *, include_targets=False):
         if claim and now - float(claim['updated']) <= CLAIM_TTL:
             state = claim['status']
             if state == 'retesting' and claim['batch_id']:
-                try:
-                    batch_ids = json.loads(claim['batch_id'])
-                except (TypeError, ValueError):
-                    batch_ids = [claim['batch_id']]
+                batch_ids = json.loads(claim['batch_id'])
                 placeholders = ','.join('?' for _ in batch_ids)
                 pending = conn.execute(
                     f"SELECT count(*) FROM retest_tasks_v1 WHERE batch_id IN ({placeholders}) "
@@ -257,46 +208,13 @@ def _index_current(conn, *, include_targets=False):
     return result
 
 
-def _dynamic_current(path, *, include_targets=False):
-    groups = {}
-    for row in _rows(path):
-        item = _dimension(row)
-        if not item:
-            continue
-        dimension, category, message = item
-        key, label = _issue(dimension, category, message)
-        group = groups.setdefault(key, dict(issue_key=key, dimension=dimension, category=category,
-            title=label, count=0, examples=[], _targets=[], status='open', owner_id=None, owner_name=None,
-            claimed_at=None, updated=None, batch_id=None))
-        group['count'] += 1
-        group['_targets'].append(dict(attempt_id=row['id'], shape_index=row['shape_index']))
-        if len(group['examples']) < 5:
-            group['examples'].append(dict(seed=row['seed'], shape_index=row['shape_index'], attempt_id=row['id'],
-                status=row['status'], message=_text(message)[:500]))
-    with closing(_connect(path)) as conn:
-        conn.row_factory = sqlite3.Row
-        claims = {row['issue_key']: dict(row) for row in conn.execute('SELECT * FROM issue_claims_v1')}             if conn.execute("SELECT 1 FROM sqlite_master WHERE name='issue_claims_v1'").fetchone() else {}
-        now = time.time()
-        for key, group in groups.items():
-            claim = claims.get(key)
-            if not claim or now - float(claim['updated']) > CLAIM_TTL:
-                continue
-            group.update(status='retesting' if claim['status'] == 'retesting' else 'claimed',
-                owner_id=claim['owner_id'], owner_name=claim['owner_name'],
-                claimed_at=claim['claimed'], updated=claim['updated'], batch_id=claim['batch_id'])
-    for group in groups.values():
-        group['target_count'] = len(group['_targets'])
-        if not include_targets:
-            group.pop('_targets', None)
-    return sorted(groups.values(), key=lambda item: (-item['count'], item['title'], item['issue_key']))
-
-
 def _current(path, *, include_targets=False):
     with closing(_connect(path)) as conn:
         conn.row_factory = sqlite3.Row
-        if _index_ready(conn):
-            return _index_current(conn, include_targets=include_targets)
-    return _dynamic_current(path, include_targets=include_targets)
+        from ..reporting.materialized import ready
+        if not ready(conn):
+            raise ValueError('case index is not ready; rebuild it before serving issues')
+        return _index_current(conn, include_targets=include_targets)
 
 
 def list_groups(path, dimension=None):

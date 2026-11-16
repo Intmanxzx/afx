@@ -45,7 +45,7 @@ class AgentAPI:
         self.allowlist = allowlist
         with store.connect() as db:
             initialize(db)
-            db.execute('CREATE INDEX IF NOT EXISTS agent_result_batch ON attempt_facts(batch_id,attempt_id)')
+            db.execute('CREATE INDEX IF NOT EXISTS agent_result_batch ON attempt_provenance(batch_id,attempt_id)')
 
     def operation(self, user, identity):
         with self.store.connect() as db:
