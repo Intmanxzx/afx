@@ -296,6 +296,8 @@ def create_manual(store: Store, principal: Principal, body: dict):
 
 
 def list_manual(store: Store, principal: Principal, limit: int = 50) -> list:
+    if principal.anonymous:
+        return []
     rows = store.reader().execute(
         "SELECT batch, MIN(created_at) AS created_at, COUNT(*) AS tasks, "
         "SUM(status IN ('pending','leased')) AS running, SUM(result='pass') AS passed, "

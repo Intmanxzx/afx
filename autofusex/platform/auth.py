@@ -36,11 +36,20 @@ class Principal:
     kind: str
     scopes: frozenset
 
+    @property
+    def anonymous(self) -> bool:
+        return self.token_id == 0
+
     def require(self, scope: str) -> None:
+        if self.anonymous:
+            raise AuthError("login required")
         if self.role == "admin":
             return
         if scope == "admin" or scope not in self.scopes:
             raise AuthError(f"token lacks scope {scope}")
+
+
+ANONYMOUS = Principal("anonymous", "viewer", 0, "anonymous", frozenset())
 
 
 def _hash(store: Store, token: str) -> bytes:

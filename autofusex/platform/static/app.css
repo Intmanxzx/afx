@@ -82,6 +82,7 @@ main { padding: 18px 20px 80px; max-width: 1500px; margin: 0 auto; }
 @media (max-width: 760px) {
   .pipe { display: flex; flex-direction: column; }
   .pipe .lane { margin-top: 10px; }
+  .pipe .cell.zero { display: none; }
 }
 
 /* charts */

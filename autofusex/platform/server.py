@@ -17,7 +17,7 @@ from importlib import resources
 from . import issues, knowledge, ops, profile, queries, regression, retests
 from .issues import IssueError
 from .search import SearchError
-from .auth import AuthError, Principal, authenticate
+from .auth import ANONYMOUS, AuthError, Principal, authenticate
 from .ingest import Ingestor, UploadError, check_stats, update_settings
 from .store import Store
 
@@ -51,6 +51,25 @@ def _static(name: str):
     except (FileNotFoundError, OSError):
         return None
     return data, STATIC_TYPES["." + name.rsplit(".", 1)[1]]
+
+
+_INDEX_CACHE: dict = {}
+
+
+def _versioned_index(html: bytes) -> bytes:
+    """Reference assets by content hash so CDN/browser caches can never serve a stale script."""
+    import hashlib
+    key = hashlib.sha256(html).hexdigest()
+    if key not in _INDEX_CACHE:
+        out = html
+        for asset in ("app.js", "app.css", "favicon.svg"):
+            found = _static(asset)
+            if found:
+                digest = hashlib.sha256(found[0]).hexdigest()[:12]
+                out = out.replace(f'"{asset}"'.encode(), f'"{asset}?v={digest}"'.encode())
+        _INDEX_CACHE.clear()
+        _INDEX_CACHE[key] = out
+    return _INDEX_CACHE[key]
 
 
 class RawBody:
@@ -198,11 +217,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._serve_static(url.path)
                 return
             params = parse_qs(url.query, max_num_fields=16)
+            header = self.headers.get("Authorization")
+            if header is None and method == "GET" and url.path != "/api/me":
+                principal = ANONYMOUS  # browsing is public; changes and commands need a token
+            else:
+                try:
+                    principal = authenticate(self.server.store, header)
+                except AuthError as exc:
+                    raise HTTPError(401, "unauthorized", str(exc)) from None
             try:
-                principal = authenticate(self.server.store, self.headers.get("Authorization"))
+                data, status = self._route(method, url.path, params, principal)
             except AuthError as exc:
-                raise HTTPError(401, "unauthorized", str(exc)) from None
-            data, status = self._route(method, url.path, params, principal)
+                if principal.anonymous:
+                    raise HTTPError(401, "unauthorized", str(exc)) from None
+                raise
             if isinstance(data, RawBody):
                 self._send_raw(status, data)
             else:
@@ -219,6 +247,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, _error("internal", "internal error"))
         finally:
             self.server.slots.release()
+
+    def _rate_key(self, principal: Principal):
+        if not principal.anonymous:
+            return principal.token_id
+        peer = self.client_address[0]
+        forwarded = self.headers.get("X-Forwarded-For")
+        # Only trust the proxy header when the request comes from the local reverse proxy.
+        if forwarded and peer in ("127.0.0.1", "::1"):
+            peer = forwarded.split(",")[0].strip()[:64]
+        return "ip:" + peer
 
     def do_GET(self):
         self._dispatch("GET")
@@ -242,6 +280,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, _error("not_found", "no such page"))
             return
         data, content_type = found
+        if name == "index.html":
+            data = _versioned_index(data)
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
@@ -249,7 +289,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cache-Control", "no-cache")
+        # HTML must always be revalidated; hashed assets may be cached forever.
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate" if name == "index.html"
+                         else "public, max-age=31536000, immutable")
         self.end_headers()
         self.wfile.write(data)
 
@@ -270,7 +312,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise HTTPError(429, "rate_limited", "too many uploads", {"Retry-After": "5"})
             raw = self._body(MAX_UPLOAD_BODY)
             return self.server.ingestor.upload(principal, self._json(raw), raw), 200
-        if not self.server.read_limit.allow(principal.token_id):
+        if not self.server.read_limit.allow(self._rate_key(principal)):
             raise HTTPError(429, "rate_limited", "too many requests", {"Retry-After": "5"})
         if method == "GET":
             if path == "/api/me":

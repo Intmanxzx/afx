@@ -49,13 +49,17 @@ function rkey() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.
 // ---------- API ----------
 class ApiError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
 async function api(path, { method = "GET", body, raw = false } = {}) {
-  const headers = { "Authorization": "Bearer " + (token() || "") };
+  const headers = {};
+  if (token()) headers["Authorization"] = "Bearer " + token();
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   if (raw && res.ok) return res.blob();
   let payload = null;
   try { payload = await res.json(); } catch { /* non JSON */ }
-  if (res.status === 401) { showLogin("登录已失效，请重新输入 token"); throw new ApiError(401, "unauthorized", "未登录"); }
+  if (res.status === 401) {
+    showLogin(token() ? "登录已失效，请重新输入 token" : "该操作需要登录：请输入管理员离线发放的 token");
+    throw new ApiError(401, "unauthorized", "需要登录");
+  }
   if (!res.ok || !payload || !payload.ok) {
     const err = (payload && payload.error) || {};
     throw new ApiError(res.status, err.code || "http_error", err.message || res.statusText);
@@ -81,7 +85,6 @@ function go(page, params = {}) {
 }
 const PAGES = {};
 async function render() {
-  if (!token()) return showLogin();
   $("#top").classList.remove("hidden");
   const { page, params } = route();
   for (const a of document.querySelectorAll("#nav a")) a.classList.toggle("active", a.dataset.page === page);
@@ -108,21 +111,27 @@ let renderToken = 0;
 
 // ---------- login ----------
 function showLogin(message) {
-  $("#top").classList.add("hidden");
+  closeDrawer();
+  hideActionBar();
   const input = el("textarea", { placeholder: "afx_…", "aria-label": "token" });
   const msg = el("div", { class: "muted small" }, message || "使用管理员离线发放的 token 登录。token 只保存在当前标签页。");
   const submit = async () => {
     const value = input.value.trim();
     if (!value.startsWith("afx_")) { msg.textContent = "token 应以 afx_ 开头"; return; }
     try { sessionStorage.setItem(TOKEN_KEY, value); } catch { msg.textContent = "浏览器禁止会话存储"; return; }
-    try { await loadMe(); render(); } catch (err) { msg.textContent = "登录失败：" + err.message; }
+    try { await loadMe(); render(); } catch (err) { try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } msg.textContent = "登录失败：" + err.message; }
   };
   $("#main").replaceChildren(el("div", { class: "panel login" }, el("h2", {}, "登录 AutofuseX 平台"), input, msg,
-    el("div", { class: "toolbar", style: { marginTop: "10px" } }, el("button", { class: "primary", onclick: submit }, "登录"))));
+    el("div", { class: "toolbar", style: { marginTop: "10px" } }, el("button", { class: "primary", onclick: submit }, "登录"),
+      el("button", { onclick: () => render() }, "返回浏览"))));
 }
 async function loadMe() {
   me = await api("/api/me");
-  $("#who").textContent = `${me.user_id} · ${me.role === "admin" ? "管理员" : me.role}`;
+  updateWho();
+}
+function updateWho() {
+  $("#who").textContent = me ? `${me.user_id} · ${me.role === "admin" ? "管理员" : me.role}` : "访客（只读）";
+  $("#logout").textContent = me ? "退出" : "登录";
 }
 const isAdmin = () => me && me.role === "admin";
 
@@ -206,7 +215,7 @@ function renderPipeline(data, q) {
   const max = Math.max(1, data.total_cases);
   const link = extra => () => go("discovery", { q: [q, extra].filter(Boolean).join(" ") });
   const cell = (cls, title, n, rowSpan, onclick, row, col) => {
-    const c = el("div", { class: "cell " + cls, onclick, title: `${title}: ${fmt(n)}` }, el("b", {}, fmt(n)), el("span", {}, title),
+    const c = el("div", { class: "cell " + cls + (n ? "" : " zero"), onclick, title: `${title}: ${fmt(n)}` }, el("b", {}, fmt(n)), el("span", {}, title),
       el("div", { class: "bar", style: { width: Math.max(4, 100 * n / max) + "%" } }));
     c.style.gridRow = `${row} / span ${rowSpan}`;
     c.style.gridColumn = String(col);
@@ -776,10 +785,14 @@ PAGES.models = async root => {
 // ---------- boot ----------
 window.addEventListener("hashchange", render);
 $("#search-form").addEventListener("submit", e => { e.preventDefault(); const { page } = route(); go(page === "models" ? "discovery" : page, { q: $("#search").value.trim() || null }); });
-$("#logout").addEventListener("click", () => { try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } me = null; showLogin(); });
+$("#logout").addEventListener("click", () => {
+  if (!me) return showLogin();
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
+  me = null; updateWho(); render();
+});
 if (matchMedia("(hover: none)").matches) document.body.classList.add("touch");
 (async () => {
-  if (!token()) return showLogin();
-  try { await loadMe(); } catch { return; }
+  updateWho();
+  if (token()) { try { await loadMe(); } catch { me = null; updateWho(); } }
   render();
 })();

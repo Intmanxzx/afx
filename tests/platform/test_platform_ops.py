@@ -240,3 +240,39 @@ def test_summary_line_skips_wrappers():
     assert summary_line("RuntimeError: aclnnAdd failed") == "RuntimeError: aclnnAdd failed"
     only_wrapper = "InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir"
     assert summary_line(only_wrapper) == only_wrapper
+
+
+def test_reads_are_public_writes_need_login(world):
+    store, _, _ = world
+    server = PlatformServer(store, ("127.0.0.1", 0))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def call(method, path, payload=None, token=None):
+        conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        conn.request(method, path, body=json.dumps(payload).encode() if payload is not None else None, headers=headers)
+        response = conn.getresponse()
+        body = json.loads(response.read() or b"null")
+        conn.close()
+        return response.status, body
+
+    try:
+        for path in ("/api/overview/pipeline", "/api/cases?limit=5", "/api/issues", "/api/knowledge/search",
+                     "/api/ops/summary", "/api/settings", "/api/retests"):
+            status, body = call("GET", path)
+            assert status == 200 and body["ok"], path
+        assert call("GET", "/api/retests")[1]["data"] == []
+        assert call("GET", "/api/me")[0] == 401
+        assert call("GET", "/api/cases", token="afx_bogus")[0] == 401  # a wrong token is still an error
+        for method, path, payload in (("POST", "/api/retests", {"request_key": "r", "case_keys": [seed(1)], "backends": ["af-mlir"]}),
+                                      ("POST", "/api/issues/claim", {"request_key": "r", "agent_id": "a"}),
+                                      ("POST", "/api/client/heartbeat", {"machine_id": "m"}),
+                                      ("PUT", "/api/admin/settings", {"changes": {}, "base_revisions": {}}),
+                                      ("POST", "/api/client/executions", {"request_key": "r"})):
+            status, body = call(method, path, payload)
+            assert status == 401 and body["error"]["code"] == "unauthorized", path
+    finally:
+        server.shutdown()
+        server.server_close()
