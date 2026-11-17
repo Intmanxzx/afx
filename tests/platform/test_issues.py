@@ -16,7 +16,7 @@ INSTALLED = {"af-mlir": {"version": FIX["fix_version"], "sha256": FIX["fix_sha25
 
 
 def seed(n):
-    return "E" + format(n, "026d").replace("0", "a")
+    return str(10 * 2**160 + n)
 
 
 def case(n, category="elementwise", ops=("add", "mul"), dtypes=("float16",), nodes=6):
@@ -68,7 +68,7 @@ class World:
         """Upload a result for each task and complete it. outcome(case_key) -> function_status."""
         results = []
         for task in tasks:
-            n = int(task["case_key"][1:].replace("a", "0"))
+            n = int(task["case_key"]) - 10 * 2**160
             status = outcome(task["case_key"])
             uuid = f"t{task['task_id']:06d}x{self.keys}"
             self.upload([item(uuid, n, status=status, summary="error at 0x1f tile 32" if status != "pass" else None,
@@ -121,7 +121,7 @@ def test_accuracy_and_performance_issues(world):
     ])
     by_dim = {i["dimension"]: i for i in issues.list_issues(world.store)["issues"]}
     assert set(by_dim) == {"accuracy", "performance"}
-    assert by_dim["accuracy"]["category"] == "severe" and "eager-npu" in by_dim["accuracy"]["title"]
+    assert by_dim["accuracy"]["category"] == "severe" and "EagerNPU" in by_dim["accuracy"]["title"]
     assert by_dim["performance"]["category"] == "2-5x" and by_dim["performance"]["case_count"] == 1
 
 
@@ -135,7 +135,7 @@ def test_full_lifecycle(world):
     claim_body = {"request_key": "claim-1", "agent_id": "agent-1"}
     claimed = issues.claim(world.store, world.agent, dict(claim_body))
     assert claimed["issue_id"] == issue_id and claimed["status"] == "claimed"
-    assert claimed["repro"]["cases"][0]["command"].startswith("afx fuzz replay E")
+    assert claimed["repro"]["cases"][0]["command"].startswith("afx fuzz replay 1")
     assert issues.claim(world.store, world.agent, dict(claim_body)) == claimed  # retry is idempotent
     with pytest.raises(IssueError) as busy:
         issues.claim(world.store, world.agent, {"request_key": "claim-2", "agent_id": "agent-1"})

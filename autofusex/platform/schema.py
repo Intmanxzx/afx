@@ -368,6 +368,57 @@ CREATE TABLE agent_requests(
   PRIMARY KEY(user_id, request_key)
 ) WITHOUT ROWID;
 """),
+    (3, """
+ALTER TABLE clients ADD COLUMN target_afx_version TEXT;
+ALTER TABLE clients ADD COLUMN last_heartbeat_at INTEGER;
+ALTER TABLE clients ADD COLUMN busy INTEGER;
+ALTER TABLE clients ADD COLUMN pending_uploads INTEGER;
+CREATE TABLE metric_rollups(
+  client_id INTEGER NOT NULL,
+  hour INTEGER NOT NULL,
+  executions INTEGER NOT NULL DEFAULT 0,
+  uploads INTEGER NOT NULL DEFAULT 0,
+  upload_errors INTEGER NOT NULL DEFAULT 0,
+  retests INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(client_id, hour)
+) WITHOUT ROWID;
+CREATE INDEX metric_rollups_hour ON metric_rollups(hour);
+ALTER TABLE retest_tasks ADD COLUMN task_kind TEXT;
+ALTER TABLE retest_tasks ADD COLUMN requested_by TEXT;
+ALTER TABLE retest_tasks ADD COLUMN batch TEXT;
+CREATE INDEX retest_tasks_batch ON retest_tasks(requested_by, batch) WHERE batch IS NOT NULL;
+CREATE TABLE import_sources(
+  import_id INTEGER PRIMARY KEY,
+  framework TEXT NOT NULL CHECK(framework IN ('baize_tf','baize_torch')),
+  package_version TEXT,
+  user_id TEXT NOT NULL,
+  case_count INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  attrs TEXT
+);
+CREATE TABLE model_jobs(
+  job_id TEXT PRIMARY KEY,
+  model_name TEXT NOT NULL,
+  model_kind TEXT NOT NULL CHECK(model_kind IN ('rec','llm')),
+  config_content_id INTEGER,
+  backend TEXT NOT NULL,
+  npu_arch TEXT,
+  env_id INTEGER,
+  user_id TEXT NOT NULL,
+  client_id INTEGER,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  attrs TEXT
+);
+CREATE TABLE model_reports(
+  job_id TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  value REAL,
+  content_id INTEGER,
+  PRIMARY KEY(job_id, metric)
+) WITHOUT ROWID;
+"""),
 ]
 
 CONTENT = [

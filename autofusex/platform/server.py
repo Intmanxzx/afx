@@ -12,8 +12,11 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import issues, knowledge, queries, regression, retests
+from importlib import resources
+
+from . import issues, knowledge, ops, profile, queries, regression, retests
 from .issues import IssueError
+from .search import SearchError
 from .auth import AuthError, Principal, authenticate
 from .ingest import Ingestor, UploadError, check_stats, update_settings
 from .store import Store
@@ -31,6 +34,23 @@ _TASK_PATH = re.compile(r"^/api/client/retests/(\d{1,12})/complete$")
 _KNOWLEDGE_PATH = re.compile(r"^/api/knowledge/(KB-\d{6})$")
 _ADMIN_KNOWLEDGE_PATH = re.compile(r"^/api/admin/knowledge/(KB-\d{6})/status$")
 _PIN_PATH = re.compile(r"^/api/regression/pins/(\d{1,12})$")
+
+
+STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
+       "font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'")
+_STATIC_NAME = re.compile(r"^[a-z0-9_-]{1,40}\.(html|js|css|svg)$")
+
+
+def _static(name: str):
+    if not _STATIC_NAME.match(name):
+        return None
+    try:
+        data = resources.files("autofusex.platform").joinpath("static", name).read_bytes()
+    except (FileNotFoundError, OSError):
+        return None
+    return data, STATIC_TYPES["." + name.rsplit(".", 1)[1]]
 
 
 class RawBody:
@@ -150,6 +170,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             url = urlsplit(self.path)
+            if method == "GET" and not url.path.startswith("/api/"):
+                self._serve_static(url.path)
+                return
             params = parse_qs(url.query, max_num_fields=16)
             try:
                 principal = authenticate(self.server.store, self.headers.get("Authorization"))
@@ -164,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(exc.status, _error(exc.code, str(exc)), exc.headers)
         except AuthError as exc:  # authenticated but missing a scope
             self._send(403, _error("forbidden", str(exc)))
-        except (UploadError, IssueError) as exc:
+        except (UploadError, IssueError, SearchError) as exc:
             self._send(exc.status, _error(exc.code, str(exc)))
         except queries.QueryError as exc:
             self._send(400, _error("invalid", str(exc)))
@@ -184,6 +207,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         self._dispatch("DELETE")
+
+    def _serve_static(self, path: str) -> None:
+        if path == "/healthz":
+            self._send(200, {"schema_version": 1, "ok": True, "data": {"status": "up"}})
+            return
+        name = "index.html" if path in ("/", "/index.html") else path.rsplit("/", 1)[-1]
+        found = _static(name) if path.count("/") <= 2 else None
+        if found is None:
+            self._send(404, _error("not_found", "no such page"))
+            return
+        data, content_type = found
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _send_raw(self, status: int, raw: RawBody) -> None:
         self.send_response(status)
@@ -215,7 +259,8 @@ class Handler(BaseHTTPRequestHandler):
                     store, after=_param(params, "after", integer=True),
                     limit=_param(params, "limit", integer=True) or 50, backend=_param(params, "backend"),
                     status=_param(params, "status"), arch=_param(params, "arch"),
-                    case_key=_param(params, "case_key")), 200
+                    case_key=_param(params, "case_key"), case_id=_param(params, "case_id", integer=True),
+                    q=_text(params, "q")), 200
             if path.startswith("/api/executions/"):
                 exec_uuid = path[len("/api/executions/"):]
                 if not _PARAM.match(exec_uuid):
@@ -272,6 +317,16 @@ class Handler(BaseHTTPRequestHandler):
                 return issues.issue_cases(store, issue_id, _param(params, "role") or "affected",
                                           _param(params, "after", integer=True))
             return None
+        if path == "/api/ops/summary":
+            return ops.summary(store)
+        if path == "/api/retests":
+            return retests.list_manual(store, principal)
+        if path == "/api/profile/axes":
+            return profile.axes(store)
+        if path in ("/api/profile/points", "/api/profile/patterns"):
+            return self._aggregate(path, params)
+        if path.startswith("/api/models/jobs"):
+            ops.not_implemented("model analysis")
         if path == "/api/regression/preview":
             return regression.preview(store, _param(params, "issue_id", required=True))
         if path == "/api/regression/pins":
@@ -295,6 +350,18 @@ class Handler(BaseHTTPRequestHandler):
         store = self.server.store
         if path == "/api/issues/claim":
             return issues.claim(store, principal, self._json_body())
+        if path == "/api/client/heartbeat":
+            return ops.heartbeat(store, principal, self._json_body())
+        if path == "/api/admin/clients/update":
+            return ops.request_update(store, principal, self._json_body())
+        if path == "/api/retests":
+            return retests.create_manual(store, principal, self._json_body())
+        if path == "/api/admin/profile/drafts":
+            return profile.create_drafts(store, principal, self._json_body())
+        if path == "/api/import/baize":
+            ops.not_implemented("Baize case import")
+        if path == "/api/models/jobs":
+            ops.not_implemented("model analysis")
         match = _ISSUE_PATH.match(path)
         if match and match.group(2) is not None:
             handler = {"renew": issues.renew, "release": issues.release, "verify": issues.verify,
@@ -328,9 +395,16 @@ class Handler(BaseHTTPRequestHandler):
             arch = _param(params, "arch")
             dim = _param(params, "dim") or "all"
             if path == "/api/overview/pipeline":
-                return queries.pipeline(store, arch)
+                return queries.pipeline(store, arch, _text(params, "q"))
             if path == "/api/overview/backend":
-                return queries.backend_stats(store, _param(params, "backend", required=True), dim, arch)
+                return queries.backend_stats(store, _param(params, "backend", required=True), dim, arch,
+                                             _text(params, "q"))
+            if path == "/api/profile/points":
+                return profile.points(store, _param(params, "x", required=True), _param(params, "y", required=True),
+                                      _param(params, "fx", required=True), _param(params, "fy", required=True), arch)
+            if path == "/api/profile/patterns":
+                return profile.patterns(store, _param(params, "x", required=True),
+                                        _param(params, "y", required=True), arch)
             if path == "/api/overview/perf":
                 return queries.perf_pair(store, _param(params, "x", required=True),
                                          _param(params, "y", required=True), dim, arch)

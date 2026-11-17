@@ -81,8 +81,8 @@ flowchart LR
 
 | 来源 `case_source` | `case_key` 规则 | 说明 |
 |---|---|---|
-| `nnsmith` | seed（`E…`/`F…`，27 字符） | 可由 seed 重建图与输入，图不会变 |
-| `baize_tf` / `baize_torch` | `B:` + Baize 用例全名（如 `B:torch/ops/test_add_bf16_001`） | 不推算 seed；`:` 不在 base36 字符集中，不会和 seed 冲突 |
+| `nnsmith` | 十进制 seed（约 50 位，高位区分静态/动态） | 可由 seed 重建图与输入，图不会变 |
+| `baize_tf` / `baize_torch` | `B:` + Baize 用例全名（如 `B:torch/ops/test_add_bf16_001`） | 不推算 seed；seed 是纯数字，带 `B:`/`M:` 前缀的 ID 不会和 seed 冲突 |
 | `model`（整网预留） | `M:` + 模型名 + 配置摘要 | 不进入 fuzz 统计 |
 
 不建议为 Baize 用例"推算 seed"：seed 是生成参数的编码，固定图无法反推。改为两层身份：

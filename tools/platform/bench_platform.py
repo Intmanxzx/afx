@@ -35,7 +35,7 @@ ALPHABET = string.digits + string.ascii_lowercase
 
 
 def seed(rng: random.Random) -> str:
-    return "E" + "".join(rng.choice(ALPHABET) for _ in range(26))
+    return str(10 * 2**160 + rng.getrandbits(150))
 
 
 def make_items(rng: random.Random, start: int, count: int):

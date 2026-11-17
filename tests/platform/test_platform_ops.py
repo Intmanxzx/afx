@@ -1,0 +1,194 @@
+import http.client as httpclient
+import json
+import threading
+
+import pytest
+
+from autofusex.platform import auth, ops, profile, queries, retests, search
+from autofusex.platform.client import af_error_line, function_status
+from autofusex.platform.ingest import Ingestor
+from autofusex.platform.issues import IssueError
+from autofusex.platform.server import PlatformServer
+from autofusex.platform.store import Store
+
+ENV = {"cann": "8.2", "backend_version": "0.3.0"}
+
+
+def seed(n):
+    return str(10 * 2**160 + n)
+
+
+def item(uuid, n, backend="af-mlir", status="pass", accuracy="pass", kernel=None, category="reduce", op="aten.sum.dim_IntList"):
+    return {"exec_uuid": uuid, "backend": backend, "npu_arch": "" if backend == "cpu" else "910b", "env": ENV,
+            "case": {"case_key": seed(n), "case_source": "nnsmith", "is_dynamic": False, "shape_count": 1,
+                     "node_count": 3, "op_types": [op], "dtypes": ["float16"], "max_numel": 64 * n, "max_dim": n,
+                     "features": {"op_category": [category]}},
+            "function_status": status, "accuracy_status": accuracy if status == "pass" else None,
+            "kernel_ns": kernel, "e2e_ns": 5, "created_at": 1000 + n,
+            "log_summary": "error: tiling failed" if status != "pass" else None}
+
+
+@pytest.fixture
+def world(tmp_path):
+    store = Store(tmp_path / "data")
+    auth.add_user(store, "dev", "developer")
+    auth.add_user(store, "root", "admin")
+    client = auth.authenticate(store, "Bearer " + auth.issue_token(store, "dev", "client"))
+    admin = auth.authenticate(store, "Bearer " + auth.issue_token(store, "root", "web", ["admin"]))
+    ingestor = Ingestor(store)
+    items = []
+    for n in range(1, 41):
+        category, op = ("reduce", "aten.sum.dim_IntList") if n % 2 else ("elementwise", "aten.add.Tensor")
+        items.append(item(f"exec-a{n:04d}", n, kernel=50 if n % 2 else 200, category=category, op=op,
+                          status="compile_fail" if n % 5 == 0 else "pass"))
+        items.append(item(f"exec-b{n:04d}", n, backend="triton-npu", kernel=100, category=category, op=op))
+    body = {"request_key": "r1", "client": {"machine_id": "m1", "npu_arch": "910b"},
+            "run": {"run_uuid": "run-00001", "kind": "fuzz"}, "items": items}
+    ingestor.upload(client, body, json.dumps(body).encode())
+    return store, client, admin
+
+
+def test_search_parser_rejects_unsafe_input():
+    assert search.parse(None) is None
+    for bad in ["backend:x;DROP", "status:nope", "unknown:x", "a" * 300, " ".join(["backend:x"] * 9),
+                "error:ab", "backend:" + "x" * 80, "op:a'b"]:
+        with pytest.raises(search.SearchError):
+            search.parse(bad)
+    query = search.parse("backend:af-mlir,af-legacy -stage:schedule category:reduce status:fail error:tiling")
+    assert len(query.head) == 4 and len(query.case) == 1
+    # user text only ever travels as bound parameters
+    assert all("tiling" not in sql and "af-mlir" not in sql for sql, _ in query.head + query.case)
+
+
+def test_search_filters_cases_and_overview(world):
+    store, _, _ = world
+    page = queries.case_page(store, q="backend:af-mlir status:fail category:reduce")
+    keys = {g["case"]["case_key"] for g in page["groups"]}
+    assert keys == {seed(n) for n in (5, 15, 25, 35)}
+    pipe = queries.pipeline(store, q="category:elementwise")
+    assert pipe["total_cases"] == 20 and pipe["q"] == "category:elementwise"
+    lanes = {lane["backend"]: lane for lane in pipe["lanes"]}
+    assert lanes["af-mlir"]["executed"] == 20
+    by_dtype = queries.backend_stats(store, "af-mlir", "op_category", q="error:tiling")
+    assert {g["value"] for g in by_dtype["groups"]} == {"reduce", "elementwise"}
+    assert queries.case_page(store, q=seed(7)[:45])["groups"][0]["case"]["case_key"].startswith(seed(7)[:45])
+    with pytest.raises(queries.QueryError):
+        queries.case_page(store, q="category:reduce", backend="af-mlir", status="fail")
+
+
+def test_search_timeout_maps_to_408(world):
+    store, _, _ = world
+    conn = store.reader()
+    with pytest.raises(search.SearchError) as exc:
+        with search.time_limit(conn, seconds=0):
+            conn.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n) SELECT COUNT(*) FROM n").fetchone()
+    assert exc.value.status == 408
+
+
+def test_heartbeat_rollups_and_update(world):
+    store, client, admin = world
+    first = ops.heartbeat(store, client, {"machine_id": "m1", "npu_arch": "910b", "afx_version": "0.2.0",
+                                         "backend_versions": {"af-mlir": "9.2.0"}, "counters": {"executions": 7},
+                                         "pending_uploads": 3})
+    assert first["update_to"] is None
+    ops.request_update(store, admin, {"request_key": "u1", "client_ids": [first["client_id"]], "version": "0.2.1"})
+    assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.0",
+                                         "counters": {"executions": 3}})["update_to"] == "0.2.1"
+    assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.1"})["update_to"] is None
+    summary = ops.summary(store)
+    me = next(c for c in summary["clients"] if c["client_id"] == first["client_id"])
+    assert me["last_24h"]["executions"] == 10 and me["online"] and me["backend_versions"] == {"af-mlir": "9.2.0"}
+    assert summary["executions_24h"] == 10
+    with pytest.raises(auth.AuthError):
+        ops.request_update(store, client, {"request_key": "u2", "client_ids": [1], "version": "0.3"})
+    with pytest.raises(IssueError):
+        ops.heartbeat(store, client, {"machine_id": "m1", "counters": {"executions": -1}})
+
+
+def test_manual_retest_runs_on_any_build_and_updates_head(world):
+    store, client, _ = world
+    created = retests.create_manual(store, client, {"request_key": "b1", "case_keys": [seed(5)],
+                                                    "backends": ["af-mlir"]})
+    assert created["tasks"] == 1
+    installed = {"af-mlir": {"version": "whatever", "sha256": "e" * 64}}
+    tasks = retests.claim(store, client, {"request_key": "c1", "machine_id": "m1", "npu_arch": "910b",
+                                          "installed": installed})["tasks"]
+    assert len(tasks) == 1 and tasks[0]["run_kind"] == "retest" and tasks[0]["run_uuid"].startswith("retest-t")
+    fixed = item("exec-retest01", 5)
+    fixed["created_at"] = 10**12
+    body = {"request_key": "r2", "client": {"machine_id": "m1"}, "run": {"run_uuid": tasks[0]["run_uuid"],
+                                                                            "kind": "retest"}, "items": [fixed]}
+    Ingestor(store).upload(client, body, json.dumps(body).encode())
+    done = retests.complete(store, client, tasks[0]["task_id"], {"request_key": "d1", "lease_id": tasks[0]["lease_id"],
+                                                                 "exec_uuids": ["exec-retest01"], "installed": installed})
+    assert done["result"] == "pass"
+    head = queries.case_page(store, case_key=seed(5))["groups"][0]["executions"]
+    assert next(e for e in head if e["exec_uuid"] == "exec-retest01")["is_head"]
+    assert retests.list_manual(store, client)[0]["passed"] == 1
+
+
+def test_profile_points_patterns_and_drafts(world):
+    store, _, admin = world
+    profile.MIN_PATTERN_CASES = 5
+    profile._cache.clear()
+    pts = profile.points(store, "af-mlir", "triton-npu", "node_count", "max_numel", "910b")
+    assert len(pts["points"]) == 32 and pts["columns"][2] == "log2_ratio"
+    pat = profile.patterns(store, "af-mlir", "triton-npu", "910b")
+    assert pat["best_ops"][0]["op"] == "aten.sum.dim_IntList" and pat["best_ops"][0]["geomean_ratio"] == 0.5
+    assert pat["importance"][0]["dim"] == "op_category"
+    profile.DRAFT_MIN_CASES = 10
+    drafts = profile.create_drafts(store, admin, {"request_key": "p1", "x": "af-mlir", "y": "triton-npu",
+                                                  "npu_arch": "910b"})
+    assert len(drafts["created"]) == 2
+    from autofusex.platform import knowledge
+    entry = knowledge.get(store.reader(), drafts["created"][0], include_unpublished=True)
+    assert entry["confidence"] == "measured" and entry["status"] == "draft"
+    assert not knowledge.search(store.reader())["items"]  # drafts are hidden until published
+
+
+def test_client_failure_attribution_uses_real_error_lines():
+    generated = ("InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir\n"
+                 "scheduled_x = fuser.schedule(x)\n Check dtype failed for graph_hint/cast Cast; input_dtypes: [DT_INT64]")
+    assert af_error_line(generated).startswith("Check dtype failed")
+    status, stage, line = function_status("af-mlir", "error", "first_call_combined", generated, None, -1)
+    assert (status, stage) == ("compile_fail", "graph_check") and line.startswith("Check dtype")
+    assert function_status("af-mlir", "ok", "", "", None, -1) == ("pass", None, None)
+    assert function_status("af-mlir", "unsupported", "", "", None, -1)[0] == "unsupported"
+
+
+def test_http_static_reserved_and_security_headers(world):
+    store, _, _ = world
+    server = PlatformServer(store, ("127.0.0.1", 0))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    token = auth.issue_token(store, "dev", "client")
+
+    def call(method, path, payload=None, auth_header=True):
+        conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        headers = {"Content-Type": "application/json"}
+        if auth_header:
+            headers["Authorization"] = "Bearer " + token
+        conn.request(method, path, body=json.dumps(payload).encode() if payload is not None else None, headers=headers)
+        response = conn.getresponse()
+        data = response.read()
+        conn.close()
+        return response, data
+
+    try:
+        response, data = call("GET", "/", auth_header=False)
+        assert response.status == 200 and b"AutofuseX" in data
+        assert "script-src 'self'" in response.getheader("Content-Security-Policy")
+        assert response.getheader("X-Frame-Options") == "DENY"
+        assert call("GET", "/app.js", auth_header=False)[0].status == 200
+        assert call("GET", "/../secret.key", auth_header=False)[0].status == 404
+        assert call("GET", "/static/../../core.db", auth_header=False)[0].status == 404
+        assert call("GET", "/healthz", auth_header=False)[0].status == 200
+        assert call("POST", "/api/import/baize", {"request_key": "x"})[0].status == 501
+        assert call("GET", "/api/models/jobs/abc")[0].status == 501
+        response, data = call("GET", "/api/cases?q=" + "backend:x%3BDROP")
+        assert response.status == 400 and json.loads(data)["error"]["code"] == "invalid_query"
+        response, data = call("GET", "/api/cases?q=category:reduce%20status:fail%20backend:af-mlir")
+        assert response.status == 200 and len(json.loads(data)["data"]["groups"]) == 4
+        assert call("POST", "/api/client/heartbeat", {"machine_id": "m9"})[0].status == 200
+    finally:
+        server.shutdown()
+        server.server_close()

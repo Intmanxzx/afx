@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 
 from .aggregates import RATIO_BINS_PER_OCTAVE
+from . import search
 from .store import Store, get_content
 
 BASELINES = ("cpu", "eager-npu")
@@ -25,12 +26,16 @@ def _arch_clause(arch):
     return ("", ()) if arch is None else (" AND npu_arch=?", (arch,))
 
 
-def pipeline(store: Store, arch: str | None = None) -> dict:
+def pipeline(store: Store, arch: str | None = None, q: str | None = None) -> dict:
     conn = store.reader()
-    clause, args = _arch_clause(arch)
-    rows = conn.execute(
-        "SELECT backend, function_status, fail_stage, accuracy_status, SUM(count) AS n FROM stats.stat_buckets "
-        f"WHERE dim='all'{clause} GROUP BY 1,2,3,4", args).fetchall()
+    query = search.parse(q)
+    if query is not None:
+        rows = search.filtered_buckets(conn, query, arch=arch)
+    else:
+        clause, args = _arch_clause(arch)
+        rows = conn.execute(
+            "SELECT backend, function_status, fail_stage, accuracy_status, SUM(count) AS n FROM stats.stat_buckets "
+            f"WHERE dim='all'{clause} GROUP BY 1,2,3,4", args).fetchall()
     lanes = {}
     for row in rows:
         lane = lanes.setdefault(row["backend"], {"backend": row["backend"], "family": FAMILIES.get(row["backend"]),
@@ -50,17 +55,30 @@ def pipeline(store: Store, arch: str | None = None) -> dict:
             lane["function_fail"] += n
             stage = row["fail_stage"] or "unknown"
             lane["stage_fail"][stage] = lane["stage_fail"].get(stage, 0) + n
-    total = int(conn.execute("SELECT value FROM meta WHERE key='case_count'").fetchone()[0])
-    return {"total_cases": total, "npu_arch": arch, "shared_stages": {k: list(v) for k, v in SHARED_STAGES.items()},
+    if query is not None:
+        total = search.filtered_case_count(conn, query)
+    elif arch:
+        # Every case run on this chip has at least one head there; the busiest lane bounds it.
+        total = max((lane["executed"] for lane in lanes.values()), default=0)
+    else:
+        total = int(conn.execute("SELECT value FROM meta WHERE key='case_count'").fetchone()[0])
+    arches = [r[0] for r in conn.execute(
+        "SELECT DISTINCT npu_arch FROM stats.stat_buckets WHERE npu_arch<>'' ORDER BY npu_arch")]
+    return {"total_cases": total, "npu_arch": arch, "arches": arches, "q": query.text if query else None, "shared_stages": {k: list(v) for k, v in SHARED_STAGES.items()},
             "lanes": sorted(lanes.values(), key=lambda lane: (not lane["baseline"], lane["backend"]))}
 
 
-def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None = None) -> dict:
+def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None = None,
+                  q: str | None = None) -> dict:
     conn = store.reader()
-    clause, args = _arch_clause(arch)
-    rows = conn.execute(
-        "SELECT dim_value, function_status, fail_stage, accuracy_status, SUM(count) AS n FROM stats.stat_buckets "
-        f"WHERE backend=? AND dim=?{clause} GROUP BY 1,2,3,4", (backend, dim) + args).fetchall()
+    query = search.parse(q)
+    if query is not None:
+        rows = search.filtered_buckets(conn, query, backend=backend, arch=arch, dim=dim)
+    else:
+        clause, args = _arch_clause(arch)
+        rows = conn.execute(
+            "SELECT dim_value, function_status, fail_stage, accuracy_status, SUM(count) AS n FROM stats.stat_buckets "
+            f"WHERE backend=? AND dim=?{clause} GROUP BY 1,2,3,4", (backend, dim) + args).fetchall()
     groups = {}
     for row in rows:
         group = groups.setdefault(row["dim_value"], {"value": row["dim_value"], "total": 0, "pass": 0,
@@ -128,7 +146,8 @@ _EXEC_COLUMNS = ("e.exec_id, e.exec_uuid, e.case_revision, e.backend, e.npu_arch
 
 
 def case_page(store: Store, *, after: int | None = None, limit: int = 50, backend: str | None = None,
-              status: str | None = None, arch: str | None = None, case_key: str | None = None) -> dict:
+              status: str | None = None, arch: str | None = None, case_key: str | None = None,
+              case_id: int | None = None, q: str | None = None) -> dict:
     """Case groups newest first, each with its latest executions (design 6.3)."""
     if not 1 <= limit <= MAX_PAGE:
         raise QueryError(f"limit must be 1..{MAX_PAGE}")
@@ -138,8 +157,15 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
         raise QueryError("status filter requires backend")
     conn = store.reader()
     cursor = after if after is not None else 1 << 62
-    if case_key is not None:
+    query = search.parse(q)
+    if case_id is not None:
+        ids = [row[0] for row in conn.execute("SELECT case_id FROM cases WHERE case_id=?", (case_id,))]
+    elif case_key is not None:
         ids = [row[0] for row in conn.execute("SELECT case_id FROM cases WHERE case_key=?", (case_key,))]
+    elif query is not None:
+        if backend is not None or status is not None:
+            raise QueryError("combine backend/status into q, e.g. backend:af-mlir status:fail")
+        ids = search.filtered_cases(conn, query, cursor, limit)
     elif backend is None:
         ids = [row[0] for row in conn.execute(
             "SELECT case_id FROM cases WHERE case_id<? ORDER BY case_id DESC LIMIT ?", (cursor, limit))]
@@ -160,18 +186,18 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
             "SELECT DISTINCT h.case_id FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
             f"WHERE {' AND '.join(where)} ORDER BY h.case_id DESC LIMIT ?", args + [limit])]
     groups = []
-    for case_id in ids:
-        case = dict(conn.execute(f"SELECT {_CASE_COLUMNS} FROM cases WHERE case_id=?", (case_id,)).fetchone())
+    for cid in ids:
+        case = dict(conn.execute(f"SELECT {_CASE_COLUMNS} FROM cases WHERE case_id=?", (cid,)).fetchone())
         executions = [dict(row) for row in conn.execute(
             f"SELECT {_EXEC_COLUMNS} FROM executions e WHERE e.case_id=? ORDER BY e.created_at DESC, e.exec_id DESC "
-            "LIMIT ?", (case_id, MAX_EXECUTIONS_PER_CASE + 1))]
-        heads = {row[0] for row in conn.execute("SELECT exec_id FROM execution_heads WHERE case_id=?", (case_id,))}
+            "LIMIT ?", (cid, MAX_EXECUTIONS_PER_CASE + 1))]
+        heads = {row[0] for row in conn.execute("SELECT exec_id FROM execution_heads WHERE case_id=?", (cid,))}
         for execution in executions:
             execution["is_head"] = execution["exec_id"] in heads
             execution["stale_graph"] = execution["case_revision"] != case["case_revision"]
         groups.append({"case": case, "executions": executions[:MAX_EXECUTIONS_PER_CASE],
                        "more_executions": len(executions) > MAX_EXECUTIONS_PER_CASE})
-    next_cursor = ids[-1] if len(ids) == limit and case_key is None else None
+    next_cursor = ids[-1] if len(ids) == limit and case_key is None and case_id is None else None
     return {"groups": groups, "next_cursor": next_cursor}
 
 

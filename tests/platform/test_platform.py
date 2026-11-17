@@ -9,8 +9,8 @@ from autofusex.platform.ingest import Ingestor, UploadError, check_stats, update
 from autofusex.platform.server import PlatformServer
 from autofusex.platform.store import Store
 
-SEED_A = "E" + "a" * 26
-SEED_B = "E" + "b" * 26
+SEED_A = str(10 * 2**160 + 1)
+SEED_B = str(10 * 2**160 + 2)
 FP1, FP2 = "1" * 64, "2" * 64
 ENV = {"cann": "8.2", "torch": "2.6", "backend_version": "0.3.0", "os": "ubuntu22", "cpu_arch": "arm"}
 
@@ -116,7 +116,7 @@ def test_upload_scope_required(env):
 
 def test_validation_rejects_bad_case_keys(env):
     _, ingestor, principal = env
-    bad_seed = item("exec-0001", c=case(key="E123"))
+    bad_seed = item("exec-0001", c=case(key="E" + "a" * 26))
     bad_baize = item("exec-0002", c=case(key="torch/x", source="baize_torch", fingerprint=FP1))
     accuracy_on_failure = item("exec-0003", status="compile_fail")
     accuracy_on_failure["accuracy_status"] = "fail"
@@ -127,7 +127,7 @@ def test_validation_rejects_bad_case_keys(env):
 def test_environment_and_content_deduplicated(env):
     store, ingestor, principal = env
     log = "error: schedule failed\n" * 100
-    items = [item(f"exec-{i:04d}", c=case(key="E" + chr(97 + i) * 26), status="compile_fail",
+    items = [item(f"exec-{i:04d}", c=case(key=str(10 * 2**160 + 100 + i)), status="compile_fail",
                   fail_stage="schedule", log=log) for i in range(5)]
     upload(ingestor, principal, body(items))
     conn = store.reader()
@@ -248,7 +248,7 @@ def test_stats_rebuilt_when_out_of_step(env):
 
 def test_case_page_filters_and_cursor(env):
     store, ingestor, principal = env
-    items = [item(f"exec-{i:04d}", c=case(key="E" + chr(97 + i) * 26),
+    items = [item(f"exec-{i:04d}", c=case(key=str(10 * 2**160 + 100 + i)),
                   status="compile_fail" if i % 2 else "pass") for i in range(6)]
     upload(ingestor, principal, body(items))
     page = queries.case_page(store, limit=4)

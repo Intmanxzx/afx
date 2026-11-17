@@ -32,6 +32,8 @@ class IssueError(ValueError):
 # -- signatures -----------------------------------------------------------------
 _NORMALIZE = [
     (re.compile(r"0x[0-9a-f]+"), "<hex>"),
+    (re.compile(r"graph=\S+"), "graph=<graph>"),
+    (re.compile(r"[0-9a-f]{12,}"), "<id>"),
     (re.compile(r"(?:[a-z]:)?(?:/[\w.+-]+){2,}"), "<path>"),
     (re.compile(r"'[^']*'|\"[^\"]*\""), "<str>"),
     (re.compile(r"\[[\d,\s]*\]|\([\d,\s]+\)"), "<shape>"),
@@ -92,12 +94,14 @@ def accuracy_bucket(execution) -> str:
 
 
 def accuracy_signature(execution, traits):
-    # Small graphs keep the exact op set; larger graphs fall back to categories.
-    ops = traits["ops"] if traits["node_count"] and traits["node_count"] <= 4 else traits["primary"]
+    # Single-op graphs keep the exact op; larger graphs group by primary category.
+    ops = traits["ops"] if traits["node_count"] == 1 else traits["primary"]
     bucket = accuracy_bucket(execution)
     ref = execution["accuracy_ref"] or "cpu"
     sig = _digest("accuracy", execution["backend"], traits["dtypes"], ops, bucket)
-    title = f"[{execution['backend']}] 精度{bucket} {traits['dtypes']} {ops} (标杆 {ref})"
+    label = {"severe": "严重", "mild": "轻微"}.get(bucket, "")
+    title = f"[{execution['backend']}] 精度{label}失败 {traits['dtypes']} {ops}" + (
+        " (EagerNPU 标杆)" if ref == "eager-npu" else "")
     return sig, bucket, title
 
 

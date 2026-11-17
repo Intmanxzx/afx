@@ -8,7 +8,6 @@ the round is evaluated and the issue moves on.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import secrets
@@ -90,10 +89,12 @@ def claim(store: Store, principal: Principal, body: dict):
         lease_ms = _setting(conn, "retest.lease_minutes") * 60_000
         tasks = []
         for backend, (version, sha) in installed.items():
+            # Issue rounds need the exact candidate package; manual retests ('*') run on any build.
             rows = conn.execute(
-                "SELECT t.*, r.kind FROM retest_tasks t JOIN issue_rounds r ON r.issue_id=t.issue_id "
-                "AND r.round_no=t.round_no WHERE t.status='pending' AND t.npu_arch=? AND t.required_backend=? "
-                "AND t.required_version=? AND t.required_sha256=? ORDER BY t.task_id LIMIT ?",
+                "SELECT t.*, COALESCE(r.kind, t.task_kind) AS kind FROM retest_tasks t LEFT JOIN issue_rounds r "
+                "ON r.issue_id=t.issue_id AND r.round_no=t.round_no WHERE t.status='pending' AND t.npu_arch=? "
+                "AND t.required_backend=? AND ((t.required_version=? AND t.required_sha256=?) "
+                "OR t.required_version='*') ORDER BY t.task_id LIMIT ?",
                 (arch, backend, version, sha, limit - len(tasks))).fetchall()
             for row in rows:
                 lease_id = secrets.token_hex(16)
@@ -115,7 +116,9 @@ def _task_payload(conn, row, lease_id):
         data = get_content(conn, case["spec_content_id"])
         spec = json.loads(data) if data is not None else None
     return {"task_id": row["task_id"], "lease_id": lease_id, "issue_id": row["issue_id"], "round_no": row["round_no"],
-            "run_kind": row["kind"], "run_uuid": f"{row['issue_id']}-r{row['round_no']}-t{row['task_id']}",
+            "run_kind": row["kind"],
+            "run_uuid": (f"{row['issue_id']}-r{row['round_no']}-t{row['task_id']}" if row["issue_id"]
+                         else f"retest-t{row['task_id']}"),
             "case_key": case["case_key"], "case_source": case["case_source"], "case_revision": case["case_revision"],
             "spec": spec, "npu_arch": row["npu_arch"], "backends": row["backends"].split(","),
             "required": {"backend": row["required_backend"], "version": row["required_version"],
@@ -131,8 +134,9 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
     installed = _installed(body)
 
     def action(conn):
-        task = conn.execute("SELECT t.*, r.kind FROM retest_tasks t JOIN issue_rounds r ON r.issue_id=t.issue_id "
-                            "AND r.round_no=t.round_no WHERE t.task_id=?", (task_id,)).fetchone()
+        task = conn.execute("SELECT t.*, COALESCE(r.kind, t.task_kind) AS kind FROM retest_tasks t "
+                            "LEFT JOIN issue_rounds r ON r.issue_id=t.issue_id AND r.round_no=t.round_no "
+                            "WHERE t.task_id=?", (task_id,)).fetchone()
         if task is None:
             raise IssueError("not_found", "task not found", 404)
         client = conn.execute("SELECT user_id FROM clients WHERE client_id=?", (task["client_id"],)).fetchone()
@@ -154,6 +158,8 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
                      "lease_expires_at=NULL WHERE task_id=?",
                      ("invalid" if result == "invalid" else "done", result, detail, now_ms(), task_id))
         conn.executemany("INSERT OR IGNORE INTO retest_task_execs VALUES(?,?)", [(task_id, r["exec_id"]) for r in rows])
+        if not task["issue_id"]:
+            return {"task_id": task_id, "result": result, "detail": detail}
         role = "affected" if task["kind"] == "verify" else "regression"
         target = next((r for r in rows if r["backend"] == task["required_backend"]), None)
         conn.execute("UPDATE issue_cases SET result=?, last_exec_id=COALESCE(?, last_exec_id) WHERE issue_id=? "
@@ -168,7 +174,7 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
 def _judge(conn, task, rows, installed):
     """pass / fail / invalid for one task. Invalid never counts as a failure of the fix."""
     required = (task["required_version"], task["required_sha256"])
-    if installed.get(task["required_backend"]) != required:
+    if task["required_version"] != "*" and installed.get(task["required_backend"]) != required:
         return "invalid", "installed package does not match the version under test"
     by_backend = {r["backend"]: r for r in rows}
     target = by_backend.get(task["required_backend"])
@@ -178,7 +184,7 @@ def _judge(conn, task, rows, installed):
     issue = conn.execute("SELECT dimension FROM issues WHERE issue_id=?", (task["issue_id"],)).fetchone()
     if not ok:
         return "fail", f"{target['function_status']}/{target['accuracy_status']}"
-    if issue["dimension"] == "performance" and task["kind"] == "verify":
+    if issue is not None and issue["dimension"] == "performance" and task["kind"] == "verify":
         anchor = by_backend.get(_setting(conn, "issue.perf_anchor"))
         if anchor is None or not anchor["kernel_ns"] or not target["kernel_ns"]:
             return "invalid", "performance verification needs kernel time of both backends"
@@ -244,5 +250,51 @@ def round_tasks(store: Store, issue_id: str, round_no: int) -> list:
         "ORDER BY t.task_id", (issue_id, round_no))]
 
 
-def body_digest(body) -> str:
-    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+# -- manual retests from the discovery page (design 6.3) -------------------------
+def create_manual(store: Store, principal: Principal, body: dict):
+    """Re-run selected cases on any client of the case's arch; results become current heads."""
+    principal.require("retest")
+    keys, backends = body.get("case_keys"), body.get("backends")
+    if not isinstance(keys, list) or not 1 <= len(keys) <= 200 or not all(isinstance(k, str) for k in keys):
+        raise IssueError("invalid", "case_keys must be a list of 1..200 strings")
+    if not isinstance(backends, list) or not 1 <= len(backends) <= 4 \
+            or not all(isinstance(b, str) and _NAME.match(b) and b != "cpu" for b in backends):
+        raise IssueError("invalid", "backends must list 1..4 NPU backends")
+    arch = body.get("npu_arch")
+    if arch is not None and (not isinstance(arch, str) or not 1 <= len(arch) <= 32):
+        raise IssueError("invalid", "npu_arch must be a short string")
+    repetitions = body.get("repetitions", 1)
+    if isinstance(repetitions, bool) or not isinstance(repetitions, int) or not 1 <= repetitions <= 5:
+        raise IssueError("invalid", "repetitions must be 1..5")
+    request_key = body.get("request_key")
+
+    def action(conn):
+        from .issues import _case_ids
+        now, created, skipped = now_ms(), 0, []
+        for case_id in _case_ids(conn, keys):
+            for backend in backends:
+                arches = [arch] if arch else [r[0] for r in conn.execute(
+                    "SELECT DISTINCT npu_arch FROM execution_heads WHERE case_id=? AND backend=?", (case_id, backend))]
+                if not arches:
+                    skipped.append(case_id)
+                    continue
+                for target_arch in arches:
+                    for _ in range(repetitions):
+                        conn.execute(
+                            "INSERT INTO retest_tasks(issue_id, round_no, case_id, npu_arch, backends, required_backend, "
+                            "required_version, required_sha256, status, created_at, task_kind, requested_by, batch) "
+                            "VALUES('', 0, ?,?,?,?, '*', '*', 'pending', ?, 'retest', ?, ?)",
+                            (case_id, target_arch, f"cpu,{backend}", backend, now, principal.user_id, request_key))
+                        created += 1
+        return {"batch": request_key, "tasks": created, "skipped_without_arch": len(skipped)}
+    return idempotent(store, principal, "retest-manual", body.pop("request_key", None), body, action)
+
+
+def list_manual(store: Store, principal: Principal, limit: int = 50) -> list:
+    rows = store.reader().execute(
+        "SELECT batch, MIN(created_at) AS created_at, COUNT(*) AS tasks, "
+        "SUM(status IN ('pending','leased')) AS running, SUM(result='pass') AS passed, "
+        "SUM(result='fail') AS failed, SUM(result='invalid' OR status='invalid') AS invalid "
+        "FROM retest_tasks WHERE requested_by=? AND batch IS NOT NULL GROUP BY batch "
+        "ORDER BY MIN(task_id) DESC LIMIT ?", (principal.user_id, limit)).fetchall()
+    return [dict(r) for r in rows]

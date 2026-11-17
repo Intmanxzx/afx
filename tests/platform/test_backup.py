@@ -12,7 +12,7 @@ ENV = {"cann": "8.2", "torch": "2.6"}
 
 
 def _item(i, log=None):
-    seed = "E" + format(i, "026d").replace("0", "a")
+    seed = str(10 * 2**160 + i)
     out = {"exec_uuid": f"exec-{i:06d}", "backend": "af-mlir", "npu_arch": "910b", "env": ENV,
            "function_status": "pass", "accuracy_status": "pass", "e2e_ns": 1, "kernel_ns": 5, "created_at": 1 + i,
            "case": {"case_key": seed, "case_source": "nnsmith", "is_dynamic": False, "shape_count": 1,

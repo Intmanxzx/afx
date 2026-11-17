@@ -27,7 +27,7 @@ ENV_FIELDS = ("cann", "python", "torch", "torch_npu", "backend_version", "afx", 
 NUMERIC_FEATURES = ("node_count", "max_numel", "max_dim", "shape_count")
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
-_SEED = re.compile(r"^[EF][0-9a-z]{26}$")
+_SEED = re.compile(r"^[1-9][0-9]{19,59}$")
 _KEY_PREFIX = {"baize_tf": "B:", "baize_torch": "B:", "model": "M:"}
 _TEXT = re.compile(r"^[^\x00-\x08\x0b\x0c\x0e-\x1f]*$")
 
@@ -101,7 +101,7 @@ def validate_case(case) -> dict:
     key = _str(case, "case_key", limit=256)
     if source == "nnsmith":
         if not _SEED.match(key):
-            raise UploadError("invalid", "nnsmith case_key must be an E/F seed")
+            raise UploadError("invalid", "nnsmith case_key must be a decimal seed")
     elif not key.startswith(_KEY_PREFIX[source]) or len(key) < 3:
         raise UploadError("invalid", f"{source} case_key must start with {_KEY_PREFIX[source]}")
     fingerprint = _str(case, "graph_fingerprint", required=source != "nnsmith", limit=64,
