@@ -270,7 +270,7 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
 
 /* pipeline diagram */
 .pipe-wrap { overflow-x: auto; margin: 4px -6px 0; padding: 0 6px; }
-.pipe-svg { display: block; min-width: 740px; }
+.pipe-svg { display: block; max-width: none; }
 .pipe-svg text { font-family: inherit; }
 .pipe-col { fill: var(--muted); font-size: 14px; font-weight: 500; }
 .pipe-family { fill: color-mix(in srgb, var(--lane-legacy) 6%, transparent); stroke: color-mix(in srgb, var(--lane-legacy) 25%, transparent); stroke-dasharray: 4 4; }
@@ -320,3 +320,10 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
   nav.main a { white-space: nowrap; }
   .search { order: 5; width: 100%; max-width: none; margin-left: 0; }
 }
+
+/* capability matrix: backends as columns, dimensions as rows */
+.cap-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px 6px; }
+.cap-grid { display: grid; gap: 10px 14px; align-items: start; }
+.cap-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 15px; padding: 6px 2px 8px; border-bottom: 2px solid var(--line); background: var(--panel); }
+.cap-row-label { grid-column: 1 / -1; position: sticky; left: 0; width: max-content; margin-top: 10px; font-size: 13px; font-weight: 650; color: var(--muted); letter-spacing: .04em; }
+.cap-grid .chart { height: 100%; }

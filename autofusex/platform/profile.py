@@ -98,7 +98,8 @@ def patterns(store: Store, x: str, y: str, arch=None) -> dict:
         conn = store.reader()
         pairs, total, step = _pairs(conn, x, y, arch, MAX_POINTS)
         ratios = dict(pairs)
-        op_feature = conn.execute("SELECT feature_id FROM feature_registry WHERE name='op'").fetchone()
+        op_feature = (conn.execute("SELECT feature_id FROM feature_registry WHERE name='op_display'").fetchone()
+                      or conn.execute("SELECT feature_id FROM feature_registry WHERE name='op'").fetchone())
         sums: dict = {}
         if op_feature is not None:
             for chunk in _chunks(list(ratios), 500):
@@ -109,8 +110,10 @@ def patterns(store: Store, x: str, y: str, arch=None) -> dict:
                     entry = sums.setdefault(op, [0, 0.0])
                     entry[0] += 1
                     entry[1] += ratios[case_id]
+        # Small populations still get a profile; large ones need more cases per op.
+        min_cases = max(5, min(MIN_PATTERN_CASES, len(pairs) // 20))
         ops = [{"op": op, "cases": n, "geomean_ratio": round(2 ** (s / n), 4), "log2": round(s / n, 4)}
-               for op, (n, s) in sums.items() if n >= MIN_PATTERN_CASES]
+               for op, (n, s) in sums.items() if n >= min_cases]
         ops.sort(key=lambda o: o["log2"])
         importance = []
         for dim in queries.dims(store):
@@ -125,7 +128,7 @@ def patterns(store: Store, x: str, y: str, arch=None) -> dict:
             spread = math.sqrt(sum(t * (m - overall) ** 2 for t, m in means) / n)
             importance.append({"dim": dim, "spread_log2": round(spread, 4), "groups": len(groups)})
         importance.sort(key=lambda d: -d["spread_log2"])
-        return {"x": x, "y": y, "npu_arch": arch, "sampled_pairs": len(pairs), "total_pairs": total,
+        return {"x": x, "y": y, "npu_arch": arch, "sampled_pairs": len(pairs), "total_pairs": total, "min_cases": min_cases,
                 "best_ops": ops[:15], "worst_ops": list(reversed(ops[-15:])), "importance": importance}
     return _cached(("patterns", x, y, arch), compute)
 

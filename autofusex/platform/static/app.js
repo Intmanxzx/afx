@@ -193,13 +193,15 @@ PAGES.overview = async (root, params) => {
   const arches = await archOptions();
   const arch = params.get("arch") || arches[0] || "";
   const pipeline = await api("/api/overview/pipeline" + qs({ arch, q }));
-  const head = el("h2", {}, "功能与精度汇总", el("span", { class: "spacer" }),
+  const head = el("h2", {}, "用例总览", el("span", { class: "spacer" }),
     arches.length ? select(arches.map(a => [a, a]), arch, v => go("overview", { arch: v })) : null);
-  root.append(el("section", { class: "panel hero" }, head, renderPipeline(pipeline, q)));
+  const hero = el("section", { class: "panel hero" }, head);
+  root.append(hero);
+  hero.append(renderPipeline(pipeline, q, hero.clientWidth - 44));
   const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
   const tabsBox = el("section", { class: "panel" });
   root.append(tabsBox);
-  renderBackendTabs(tabsBox, lanes, arch, q, params.get("tab") || lanes.find(b => b === "af-mlir") || lanes[0]);
+  renderBackendTabs(tabsBox, lanes, arch, q);
   const perfBox = el("section", { class: "panel" });
   root.append(perfBox);
   const npuBackends = pipeline.lanes.map(l => l.backend).filter(b => b !== "cpu");
@@ -212,7 +214,7 @@ const LOSS_COLOR = { build: "var(--loss-build)", stage: "var(--loss-stage)", oth
 
 // Overview module 1: each backend is a pipe whose width is its case count. Every stage that
 // loses cases peels a curved branch off the bottom of the pipe; what reaches the right is "pass".
-function renderPipeline(data, q) {
+function renderPipeline(data, q, width) {
   const lanes = data.lanes.filter(l => !l.baseline);
   if (!lanes.length) return el("div", { class: "empty" }, "暂无执行记录");
   const link = extra => () => go("discovery", { q: [q, extra].filter(Boolean).join(" ") });
@@ -232,18 +234,19 @@ function renderPipeline(data, q) {
       note: l => (detail(l, l.family === "af" ? SCHEDULE_STAGES : []) || "—") + (l.unsupported ? `；含不支持 ${fmt(l.unsupported)}` : "") },
     { key: "accuracy", label: "精度失败", kind: "accuracy", value: l => l.accuracy_fail, filter: b => `backend:${b} status:accuracy_fail`, note: () => "执行成功但与标杆比对未通过" },
   ].filter(c => c.key !== "schedule" || lanes.some(l => l.family === "af"));
-  const narrow = matchMedia("(max-width: 760px)").matches;
-  return narrow ? pipelineVertical(data, lanes, columns, link) : pipelineSvg(data, lanes, columns, link);
+  return width < 860 ? pipelineVertical(data, lanes, columns, link) : pipelineSvg(data, lanes, columns, link, width);
 }
 
-function pipelineSvg(data, lanes, columns, link) {
+function pipelineSvg(data, lanes, columns, link, width) {
   const total = Math.max(1, data.total_cases, ...lanes.map(l => l.executed));
-  const maxT = 46, laneH = 150, top = 64, left = 24, srcW = 92, laneStart = 300, endPad = 210;
-  const W = Math.max(1100, laneStart + columns.length * 120 + endPad), H = top + lanes.length * laneH + 10;
+  // Drawn at the real container width so text keeps its size; wide screens just get more room.
+  const W = Math.max(860, Math.floor(width)), compact = W < 1100;
+  const maxT = 46, laneH = 150, top = 64, left = 8, srcW = compact ? 80 : 92, laneStart = compact ? 250 : 300, endPad = compact ? 196 : 210;
+  const H = top + lanes.length * laneH + 10;
   const colX = i => laneStart + 60 + i * ((W - endPad - laneStart - 60) / Math.max(1, columns.length));
   const th = n => n > 0 ? Math.max(2.5, maxT * n / total) : 0;
   const pipeT = n => n > 0 ? Math.max(8, th(n)) : 0;  // keep small lanes readable as pipes
-  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", class: "pipe-svg", role: "img", "aria-label": "各后端功能与精度流失管道" });
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "pipe-svg", role: "img", "aria-label": "各后端用例流失管道" });
   const defs = svg("defs");
   root.append(defs);
   // column headers
@@ -300,7 +303,7 @@ function pipelineSvg(data, lanes, columns, link) {
     bottoms.push([W - endPad + 20, t]);
     let back = "";
     for (let k = bottoms.length - 1; k >= 0; k--) back += ` L ${bottoms[k][0]} ${yTop + bottoms[k][1]}`;
-    const pipe = svg("path", { d: d + back + " Z", fill: `url(#${gid})`, class: "pipe-main", "data-tooltip": `${label(lane.backend)}：执行 ${fmt(lane.executed)}，通过 ${fmt(lane.pass)}（${pct(lane.pass, lane.executed)}）` });
+    const pipe = svg("path", { d: d + back + " Z", fill: `url(#${gid})`, class: "pipe-main", "data-tooltip": `执行 ${fmt(lane.executed)}` });
     pipe.addEventListener("click", link(`backend:${lane.backend}`));
     root.append(pipe);
     // drops
@@ -311,26 +314,25 @@ function pipelineSvg(data, lanes, columns, link) {
       if (shared && !firstOfFamily) continue;  // the family draws one merged drop
       const dx = drop.cx, dy = drop.yFrom + drop.t / 2, endY = yTop + maxT + 46;
       const band = svg("path", { d: `M ${dx} ${dy} C ${dx + 18} ${dy}, ${dx + 22} ${dy + 12}, ${dx + 22} ${Math.max(dy + 20, endY)}`,
-        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${shared ? lane.family.toUpperCase() + " 族" : label(lane.backend)} · ${drop.c.label}：${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）\n${drop.c.note ? drop.c.note(lane) : ""}` });
+        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）` });
       band.addEventListener("click", link(drop.c.filter(lane.backend)));
       const pillText = `${fmt(drop.loss)}`;
       const pw = 20 + pillText.length * 9.5;
-      const pill = svg("g", { class: "pipe-pill " + drop.c.kind, transform: `translate(${dx + 22 - pw / 2}, ${Math.max(dy + 20, endY) + 4})` },
+      const pill = svg("g", { class: "pipe-pill " + drop.c.kind, "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）`, transform: `translate(${dx + 22 - pw / 2}, ${Math.max(dy + 20, endY) + 4})` },
         svg("rect", { width: pw, height: 26, rx: 13 }), svg("text", { x: pw / 2, y: 18, "text-anchor": "middle" }, pillText));
       pill.addEventListener("click", link(drop.c.filter(lane.backend)));
       root.append(band, pill);
     }
     // pass terminal
     const pw = 170, px = W - endPad + 30, py = yTop + t / 2 - 21;
-    const term = svg("g", { class: "pipe-pass", transform: `translate(${px}, ${py})`, "data-tooltip": `${label(lane.backend)} 通过 ${fmt(lane.pass)} / ${fmt(lane.executed)}` },
+    const term = svg("g", { class: "pipe-pass", transform: `translate(${px}, ${py})`, "data-tooltip": `通过 ${fmt(lane.pass)}（${pct(lane.pass, lane.executed)}）` },
       svg("rect", { width: pw, height: 42, rx: 21 }),
       svg("text", { x: 18, y: 27, class: "pipe-pass-n" }, fmt(lane.pass)),
       svg("text", { x: pw - 16, y: 27, "text-anchor": "end", class: "pipe-pass-p" }, pct(lane.pass, lane.executed)));
     term.addEventListener("click", link(`backend:${lane.backend} status:pass`));
     root.append(term);
   });
-  return el("div", {}, el("div", { class: "pipe-wrap" }, root),
-    el("div", { class: "muted small", style: { marginTop: "6px" } }, "管道宽度表示用例数；每个向下的分支是在该阶段流失的用例，悬停查看占比，点击查看对应用例。以 CPU 为精度标杆（CPU 不支持时使用 EagerNPU）。"));
+  return el("div", { class: "pipe-wrap" }, root);
 }
 
 function pipelineVertical(data, lanes, columns, link) {
@@ -343,7 +345,7 @@ function pipelineVertical(data, lanes, columns, link) {
       const loss = c.value(lane);
       if (!loss) continue;
       remaining -= loss;
-      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)), "data-tooltip": c.note ? c.note(lane) : null },
+      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)), "data-tooltip": `${c.label} ${fmt(loss)}（${pct(loss, lane.executed)}）` },
         el("span", {}, c.label), el("b", {}, "−" + fmt(loss)),
         el("i", { style: { width: Math.max(4, 100 * remaining / Math.max(1, lane.executed)) + "%", background: color } })));
     }
@@ -354,27 +356,35 @@ function pipelineVertical(data, lanes, columns, link) {
   return box;
 }
 
-async function renderBackendTabs(box, lanes, arch, q, active) {
-  const tabs = el("div", { class: "tabs" });
-  const body = el("div");
-  box.replaceChildren(el("h2", {}, "基础能力统计分布"), tabs, body);
-  const cache = {};
-  const show = async backend => {
-    for (const b of tabs.children) b.classList.toggle("active", b.dataset.backend === backend);
-    if (!cache[backend]) {
-      body.replaceChildren(el("div", { class: "empty" }, "加载中…"));
-      const available = await api("/api/overview/dims");
-      const dims = DIM_ORDER.filter(d => available.includes(d));
-      const [total, ...results] = await Promise.all(["all", ...dims].map(dim => api("/api/overview/backend" + qs({ backend, dim, arch, q })).catch(err => ({ dim, error: err }))));
-      cache[backend] = el("div", {}, legend([["c-pass", "通过"], ["c-func", "功能失败"], ["c-acc", "精度失败"], ["c-uns", "不支持"]]),
-        el("div", { class: "chart-grid" }, donutChart(total, backend), results.map(r => statusChart(r, backend))));
-    }
-    body.replaceChildren(cache[backend]);
-  };
-  for (const backend of lanes) tabs.append(el("button", { "data-backend": backend, onclick: () => show(backend) }, `${label(backend)} 基础能力`));
-  if (active) show(active);
+// Capability matrix: one column per backend, one row per dimension, so a row compares the same
+// metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
+async function renderBackendTabs(box, lanes, arch, q) {
+  const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
+  box.replaceChildren(el("h2", {}, "基础能力统计分布"), legend([["c-pass", "通过"], ["c-func", "功能失败"], ["c-acc", "精度失败"], ["c-uns", "不支持"]]), body);
+  if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, "暂无数据")); return; }
+  let matrix;
+  try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, q })); }
+  catch (err) { body.replaceChildren(errorBox(err)); return; }
+  const dims = ["all", ...DIM_ORDER.filter(d => matrix.dims.includes(d))];
+  const results = lanes.map(backend => dims.map(dim => matrix.cells[backend][dim] || { dim, groups: [] }));
+  const grid = el("div", { class: "cap-grid" });
+  grid.style.gridTemplateColumns = `repeat(${lanes.length}, minmax(320px, 1fr))`;
+  for (const backend of lanes) grid.append(el("div", { class: "cap-head" }, el("span", { class: "pipe-v-dot", style: { background: LANE_COLOR[backend] || "var(--accent)" } }), label(backend)));
+  dims.forEach((dim, row) => {
+    grid.append(el("div", { class: "cap-row-label" }, dim === "all" ? "正确性分布" : (DIM_LABEL[dim] || dim)));
+    // One shared row order per dimension so the same line compares the same value across backends.
+    const totals = new Map();
+    for (let col = 0; col < lanes.length; col++) for (const g of (results[col][row].groups || [])) totals.set(g.value, (totals.get(g.value) || 0) + g.total);
+    const order = [...totals.keys()].sort(BUCKET_DIMS.includes(dim) ? bucketCompare : (a, b) => totals.get(b) - totals.get(a));
+    lanes.forEach((backend, col) => {
+      const result = results[col][row];
+      grid.append(dim === "all" ? donutChart(result, backend, true) : statusChart(result, backend, true, order));
+    });
+  });
+  body.replaceChildren(el("div", { class: "cap-scroll" }, grid));
 }
-function donutChart(result, backend) {
+
+function donutChart(result, backend, compact = false) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, function_fail: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
   const parts = [["通过", g.pass, "var(--ok)"], ["功能失败", g.function_fail, "var(--bad)"], ["精度失败", g.accuracy_fail, "var(--warn)"], ["不支持", g.unsupported, "var(--tie)"]].filter(p => p[1] > 0);
@@ -388,19 +398,36 @@ function donutChart(result, backend) {
   }
   root.append(svg("text", { x: C, y: C + 4, "text-anchor": "middle", class: "donut-center" }, pct(g.pass, g.total)));
   const stages = Object.entries(g.stage_fail || {}).sort((a, b) => b[1] - a[1]);
-  return el("div", { class: "chart" }, el("h3", {}, `${label(backend)} · 正确性分布（${fmt(g.total)} 个用例）`),
+  return el("div", { class: "chart" }, compact ? el("div", { class: "muted small" }, `${fmt(g.total)} 个用例`) : el("h3", {}, `${label(backend)} · 正确性分布（${fmt(g.total)} 个用例）`),
     el("div", { class: "donut-wrap" }, root, el("div", { class: "small" }, parts.map(([name, n, color]) => el("div", {}, el("i", { class: "swatch", style: { background: color } }), `${name} ${fmt(n)}（${pct(n, g.total)}）`)),
       stages.length ? el("div", { class: "muted", style: { marginTop: "6px" } }, "功能失败阶段：" + stages.map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join(" · ")) : null)));
 }
-function statusChart(result, backend) {
+const BUCKET_DIMS = ["dim_bucket", "size_bucket"];
+function bucketValue(label) {
+  const m = /^(<=|>)\s*([\d.]+)\s*([KM]?)$/.exec(label || "");
+  if (!m) return Infinity;
+  const n = Number(m[2]) * ({ K: 1024, M: 1048576 }[m[3]] || 1);
+  return m[1] === ">" ? n + 0.5 : n;
+}
+function bucketCompare(a, b) { return bucketValue(a) - bucketValue(b); }
+function statusChart(result, backend, compact = false, order = null) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const limit = result.dim === "op_display" ? 24 : 14;
-  const groups = result.groups.slice(0, limit);
+  let groups;
+  if (order) {
+    const byValue = new Map(result.groups.map(g => [g.value, g]));
+    const empty = v => ({ value: v, total: 0, pass: 0, function_fail: 0, accuracy_fail: 0, unsupported: 0 });
+    groups = order.slice(0, limit).map(v => byValue.get(v) || empty(v));
+  } else {
+    groups = result.groups.slice(0, limit);
+  }
   const note = result.dim === "op_display" ? `（覆盖 ${result.groups.length} 个算子，显示用例最多的 ${groups.length} 个）` : "";
-  return el("div", { class: "chart" + (result.dim === "op_display" ? " wide" : "") }, el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`),
-    groups.length ? groups.map(g => el("div", { class: "hbar", "data-tooltip": `${g.value}：${fmt(g.total)} 个用例，通过 ${fmt(g.pass)}，功能失败 ${fmt(g.function_fail)}，精度失败 ${fmt(g.accuracy_fail)}` }, el("div", { class: "label" }, g.value),
+  const title = compact ? (note ? el("div", { class: "muted small" }, note.replace(/[（）]/g, "")) : null)
+    : el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`);
+  return el("div", { class: "chart" + (result.dim === "op_display" && !compact ? " wide" : "") }, title,
+    groups.length ? groups.map(g => el("div", { class: "hbar", "data-tooltip": `通过 ${fmt(g.pass)}（${pct(g.pass, g.total)}）· 功能失败 ${fmt(g.function_fail)}（${pct(g.function_fail, g.total)}）· 精度失败 ${fmt(g.accuracy_fail)}（${pct(g.accuracy_fail, g.total)}）` }, el("div", { class: "label" }, g.value),
       stackBar([["c-pass", g.pass, "通过"], ["c-func", g.function_fail, "功能失败"], ["c-acc", g.accuracy_fail, "精度失败"], ["c-uns", g.unsupported, "不支持"]], g.total),
-      el("div", { class: "muted" }, pct(g.pass, g.total)))) : el("div", { class: "empty" }, "无数据"));
+      el("div", { class: "muted" }, g.total ? pct(g.pass, g.total) : "—"))) : el("div", { class: "empty" }, "无数据"));
 }
 
 async function renderPerf(box, backends, arch, x, y, dim) {
@@ -432,18 +459,25 @@ async function renderPerf(box, backends, arch, x, y, dim) {
   } catch (err) { body.replaceChildren(errorBox(err)); }
 }
 function histogram(bins) {
-  const W = 420, H = 160, pad = 24;
-  const lo = -24, hi = 24, max = Math.max(1, ...bins.map(b => b.count));
-  const xs = b => pad + (b - lo) / (hi - lo + 1) * (W - 2 * pad);
-  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "ratio histogram" });
+  const W = 460, H = 190, pad = 28;
+  if (!bins.length) return el("div", { class: "muted" }, "无数据");
+  // Zoom to the data (with a margin) instead of the full +-64x range.
+  const lo = Math.min(-4, Math.min(...bins.map(b => b.bin)) - 2), hi = Math.max(4, Math.max(...bins.map(b => b.bin)) + 2);
+  const max = Math.max(1, ...bins.map(b => b.count)), span = hi - lo + 1, bw = (W - 2 * pad) / span;
+  const xs = b => pad + (b - lo) * bw;
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "耗时比分布" });
   for (const b of bins) {
     const h = (H - 2 * pad) * b.count / max;
     const color = b.log2_low < -0.07 ? "var(--ok)" : b.log2_low >= 0.07 ? "var(--bad)" : "var(--tie)";
-    root.append(svg("rect", { x: xs(b.bin), y: H - pad - h, width: Math.max(2, (W - 2 * pad) / (hi - lo + 1) - 1), height: h, fill: color },
-      svg("title", {}, `2^${b.log2_low} 起：${b.count}`)));
+    root.append(svg("rect", { x: xs(b.bin) + 1, y: H - pad - h, width: Math.max(2, bw - 2), height: h, rx: 2, fill: color,
+      "data-tooltip": `${(2 ** b.log2_low).toFixed(2)}x – ${(2 ** (b.log2_low + 0.25)).toFixed(2)}x：${b.count}` }));
   }
   root.append(svg("line", { x1: xs(0), x2: xs(0), y1: pad / 2, y2: H - pad, stroke: "var(--muted)", "stroke-dasharray": "3 3" }));
-  for (const [v, t] of [[-16, "1/16x"], [-8, "1/4x"], [0, "1x"], [8, "4x"], [16, "16x"]]) root.append(svg("text", { x: xs(v), y: H - 6, "text-anchor": "middle" }, t));
+  for (const v of [-16, -12, -8, -4, 0, 4, 8, 12, 16]) {
+    if (v < lo || v > hi) continue;
+    const ratio = 2 ** (v / 4);
+    root.append(svg("text", { x: xs(v), y: H - 8, "text-anchor": "middle" }, ratio >= 1 ? `${ratio}x` : `1/${1 / ratio}x`));
+  }
   return root;
 }
 
@@ -988,10 +1022,10 @@ PAGES.profile = async (root, params) => {
     drawScatter(canvas, pts, info);
     side.append(el("div", { class: "panel" }, el("h2", {}, "区分度最高的维度"), pat.importance.length ? pat.importance.map(d => el("div", { class: "hbar" }, el("div", {}, DIM_LABEL[d.dim] || d.dim),
       el("div", { class: "track" }, el("i", { class: "c-pass", style: { width: Math.min(100, d.spread_log2 * 100) + "%" } })), el("div", { class: "muted" }, d.spread_log2.toFixed(2)))) : el("div", { class: "muted" }, "数据不足")),
-      opPanel(`${label(x)} 优势算子`, pat.best_ops.filter(o => o.log2 < 0)), opPanel(`${label(x)} 劣势算子`, pat.worst_ops.filter(o => o.log2 > 0)),
-      isAdmin() ? el("div", { class: "toolbar" }, el("button", { onclick: async () => {
+      opPanel(`${label(x)} 优势算子`, pat.best_ops.filter(o => o.log2 < 0)), opPanel(`${label(x)} 劣势算子`, pat.worst_ops.filter(o => o.log2 > 0)));
+    if (isAdmin()) side.append(el("div", { class: "toolbar" }, el("button", { onclick: async () => {
         try { const r = await api("/api/admin/profile/drafts", { method: "POST", body: { request_key: rkey(), x, y, npu_arch: arch || null } }); alert(`生成 ${r.created.length} 条知识草稿（候选 ${r.candidates}），请到知识库审核发布`); }
-        catch (err) { alert(err.message); } } }, "生成画像知识草稿")) : null);
+        catch (err) { alert(err.message); } } }, "生成画像知识草稿")));
   } catch (err) { info.replaceChildren(errorBox(err)); }
 };
 function opPanel(title, ops) {
@@ -1016,11 +1050,15 @@ function drawScatter(canvas, data, info) {
   const px = v => pad + (tx(v) - x0) / ((x1 - x0) || 1) * (W - 2 * pad), py = v => H - pad - (ty(v) - y0) / ((y1 - y0) || 1) * (H - 2 * pad);
   const ok = style.getPropertyValue("--ok").trim(), bad = style.getPropertyValue("--bad").trim(), tie = style.getPropertyValue("--tie").trim();
   ctx.globalAlpha = 0.65;
+  const discreteX = new Set(pts.map(p => p[0])).size <= 64;
+  const size = pts.length > 5000 ? 3 : 6;
+  const jitter = discreteX ? Math.min(14, (W - 2 * pad) / Math.max(8, new Set(pts.map(p => p[0])).size) / 3) : 0;
   for (const p of pts) {
     const r = Math.max(-2, Math.min(2, p[2]));
     ctx.fillStyle = Math.abs(r) < 0.07 ? tie : r < 0 ? ok : bad;
-    ctx.globalAlpha = 0.25 + 0.55 * Math.min(1, Math.abs(r) / 2);
-    ctx.fillRect(px(p[0]) - 1.5, py(p[1]) - 1.5, 3, 3);
+    ctx.globalAlpha = 0.35 + 0.55 * Math.min(1, Math.abs(r) / 1.5);
+    const jx = jitter ? (((p[3] * 2654435761) % 1000) / 1000 - 0.5) * 2 * jitter : 0;  // stable per case
+    ctx.beginPath(); ctx.arc(px(p[0]) + jx, py(p[1]), size / 2, 0, 2 * Math.PI); ctx.fill();
   }
   ctx.globalAlpha = 1;
   ctx.fillStyle = style.getPropertyValue("--muted").trim();
@@ -1212,6 +1250,12 @@ document.addEventListener("focusin", showFieldTooltip);
 document.addEventListener("pointerout", e => { if (tooltipTarget && !tooltipTarget.contains(e.relatedTarget) && !fieldTooltip.contains(e.relatedTarget)) hideFieldTooltip(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") hideFieldTooltip(); });
 window.addEventListener("scroll", hideFieldTooltip, true);
+
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (route().page === "overview" || route().page === "") render(); }, 300);
+});
 
 // ---------- boot ----------
 window.addEventListener("hashchange", render);

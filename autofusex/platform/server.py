@@ -494,6 +494,15 @@ class Handler(BaseHTTPRequestHandler):
                                          _param(params, "y", required=True), dim, arch)
             if path == "/api/overview/dims":
                 return queries.dims(store)
+            if path == "/api/overview/matrix":
+                raw = (params.get("backends") or [""])[0]
+                backends = [b for b in raw.split(",") if b][:8]
+                if not backends or not all(_PARAM.match(b) for b in backends):
+                    raise HTTPError(400, "invalid", "backends must be a comma separated list of backend names")
+                q = _text(params, "q")
+                dims = queries.dims(store)
+                return {"dims": dims, "backends": backends,
+                        "cells": {b: {d: queries.backend_stats(store, b, d, arch, q) for d in dims} for b in backends}}
             raise HTTPError(404, "not_found", "no such route")
         finally:
             self.server.aggregate_slots.release()

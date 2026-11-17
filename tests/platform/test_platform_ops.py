@@ -267,7 +267,7 @@ def test_reads_are_public_writes_need_login(world):
         return response.status, body
 
     try:
-        for path in ("/api/overview/pipeline", "/api/cases?limit=5", "/api/issues", "/api/knowledge/search",
+        for path in ("/api/overview/pipeline", "/api/overview/matrix?backends=af-mlir,triton-npu", "/api/cases?limit=5", "/api/issues", "/api/knowledge/search",
                      "/api/ops/summary", "/api/settings", "/api/retests"):
             status, body = call("GET", path)
             assert status == 200 and body["ok"], path
