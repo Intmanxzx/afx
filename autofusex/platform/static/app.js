@@ -195,7 +195,7 @@ PAGES.overview = async (root, params) => {
   const pipeline = await api("/api/overview/pipeline" + qs({ arch, q }));
   const head = el("h2", {}, "功能与精度汇总", el("span", { class: "spacer" }),
     arches.length ? select(arches.map(a => [a, a]), arch, v => go("overview", { arch: v })) : null);
-  root.append(el("section", { class: "panel" }, head, renderPipeline(pipeline, q)));
+  root.append(el("section", { class: "panel hero" }, head, renderPipeline(pipeline, q)));
   const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
   const tabsBox = el("section", { class: "panel" });
   root.append(tabsBox);
@@ -207,52 +207,145 @@ PAGES.overview = async (root, params) => {
     params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category");
 };
 
+const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-legacy)", "triton-npu": "var(--lane-triton)", "eager-npu": "var(--lane-eager)" };
+const LOSS_COLOR = { build: "var(--loss-build)", stage: "var(--loss-stage)", other: "var(--loss-stage)", unsupported: "var(--loss-build)", accuracy: "var(--loss-acc)" };
+
+// Overview module 1: each backend is a pipe whose width is its case count. Every stage that
+// loses cases peels a curved branch off the bottom of the pipe; what reaches the right is "pass".
 function renderPipeline(data, q) {
   const lanes = data.lanes.filter(l => !l.baseline);
   if (!lanes.length) return el("div", { class: "empty" }, "暂无执行记录");
-  const families = {};
-  for (const lane of lanes) if (lane.family) (families[lane.family] = families[lane.family] || []).push(lane);
-  const stageNames = [...new Set(lanes.flatMap(l => Object.keys(l.stage_fail)))].sort((a, b) => (b === "schedule") - (a === "schedule") || a.localeCompare(b));
-  const grid = el("div", { class: "pipe" });
-  const cols = 4 + stageNames.length + 3;
-  grid.style.gridTemplateColumns = `minmax(110px,auto) minmax(110px,auto) repeat(${cols - 2}, minmax(96px,auto))`;
-  const max = Math.max(1, data.total_cases);
   const link = extra => () => go("discovery", { q: [q, extra].filter(Boolean).join(" ") });
-  const cell = (cls, title, n, rowSpan, onclick, row, col) => {
-    const c = el("div", { class: "cell " + cls + (n ? "" : " zero"), onclick, title: `${title}: ${fmt(n)}` }, el("b", {}, fmt(n)), el("span", {}, title),
-      el("div", { class: "bar", style: { width: Math.max(4, 100 * n / max) + "%" } }));
-    c.style.gridRow = `${row} / span ${rowSpan}`;
-    c.style.gridColumn = String(col);
-    return c;
-  };
-  grid.append(cell("total", "总用例", data.total_cases, lanes.length, link(""), 1, 1));
+  // Shared column order across lanes: build, named stages (Schedule first, then by size), other, unsupported, accuracy.
+  const stageTotals = {};
+  for (const l of lanes) for (const [k, v] of Object.entries(l.stage_fail)) stageTotals[k] = (stageTotals[k] || 0) + v;
+  const stages = Object.keys(stageTotals).sort((a, b) => (b === "schedule") - (a === "schedule") || stageTotals[b] - stageTotals[a]);
+  const columns = [
+    { key: "build", label: "构图失败", kind: "build", value: l => l.build_fail, filter: b => `backend:${b} status:function_fail` },
+    ...stages.map(st => ({ key: "stage:" + st, label: (STAGE_LABEL[st] || st) + "失败", kind: "stage", value: l => l.stage_fail[st] || 0, filter: b => `backend:${b} stage:${st}` })),
+    { key: "other", label: "其他功能失败", kind: "other", value: l => Math.max(0, l.function_fail - Object.values(l.stage_fail).reduce((a, b) => a + b, 0)), filter: b => `backend:${b} status:function_fail` },
+    { key: "unsupported", label: "不支持", kind: "unsupported", value: l => l.unsupported, filter: b => `backend:${b} status:unsupported` },
+    { key: "accuracy", label: "精度失败", kind: "accuracy", value: l => l.accuracy_fail, filter: b => `backend:${b} status:accuracy_fail` },
+  ].filter(c => lanes.some(l => c.value(l) > 0));
+  const narrow = matchMedia("(max-width: 760px)").matches;
+  return narrow ? pipelineVertical(data, lanes, columns, link) : pipelineSvg(data, lanes, columns, link);
+}
+
+function pipelineSvg(data, lanes, columns, link) {
+  const total = Math.max(1, data.total_cases, ...lanes.map(l => l.executed));
+  const maxT = 46, laneH = 150, top = 64, left = 24, srcW = 92, laneStart = 300, endPad = 210;
+  const W = Math.max(1100, laneStart + columns.length * 120 + endPad), H = top + lanes.length * laneH + 10;
+  const colX = i => laneStart + 60 + i * ((W - endPad - laneStart - 60) / Math.max(1, columns.length));
+  const th = n => n > 0 ? Math.max(2.5, maxT * n / total) : 0;
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", class: "pipe-svg", role: "img", "aria-label": "各后端功能与精度流失管道" });
+  const defs = svg("defs");
+  root.append(defs);
+  // column headers
+  columns.forEach((c, i) => root.append(svg("text", { x: colX(i) + 22, y: 30, class: "pipe-col", "text-anchor": "middle" }, c.label)));
+  root.append(svg("text", { x: W - endPad + 115, y: 30, class: "pipe-col", "text-anchor": "middle" }, "通过"));
+  // family bands (shared front end)
+  const families = {};
+  lanes.forEach((l, i) => { if (l.family) (families[l.family] = families[l.family] || []).push(i); });
+  for (const [fam, idx] of Object.entries(families)) {
+    if (idx.length < 2) continue;
+    const y0 = top + Math.min(...idx) * laneH - 18, y1 = top + (Math.max(...idx) + 1) * laneH - 26;
+    root.append(svg("rect", { x: laneStart - 150, y: y0, width: W - laneStart + 130, height: y1 - y0, rx: 16, class: "pipe-family" }),
+      svg("text", { x: laneStart - 138, y: y1 - 12, class: "pipe-family-label" }, `${fam.toUpperCase()} 族 · 共享前端`));
+  }
+  // total source bar
+  const srcTop = top - 6, srcH = lanes.length * laneH - 60;
+  const source = svg("g", { class: "pipe-source", "data-tooltip": `总用例 ${fmt(data.total_cases)}` },
+    svg("rect", { x: left, y: srcTop, width: srcW, height: srcH, rx: 14 }),
+    svg("text", { x: left + srcW / 2, y: srcTop + srcH / 2 - 6, "text-anchor": "middle", class: "pipe-source-n" }, fmt(data.total_cases)),
+    svg("text", { x: left + srcW / 2, y: srcTop + srcH / 2 + 16, "text-anchor": "middle", class: "pipe-source-l" }, "总用例"));
+  source.addEventListener("click", link(""));
+  root.append(source);
+  let srcOffset = srcTop + 14;
   lanes.forEach((lane, i) => {
-    const row = i + 1;
-    const laneCell = el("div", { class: "lane" }, label(lane.backend));
-    laneCell.style.gridRow = String(row);
-    laneCell.style.gridColumn = "2";
-    grid.append(laneCell);
-    let col = 3;
-    // shared stages are merged across a family when every member reports the same count
-    const fam = lane.family ? families[lane.family] : null;
-    const sharedWith = (key, value) => fam && fam.length > 1 && fam.every(m => (key(m) || 0) === value);
-    const first = fam && fam[0] === lane;
-    const addShared = (key, cls, title, filter) => {
-      const value = key(lane) || 0;
-      if (sharedWith(key, value)) { if (first) grid.append(cell(cls, `${lane.family.toUpperCase()} ${title}`, value, fam.length, link(filter), row, col)); }
-      else grid.append(cell(cls, title, value, 1, link(`backend:${lane.backend} ` + filter), row, col));
-      col++;
-    };
-    addShared(l => l.build_fail, "build", "构图失败", "status:function_fail");
-    for (const stage of stageNames) addShared(l => l.stage_fail[stage], "stage", (STAGE_LABEL[stage] || stage) + "失败", `stage:${stage}`);
-    const other = lane.function_fail - Object.values(lane.stage_fail).reduce((a, b) => a + b, 0);
-    if (other > 0) { grid.append(cell("func", "其他功能失败", other, 1, link(`backend:${lane.backend} status:function_fail`), row, col)); }
-    col++;
-    grid.append(cell("acc", "精度失败", lane.accuracy_fail, 1, link(`backend:${lane.backend} status:accuracy_fail`), row, col++));
-    grid.append(cell("pass", "通过", lane.pass, 1, link(`backend:${lane.backend} status:pass`), row, col++));
-    if (lane.unsupported) grid.append(cell("build", "不支持", lane.unsupported, 1, link(`backend:${lane.backend} status:unsupported`), row, col));
+    const color = LANE_COLOR[lane.backend] || "var(--accent)";
+    const yTop = top + i * laneH + 14;
+    const t0 = th(lane.executed);
+    const gid = "lane-grad-" + i;
+    defs.append(svg("linearGradient", { id: gid, x1: 0, x2: 1, y1: 0, y2: 0 },
+      svg("stop", { offset: "0%", "stop-color": color, "stop-opacity": 0.55 }), svg("stop", { offset: "100%", "stop-color": color, "stop-opacity": 0.95 })));
+    // fan-out band from the source bar into the lane
+    const sx = left + srcW, sy = srcOffset, ex = laneStart, ey = yTop, bt = Math.max(2.5, Math.min(t0, (srcH - 28) / lanes.length - 6));
+    srcOffset += bt + 8;
+    root.append(svg("path", { d: `M ${sx} ${sy} C ${sx + 90} ${sy}, ${ex - 90} ${ey}, ${ex} ${ey} L ${ex} ${ey + t0} C ${ex - 90} ${ey + t0}, ${sx + 90} ${sy + bt}, ${sx} ${sy + bt} Z`, fill: color, class: "pipe-fan" }));
+    root.append(svg("text", { x: laneStart - 12, y: yTop + 6, class: "pipe-lane", "text-anchor": "end" }, label(lane.backend)),
+      svg("text", { x: laneStart - 12, y: yTop + 26, class: "pipe-lane-n", "text-anchor": "end" }, `${fmt(lane.executed)} 执行`));
+    // main pipe: top edge flat, bottom edge steps up at each loss
+    let remaining = lane.executed, d = `M ${laneStart} ${yTop} L ${W - endPad + 20} ${yTop}`;
+    const bottoms = [];
+    let x = laneStart, t = th(remaining);
+    const drops = [];
+    columns.forEach((c, ci) => {
+      const loss = c.value(lane);
+      const cx = colX(ci);
+      bottoms.push([x, t], [cx, t]);
+      if (loss > 0) {
+        drops.push({ c, ci, cx, loss, yFrom: yTop + th(remaining) - th(loss), t: th(loss) });
+        remaining -= loss;
+        t = th(remaining);
+        bottoms.push([cx + 26, t]);
+        x = cx + 26;
+      }
+    });
+    bottoms.push([W - endPad + 20, t]);
+    let back = "";
+    for (let k = bottoms.length - 1; k >= 0; k--) back += ` L ${bottoms[k][0]} ${yTop + bottoms[k][1]}`;
+    const pipe = svg("path", { d: d + back + " Z", fill: `url(#${gid})`, class: "pipe-main", "data-tooltip": `${label(lane.backend)}：执行 ${fmt(lane.executed)}，通过 ${fmt(lane.pass)}（${pct(lane.pass, lane.executed)}）` });
+    pipe.addEventListener("click", link(`backend:${lane.backend}`));
+    root.append(pipe);
+    // drops
+    for (const drop of drops) {
+      const shared = lane.family && families[lane.family] && families[lane.family].length > 1 && drop.c.kind === "build"
+        && families[lane.family].every(j => drop.c.value(lanes[j]) === drop.loss);
+      const firstOfFamily = shared && families[lane.family][0] === i;
+      if (shared && !firstOfFamily) continue;  // the family draws one merged drop
+      const dx = drop.cx, dy = drop.yFrom + drop.t / 2, endY = yTop + maxT + 46;
+      const band = svg("path", { d: `M ${dx} ${dy} C ${dx + 18} ${dy}, ${dx + 22} ${dy + 12}, ${dx + 22} ${Math.max(dy + 20, endY)}`,
+        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${shared ? lane.family.toUpperCase() + " 族" : label(lane.backend)} · ${drop.c.label}：${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）` });
+      band.addEventListener("click", link(drop.c.filter(lane.backend)));
+      const pillText = `${fmt(drop.loss)}`;
+      const pw = 20 + pillText.length * 9.5;
+      const pill = svg("g", { class: "pipe-pill " + drop.c.kind, transform: `translate(${dx + 22 - pw / 2}, ${Math.max(dy + 20, endY) + 4})` },
+        svg("rect", { width: pw, height: 26, rx: 13 }), svg("text", { x: pw / 2, y: 18, "text-anchor": "middle" }, pillText));
+      pill.addEventListener("click", link(drop.c.filter(lane.backend)));
+      root.append(band, pill);
+    }
+    // pass terminal
+    const pw = 170, px = W - endPad + 30, py = yTop + t / 2 - 21;
+    const term = svg("g", { class: "pipe-pass", transform: `translate(${px}, ${py})`, "data-tooltip": `${label(lane.backend)} 通过 ${fmt(lane.pass)} / ${fmt(lane.executed)}` },
+      svg("rect", { width: pw, height: 42, rx: 21 }),
+      svg("text", { x: 18, y: 27, class: "pipe-pass-n" }, fmt(lane.pass)),
+      svg("text", { x: pw - 16, y: 27, "text-anchor": "end", class: "pipe-pass-p" }, pct(lane.pass, lane.executed)));
+    term.addEventListener("click", link(`backend:${lane.backend} status:pass`));
+    root.append(term);
   });
-  return el("div", {}, el("div", { class: "muted small", style: { marginBottom: "8px" } }, "以 CPU 为精度标杆（CPU 不支持时使用 EagerNPU）。点击任一节点查看对应用例。"), grid);
+  return el("div", {}, el("div", { class: "pipe-wrap" }, root),
+    el("div", { class: "muted small", style: { marginTop: "6px" } }, "管道宽度表示用例数；每个向下的分支是在该阶段流失的用例，悬停查看占比，点击查看对应用例。以 CPU 为精度标杆（CPU 不支持时使用 EagerNPU）。"));
+}
+
+function pipelineVertical(data, lanes, columns, link) {
+  const box = el("div", { class: "pipe-v" }, el("button", { class: "pipe-v-total", onclick: link("") }, el("b", {}, fmt(data.total_cases)), el("span", {}, "总用例")));
+  for (const lane of lanes) {
+    const color = LANE_COLOR[lane.backend] || "var(--accent)";
+    const steps = el("div", { class: "pipe-v-steps" });
+    let remaining = lane.executed;
+    for (const c of columns) {
+      const loss = c.value(lane);
+      if (!loss) continue;
+      remaining -= loss;
+      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)) },
+        el("span", {}, c.label), el("b", {}, "−" + fmt(loss)),
+        el("i", { style: { width: Math.max(4, 100 * remaining / Math.max(1, lane.executed)) + "%", background: color } })));
+    }
+    box.append(el("div", { class: "pipe-v-lane" }, el("div", { class: "pipe-v-head" }, el("span", { class: "pipe-v-dot", style: { background: color } }), label(lane.backend),
+      el("span", { class: "muted small" }, ` ${fmt(lane.executed)} 执行`)), steps,
+      el("button", { class: "pipe-v-pass", onclick: link(`backend:${lane.backend} status:pass`) }, el("span", {}, "通过"), el("b", {}, `${fmt(lane.pass)} · ${pct(lane.pass, lane.executed)}`))));
+  }
+  return box;
 }
 
 async function renderBackendTabs(box, lanes, arch, q, active) {
