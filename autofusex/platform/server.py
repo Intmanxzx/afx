@@ -148,15 +148,36 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _body(self, limit: int) -> bytes:
+    def _drain(self) -> None:
+        """Consume the request body up front so no response can leave bytes on a reused connection.
+
+        A reverse proxy reuses upstream connections: an unread body would be parsed as the
+        next request. Bodies that are missing a length or exceed the upload cap close the
+        connection instead of being read.
+        """
+        self._raw = b""
+        if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
+            raise HTTPError(411, "length_required", "chunked bodies are not accepted; send Content-Length")
         length = self.headers.get("Content-Length")
-        if length is None or not length.isdigit():
+        if length is None:
+            return
+        if not length.isdigit():
+            self.close_connection = True
+            raise HTTPError(400, "invalid", "invalid Content-Length")
+        if int(length) > MAX_UPLOAD_BODY:
+            self.close_connection = True
+            raise HTTPError(413, "too_large", f"body exceeds {MAX_UPLOAD_BODY} bytes")
+        self._raw = self.rfile.read(int(length))
+
+    def _body(self, limit: int) -> bytes:
+        if self.headers.get("Content-Length") is None:
             raise HTTPError(411, "length_required", "Content-Length is required")
-        if int(length) > limit:
+        if len(self._raw) > limit:
             raise HTTPError(413, "too_large", f"body exceeds {limit} bytes")
         if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
             raise HTTPError(415, "unsupported_media_type", "Content-Type must be application/json")
-        return self.rfile.read(int(length))
+        return self._raw
 
     def _json(self, raw: bytes):
         try:
@@ -165,10 +186,13 @@ class Handler(BaseHTTPRequestHandler):
             raise HTTPError(400, "invalid_json", "body is not valid JSON") from None
 
     def _dispatch(self, method: str) -> None:
+        self._raw = b""
         if not self.server.slots.acquire(blocking=False):
+            self.close_connection = True
             self._send(503, _error("busy", "server busy"), {"Retry-After": "2"})
             return
         try:
+            self._drain()
             url = urlsplit(self.path)
             if method == "GET" and not url.path.startswith("/api/"):
                 self._serve_static(url.path)

@@ -73,7 +73,7 @@ class Store:
             conn.execute("PRAGMA foreign_keys=ON")
         conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA cache_size=-65536")
+        conn.execute("PRAGMA cache_size=-32768")  # 32 MiB per connection; the server box has 1 GiB RAM
         conn.row_factory = sqlite3.Row
         return conn
 

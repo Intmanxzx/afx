@@ -202,12 +202,14 @@ class Mapper:
         self._static_env = {"os": os_label(), "gcc": gcc_version(), "nnsmith": nnsmith_version()}
 
     def context(self, context_id):
-        if context_id not in self._contexts:
+        cached = self._contexts.get(context_id)
+        if cached is None:
             row = self.conn.execute("SELECT payload FROM contexts WHERE id=?", (context_id,)).fetchone()
-            self._contexts[context_id] = json.loads(row[0]) if row else {}
-            if len(self._contexts) > 2000:
+            cached = json.loads(row[0]) if row else {}
+            if len(self._contexts) >= 2000:
                 self._contexts.clear()
-        return self._contexts[context_id]
+            self._contexts[context_id] = cached
+        return cached
 
     def attempts_after(self, rowid: int, limit: int = BATCH):
         return self.conn.execute("SELECT rowid, * FROM attempts WHERE rowid>? ORDER BY rowid LIMIT ?",
@@ -399,6 +401,7 @@ class Client:
         self.stop = threading.Event()
         self.env = None
         self.busy = False
+        self._retried = False
 
     def environment(self) -> dict:
         if self.env is None:
@@ -409,7 +412,20 @@ class Client:
     def upload_once(self) -> dict:
         if not Path(self.results_db).exists():
             return {}
-        return upload_new(self.api, Mapper(self.results_db), self.state, self.counters, key_prefix="fuzz")
+        mapper = Mapper(self.results_db)
+        if not self._retried:
+            self._retried = True
+            self.retry_skipped(mapper)
+        return upload_new(self.api, mapper, self.state, self.counters, key_prefix="fuzz")
+
+    def retry_skipped(self, mapper) -> None:
+        """Attempts skipped by a local mapping error are retried once per process start."""
+        ids = [r[0] for r in self.state.conn.execute("SELECT attempt_id FROM rejected WHERE reason LIKE 'map:%'")]
+        for i in range(0, len(ids), BATCH):
+            chunk = ids[i:i + BATCH]
+            statuses = upload_new(self.api, mapper, self.state, self.counters, key_prefix="fuzz", attempt_ids=chunk)
+            done = [a for a, s in statuses.items() if s in ("accepted", "duplicate")]
+            self.state.conn.executemany("DELETE FROM rejected WHERE attempt_id=?", [(a,) for a in done])
 
     def heartbeat(self) -> dict:
         env = self.environment()

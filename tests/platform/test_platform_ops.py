@@ -192,3 +192,40 @@ def test_http_static_reserved_and_security_headers(world):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_keep_alive_survives_rejected_bodies(world):
+    """A 404/401 for a request with a body must not leave the body on a reused connection."""
+    store, _, _ = world
+    server = PlatformServer(store, ("127.0.0.1", 0))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    token = auth.issue_token(store, "dev", "client")
+    try:
+        conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        junk = json.dumps({"backends": ["cpu", "af-mlir"], "pad": "x" * 5000}).encode()
+        for path, headers in (("/api/legacy/upload", {"Authorization": "Bearer " + token}), ("/api/me", {})):
+            conn.request("POST", path, body=junk, headers={"Content-Type": "application/json", **headers})
+            response = conn.getresponse()
+            response.read()
+            assert response.status in (401, 404)
+        conn.request("POST", "/api/client/heartbeat", body=json.dumps({"machine_id": "m1"}).encode(),
+                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
+        response = conn.getresponse()
+        assert response.status == 200 and json.loads(response.read())["ok"]
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_mapper_context_cache_survives_eviction(tmp_path):
+    import sqlite3
+    from autofusex.platform.client import Mapper
+    db = tmp_path / "results.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE contexts(id TEXT PRIMARY KEY, kind TEXT, payload TEXT)")
+    conn.executemany("INSERT INTO contexts VALUES(?,?,?)", [(f"c{i}", "x", json.dumps({"i": i})) for i in range(2105)])
+    conn.commit()
+    mapper = Mapper(str(db))
+    assert [mapper.context(f"c{i}")["i"] for i in range(2105)] == list(range(2105))
+    assert mapper.context("missing") == {}
