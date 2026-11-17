@@ -1,0 +1,18 @@
+[Unit]
+Description=AutofuseX platform %i backup pushed to the backup host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=afx
+ExecStart=/bin/sh /opt/afx-platform/deploy/backup.sh %i
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# Reading a WAL database needs write access to its -shm file, so the data dir is not read-only.
+ReadWritePaths=/var/tmp/afx-platform-backup /data/afx-platform
+ReadOnlyPaths=/etc/afx-platform
