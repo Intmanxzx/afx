@@ -340,3 +340,21 @@ def test_client_retries_transient_errors(monkeypatch):
     monkeypatch.setattr(platform_client.API, "_call", lambda self, *a: (_ for _ in ()).throw(platform_client.APIError(400, "invalid", "bad")))
     with pytest.raises(platform_client.APIError):
         api.call("POST", "/x", {})
+
+
+def test_heartbeat_accepts_large_window_payload(world):
+    store, _, _ = world
+    server = PlatformServer(store, ("127.0.0.1", 0))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    token = auth.issue_token(store, "dev", "client")
+    try:
+        rows = [{"backend": "af-mlir", "window_seconds": 60, "pad": "x" * 5000} for _ in range(20)]
+        body = {"machine_id": "m1", "windows": [{"window_id": "w-big", "rows": rows}]}
+        conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        conn.request("POST", "/api/client/heartbeat", body=json.dumps(body).encode(),
+                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
+        response = conn.getresponse()
+        assert response.status == 200 and json.loads(response.read())["data"]["windows_accepted"] == ["w-big"]
+    finally:
+        server.shutdown()
+        server.server_close()

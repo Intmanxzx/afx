@@ -23,6 +23,7 @@ from .store import Store
 
 MAX_UPLOAD_BODY = 2 * 1024 * 1024
 MAX_BODY = 64 * 1024
+MAX_HEARTBEAT_BODY = 1024 * 1024
 MAX_CONCURRENT = 16
 MAX_AGGREGATE_CONCURRENT = 4
 _PARAM = re.compile(r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")
@@ -430,7 +431,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/issues/claim":
             return issues.claim(store, principal, self._json_body())
         if path == "/api/client/heartbeat":
-            return ops.heartbeat(store, principal, self._json_body())
+            # carries run snapshots and finished efficiency windows, larger than ordinary writes
+            body = self._json(self._body(MAX_HEARTBEAT_BODY))
+            if not isinstance(body, dict):
+                raise HTTPError(400, "invalid", "body must be a JSON object")
+            return ops.heartbeat(store, principal, body)
         if path == "/api/admin/clients/update":
             return ops.request_update(store, principal, self._json_body())
         if path == "/api/retests":
