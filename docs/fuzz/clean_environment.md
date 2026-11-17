@@ -10,7 +10,7 @@
 - 旧机器心跳的名称补填、仅为旧不完整环境记录提供的清理函数。
 - 旧 seed 解析、旧图描述放宽校验、旧记录不可重放的前端分支。
 - cpu-eager、npu-eager、ascendc、triton 的历史后端名称入口。
-- telemetry v1，以及 MLIR 子分类依赖旧 debug 日志的猜测路径。MLIR 子分类要求 MLIR Codegen Result 明确证据；缺少证据显示未确认。
+- telemetry v1。MLIR 子分类接受明确的 Codegen 失败状态、MLIR 流程失败标记及 MLIR op 校验错误；已确认的 AF 功能失败可使用本次执行的共享日志定界，不要求单 shape 或固定状态行。仅选择 MLIR 后端或出现通用 Codegen 错误不足以定界。
 - 服务端缺少问题索引时逐页扫描并临时聚合的备用实现。新中心初始化即建立查询模型。
 
 ## 保留的当前功能
