@@ -365,3 +365,24 @@ def test_negated_stage_keeps_rows_without_stage(world):
     # failing af-mlir rows in the fixture have no fail_stage; excluding a stage must not drop them
     keys = {g["case"]["case_key"] for g in queries.case_page(store, q="backend:af-mlir status:function_fail -stage:schedule,graph_check")["groups"]}
     assert keys == {seed(n) for n in (5, 10, 15, 20, 25, 30, 35, 40)}
+
+
+def test_schedule_stage_from_optimize_module_logs():
+    from autofusex.platform.client import function_status
+    ge = ("InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir\n"
+          "[ERROR] GE(12345,python3):2026-11-17-18:00:00.123.456 [./autofuse/optimize/autoschedule/autoschedule.cpp:812]12345 GenTilingGroup: "
+          "[AUTOFUSE]tiling group gen failed for node reduce_0.\n Codegen generate kernel failed or abort")
+    status, stage, line = function_status("af-mlir", "error", "first_call_combined", ge, None, -1)
+    assert (status, stage) == ("compile_fail", "schedule") and "autoschedule.cpp" in line
+    raised = "Traceback...\nRuntimeError: Optimize fail"
+    assert function_status("af-legacy", "error", "", raised, None, -1)[1] == "schedule"
+    # GE errors from files outside optimize, or on non-AF backends, are not schedule failures
+    other = ("[ERROR] GE(1,p):t [./autofuse/compiler/py_module/pyautofuse.cpp:269]1 CodegenImpl: Codegen generate kernel "
+             "failed\nRuntimeError: Codegen generate kernel failed")
+    assert function_status("af-mlir", "error", "", "[ERROR] GE(1,p):t [schedule_utils.cpp:3]1 x: y", None, -1)[1] == "schedule"
+    assert function_status("af-mlir", "error", "", other, None, -1)[1] != "schedule"
+    assert function_status("triton-npu", "error", "", raised, None, -1)[1] != "schedule"
+    # ASCIR graph construction happens before schedule
+    check = ("InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir\n"
+             "Check dtype failed for graph_hint/cast Cast; input_dtypes: [DT_INT64]\nRuntimeError: Optimize fail")
+    assert function_status("af-mlir", "error", "", check, None, -1)[1] == "graph_check"

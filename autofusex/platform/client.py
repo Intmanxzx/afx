@@ -210,6 +210,48 @@ def af_error_line(evidence: str) -> str | None:
     return None
 
 
+# Source files of the Autofuse optimize module (autofuse/optimize). A GE error log line located
+# in one of them means the failure happened in schedule (Optimize), before codegen. GE prints
+# "[ERROR] GE(pid,proc):time [file.cpp:line]..." when plog goes to stdout
+# (ASCEND_SLOG_PRINT_TO_STDOUT=1); the Python side raises "RuntimeError: Optimize fail".
+OPTIMIZE_SOURCES = frozenset((
+    'alignment_handler.cpp', 'alignment_handler.h', 'alignment_strategy.cpp', 'alignment_strategy.h', 'autoschedule.cpp', 'autoschedule_defs.h',
+    'autoschedule.h', 'backend_spec.cpp', 'base_alignment_strategy.cpp', 'base_alignment_strategy.h', 'base_graph_pass.h', 'base_platform.h',
+    'base_template_generator.cpp', 'base_template_generator.h', 'base_template.h', 'brc_inline_template.cpp', 'brc_inline_template.h', 'broadcast_backward_pass.cpp',
+    'broadcast_backward_pass.h', 'broadcast_backward_shared_split.cpp', 'broadcast_backward_shared_split.h', 'broadcast_const_to_store.cpp', 'broadcast_const_to_store.h', 'buf_que_allocator.cpp',
+    'buf_que_allocator.h', 'cast_optimization_pass.cpp', 'cast_optimization_pass.h', 'cast_reorder_pass.cpp', 'cast_reorder_pass.h', 'concat_group_partitioner.cpp',
+    'concat_group_partitioner.h', 'concat_inputs_unification_pass.cpp', 'concat_inputs_unification_pass.h', 'concat_schedule_case_generator.cpp', 'concat_schedule_case_generator.h', 'concat_score_function_generator.cpp',
+    'concat_score_function_generator.h', 'dtype_consistency.cpp', 'dtype_consistency.h', 'duplicate_elewise_cse_pass.cpp', 'duplicate_elewise_cse_pass.h', 'expand_dims_for_all_reduce.cpp',
+    'expand_dims_for_all_reduce.h', 'fused_graph_modifier.cpp', 'fused_graph_modifier.h', 'fused_graph_unfolder.cpp', 'fused_graph_unfolder.h', 'graph_properties_cache.h',
+    'improve_precision.cpp', 'improve_precision.h', 'indirect_load_schedule_case_generator.cpp', 'indirect_load_schedule_case_generator.h', 'masked_fill_input_reorder_pass.cpp', 'masked_fill_input_reorder_pass.h',
+    'mem_reuse_manager.cpp', 'mem_reuse_manager.h', 'node_cache_marker.cpp', 'node_cache_marker.h', 'node_partition_utils.cpp', 'node_partition_utils.h',
+    'optimize.cpp', 'optimize.h', 'pass_runner.h', 'pass_runner_handler.cpp', 'pass_runner_handler.h', 'pass_runner_v1.h',
+    'pass_utils.cpp', 'pass_utils.h', 'platform_factory.cpp', 'platform_factory.h', 'platformv1.cpp', 'platformv1.h',
+    'pow_equiv_substitution_pass.cpp', 'pow_equiv_substitution_pass.h', 'pre_process_config.h', 'pre_process.cpp', 'pre_process.h', 'recompute_case_generator.cpp',
+    'recompute_case_generator.h', 'reduce_schedule_case_generator.cpp', 'reduce_schedule_case_generator.h', 'redundant_broadcast_eliminate_pass.cpp', 'redundant_broadcast_eliminate_pass.h', 'scalar_broadcast_insert.cpp',
+    'scalar_broadcast_insert.h', 'scalar_broadcast_optimization.cpp', 'scalar_broadcast_optimization.h', 'scalar_to_1d_tensor.cpp', 'scalar_to_1d_tensor.h', 'schedule_case_generator.h',
+    'schedule.cpp', 'schedule_group_partitioner.cpp', 'schedule_group_partitioner.h', 'schedule.h', 'schedule_task_generator.cpp', 'schedule_task_generator.h',
+    'schedule_utils.cpp', 'schedule_utils.h', 'simt_boundary_sync.cpp', 'simt_boundary_sync.h', 'softmax_pattern_fusion_pass.cpp', 'softmax_pattern_fusion_pass.h',
+    'softmax_pattern_fusion_utils.cpp', 'softmax_pattern_fusion_utils.h', 'split_group_partitioner.cpp', 'split_group_partitioner.h', 'split_schedule_case_generator.cpp', 'split_schedule_case_generator.h',
+    'split_score_function_generator.cpp', 'split_score_function_generator.h', 'static_ub_template_filter.cpp', 'static_ub_template_filter.h', 'template_generator_handler.cpp', 'template_generator_handler.h',
+    'template_generator_v1.h', 'tensor_mem_defs.h', 'tiling_group.cpp', 'tiling_group.h', 'transpose_schedule_case_generator.cpp', 'transpose_schedule_case_generator.h',
+    'unaligned_template.cpp', 'unaligned_template.h',
+))
+_GE_ERROR = re.compile(r"\[ERROR\]\s+(?:GE|AUTOFUSE|ASCGEN)\b[^\n]*?\[([\w./+-]+\.(?:cpp|cc|h)):\d+\]")
+
+
+def schedule_error_line(evidence: str) -> str | None:
+    for match in _GE_ERROR.finditer(evidence):
+        path = match.group(1)
+        # GE prints the source path relative to the repo, e.g. [./autofuse/optimize/autoschedule/autoschedule.cpp:812]
+        if "/optimize/" in path or ("/" not in path and path in OPTIMIZE_SOURCES):
+            start = evidence.rfind("\n", 0, match.start()) + 1
+            end = evidence.find("\n", match.end())
+            return evidence[start:end if end >= 0 else None].strip()[:500]
+    found = re.search(r"^.*\bOptimize fail\b.*$", evidence, re.M)
+    return found.group(0).strip()[:500] if found else None
+
+
 def function_status(backend, status, stage, summary, diagnostics, index):
     """Map the client's status + failure attribution to (function_status, fail_stage, summary line)."""
     from autofusex.fuzz.server.reporting.failure_origin import classify, failure_path
@@ -220,15 +262,21 @@ def function_status(backend, status, stage, summary, diagnostics, index):
     evidence = _evidence(summary, diagnostics)
     if re.search(r"\btimed? ?out\b|\btimeout\b", summary or "", re.I):
         return "timeout", "timeout", None
+    if backend in AF_BACKENDS:
+        line = af_error_line(evidence) or ""
+        schedule_line = schedule_error_line(evidence)
+        if schedule_line and not re.search(r"check (?:dtype|shape) failed", line, re.I):
+            return "compile_fail", "schedule", schedule_line  # optimize module failed: AF owns it
     kind = classify(backend, status, stage or "", summary or "", diagnostics, index)
     if kind == "gen_failed":
         return "build_fail", _STAGE.sub("_", (stage or "build").lower())[:32] or "build", None
     if kind == "function_failed":
         line = af_error_line(evidence)
         lowered = (line or "").lower()
-        for word, label in (("check dtype failed", "graph_check"), ("check shape failed", "graph_check"),
-                            ("schedul", "schedule"), ("tiling", "tiling"), ("lower", "lowering"),
-                            ("codegen", "codegen")):
+        # ASCIR graph construction (graph_check) runs before schedule; optimize errors mean schedule.
+        if "check dtype failed" in lowered or "check shape failed" in lowered:
+            return "compile_fail", "graph_check", line
+        for word, label in (("tiling", "tiling"), ("lower", "lowering"), ("codegen", "codegen")):
             if word in lowered:
                 return "compile_fail", label, line
         if failure_path(backend, status, stage or "", summary or "", diagnostics, index) == "mlir_failed":

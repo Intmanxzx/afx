@@ -218,7 +218,7 @@ function renderPipeline(data, q) {
   const link = extra => () => go("discovery", { q: [q, extra].filter(Boolean).join(" ") });
   // Fixed stages (as specified): build -> AF Schedule (AF family only, shared Autofuse front end
   // before codegen) -> function -> accuracy -> pass. Detailed stages stay in tooltips and the stats below.
-  const SCHEDULE_STAGES = ["graph_check", "schedule"];
+  const SCHEDULE_STAGES = ["schedule"];  // errors from the autofuse/optimize module (Optimize / schedule)
   const scheduleOf = l => l.family === "af" ? SCHEDULE_STAGES.reduce((n, st) => n + (l.stage_fail[st] || 0), 0) : 0;
   const detail = (l, skip) => Object.entries(l.stage_fail).filter(([k]) => !skip.includes(k)).sort((a, b) => b[1] - a[1])
     .map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join("、");
@@ -226,7 +226,7 @@ function renderPipeline(data, q) {
     { key: "build", label: "构图失败", kind: "build", value: l => l.build_fail, filter: b => `backend:${b} status:function_fail`,
       note: () => "NNSmith 生成、CPU 参考或 Torch/Dynamo/Inductor 链路失败" },
     { key: "schedule", label: "AF Schedule失败", kind: "stage", shared: true, value: scheduleOf,
-      filter: b => `backend:${b} stage:${SCHEDULE_STAGES.join(",")}`, note: l => "Autofuse 前端（codegen 之前）：" + (detail(l, Object.keys(l.stage_fail).filter(k => !SCHEDULE_STAGES.includes(k))) || "—") },
+      filter: b => `backend:${b} stage:${SCHEDULE_STAGES.join(",")}`, note: () => "Autofuse optimize 模块（Optimize / schedule）报错，发生在 codegen 之前" },
     { key: "function", label: "功能失败", kind: "stage", value: l => Math.max(0, l.function_fail - scheduleOf(l)) + l.unsupported,
       filter: b => `backend:${b} status:function_fail -stage:${SCHEDULE_STAGES.join(",")}`,
       note: l => (detail(l, l.family === "af" ? SCHEDULE_STAGES : []) || "—") + (l.unsupported ? `；含不支持 ${fmt(l.unsupported)}` : "") },
