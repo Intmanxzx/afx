@@ -358,3 +358,10 @@ def test_heartbeat_accepts_large_window_payload(world):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_negated_stage_keeps_rows_without_stage(world):
+    store, _, _ = world
+    # failing af-mlir rows in the fixture have no fail_stage; excluding a stage must not drop them
+    keys = {g["case"]["case_key"] for g in queries.case_page(store, q="backend:af-mlir status:function_fail -stage:schedule,graph_check")["groups"]}
+    assert keys == {seed(n) for n in (5, 10, 15, 20, 25, 30, 35, 40)}

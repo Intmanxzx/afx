@@ -216,17 +216,22 @@ function renderPipeline(data, q) {
   const lanes = data.lanes.filter(l => !l.baseline);
   if (!lanes.length) return el("div", { class: "empty" }, "暂无执行记录");
   const link = extra => () => go("discovery", { q: [q, extra].filter(Boolean).join(" ") });
-  // Shared column order across lanes: build, named stages (Schedule first, then by size), other, unsupported, accuracy.
-  const stageTotals = {};
-  for (const l of lanes) for (const [k, v] of Object.entries(l.stage_fail)) stageTotals[k] = (stageTotals[k] || 0) + v;
-  const stages = Object.keys(stageTotals).sort((a, b) => (b === "schedule") - (a === "schedule") || stageTotals[b] - stageTotals[a]);
+  // Fixed stages (as specified): build -> AF Schedule (AF family only, shared Autofuse front end
+  // before codegen) -> function -> accuracy -> pass. Detailed stages stay in tooltips and the stats below.
+  const SCHEDULE_STAGES = ["graph_check", "schedule"];
+  const scheduleOf = l => l.family === "af" ? SCHEDULE_STAGES.reduce((n, st) => n + (l.stage_fail[st] || 0), 0) : 0;
+  const detail = (l, skip) => Object.entries(l.stage_fail).filter(([k]) => !skip.includes(k)).sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join("、");
   const columns = [
-    { key: "build", label: "构图失败", kind: "build", value: l => l.build_fail, filter: b => `backend:${b} status:function_fail` },
-    ...stages.map(st => ({ key: "stage:" + st, label: (STAGE_LABEL[st] || st) + "失败", kind: "stage", value: l => l.stage_fail[st] || 0, filter: b => `backend:${b} stage:${st}` })),
-    { key: "other", label: "其他功能失败", kind: "other", value: l => Math.max(0, l.function_fail - Object.values(l.stage_fail).reduce((a, b) => a + b, 0)), filter: b => `backend:${b} status:function_fail` },
-    { key: "unsupported", label: "不支持", kind: "unsupported", value: l => l.unsupported, filter: b => `backend:${b} status:unsupported` },
-    { key: "accuracy", label: "精度失败", kind: "accuracy", value: l => l.accuracy_fail, filter: b => `backend:${b} status:accuracy_fail` },
-  ].filter(c => lanes.some(l => c.value(l) > 0));
+    { key: "build", label: "构图失败", kind: "build", value: l => l.build_fail, filter: b => `backend:${b} status:function_fail`,
+      note: () => "NNSmith 生成、CPU 参考或 Torch/Dynamo/Inductor 链路失败" },
+    { key: "schedule", label: "AF Schedule失败", kind: "stage", shared: true, value: scheduleOf,
+      filter: b => `backend:${b} stage:${SCHEDULE_STAGES.join(",")}`, note: l => "Autofuse 前端（codegen 之前）：" + (detail(l, Object.keys(l.stage_fail).filter(k => !SCHEDULE_STAGES.includes(k))) || "—") },
+    { key: "function", label: "功能失败", kind: "stage", value: l => Math.max(0, l.function_fail - scheduleOf(l)) + l.unsupported,
+      filter: b => `backend:${b} status:function_fail -stage:${SCHEDULE_STAGES.join(",")}`,
+      note: l => (detail(l, l.family === "af" ? SCHEDULE_STAGES : []) || "—") + (l.unsupported ? `；含不支持 ${fmt(l.unsupported)}` : "") },
+    { key: "accuracy", label: "精度失败", kind: "accuracy", value: l => l.accuracy_fail, filter: b => `backend:${b} status:accuracy_fail`, note: () => "执行成功但与标杆比对未通过" },
+  ].filter(c => c.key !== "schedule" || lanes.some(l => l.family === "af"));
   const narrow = matchMedia("(max-width: 760px)").matches;
   return narrow ? pipelineVertical(data, lanes, columns, link) : pipelineSvg(data, lanes, columns, link);
 }
@@ -300,13 +305,13 @@ function pipelineSvg(data, lanes, columns, link) {
     root.append(pipe);
     // drops
     for (const drop of drops) {
-      const shared = lane.family && families[lane.family] && families[lane.family].length > 1 && drop.c.kind === "build"
+      const shared = lane.family && families[lane.family] && families[lane.family].length > 1 && (drop.c.key === "build" || drop.c.shared)
         && families[lane.family].every(j => drop.c.value(lanes[j]) === drop.loss);
       const firstOfFamily = shared && families[lane.family][0] === i;
       if (shared && !firstOfFamily) continue;  // the family draws one merged drop
       const dx = drop.cx, dy = drop.yFrom + drop.t / 2, endY = yTop + maxT + 46;
       const band = svg("path", { d: `M ${dx} ${dy} C ${dx + 18} ${dy}, ${dx + 22} ${dy + 12}, ${dx + 22} ${Math.max(dy + 20, endY)}`,
-        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${shared ? lane.family.toUpperCase() + " 族" : label(lane.backend)} · ${drop.c.label}：${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）` });
+        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${shared ? lane.family.toUpperCase() + " 族" : label(lane.backend)} · ${drop.c.label}：${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）\n${drop.c.note ? drop.c.note(lane) : ""}` });
       band.addEventListener("click", link(drop.c.filter(lane.backend)));
       const pillText = `${fmt(drop.loss)}`;
       const pw = 20 + pillText.length * 9.5;
@@ -338,7 +343,7 @@ function pipelineVertical(data, lanes, columns, link) {
       const loss = c.value(lane);
       if (!loss) continue;
       remaining -= loss;
-      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)) },
+      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)), "data-tooltip": c.note ? c.note(lane) : null },
         el("span", {}, c.label), el("b", {}, "−" + fmt(loss)),
         el("i", { style: { width: Math.max(4, 100 * remaining / Math.max(1, lane.executed)) + "%", background: color } })));
     }

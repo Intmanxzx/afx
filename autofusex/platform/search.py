@@ -98,7 +98,9 @@ def parse(text: str | None) -> Query | None:
             sql = "(" + " OR ".join(STATUS[v] for v in values) + ")"
             query.head.append(((f"NOT {sql}" if negate else sql), []))
         elif name in HEAD_FIELDS:
-            query.head.append((f"{HEAD_FIELDS[name]} {'NOT ' if negate else ''}IN ({marks})", values))
+            column = HEAD_FIELDS[name]
+            # exclusion keeps rows where the field is empty (NULL NOT IN (...) would drop them)
+            query.head.append(((f"COALESCE({column},'') NOT IN ({marks})" if negate else f"{column} IN ({marks})"), values))
         elif name in FEATURE_FIELDS:
             names = FEATURE_FIELDS[name]
             sql = ("EXISTS (SELECT 1 FROM case_features f JOIN feature_registry r ON r.feature_id=f.feature_id "
