@@ -48,7 +48,21 @@ class API:
             raise ValueError("endpoint must be https (plain http only for loopback)")
         self.endpoint, self.token, self.timeout = endpoint.rstrip("/"), token, timeout
 
-    def call(self, method: str, path: str, body=None):
+    def call(self, method: str, path: str, body=None, *, attempts: int = 5):
+        """One API call; proxy/server restarts (502/503/504, connection errors) are retried with backoff.
+        Retries resend the identical body, so request_key idempotency keeps them safe."""
+        for attempt in range(attempts):
+            try:
+                return self._call(method, path, body)
+            except APIError as exc:
+                if exc.status not in (502, 503, 504) or attempt == attempts - 1:
+                    raise
+            except (urllib.error.URLError, ConnectionError, TimeoutError):
+                if attempt == attempts - 1:
+                    raise
+            time.sleep(min(60, 2 ** attempt * 2))
+
+    def _call(self, method: str, path: str, body=None):
         data = json.dumps(body).encode() if body is not None else None
         request = urllib.request.Request(self.endpoint + path, data=data, method=method, headers={
             "Authorization": "Bearer " + self.token, "Content-Type": "application/json",

@@ -320,3 +320,23 @@ def test_display_names_history_spec_and_windows(tmp_path):
     a = next(c for c in summary["clients"] if c["display_name"] == "张三-npu0")
     assert a["runtime"][0]["run_id"] == "r1"
     assert ops.efficiency(store)["windows"][0]["client_name"] == "张三-npu0"
+
+
+def test_client_retries_transient_errors(monkeypatch):
+    from autofusex.platform import client as platform_client
+    calls = []
+
+    def flaky(self, method, path, body=None):
+        calls.append(path)
+        if len(calls) < 3:
+            raise platform_client.APIError(502, "http_error", "Bad Gateway")
+        return {"ok": True}
+
+    monkeypatch.setattr(platform_client.API, "_call", flaky)
+    monkeypatch.setattr(platform_client.time, "sleep", lambda s: None)
+    api = platform_client.API("http://127.0.0.1:1", "afx_x")
+    assert api.call("POST", "/api/client/heartbeat", {}) == {"ok": True} and len(calls) == 3
+    calls.clear()
+    monkeypatch.setattr(platform_client.API, "_call", lambda self, *a: (_ for _ in ()).throw(platform_client.APIError(400, "invalid", "bad")))
+    with pytest.raises(platform_client.APIError):
+        api.call("POST", "/x", {})
