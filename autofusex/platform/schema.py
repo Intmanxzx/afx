@@ -205,6 +205,169 @@ CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT INTO meta(key, value) VALUES('ingest_seq', '0');
 INSERT INTO meta(key, value) VALUES('case_count', '0');
 """),
+    (2, """
+CREATE TABLE issues(
+  issue_no INTEGER PRIMARY KEY,
+  issue_id TEXT NOT NULL UNIQUE,
+  dimension TEXT NOT NULL CHECK(dimension IN ('function','accuracy','performance')),
+  backend TEXT NOT NULL,
+  signature BLOB NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  log_summary TEXT,
+  status TEXT NOT NULL CHECK(status IN ('open','claimed','verifying','regressing','summarizing','resolved','closed')),
+  priority INTEGER NOT NULL DEFAULT 0,
+  case_count INTEGER NOT NULL DEFAULT 0,
+  owner_user TEXT,
+  agent_id TEXT,
+  lease_id TEXT,
+  lease_expires_at INTEGER,
+  fix_version TEXT,
+  fix_sha256 TEXT,
+  fix_ref TEXT,
+  knowledge_id TEXT,
+  caused_by TEXT,
+  duplicate_of TEXT,
+  close_reason TEXT,
+  round_no INTEGER NOT NULL DEFAULT 0,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  claimed_at INTEGER,
+  resolved_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  attrs TEXT,
+  UNIQUE(dimension, backend, signature)
+);
+CREATE INDEX issues_status ON issues(status, dimension, backend, priority DESC);
+CREATE INDEX issues_owner ON issues(owner_user, agent_id) WHERE lease_id IS NOT NULL;
+CREATE TABLE issue_signature_alias(
+  dimension TEXT NOT NULL,
+  backend TEXT NOT NULL,
+  signature BLOB NOT NULL,
+  issue_id TEXT NOT NULL,
+  PRIMARY KEY(dimension, backend, signature)
+) WITHOUT ROWID;
+CREATE TABLE issue_cases(
+  issue_id TEXT NOT NULL,
+  case_id INTEGER NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('affected','regression')),
+  npu_arch TEXT NOT NULL,
+  pick_reason TEXT,
+  case_revision INTEGER NOT NULL,
+  stale INTEGER NOT NULL DEFAULT 0,
+  first_exec_id INTEGER,
+  last_exec_id INTEGER,
+  round_no INTEGER,
+  result TEXT,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY(issue_id, role, case_id, npu_arch)
+) WITHOUT ROWID;
+CREATE INDEX issue_cases_case ON issue_cases(case_id);
+CREATE TABLE issue_rounds(
+  issue_id TEXT NOT NULL,
+  round_no INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('verify','regress')),
+  fix_version TEXT NOT NULL,
+  fix_sha256 TEXT NOT NULL,
+  selection_seed INTEGER,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  outcome TEXT,
+  pass_count INTEGER NOT NULL DEFAULT 0,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  invalid_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(issue_id, round_no)
+) WITHOUT ROWID;
+CREATE TABLE issue_events(
+  event_id INTEGER PRIMARY KEY,
+  issue_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  actor TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  from_status TEXT,
+  to_status TEXT,
+  detail TEXT
+);
+CREATE INDEX issue_events_issue ON issue_events(issue_id, event_id);
+
+CREATE TABLE regression_pins(
+  pin_id INTEGER PRIMARY KEY,
+  scope TEXT NOT NULL CHECK(scope IN ('global','feature','issue')),
+  scope_value TEXT NOT NULL,
+  case_id INTEGER NOT NULL,
+  added_by TEXT NOT NULL,
+  reason TEXT,
+  created_at INTEGER NOT NULL,
+  revoked_at INTEGER
+);
+CREATE INDEX regression_pins_scope ON regression_pins(scope, scope_value) WHERE revoked_at IS NULL;
+
+CREATE TABLE retest_tasks(
+  task_id INTEGER PRIMARY KEY,
+  issue_id TEXT NOT NULL,
+  round_no INTEGER NOT NULL,
+  case_id INTEGER NOT NULL,
+  npu_arch TEXT NOT NULL,
+  backends TEXT NOT NULL,
+  required_backend TEXT NOT NULL,
+  required_version TEXT NOT NULL,
+  required_sha256 TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending','leased','done','invalid','cancelled')),
+  client_id INTEGER,
+  lease_id TEXT,
+  lease_expires_at INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  result TEXT,
+  detail TEXT,
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE INDEX retest_tasks_queue ON retest_tasks(status, npu_arch, required_backend, required_version);
+CREATE INDEX retest_tasks_round ON retest_tasks(issue_id, round_no);
+CREATE TABLE retest_task_execs(
+  task_id INTEGER NOT NULL,
+  exec_id INTEGER NOT NULL,
+  PRIMARY KEY(task_id, exec_id)
+) WITHOUT ROWID;
+
+CREATE TABLE knowledge(
+  knowledge_no INTEGER PRIMARY KEY,
+  knowledge_id TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  keywords TEXT NOT NULL,
+  ops TEXT, dtypes TEXT, backends TEXT,
+  graph_pattern TEXT,
+  symptom TEXT, root_cause TEXT, solution TEXT, applicability TEXT,
+  evidence TEXT,
+  version_range TEXT,
+  confidence TEXT NOT NULL CHECK(confidence IN ('verified','measured','proposed')),
+  status TEXT NOT NULL CHECK(status IN ('draft','published','deprecated')),
+  author_user TEXT NOT NULL,
+  agent_id TEXT,
+  body_md TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  attrs TEXT
+);
+CREATE TABLE knowledge_links(
+  knowledge_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK(target_kind IN ('issue','case','knowledge')),
+  target_id TEXT NOT NULL,
+  PRIMARY KEY(knowledge_id, target_kind, target_id)
+) WITHOUT ROWID;
+CREATE VIRTUAL TABLE knowledge_fts USING fts5(title, keywords, body, tokenize='trigram');
+CREATE TABLE agent_requests(
+  user_id TEXT NOT NULL,
+  request_key TEXT NOT NULL,
+  route TEXT NOT NULL,
+  body_hash BLOB NOT NULL,
+  status INTEGER NOT NULL,
+  response TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(user_id, request_key)
+) WITHOUT ROWID;
+"""),
 ]
 
 CONTENT = [

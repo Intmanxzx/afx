@@ -6,7 +6,7 @@ import json
 import re
 import sqlite3
 
-from . import aggregates
+from . import aggregates, issues
 from .auth import Principal
 from .store import Store, canonical_json, now_ms, put_content
 
@@ -247,6 +247,7 @@ class Ingestor:
                         raise UploadError("conflict", "request_key reused with a different body", 409)
                     return json.loads(previous["response"])
                 tie = self.store.setting(conn, "perf.tie_threshold")
+                self._issue_cfg = issues.config(conn)
                 client_id = self._client(conn, principal.user_id, request["client"])
                 run_id = self._run(conn, principal.user_id, client_id, request["run"])
                 results, changed = [], False
@@ -275,15 +276,7 @@ class Ingestor:
 
     # -- dimensions ------------------------------------------------------------
     def _client(self, conn, user_id, client) -> int:
-        now = now_ms()
-        conn.execute(
-            "INSERT INTO clients(user_id, machine_id, hostname, npu_arch, afx_version, first_seen_at, last_seen_at) "
-            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id, machine_id) DO UPDATE SET "
-            "hostname=COALESCE(excluded.hostname, hostname), npu_arch=COALESCE(excluded.npu_arch, npu_arch), "
-            "afx_version=COALESCE(excluded.afx_version, afx_version), last_seen_at=excluded.last_seen_at",
-            (user_id, client["machine_id"], client["hostname"], client["npu_arch"], client["afx_version"], now, now))
-        return conn.execute("SELECT client_id FROM clients WHERE user_id=? AND machine_id=?",
-                            (user_id, client["machine_id"])).fetchone()[0]
+        return upsert_client(conn, user_id, client)
 
     def _run(self, conn, user_id, client_id, run) -> int:
         row = conn.execute("SELECT run_id, user_id, client_id, kind FROM runs WHERE run_uuid=?",
@@ -360,6 +353,7 @@ class Ingestor:
             conn.execute("DELETE FROM case_features WHERE case_id=?", (case_id,))
             conn.execute("DELETE FROM case_metrics WHERE case_id=?", (case_id,))
             self._write_case(conn, case, case_id, revision, now)
+            issues.mark_stale(conn, case_id, revision)
         else:
             case_id = self._write_case(conn, case, None, 1, now)
             revision = 1
@@ -438,9 +432,15 @@ class Ingestor:
                 "INSERT INTO execution_shapes VALUES(?,?,?,?,?,?,?,?)",
                 [(exec_id, s["shape_index"], s["function_status"], s["accuracy_status"], s["max_abs_err"],
                   s["max_rel_err"], s["kernel_ns"], s["e2e_ns"]) for s in item["shapes"]])
-        if not current or run_kind not in HEAD_RUN_KINDS:
-            return "accepted", False
-        return "accepted", self._advance_head(conn, case_id, exec_id, item, tie)
+        if current and run_kind in HEAD_RUN_KINDS and self._advance_head(conn, case_id, exec_id, item, tie):
+            issues.on_head(conn, case_id, exec_id, self._issue_cfg)
+            return "accepted", True
+        if issues.failure_dimension(item) is not None:
+            if item["backend"] in self._issue_cfg["backends"]:
+                row = conn.execute("SELECT * FROM executions WHERE exec_id=?", (exec_id,)).fetchone()
+                conn.execute("UPDATE executions SET issue_signature=? WHERE exec_id=?",
+                             (issues.execution_signature(conn, row), exec_id))
+        return "accepted", False
 
     def _advance_head(self, conn, case_id, exec_id, item, tie) -> bool:
         head = conn.execute(
@@ -463,6 +463,19 @@ class Ingestor:
         aggregates.apply_stat(conn, new, dims, 1)
         aggregates.apply_perf(conn, new, dims, 1, tie)
         return True
+
+
+def upsert_client(conn, user_id: str, client: dict) -> int:
+    now = now_ms()
+    conn.execute(
+        "INSERT INTO clients(user_id, machine_id, hostname, npu_arch, afx_version, first_seen_at, last_seen_at) "
+        "VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id, machine_id) DO UPDATE SET "
+        "hostname=COALESCE(excluded.hostname, hostname), npu_arch=COALESCE(excluded.npu_arch, npu_arch), "
+        "afx_version=COALESCE(excluded.afx_version, afx_version), last_seen_at=excluded.last_seen_at",
+        (user_id, client["machine_id"], client.get("hostname"), client.get("npu_arch"), client.get("afx_version"),
+         now, now))
+    return conn.execute("SELECT client_id FROM clients WHERE user_id=? AND machine_id=?",
+                        (user_id, client["machine_id"])).fetchone()[0]
 
 
 def size_bucket(numel: int) -> str:
@@ -510,6 +523,17 @@ def _check_setting(key, value):
         ok = (isinstance(value, dict) and set(value) == {"neighbor", "sentinel", "history", "random"}
               and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in value.values())
               and sum(value.values()) == 100)
+    elif key == "issue.backends":
+        ok = (isinstance(value, list) and 1 <= len(value) <= 8
+              and all(isinstance(v, str) and _NAME.match(v) for v in value))
+    elif key == "issue.perf_anchor":
+        ok = isinstance(value, str) and bool(_NAME.match(value))
+    elif key == "issue.perf_slowdown":
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool) and 1.01 <= value <= 100
+    elif key in ("issue.lease_minutes", "retest.lease_minutes"):
+        ok = isinstance(value, int) and not isinstance(value, bool) and 5 <= value <= 1440
+    elif key == "verify.max_cases":
+        ok = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5000
     else:
         ok = False
     if not ok:

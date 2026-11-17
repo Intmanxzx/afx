@@ -12,7 +12,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import queries
+from . import issues, knowledge, queries, regression, retests
+from .issues import IssueError
 from .auth import AuthError, Principal, authenticate
 from .ingest import Ingestor, UploadError, check_stats, update_settings
 from .store import Store
@@ -22,6 +23,19 @@ MAX_BODY = 64 * 1024
 MAX_CONCURRENT = 16
 MAX_AGGREGATE_CONCURRENT = 4
 _PARAM = re.compile(r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")
+_TEXT_PARAM = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
+_ISSUE_PATH = re.compile(r"^/api/issues/(ISS-[FAP]-\d{6})(?:/(\w[\w-]*))?$")
+_ADMIN_ISSUE_PATH = re.compile(r"^/api/admin/issues/(ISS-[FAP]-\d{6})/(close|merge)$")
+_ROUND_PATH = re.compile(r"^/api/issues/(ISS-[FAP]-\d{6})/rounds/(\d{1,6})/tasks$")
+_TASK_PATH = re.compile(r"^/api/client/retests/(\d{1,12})/complete$")
+_KNOWLEDGE_PATH = re.compile(r"^/api/knowledge/(KB-\d{6})$")
+_ADMIN_KNOWLEDGE_PATH = re.compile(r"^/api/admin/knowledge/(KB-\d{6})/status$")
+_PIN_PATH = re.compile(r"^/api/regression/pins/(\d{1,12})$")
+
+
+class RawBody:
+    def __init__(self, data: bytes, content_type: str):
+        self.data, self.content_type = data, content_type
 
 
 class RateLimiter:
@@ -65,6 +79,15 @@ class PlatformServer(ThreadingHTTPServer):
         self.read_limit = RateLimiter(600)
         self.upload_limit = RateLimiter(1200)
         super().__init__(address, Handler)
+
+
+def _text(params, name):
+    values = params.get(name)
+    if not values:
+        return None
+    if not _TEXT_PARAM.match(values[0]):
+        raise HTTPError(400, "invalid", f"{name} must be 1..128 printable chars")
+    return values[0]
 
 
 def _param(params, name, *, required=False, integer=False):
@@ -133,12 +156,15 @@ class Handler(BaseHTTPRequestHandler):
             except AuthError as exc:
                 raise HTTPError(401, "unauthorized", str(exc)) from None
             data, status = self._route(method, url.path, params, principal)
-            self._send(status, {"schema_version": 1, "ok": True, "data": data})
+            if isinstance(data, RawBody):
+                self._send_raw(status, data)
+            else:
+                self._send(status, {"schema_version": 1, "ok": True, "data": data})
         except HTTPError as exc:
             self._send(exc.status, _error(exc.code, str(exc)), exc.headers)
         except AuthError as exc:  # authenticated but missing a scope
             self._send(403, _error("forbidden", str(exc)))
-        except UploadError as exc:
+        except (UploadError, IssueError) as exc:
             self._send(exc.status, _error(exc.code, str(exc)))
         except queries.QueryError as exc:
             self._send(400, _error("invalid", str(exc)))
@@ -155,6 +181,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         self._dispatch("PUT")
+
+    def do_DELETE(self):
+        self._dispatch("DELETE")
+
+    def _send_raw(self, status: int, raw: RawBody) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", raw.content_type)
+        self.send_header("Content-Length", str(len(raw.data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw.data)
 
     # -- routes -----------------------------------------------------------------
     def _route(self, method: str, path: str, params, principal: Principal):
@@ -190,6 +228,17 @@ class Handler(BaseHTTPRequestHandler):
                 return queries.clients(store), 200
             if path == "/api/settings":
                 return queries.settings(store), 200
+            routed = self._get_lifecycle(path, params, principal)
+            if routed is not None:
+                return routed, 200
+        if method == "POST" and path.startswith("/api/") and path != "/api/client/executions":
+            routed = self._post_lifecycle(path, principal)
+            if routed is not None:
+                return routed, 200
+        if method == "DELETE":
+            match = _PIN_PATH.match(path)
+            if match:
+                return regression.revoke_pin(store, principal, int(match.group(1)), self._json_body()), 200
         if method == "PUT" and path == "/api/admin/settings":
             principal.require("admin")
             body = self._json(self._body(MAX_BODY))
@@ -198,6 +247,78 @@ class Handler(BaseHTTPRequestHandler):
                 raise HTTPError(400, "invalid", "changes and base_revisions objects are required")
             return update_settings(store, principal.user_id, body["changes"], body["base_revisions"]), 200
         raise HTTPError(404, "not_found", "no such route")
+
+    def _json_body(self) -> dict:
+        body = self._json(self._body(MAX_BODY))
+        if not isinstance(body, dict):
+            raise HTTPError(400, "invalid", "body must be a JSON object")
+        return body
+
+    def _get_lifecycle(self, path, params, principal):
+        store = self.server.store
+        if path == "/api/issues":
+            return issues.list_issues(store, dimension=_param(params, "dimension"), backend=_param(params, "backend"),
+                                      status=_param(params, "status"), after=_param(params, "after", integer=True),
+                                      limit=_param(params, "limit", integer=True) or 50)
+        match = _ROUND_PATH.match(path)
+        if match:
+            return retests.round_tasks(store, match.group(1), int(match.group(2)))
+        match = _ISSUE_PATH.match(path)
+        if match:
+            issue_id, sub = match.groups()
+            if sub is None:
+                return issues.issue_detail(store, issue_id)
+            if sub == "cases":
+                return issues.issue_cases(store, issue_id, _param(params, "role") or "affected",
+                                          _param(params, "after", integer=True))
+            return None
+        if path == "/api/regression/preview":
+            return regression.preview(store, _param(params, "issue_id", required=True))
+        if path == "/api/regression/pins":
+            return regression.list_pins(store, _param(params, "scope"))
+        if path == "/api/knowledge/search":
+            return knowledge.search(store.reader(), q=_text(params, "q"), kind=_param(params, "kind"),
+                                    op=_param(params, "op"), dtype=_param(params, "dtype"),
+                                    backend=_param(params, "backend"), confidence=_param(params, "confidence"),
+                                    include_unpublished=principal.role == "admin",
+                                    after=_param(params, "after", integer=True),
+                                    limit=_param(params, "limit", integer=True) or 20)
+        if path == "/api/knowledge/export":
+            data = "".join(knowledge.export_jsonl(store.reader())).encode()
+            return RawBody(data, "application/x-ndjson; charset=utf-8")
+        match = _KNOWLEDGE_PATH.match(path)
+        if match:
+            return knowledge.get(store.reader(), match.group(1), include_unpublished=principal.role == "admin")
+        return None
+
+    def _post_lifecycle(self, path, principal):
+        store = self.server.store
+        if path == "/api/issues/claim":
+            return issues.claim(store, principal, self._json_body())
+        match = _ISSUE_PATH.match(path)
+        if match and match.group(2) is not None:
+            handler = {"renew": issues.renew, "release": issues.release, "verify": issues.verify,
+                       "regression-cases": issues.pin_cases, "knowledge": issues.submit_knowledge}.get(match.group(2))
+            if handler is not None:
+                return handler(store, principal, match.group(1), self._json_body())
+            return None
+        match = _ADMIN_ISSUE_PATH.match(path)
+        if match:
+            handler = issues.close if match.group(2) == "close" else issues.merge
+            return handler(store, principal, match.group(1), self._json_body())
+        if path == "/api/client/retests/claim":
+            return retests.claim(store, principal, self._json_body())
+        match = _TASK_PATH.match(path)
+        if match:
+            return retests.complete(store, principal, int(match.group(1)), self._json_body())
+        if path == "/api/regression/pins":
+            return regression.add_pins(store, principal, self._json_body())
+        if path == "/api/knowledge":
+            return knowledge.propose(store, principal, self._json_body())
+        match = _ADMIN_KNOWLEDGE_PATH.match(path)
+        if match:
+            return knowledge.set_status(store, principal, match.group(1), self._json_body())
+        return None
 
     def _aggregate(self, path, params):
         store = self.server.store

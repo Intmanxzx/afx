@@ -41,7 +41,7 @@ flowchart LR
 | `open` 未领取 | 聚类新建或租约过期回收 | 聚类产生 / 释放 / 租约过期 | Agent 领取 |
 | `claimed` 修复中 | 已被某用户的某 Agent 持有（带租约） | claim | 提交验证 / 释放 |
 | `verifying` 验证中 | 服务端已为涉及用例下发复测，客户端执行中 | Agent 调用"验证回归" | 全通过→`regressing`；任一失败→`claimed`（保留轮次记录） |
-| `regressing` 回归中 | 服务端挑选回归集并下发，客户端执行中 | 验证通过自动进入 | 全通过→`summarizing`；出现新失败→`claimed`，新失败另建问题并关联 `caused_by` |
+| `regressing` 回归中 | 服务端挑选回归集并下发，客户端执行中 | 验证通过自动进入 | 全通过→`summarizing`；出现新失败→`claimed`（失败用例记在本轮回归结果中，不另建问题，见 8.2） |
 | `summarizing` 归档中 | 等待 Agent 提交知识总结 | 回归通过 | 提交总结→`resolved` |
 | `resolved` 已解决 | 闭环完成，剩余人工合入代码 | 知识已关联 | 若同签名在新版本再次出现→`reopened` 新轮次 |
 | `closed` 关闭 | 不修复 / 重复 / 误报（管理员操作，需理由） | 人工 | — |
@@ -73,7 +73,7 @@ flowchart LR
 
 指定用例存放在 `regression_pins(pin_id, scope, scope_value, case_id, added_by, reason, created_at, revoked_at)` 中。单问题的指定只能在问题进入 `regressing` 之前提交（由租约持有者或管理员提交），提交后冻结。页面入口：问题发现页选中用例后点"加入回归集"；问题详情抽屉中有"指定回归用例"。
 
-挑选结果冻结在 `issue_cases(role='regression', pick_reason=pinned|neighbor|sentinel|history|random)` 中。回归判定：回归集中原 Pass 用例变为非 Pass 即回归失败；原本就不稳定（历史上同版本结果翻转过）的用例标记 `flaky`，不阻塞但在页面提示。
+挑选结果冻结在 `issue_cases(role='regression', pick_reason=pinned|neighbor|sentinel|history|random)` 中。回归判定：回归集中原 Pass 用例变为非 Pass 即回归失败；原本就不稳定（历史上同版本结果翻转过）的用例标记 `flaky`，不阻塞但在页面提示（P1 尚未实现 flaky 识别）。
 
 ## 3. 用例标识
 
@@ -556,6 +556,52 @@ P0 已实现的路由：`POST /api/client/executions`；`GET /api/me`、`/api/ov
 - 磁盘：core.db 1.52 GB（每条执行记录约 505 字节，含用例、特征、索引）；content.db 108 MB（只存失败日志，合成日志偏短）；stats.db 112 KB。按真实日志估算，content.db 会明显更大，需在服务器上用真实数据复核。
 - 失败过滤的耗时取决于失败比例。如果某个 backend 几乎全部通过，按"失败"过滤需要扫描更多执行头；合成数据中失败率约 40%，没有覆盖这种情况。
 - 未覆盖：HTTP/TLS 开销、并发写锁竞争、真实日志重复率、Python 3.9 与旧版 SQLite。
+
+### 8.2 P1 实现说明（问题闭环）
+
+| 文件 | 内容 |
+|---|---|
+| `issues.py` | 聚类签名、执行头变化时归类、领取/续租/释放、提交验证、指定回归用例、提交知识、管理员合并/关闭、请求幂等 |
+| `retests.py` | 验证/回归任务的创建、按版本领取、完成判定、轮次评估与状态推进 |
+| `regression.py` | 回归集挑选（指定 + 四层）、预览、全局/特征范围指定用例管理 |
+| `knowledge.py` | 知识校验、创建、检索（结构化过滤 + FTS5 trigram，短词回退 LIKE）、JSONL 导出 |
+
+新增路由（全部要求 Bearer token，写请求都带 `request_key`，同 key 同 body 返回首次结果，不同 body 返回 409）：
+
+| 方法 | 路由 | scope |
+|---|---|---|
+| GET | `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/cases?role=`、`/api/issues/{id}/rounds/{n}/tasks` | 任意 |
+| POST | `/api/issues/claim`；`/api/issues/{id}/{renew,release,verify,regression-cases,knowledge}` | issue / knowledge |
+| POST | `/api/admin/issues/{id}/{close,merge}` | admin |
+| GET / POST / DELETE | `/api/regression/preview?issue_id=`、`/api/regression/pins`、`/api/regression/pins/{id}` | 任意 / admin |
+| POST | `/api/client/retests/claim`、`/api/client/retests/{task_id}/complete` | retest |
+| GET | `/api/knowledge/search`、`/api/knowledge/{id}`、`/api/knowledge/export`（NDJSON） | 任意 |
+| POST | `/api/knowledge`（草稿）、`/api/admin/knowledge/{id}/status` | knowledge / admin |
+
+客户端复测协议：
+
+1. `POST /api/client/retests/claim`，带 `machine_id`、`npu_arch` 和已安装包 `installed: {backend: {version, sha256}}`。只会领到 arch、backend、版本、sha256 全部匹配的任务（每次最多 20 个）。返回内容包括建议的 `run_uuid`、`run_kind`（verify/regress）和需要执行的 backend 列表；导入用例还会附带构图规格。
+2. 执行后按普通方式上报（`run.kind` 为 verify 或 regress）。这些结果不会成为当前结果，也不进入总览统计。
+3. `POST /api/client/retests/{task_id}/complete`，带 `lease_id`、`exec_uuids` 和执行时的 `installed`。服务端核对执行记录归属与用例，再判定任务结果：
+   - **pass**：目标 backend 功能通过且精度不失败。性能问题还要求 kernel 耗时与锚点的比值 < `issue.perf_slowdown`。
+   - **fail**：未达到上述条件。
+   - **invalid**：上报的已安装包与待测版本不符，或缺少结果。
+
+   invalid 不算修复失败；一轮里没有 fail、只有 invalid 时，问题退回修复中，需要重新提交验证。任务租约默认 60 分钟，超时重新排队，连续超时 3 次判为 invalid。
+
+实现时确定的规则：
+
+- **聚类粒度**：签名使用一个"主算子类别"（按 reduce > broadcast > view > compare > cast > elementwise 取最高者），不用全部类别的组合。否则多类别的图会把同一个 bug 拆成几十类：1 万用例合成数据中，功能问题从每个 backend 665 类降到 102 类。精度问题在 ≤4 个节点的小图上使用精确算子集合。
+- **何时归类**：只有成为当前结果（fuzz/retest/import）的失败执行会归入问题。verify/regress 的失败执行只记录签名，不归入问题。
+- **重新打开**：已解决的问题只在新失败满足两个条件时重新打开：执行时间晚于解决时间；所在 backend 版本是修复版本，或不在解决前已知失败的版本里。修复合入前，旧版本持续失败是预期内的，不会反复打开问题。
+- **回归失败不另建问题**：回归跑的是尚未合入的候选包，用它的失败建新问题会污染问题池。失败用例记在该轮回归结果中（`issue_cases.result=fail`），问题退回修复中。`caused_by` 字段保留，等候选包合入后再考虑使用。
+- **租约**：问题租约默认 30 分钟，在下一次写请求时检查过期。过期后，处于修复中的问题回到未领取；处于验证中、回归中或归档中的问题保持原状态，只清空持有人，其他 Agent 可以按 issue_id 接管，旧租约的写请求会被拒绝。
+- **轮次评估**：一轮的全部任务都结束后才评估。有 fail 时退回修复中（没有有效租约则回到未领取）；没有 fail 但有 invalid 时同样退回；全部 pass 时，验证轮自动进入回归轮，回归轮进入归档中。回归集为空时直接进入归档中。
+- **知识**：回归通过后由租约持有者提交，生成 `verified / published` 条目，自动附带证据（问题、各轮结果、样例用例、修复版本）。`version_range` 默认为"≥ 修复版本"。领取问题时返回同 backend 的相关知识 Top-5。
+
+未实现（留待后续）：flaky 用例识别；验证/回归任务的优先级与公平调度；按特征把多个问题打包领取。
+
+P1 后入库吞吐（1 万用例本地合成）：约 5500 执行/秒，比 P0 下降约 26%，原因是入库时增加了签名计算和性能对比。
 
 ## 9. 分期计划
 

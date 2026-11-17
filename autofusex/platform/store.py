@@ -21,6 +21,13 @@ DEFAULT_SETTINGS = {
     "regression.budget": 100,
     "regression.max_budget": 300,
     "regression.shares": {"neighbor": 50, "sentinel": 20, "history": 20, "random": 10},
+    # Issue clustering and lifecycle (design 2, 4.5).
+    "issue.backends": ["af-legacy", "af-mlir"],
+    "issue.perf_anchor": "triton-npu",
+    "issue.perf_slowdown": 1.2,
+    "issue.lease_minutes": 30,
+    "retest.lease_minutes": 60,
+    "verify.max_cases": 200,
 }
 
 BUSY_TIMEOUT_MS = 10_000
