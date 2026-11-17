@@ -30,7 +30,9 @@ from pathlib import Path
 log = logging.getLogger("afx.platform.client")
 
 BATCH = 100
-UPLOAD_BUDGET = 1500 * 1024  # stay below the proxy's 2 MiB request limit
+UPLOAD_BUDGET = 1500 * 1024
+RETEST_TRIES = 8
+BUSY = re.compile(r"device busy|owns this physical NPU", re.I)  # stay below the proxy's 2 MiB request limit
 MAX_LOG = 200 * 1024
 AF_BACKENDS = ("af-mlir", "af-legacy")
 _STAGE = re.compile(r"[^a-z0-9_.-]+")
@@ -681,25 +683,43 @@ class Client:
         return len(tasks)
 
     def _run_task(self, task: dict, device: str, installed: dict) -> None:
+        """Replay one retest task. Cards are shared with the running fuzz job: when the card is busy
+        the replay waits its turn (each replay already waits up to 60 s for the card lock) and is
+        retried with backoff on the next card, so busy-card attempts are never reported as results."""
         if task["case_source"] != "nnsmith":
             log.warning("task %s: %s cases are not executable by this client yet", task["task_id"], task["case_source"])
             return  # lease expires and the server marks it invalid after retries
-        mapper_before = Mapper(self.retest_db).max_rowid() if Path(self.retest_db).exists() else 0
-        for backend in task["backends"]:
-            if backend == "cpu":
-                continue  # replay always computes the shared CPU reference
-            command = [*self.afx, "fuzz", "replay", task["case_key"], "--backend", backend,
-                       "--database", self.retest_db, "--save", "--device", device]
-            done = subprocess.run(command, capture_output=True, text=True, timeout=3600)
-            if done.returncode not in (0, 1):
-                log.warning("replay %s exited %s: %s", task["case_key"], done.returncode, done.stderr[-2000:])
-        mapper = Mapper(self.retest_db)
         from autofusex.fuzz.client.contracts import Seed
-        ids = [r[0] for r in mapper.conn.execute(
-            "SELECT id FROM attempts WHERE rowid>? AND seed=?", (mapper_before, str(Seed.parse(task["case_key"]))))]
+        seed = str(Seed.parse(task["case_key"]))
+        devices = [device] + [d for d in self.devices if d != device]
+        ids = []
+        for attempt in range(RETEST_TRIES):
+            card = devices[attempt % len(devices)]
+            before = Mapper(self.retest_db).max_rowid() if Path(self.retest_db).exists() else 0
+            for backend in task["backends"]:
+                if backend == "cpu":
+                    continue  # replay always computes the shared CPU reference
+                command = [*self.afx, "fuzz", "replay", task["case_key"], "--backend", backend,
+                           "--database", self.retest_db, "--save", "--device", card]
+                done = subprocess.run(command, capture_output=True, text=True, timeout=3600)
+                if done.returncode not in (0, 1):
+                    log.warning("replay %s exited %s: %s", task["case_key"], done.returncode, done.stderr[-2000:])
+            mapper = Mapper(self.retest_db)
+            rows = mapper.conn.execute("SELECT id, error_summary FROM attempts WHERE rowid>? AND seed=?",
+                                       (before, seed)).fetchall()
+            busy = any(BUSY.search(r[1] or "") for r in rows) or any(BUSY.search(r[0] or "") for r in mapper.conn.execute(
+                "SELECT s.error_summary FROM shapes s JOIN attempts a ON a.id=s.attempt_id WHERE a.rowid>? AND a.seed=?",
+                (before, seed)))
+            if rows and not busy:
+                ids = [r[0] for r in rows]
+                break
+            log.info("task %s: card %s busy, retrying", task["task_id"], card)
+            if self.stop.wait(min(300, 20 * (attempt + 1))):
+                return
         if not ids:
-            log.warning("task %s produced no results", task["task_id"])
+            log.warning("task %s produced no usable results; it will be re-queued when its lease expires", task["task_id"])
             return
+        mapper = Mapper(self.retest_db)
         run = {"run_uuid": task["run_uuid"][:64], "kind": task["run_kind"]}
         statuses = upload_new(self.api, mapper, self.state, self.counters, key_prefix=f"task{task['task_id']}",
                               run_override=run, attempt_ids=ids)
