@@ -17,6 +17,9 @@ from .issues import IssueError, _setting, event, idempotent
 from .store import Store, get_content, now_ms
 
 MAX_CLAIM = 20
+# Failures caused by the test machine rather than the candidate package never count against a fix.
+_INFRA = re.compile(r"device busy|owns this physical NPU|device lease|out of memory|ACL_ERROR_RT_MEMORY|"
+                    r"No space left on device|Connection (?:reset|refused)|Too many open files", re.I)
 MAX_ATTEMPTS = 3
 
 
@@ -180,6 +183,8 @@ def _judge(conn, task, rows, installed):
     target = by_backend.get(task["required_backend"])
     if target is None:
         return "invalid", f"no {task['required_backend']} result"
+    if target["function_status"] != "pass" and _INFRA.search(target["log_summary"] or ""):
+        return "invalid", f"environment problem, not the fix: {(target['log_summary'] or '')[:160]}"
     ok = target["function_status"] == "pass" and target["accuracy_status"] != "fail"
     issue = conn.execute("SELECT dimension FROM issues WHERE issue_id=?", (task["issue_id"],)).fetchone()
     if not ok:

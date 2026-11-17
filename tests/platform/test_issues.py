@@ -341,3 +341,21 @@ def test_http_issue_flow(world):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_device_busy_is_invalid_not_failure(world):
+    issue_id = seed_failures(world)["schedule"]["issue_id"]
+    lease = issues.claim(world.store, world.agent, {"request_key": "c1", "agent_id": "a"})["lease_id"]
+    issues.verify(world.store, world.agent, issue_id, dict(FIX, request_key="v1", lease_id=lease))
+    tasks = world.claim_tasks()
+    for task in tasks:
+        n = int(task["case_key"]) - 10 * 2**160
+        uuid = f"busy{task['task_id']:06d}"
+        world.upload([item(uuid, n, status="runtime_fail", fail_stage="capability",
+                           summary="ValueError: device busy: another managed test owns this physical NPU",
+                           created=5000)], kind="verify", run=task["run_uuid"])
+        result = retests.complete(world.store, world.client, task["task_id"], {
+            "request_key": world.key(), "lease_id": task["lease_id"], "exec_uuids": [uuid], "installed": INSTALLED})
+        assert result["result"] == "invalid"
+    detail = world.issue(issue_id)
+    assert detail["rounds"][0]["outcome"] == "invalid" and detail["status"] == "claimed"
