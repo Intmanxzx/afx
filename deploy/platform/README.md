@@ -52,3 +52,36 @@ afx platform --data /data/afx-platform.new restore afx-platform-20261117T153000Z
 ```bash
 afx platform --data /tmp/unused verify-backup /srv/backups/afx-platform/afx-platform-最新.tar
 ```
+
+## 服务端安装与升级
+
+```bash
+bash deploy/platform/install_server.sh --wheel autofusex-0.2.0-py3-none-any.whl --root /home/ubuntu/afx-platform --port 8100
+```
+
+- 每个 wheel 安装到独立 venv（`ROOT/deployments/platform-<摘要>`）。脚本先用新代码打开（并迁移）数据目录做启动检查，再写 systemd 单元 `afx-platform`（只读系统、仅 `ROOT/data` 可写、内存上限 600M），重启服务，最后检查 `/healthz`。
+- `ROOT/bin/afx` 指向当前版本。用户与 token 离线发放：
+
+```bash
+ROOT/bin/afx platform --data ROOT/data user add alice --role developer
+ROOT/bin/afx platform --data ROOT/data token issue alice --kind client   # client | agent | web
+ROOT/bin/afx platform --data ROOT/data token list
+ROOT/bin/afx platform --data ROOT/data token revoke afx_XXXXXXXX
+```
+
+- Caddy 等 TLS 代理把站点反代到 `127.0.0.1:8100`。服务会在响应前读完请求体，以防代理复用连接时残留的请求体污染下一个请求。
+
+## 客户端（NPU 机器）
+
+客户端只读取 `afx fuzz run --save` / `afx fuzz replay --save` 写出的本地结果库，上传进度保存在旁边独立的 `platform-sync.sqlite` 中，不与旧版同步状态共用。
+
+```bash
+afx fuzz run --save --backend af-mlir --backend af-legacy --device npu:0 --device npu:1   # 不带 --count 即为持续运行
+afx platform client run --endpoint https://autofuse.online --token-file client.token \
+  --results $AUTOFUSEX_HOME/results/results.sqlite --retest --device npu:1
+```
+
+- `run`：持续上传，每 60 秒发送一次心跳（携带计数），开启 `--retest` 时还会领取复测任务（问题验证、回归和手动复测），通过 `afx fuzz replay` 执行后上传并回执结果。
+- `once`：上传一次并发送心跳；`status`：查看上传游标，以及可用于验证的已安装包（graph-autofusion Version 与 `pyautofuse.so` 的 SHA256）。
+- 管理员在“平台运维”页点击一键更新后，客户端在下一次心跳时 `pip install autofusex==版本` 并重启自身进程；正在进行的 fuzz 任务需另行重启。
+- 已知限制：当前执行引擎不支持严格的 NPU kernel 计时（replay `--perf` 会报 `strict NPU measurement requires a device lease; not implemented yet`），因此 Kernel 对比与能力画像暂时只能使用其他来源的 kernel 数据。

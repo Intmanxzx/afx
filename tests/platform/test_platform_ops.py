@@ -229,3 +229,14 @@ def test_mapper_context_cache_survives_eviction(tmp_path):
     mapper = Mapper(str(db))
     assert [mapper.context(f"c{i}")["i"] for i in range(2105)] == list(range(2105))
     assert mapper.context("missing") == {}
+
+
+def test_summary_line_skips_wrappers():
+    from autofusex.platform.client import summary_line
+    text = ("BackendCompilerFailed: backend='inductor' raised:\nTraceback (most recent call last):\n"
+            "  File \"x.py\", line 1\nTypeError: int_noop() got an unexpected keyword argument 'decimals'\n"
+            "Set TORCH_LOGS=\"+dynamo\" and TORCHDYNAMO_VERBOSE=1 for more information")
+    assert summary_line(text) == "TypeError: int_noop() got an unexpected keyword argument 'decimals'"
+    assert summary_line("RuntimeError: aclnnAdd failed") == "RuntimeError: aclnnAdd failed"
+    only_wrapper = "InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir"
+    assert summary_line(only_wrapper) == only_wrapper

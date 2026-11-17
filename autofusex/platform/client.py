@@ -77,6 +77,24 @@ def _first_line(text: str | None) -> str | None:
     return None
 
 
+# Lines that only wrap the real exception (Inductor/Dynamo re-raise) and say nothing about the cause.
+_WRAPPER = re.compile(r"raised:\s*$|^BackendCompilerFailed\b|^InductorError: (?:RuntimeError: )?Failed to execute graph code"
+                      r"|^torch\._dynamo\.exc\.|^Set TORCH_LOGS|^You can suppress", re.I)
+_EXCEPTION = re.compile(r"^\s*(?:[A-Za-z_][\w.]*\.)?[A-Z]\w*(?:Error|Exception)\b.*")
+
+
+def summary_line(text: str | None) -> str | None:
+    """Most informative single line: the last real exception if the first line is only a wrapper."""
+    first = _first_line(text)
+    if first is None or not _WRAPPER.search(first):
+        return first
+    for line in reversed((text or "").splitlines()):
+        line = line.strip()
+        if _EXCEPTION.match(line) and not _WRAPPER.search(line):
+            return line[:500]
+    return first
+
+
 def os_label() -> str | None:
     try:
         info = dict(line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines() if "=" in line)
@@ -274,7 +292,7 @@ class Mapper:
             "compile_ns": attempt["prepare_ns"],
             "kernel_ns": int(sum(kernels) / len(kernels)) if kernels and evaluation.get("performance") else None,
             "e2e_ns": max(1, e2e),
-            "log_summary": af_line or _first_line(summary_text),
+            "log_summary": af_line or summary_line(log_text or summary_text),
             "log": log_text[:MAX_LOG] if log_text and status != "pass" else None,
             "shapes": shape_items[:8],
             "created_at": _ms(attempt["created_at"]),
@@ -427,8 +445,22 @@ class Client:
             done = [a for a, s in statuses.items() if s in ("accepted", "duplicate")]
             self.state.conn.executemany("DELETE FROM rejected WHERE attempt_id=?", [(a,) for a in done])
 
+    def identity(self) -> dict:
+        """Machine id, chip and afx version as recorded in the newest local result, so uploads and
+        heartbeats describe the same client; falls back to the live environment."""
+        env = dict(self.environment())
+        if Path(self.results_db).exists():
+            mapper = Mapper(self.results_db)
+            row = mapper.conn.execute("SELECT environment_id FROM attempts WHERE backend<>'cpu' "
+                                      "ORDER BY rowid DESC LIMIT 1").fetchone()
+            if row is not None:
+                recorded = mapper.context(row[0])
+                for key in ("installation_id", "device_model", "package_version"):
+                    env[key] = recorded.get(key) or env.get(key)
+        return env
+
     def heartbeat(self) -> dict:
-        env = self.environment()
+        env = self.identity()
         counters = self.counters.take()
         pending = 0
         if Path(self.results_db).exists():
@@ -449,8 +481,8 @@ class Client:
 
     def retest_once(self) -> int:
         """Claim and run retest tasks this client can serve. Returns the number of tasks finished."""
-        env = self.environment()
-        installed = installed_packages(env)
+        installed = installed_packages(self.environment())
+        env = self.identity()
         if not installed or not self.devices:
             return 0
         machine = (env.get("installation_id") or socket.gethostname())[:128]
