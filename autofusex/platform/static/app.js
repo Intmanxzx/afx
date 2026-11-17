@@ -8,7 +8,8 @@ const VIEW_KEY = "afx.discovery.view";
 const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "AF-Legacy", "af-mlir": "AF-MLIR", "triton-npu": "TritonNPU" };
 const STAGE_LABEL = { schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
   tiling: "Tiling", autofuse: "AF 其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知" };
-const DIM_LABEL = { all: "全部", op_category: "算子类别", dtype: "数据类型", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
+const DIM_LABEL = { all: "全部", op_category: "算子类别", op_display: "算子覆盖", dtype: "数据类型", dim_bucket: "最大维度", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
+const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "op_category", "dynamic", "source"];
 const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };
 let me = null;
 
@@ -57,7 +58,9 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   let payload = null;
   try { payload = await res.json(); } catch { /* non JSON */ }
   if (res.status === 401) {
-    showLogin(token() ? "登录已失效，请重新输入 token" : "该操作需要登录：请输入管理员离线发放的 token");
+    const expired = !!token();
+    if (expired) { try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } me = null; updateWho(); }
+    showLogin(expired ? "登录已失效，请重新输入 token；也可以返回以访客身份浏览" : "该操作需要登录：请输入管理员离线发放的 token");
     throw new ApiError(401, "unauthorized", "需要登录");
   }
   if (!res.ok || !payload || !payload.ok) {
@@ -169,6 +172,7 @@ function select(options, value, onchange, attrs = {}) {
   return s;
 }
 function statusChip(e) {
+  if (e.backend === "cpu" && e.function_status === "pass") return el("span", { class: "chip gray", "data-tooltip": "CPU 结果作为精度标杆" }, "参考");
   if (e.function_status === "pass") {
     if (e.accuracy_status === "fail") return el("span", {}, el("span", { class: "chip warn" }, "精度失败"), e.accuracy_ref === "eager-npu" ? el("span", { class: "float-tag", title: "CPU 不支持，以 EagerNPU 为标杆" }, "EagerNPU") : null);
     return el("span", { class: "chip ok" }, e.accuracy_status === "pass" ? "通过" : "功能通过");
@@ -260,21 +264,42 @@ async function renderBackendTabs(box, lanes, arch, q, active) {
     for (const b of tabs.children) b.classList.toggle("active", b.dataset.backend === backend);
     if (!cache[backend]) {
       body.replaceChildren(el("div", { class: "empty" }, "加载中…"));
-      const dims = (await api("/api/overview/dims")).filter(d => d !== "all");
-      const results = await Promise.all(dims.map(dim => api("/api/overview/backend" + qs({ backend, dim, arch, q })).catch(err => ({ dim, error: err }))));
+      const available = await api("/api/overview/dims");
+      const dims = DIM_ORDER.filter(d => available.includes(d));
+      const [total, ...results] = await Promise.all(["all", ...dims].map(dim => api("/api/overview/backend" + qs({ backend, dim, arch, q })).catch(err => ({ dim, error: err }))));
       cache[backend] = el("div", {}, legend([["c-pass", "通过"], ["c-func", "功能失败"], ["c-acc", "精度失败"], ["c-uns", "不支持"]]),
-        el("div", { class: "chart-grid" }, results.map(r => statusChart(r, backend))));
+        el("div", { class: "chart-grid" }, donutChart(total, backend), results.map(r => statusChart(r, backend))));
     }
     body.replaceChildren(cache[backend]);
   };
   for (const backend of lanes) tabs.append(el("button", { "data-backend": backend, onclick: () => show(backend) }, `${label(backend)} 基础能力`));
   if (active) show(active);
 }
+function donutChart(result, backend) {
+  if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
+  const g = result.groups[0] || { total: 0, pass: 0, function_fail: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
+  const parts = [["通过", g.pass, "var(--ok)"], ["功能失败", g.function_fail, "var(--bad)"], ["精度失败", g.accuracy_fail, "var(--warn)"], ["不支持", g.unsupported, "var(--tie)"]].filter(p => p[1] > 0);
+  const R = 60, r = 38, C = 80, root = svg("svg", { viewBox: "0 0 160 160", width: 160, height: 160, role: "img", "aria-label": "正确性分布" });
+  let angle = -Math.PI / 2;
+  for (const [name, n, color] of parts) {
+    const sweep = 2 * Math.PI * n / (g.total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
+    const p = (rad, a) => `${C + rad * Math.cos(a)} ${C + rad * Math.sin(a)}`;
+    root.append(svg("path", { d: `M ${p(R, angle)} A ${R} ${R} 0 ${large} 1 ${p(R, end)} L ${p(r, end)} A ${r} ${r} 0 ${large} 0 ${p(r, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}（${pct(n, g.total)}）` }));
+    angle += sweep;
+  }
+  root.append(svg("text", { x: C, y: C + 4, "text-anchor": "middle", class: "donut-center" }, pct(g.pass, g.total)));
+  const stages = Object.entries(g.stage_fail || {}).sort((a, b) => b[1] - a[1]);
+  return el("div", { class: "chart" }, el("h3", {}, `${label(backend)} · 正确性分布（${fmt(g.total)} 个用例）`),
+    el("div", { class: "donut-wrap" }, root, el("div", { class: "small" }, parts.map(([name, n, color]) => el("div", {}, el("i", { class: "swatch", style: { background: color } }), `${name} ${fmt(n)}（${pct(n, g.total)}）`)),
+      stages.length ? el("div", { class: "muted", style: { marginTop: "6px" } }, "功能失败阶段：" + stages.map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join(" · ")) : null)));
+}
 function statusChart(result, backend) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
-  const groups = result.groups.slice(0, 14);
-  return el("div", { class: "chart" }, el("h3", {}, `${label(backend)} · 按${DIM_LABEL[result.dim] || result.dim}`),
-    groups.length ? groups.map(g => el("div", { class: "hbar" }, el("div", { class: "label", title: g.value }, g.value),
+  const limit = result.dim === "op_display" ? 24 : 14;
+  const groups = result.groups.slice(0, limit);
+  const note = result.dim === "op_display" ? `（覆盖 ${result.groups.length} 个算子，显示用例最多的 ${groups.length} 个）` : "";
+  return el("div", { class: "chart" + (result.dim === "op_display" ? " wide" : "") }, el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`),
+    groups.length ? groups.map(g => el("div", { class: "hbar", "data-tooltip": `${g.value}：${fmt(g.total)} 个用例，通过 ${fmt(g.pass)}，功能失败 ${fmt(g.function_fail)}，精度失败 ${fmt(g.accuracy_fail)}` }, el("div", { class: "label" }, g.value),
       stackBar([["c-pass", g.pass, "通过"], ["c-func", g.function_fail, "功能失败"], ["c-acc", g.accuracy_fail, "精度失败"], ["c-uns", g.unsupported, "不支持"]], g.total),
       el("div", { class: "muted" }, pct(g.pass, g.total)))) : el("div", { class: "empty" }, "无数据"));
 }
@@ -327,7 +352,7 @@ function histogram(bins) {
 // 问题发现
 // =====================================================================
 const COLUMNS = [
-  ["user_id", "用户"], ["backend", "后端"], ["npu_arch", "芯片"], ["status", "结果"], ["log_summary", "日志摘要"],
+  ["user_id", "用户"], ["client", "节点"], ["backend", "后端"], ["npu_arch", "芯片"], ["status", "结果"], ["log_summary", "日志摘要"],
   ["compile_ns", "编译"], ["kernel_ns", "Kernel"], ["e2e_ns", "E2E"], ["run", "批次"], ["created_at", "时间"],
 ];
 PAGES.discovery = async (root, params) => {
@@ -378,15 +403,15 @@ function caseCell(group, selected, updateBar, rowSpan) {
     onchange: e => { e.target.checked ? selected.add(c.case_key) : selected.delete(c.case_key); updateBar(); } });
   const menuBtn = el("button", { class: "icon-btn", title: "更多操作", onclick: e => popMenu(e.currentTarget, [
     ["复测", () => retestDrawer([c.case_key], [group])],
-    ["复制复现命令", () => navigator.clipboard && navigator.clipboard.writeText(`afx fuzz replay ${c.case_key} --backend af-mlir`)],
+    ["复制复现命令", () => navigator.clipboard && navigator.clipboard.writeText(`afx fuzz replay ${c.case_key}`)],
     ...(isAdmin() ? [["加入回归集", () => pinGlobal([c.case_key])]] : []),
     ["查看用例详情", () => caseDrawer(group)],
   ]) }, "⋯");
   return el("td", { class: "case-cell", rowspan: rowSpan },
-    el("div", {}, box, " ", el("a", { href: "#", class: "mono", onclick: e => { e.preventDefault(); caseDrawer(group); } }, c.case_key.slice(0, 14) + "…"),
+    el("div", {}, box, " ", el("a", { href: "#", class: "mono", title: c.case_key, onclick: e => { e.preventDefault(); caseDrawer(group); } }, c.case_key),
       el("span", { class: "row-actions" }, el("button", { class: "icon-btn", title: "复测", onclick: () => retestDrawer([c.case_key], [group]) }, "⟳")), menuBtn),
     el("div", { class: "muted small" }, `${c.case_source} · ${c.is_dynamic ? "动态" : "静态"} · ${c.node_count ?? "?"} 节点 · ${c.dtypes || ""}`),
-    el("div", { class: "muted small", title: c.op_types || "" }, (c.op_types || "").split(",").slice(0, 4).map(o => o.replace(/^aten\./, "")).join(", ")));
+    el("div", { class: "muted small", "data-tooltip": (c.op_display || "") + "\n" + (c.op_types || "") }, (c.op_display || c.op_types || "").split(",").slice(0, 6).join(" · ")));
 }
 function batchClasses(executions) {
   const order = [];
@@ -420,6 +445,8 @@ function execValue(e, k) {
     case "run": return el("span", {}, `#${e.run_id}`, e.run_kind !== "fuzz" ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, { retest: "复测", verify: "验证", regress: "回归", import: "导入" }[e.run_kind] || e.run_kind) : null);
     case "created_at": return el("span", { class: "small" }, time(e.created_at));
     case "npu_arch": return e.npu_arch || "—";
+    case "user_id": return el("span", { "data-tooltip": e.user_id }, e.user_name || e.user_id);
+    case "client": return e.client_name || "—";
     default: return e[k] ?? "—";
   }
 }
@@ -435,31 +462,18 @@ function pivotTable(groups, selected, updateBar) {
       const tr = el("tr", { class: i === 0 ? "group-start" : "" });
       if (i === 0) tr.append(caseCell(group, selected, updateBar, Math.max(1, runs.length)));
       const any = Object.values(cells)[0];
-      tr.append(el("td", { class: run ? batchOf(run) + " batch" : "" }, run ? `#${run}` : "—", any ? el("div", { class: "muted small" }, `${any.user_id} · ${time(any.created_at)}`) : null));
+      tr.append(el("td", { class: run ? batchOf(run) + " batch" : "" }, run ? `#${run}` : "—", any ? el("div", { class: "muted small" }, `${any.user_name || any.user_id} · ${any.client_name || ""} · ${time(any.created_at)}`) : null));
       for (const b of backends) { const e = cells[b]; tr.append(el("td", { class: run ? batchOf(run) : "" }, e ? el("div", {}, statusChip(e), el("div", { class: "muted small" }, e.kernel_ns ? "kernel " + ns(e.kernel_ns) : "")) : "—")); }
       body.append(tr);
     });
   }
   return el("table", { class: "grid" }, el("thead", {}, el("tr", {}, el("th", {}, "用例"), el("th", {}, "批次"), backends.map(b => el("th", {}, label(b))))), body);
 }
-async function caseDrawer(group) {
-  const c = group.case;
-  const execs = el("div");
-  openDrawer(el("h2", {}, "用例详情"), el("div", { class: "kv" },
-    [["用例 ID", el("span", { class: "mono" }, c.case_key)], ["来源", c.case_source], ["版本", c.case_revision], ["节点数", c.node_count ?? "—"], ["算子", c.op_types || "—"], ["数据类型", c.dtypes || "—"],
-      ["最大维度", fmt(c.max_dim)], ["最大张量元素", fmt(c.max_numel)], ["首次出现", time(c.first_seen_at)]].flat().map(v => el("div", {}, v))), el("h3", {}, "执行记录"), execs);
-  for (const e of group.executions) {
-    const box = el("div", { class: "panel" }, el("div", {}, label(e.backend), " ", statusChip(e), el("span", { class: "muted small" }, ` · ${e.user_id} · ${time(e.created_at)} · 批次 #${e.run_id}`)));
-    execs.append(box);
-    if (e.function_status !== "pass" || e.accuracy_status === "fail") {
-      api("/api/executions/" + encodeURIComponent(e.exec_uuid)).then(d => {
-        box.append(el("div", { class: "kv small" }, ["CANN", d.env.cann, "后端版本", d.env.backend_version, "afx", d.env.afx, "torch", d.env.torch, "OS", d.env.os].map(v => el("div", {}, v ?? "—"))));
-        if (d.log) box.append(el("pre", { class: "log" }, d.log));
-        else if (d.log_missing) box.append(el("div", { class: "muted small" }, "日志不在当前数据中"));
-      }).catch(err => box.append(errorBox(err)));
-    }
-  }
+function caseDrawer(group) { openCase(group.case.case_key); }
+function openCase(key, exec) {
+  location.hash = "case?key=" + encodeURIComponent(key) + (exec ? "&exec=" + encodeURIComponent(exec) : "");
 }
+
 function retestDrawer(keys, groups) {
   const known = new Set(groups.flatMap(g => g.executions.map(e => e.backend)).filter(b => b !== "cpu"));
   const backends = [...(known.size ? known : new Set(["af-mlir"]))];
@@ -494,6 +508,227 @@ async function renderRetests(root) {
         el("td", {}, r.passed), el("td", {}, r.failed), el("td", {}, r.invalid),
         el("td", { style: { minWidth: "160px" } }, el("div", { class: "hbar", style: { gridTemplateColumns: "1fr" } }, stackBar([["c-pass", r.passed, "通过"], ["c-func", r.failed, "失败"], ["c-uns", r.invalid, "无效"], ["c-acc", r.running, "进行中"]], r.tasks)))))))
       : el("div", { class: "empty" }, "还没有复测记录。在执行记录中选中用例后点击“复测”。")));
+}
+
+// =====================================================================
+// 用例详情（移植自原详情页：DAG、Shape、后端对比、运行环境、计时、阶段时间线、失败详情、ASCIR、历史）
+// =====================================================================
+const STAGE_NAME = { generate: "共享生成", reference: "CPU 期望结果", compare: "CPU 结果校验", record: "持久化",
+  shape_processing: "Shape 处理耗时（墙钟跨度）", generation: "生成用例", capability: "后端能力检查", prepare: "准备执行器（不代表编译完成）",
+  input_binding: "输入绑定", first_call_combined: "首调(惰性编译/执行/同步)", correctness: "精度校验", execution_total: "执行总计",
+  compile: "独立编译", kernel_mean: "Kernel 平均耗时", performance: "性能测量" };
+const stageName = k => STAGE_NAME[k] || k || "Unknown";
+const secs = v => v == null ? null : (v / 1e9).toFixed(3) + " s";
+function stageLabel(f) {
+  if (f.kind === "first_call_combined") return (f.lease && f.lease.device_uuid ? "NPU" : "CPU") + stageName(f.kind);
+  return stageName(f.kind);
+}
+const DTYPE_SHORT = { float16: "fp16", float32: "fp32", float64: "fp64", bfloat16: "bf16" };
+
+PAGES.case = async (root, params) => {
+  const key = params.get("key");
+  if (!key) { root.append(el("div", { class: "empty" }, "缺少用例 ID")); return; }
+  const [spec, history] = await Promise.all([api(`/api/cases/${encodeURIComponent(key)}/spec`), api(`/api/cases/${encodeURIComponent(key)}/history?limit=50`)]);
+  const c = history.case;
+  let executions = history.executions, cursor = history.next_cursor;
+  const shapes = (spec.shape_variants || []).length;
+  let shape = Number(params.get("shape") || (shapes ? 0 : -1));
+  const command = `afx fuzz replay ${c.case_key}`;
+  const copy = el("button", { onclick: () => navigator.clipboard && navigator.clipboard.writeText(command).then(() => { copy.textContent = "已复制"; }) }, "复制");
+  root.append(el("section", { class: "panel" },
+    el("h2", {}, "用例详情 · ", el("span", { class: "mono" }, c.case_key + (shape >= 0 && c.is_dynamic ? String(shape) : "")), el("span", { class: "spacer" }),
+      el("button", { onclick: () => retestDrawer([c.case_key], [{ case: c, executions }]) }, "⟳ 复测"),
+      isAdmin() ? el("button", { onclick: () => pinGlobal([c.case_key]) }, "加入回归集") : null),
+    el("div", { class: "toolbar" }, el("input", { class: "mono", value: command, readonly: true, style: { flex: 1 } }), copy),
+    el("div", { class: "kv" }, [["来源", c.case_source], ["形态", c.is_dynamic ? `动态（${c.shape_count} 个 Shape）` : "静态"], ["节点数", c.node_count ?? "—"],
+      ["算子", (c.op_display || c.op_types || "—").split(",").join(" · ")], ["数据类型", (c.dtypes || "—").split(",").join(" · ")], ["最大维度 / 张量元素", `${fmt(c.max_dim)} / ${fmt(c.max_numel)}`],
+      ["首次出现", time(c.first_seen_at)], ["执行次数", fmt(history.total)]].flat().map(v => el("div", {}, v)))));
+  // Shape selector + DAG
+  const dagBox = el("section", { class: "panel" });
+  root.append(dagBox);
+  const drawDag = () => {
+    const tabs = shapes > 1 ? el("div", { class: "tabs" }, (spec.shape_variants || []).map((v, i) => el("button", { class: i === shape ? "active" : "", onclick: () => { shape = i; drawDag(); compare(); selectExec(currentExec); } },
+      `S${i} · ${tensorText(v.input_shapes, spec.weights, v.input_dtypes)}`.slice(0, 60)))) : null;
+    const sample = shape >= 0 ? (spec.shape_variants || [])[shape] || {} : {};
+    dagBox.replaceChildren(el("h2", {}, "用例节点 DAG", el("span", { class: "muted small" }, "箭头表示张量依赖；* 为推断形状")), tabs,
+      el("div", { class: "muted small" }, "张量：" + tensorText(sample.input_shapes || spec.input_shapes || {}, spec.weights || [], sample.input_dtypes || spec.input_dtypes || {})),
+      renderCaseDag(spec, sample));
+  };
+  // backend comparison of the latest execution per backend
+  const cmpBox = el("section", { class: "panel" });
+  root.append(cmpBox);
+  const compare = () => {
+    const latest = {};
+    for (const e of executions) if (!latest[e.backend] || (e.is_head && !latest[e.backend].is_head)) latest[e.backend] = latest[e.backend] || e;
+    for (const e of executions) if (e.is_head) latest[e.backend] = e;
+    const rows = Object.values(latest).sort((a, b) => a.backend.localeCompare(b.backend));
+    cmpBox.replaceChildren(el("h2", {}, "后端对比", el("span", { class: "muted small" }, "每个后端取当前结果；点击行查看该次执行")),
+      el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端", "结果", "编译", "Kernel", "E2E", "节点", "时间"].map(t => el("th", {}, t)))),
+        el("tbody", {}, rows.map(e => el("tr", { style: { cursor: "pointer" }, onclick: () => selectExec(e.exec_uuid) }, el("td", {}, label(e.backend)), el("td", {}, statusChip(e)),
+          el("td", {}, ns(e.compile_ns)), el("td", {}, ns(e.kernel_ns)), el("td", {}, ns(e.e2e_ns)), el("td", {}, e.client_name || "—"), el("td", { class: "small" }, time(e.created_at)))))));
+  };
+  const execBox = el("section", { class: "panel" });
+  root.append(execBox);
+  let currentExec = params.get("exec");
+  const selectExec = async uuid => {
+    if (!uuid) { execBox.replaceChildren(el("div", { class: "empty" }, "暂无执行记录")); return; }
+    currentExec = uuid;
+    execBox.replaceChildren(el("div", { class: "empty" }, "加载中…"));
+    try { execBox.replaceChildren(...renderExecution(await api("/api/executions/" + encodeURIComponent(uuid)), shape)); }
+    catch (err) { execBox.replaceChildren(errorBox(err)); }
+  };
+  // history
+  const histBody = el("tbody");
+  const more = el("div", { class: "toolbar", style: { marginTop: "8px" } });
+  root.append(el("section", { class: "panel" }, el("h2", {}, `执行历史（${fmt(history.total)}）`, el("span", { class: "muted small" }, "同色为同一批次")),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端", "结果", "用户", "节点", "批次", "版本", "时间"].map(t => el("th", {}, t)))), histBody)), more));
+  const drawHistory = () => {
+    const batchOf = batchClasses(executions);
+    histBody.replaceChildren(...executions.map(e => el("tr", { class: batchOf(e.run_id), style: { cursor: "pointer" }, onclick: () => selectExec(e.exec_uuid) },
+      el("td", {}, label(e.backend), e.is_head ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "当前") : null, e.stale_graph ? el("span", { class: "chip gray" }, "旧图") : null),
+      el("td", {}, statusChip(e)), el("td", {}, e.user_name || e.user_id), el("td", {}, e.client_name || "—"),
+      el("td", {}, `#${e.run_id}`, e.run_kind !== "fuzz" ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, { retest: "复测", verify: "验证", regress: "回归", import: "导入" }[e.run_kind] || e.run_kind) : null),
+      el("td", { class: "small" }, `rev ${e.case_revision}`), el("td", { class: "small" }, time(e.created_at)))));
+    more.replaceChildren(cursor ? el("button", { onclick: async () => {
+      const page = await api(`/api/cases/${encodeURIComponent(key)}/history?limit=50&after=${cursor}`);
+      executions = executions.concat(page.executions); cursor = page.next_cursor; drawHistory();
+    } }, "加载更多") : el("span", { class: "muted small" }, "已显示全部"));
+  };
+  drawDag(); compare(); drawHistory();
+  const pick = currentExec || (executions.find(e => e.is_head && e.backend !== "cpu" && (e.function_status !== "pass" || e.accuracy_status === "fail"))
+    || executions.find(e => e.backend !== "cpu") || executions[0] || {}).exec_uuid;
+  selectExec(pick);
+};
+
+function tensorText(shapes = {}, weights = [], types = {}) {
+  const entries = [...Object.entries(shapes || {}).map(([n, sh]) => ({ shape: sh, dtype: (types || {})[n] })), ...(weights || [])];
+  return entries.map((t, i) => "x" + (i + 1) + "[" + [...(t.shape || []), DTYPE_SHORT[t.dtype] || t.dtype || "?"].join(",") + "]").join(", ") || "—";
+}
+
+function renderExecution(d, shape) {
+  const detail = d.detail || {};
+  const view = (detail.shape_views || {})[String(shape)] || detail.diagnostic_view || {};
+  const out = [el("h2", {}, `执行详情 · ${label(d.backend)}`, " ", statusChip(d), el("span", { class: "muted small" }, ` · ${d.user_name || d.user_id} · ${d.client_name || ""} · ${time(d.created_at)}`))];
+  // per-shape results
+  if (d.shapes && d.shapes.length) out.push(el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Shape", "功能", "精度", "最大绝对误差", "最大相对误差", "Kernel", "E2E"].map(t => el("th", {}, t)))),
+    el("tbody", {}, d.shapes.map(x => el("tr", { class: x.shape_index === shape ? "bt0" : "" }, el("td", {}, "S" + x.shape_index), el("td", {}, x.function_status), el("td", {}, x.accuracy_status || "—"),
+      el("td", {}, x.max_abs_err ?? "—"), el("td", {}, x.max_rel_err ?? "—"), el("td", {}, ns(x.kernel_ns)), el("td", {}, ns(x.e2e_ns)))))));
+  // failure explanation, ASCIR, log
+  const mlir = detail.mlir_failure || {};
+  const explanation = mlir.path === "mlir_failed" ? `MLIR 路径失败（${mlir.scope === "shape" ? "当前 Shape" : "单 Shape 运行日志"}）：${mlir.evidence}`
+    : mlir.path === "unconfirmed" ? "已确认 AF 功能失败，但现有日志不能确认是 MLIR 路径失败。" : view.explanation;
+  if (d.function_status !== "pass" || d.accuracy_status === "fail") {
+    out.push(el("h3", {}, "失败详情"));
+    if (explanation) out.push(el("div", { class: "filter-note" }, explanation));
+    if (d.log_summary) out.push(el("div", { class: "mono small" }, "摘要：" + d.log_summary));
+  }
+  out.push(el("h3", {}, "ASCIR 表达的图结构"), el("pre", { class: "log" }, view.shape_log || "未保存当前 Shape 的 ASCIR / 图结构文本"));
+  const runLog = view.run_log || view.shared_log || (view.shared_lines || []).join("\n") || d.log || view.summary;
+  out.push(el("h3", {}, "报错日志摘要"), el("pre", { class: "log" }, runLog || "未保存报错日志"));
+  // provenance
+  const env = (detail.contexts || {}).environment || {};
+  const envRows = [["用户", d.user_name || d.user_id], ["节点", d.client_name], ["芯片", d.npu_arch || env.device_model], ["CANN", d.env.cann || env.cann], ["Torch", d.env.torch || env.torch],
+    ["Torch NPU", d.env.torch_npu || env.torch_npu], ["后端版本", d.env.backend_version], ["Autofuse commit", env.autofuse_commit], ["Autofuse binary", env.autofuse_binary],
+    ["Triton", env.triton], ["Python", d.env.python || env.python], ["AutofuseX", d.env.afx || env.package_version], ["NNSmith", d.env.nnsmith], ["OS", d.env.os],
+    ["CPU 架构", d.env.cpu_arch || env.machine], ["GCC", d.env.gcc]].filter(([, v]) => v);
+  out.push(el("h3", {}, "运行环境"), el("div", { class: "kv" }, envRows.flat().map(v => el("div", { class: "mono small" }, v))));
+  // timing
+  let telemetry = {};
+  try { telemetry = JSON.parse(((detail.contexts || {}).execution || {}).telemetry || "{}"); } catch { telemetry = {}; }
+  const timeRows = [...Object.entries(telemetry.stages || {}).map(([k, v]) => [stageName(k), v]),
+    ...Object.entries(telemetry.shapes || {}).flatMap(([i, m]) => Object.entries(m).map(([k, v]) => [`S${i} ${stageName(k)}`, v]))];
+  out.push(el("h3", {}, "用例执行耗时"), el("div", { class: "muted small" }, `本次运行 ${detail.shape_count ?? d.shapes.length} 个 Shape 的计时。执行总计包含能力检查、准备和这些 Shape；生成耗时单独记录。下列指标不能逐项相加。`),
+    timeRows.length ? el("table", { class: "grid" }, el("tbody", {}, timeRows.map(([k, v]) => el("tr", {}, el("td", {}, k), el("td", {}, (v / 1e9).toFixed(1) + " s"))))) : el("div", { class: "muted" }, "未采集本次运行计时"));
+  const fs = detail.stage_timeline || [];
+  if (fs.length) {
+    out.push(el("h3", {}, "阶段时间线"), el("div", { class: "table-wrap" }, el("table", { class: "grid" },
+      el("thead", {}, el("tr", {}, ["泳道 / 阶段", "状态", "相对接纳时间", "依赖等待", "资源等待", "运行", "worker / 冷暖"].map(t => el("th", {}, t)))),
+      el("tbody", {}, fs.map(f => { const begin = f.started ?? f.dispatched, end = f.finished; return el("tr", {}, el("td", {}, stageLabel(f)), el("td", {}, f.state),
+        el("td", {}, begin == null ? "未采集" : secs(begin - f.admitted)), el("td", {}, f.ready == null ? "未采集" : secs(f.ready - f.admitted)),
+        el("td", {}, f.ready == null || f.dispatched == null ? "未采集" : secs(f.dispatched - f.ready)), el("td", {}, begin == null || end == null ? "未采集" : secs(end - begin)),
+        el("td", {}, (f.worker_id || "未采集") + " / " + (f.temperature || "未采集"))); })))));
+    const timed = fs.filter(f => f.started != null && f.finished != null);
+    if (timed.length) {
+      const origin = Math.min(...timed.map(f => f.admitted)), extent = Math.max(1, ...timed.map(f => f.finished - origin));
+      const lanes = el("div", { class: "stage-lanes" });
+      for (const f of timed) {
+        const track = el("div", { class: "stage-track" });
+        const add = (a, b, cls) => { if (b <= a) return; const bar = el("span", { class: cls, title: stageName(f.kind) + " " + secs(b - a) }); bar.style.left = (100 * (a - origin) / extent) + "%"; bar.style.width = (100 * (b - a) / extent) + "%"; track.append(bar); };
+        add(f.admitted, f.ready ?? f.started, "stage-dependency"); add(f.ready ?? f.started, f.dispatched ?? f.started, "stage-resource"); add(f.started, f.finished, f.state === "failed" ? "stage-failed" : "stage-running");
+        lanes.append(el("div", { class: "stage-lane" }, el("span", {}, stageLabel(f)), track));
+      }
+      lanes.append(el("div", { class: "muted small" }, "灰：依赖等待 · 黄：资源等待 · 绿：运行 · 红：失败；共享生成/参考不摊分为单 Shape。"));
+      out.push(lanes);
+    }
+  }
+  const life = detail.lifecycle || [];
+  out.push(el("div", { class: "muted small", "data-tooltip": life.map(e => e.event + " " + e.wall_time).join(" → ") },
+    "生命周期（UTC）：" + (life.map(e => e.event + " " + String(e.wall_time || "").slice(11, 23)).join(" → ") || "未采集") + "。端到端延迟：" + (secs(detail.end_to_end_ns) || "未采集")));
+  if (!d.detail) out.push(el("div", { class: "muted small" }, "该执行未上传详细诊断（旧客户端或诊断不可用）。"));
+  return out;
+}
+
+// DAG layout ported from the original detail page (node labels use operator display names).
+function caseDag(meta, sample) {
+  const graph = meta.graph || {};
+  if (!graph.nodes || !graph.nodes.length) return { nodes: [], edges: [] };
+  const nodes = [], byName = new Map(), edges = [];
+  const add = (name, labelText, tensor = {}, kind = "op", inputs = [], attrs = {}) => { const node = { name, label: labelText, ...tensor, kind, inputs, attrs, level: 0 }; nodes.push(node); byName.set(name, node); return node; };
+  const shapes = sample.input_shapes || meta.input_shapes || {}, types = sample.input_dtypes || meta.input_dtypes || {};
+  for (const [name, shp] of Object.entries(shapes)) add(name, "Input", { shape: shp, dtype: types[name] }, "input");
+  for (const w of meta.weights || []) add(w.name, "Weight", w, "weight");
+  for (const node of graph.nodes) {
+    const outputs = node.outputs || [node.output];
+    const labelText = node.display_name || node.op;
+    for (const [i, name] of outputs.entries()) add(name, outputs.length > 1 ? `${labelText} [${i}]` : labelText, {}, "op", node.inputs || [], node.attrs || {});
+  }
+  for (const node of [...nodes]) for (const name of node.inputs) if (!byName.has(name)) add(name, "未记录输入", {}, "input");
+  const pending = new Set(nodes), resolved = new Set();
+  while (pending.size) {
+    let progress = false;
+    for (const node of pending) {
+      if (node.inputs.some(n => !resolved.has(n))) continue;
+      const inputs = node.inputs.map(n => byName.get(n));
+      node.level = inputs.length ? Math.max(...inputs.map(n => n.level)) + 1 : 0;
+      if (node.kind === "op") {
+        const first = inputs[0];
+        node.dtype = inputs.length && inputs.every(n => n.dtype === first.dtype) ? first.dtype : undefined;
+      }
+      const outputShape = (sample.output_shapes || meta.output_shapes || {})[node.name];
+      if (outputShape) { node.shape = outputShape; node.dtype = (sample.output_dtypes || meta.output_dtypes || {})[node.name] || node.dtype; node.inferred = false; }
+      node.isOutput = (graph.outputs || []).includes(node.name);
+      resolved.add(node.name); pending.delete(node); progress = true;
+    }
+    if (!progress) return { nodes: [], edges: [], error: "已保存节点依赖存在环，无法绘制 DAG" };
+  }
+  for (const node of nodes) for (const name of node.inputs) edges.push({ from: byName.get(name), to: node });
+  return { nodes, edges };
+}
+function renderCaseDag(meta, sample) {
+  const graph = caseDag(meta, sample);
+  if (!graph.nodes.length) return el("div", { class: "muted" }, graph.error || "未保存节点依赖，无法绘制 DAG");
+  const levels = [];
+  for (const node of graph.nodes) (levels[node.level] = levels[node.level] || []).push(node);
+  const W = 270, H = 150;
+  const width = Math.max(640, ...levels.map(l => l.length * W + 32)), height = levels.length * H + 32;
+  const canvas = svg("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": "用例节点 DAG，箭头表示张量依赖" });
+  const marker = svg("marker", { id: "dag-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, svg("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "dag-arrowhead" }));
+  canvas.append(svg("defs", {}, marker));
+  for (const layer of levels) layer.forEach((node, i) => { node.x = (width - layer.length * W) / 2 + i * W + 10; node.y = node.level * H + 16; });
+  for (const { from, to } of graph.edges) {
+    const x = from.x + 125, y = from.y + 100, ex = to.x + 125, ey = to.y;
+    canvas.append(svg("path", { d: `M ${x} ${y} C ${x} ${y + 25}, ${ex} ${ey - 25}, ${ex} ${ey}`, class: "dag-edge", "marker-end": "url(#dag-arrow)" }, svg("title", {}, from.name + " → " + to.name)));
+  }
+  for (const node of graph.nodes) {
+    const tensor = (node.shape ? "[" + node.shape.join(", ") + "]" : "Shape 未采集") + " · " + (node.dtype || "Dtype 未采集") + (node.inferred ? " *" : "");
+    const title = node.label + " · " + node.name + (node.isOutput ? " · Output" : "");
+    const tip = title + "\n" + tensor + (Object.keys(node.attrs).length ? "\n" + JSON.stringify(node.attrs) : "");
+    const g = svg("g", { transform: `translate(${node.x},${node.y})`, class: "dag-node " + node.kind, tabindex: 0, "aria-label": tip, "data-tooltip": tip }, svg("rect", { width: 250, height: 100, rx: 10 }));
+    const line = (y, text, cls) => g.append(svg("text", { x: 12, y, class: cls }, text.length > 32 ? text.slice(0, 31) + "…" : text));
+    line(26, title, "dag-op"); line(50, node.name + (node.isOutput ? " → Output" : ""), "dag-name"); line(76, tensor, "dag-tensor");
+    canvas.append(g);
+  }
+  return el("div", { class: "dag-scroll" }, canvas);
 }
 
 // =====================================================================
@@ -550,7 +785,7 @@ async function issueDrawer(issueId) {
     const tasks = el("div");
     box.append(el("button", { class: "icon-btn", onclick: async () => {
       const list = await api(`/api/issues/${issueId}/rounds/${r.round_no}/tasks`);
-      tasks.replaceChildren(el("table", { class: "grid" }, el("tbody", {}, list.map(t => el("tr", {}, el("td", { class: "mono small" }, t.case_key.slice(0, 18) + "…"), el("td", {}, t.npu_arch), el("td", {}, t.result || t.status), el("td", { class: "small muted" }, t.detail || ""))))));
+      tasks.replaceChildren(el("table", { class: "grid" }, el("tbody", {}, list.map(t => el("tr", {}, el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(t.case_key); } }, t.case_key)), el("td", {}, t.npu_arch), el("td", {}, t.result || t.status), el("td", { class: "small muted" }, t.detail || ""))))));
     } }, "查看任务"), tasks);
     rounds.append(box);
   }
@@ -571,7 +806,7 @@ async function issueDrawer(issueId) {
 }
 function caseList(cases) {
   return el("table", { class: "grid" }, el("tbody", {}, cases.map(c => el("tr", {},
-    el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); go("discovery", { q: `${c.case_key.slice(0, 40)}` }); } }, c.case_key.slice(0, 22) + "…")),
+    el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
     el("td", {}, c.npu_arch), el("td", {}, c.pick_reason || ""), el("td", {}, c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
     el("td", {}, c.result ? el("span", { class: "chip " + (c.result === "pass" ? "ok" : c.result === "fail" ? "bad" : "warn") }, c.result) : "")))));
 }
@@ -621,7 +856,7 @@ async function knowledgeDrawer(id) {
       ["后端", k.backends.map(label).join(", ") || "—"], ["适用版本", k.version_range || "—"], ["作者", `${k.author_user}${k.agent_id ? " / " + k.agent_id : ""}`], ["更新", time(k.updated_at)]].flat().map(v => el("div", {}, v))),
     ...[["现象", k.symptom], ["根因", k.root_cause], ["解决方案", k.solution], ["适用范围", k.applicability], ["子图模式", k.graph_pattern]].filter(([, v]) => v).map(([t, v]) => el("div", {}, el("h3", {}, t), el("div", { style: { whiteSpace: "pre-wrap" } }, v))),
     k.evidence ? el("div", {}, el("h3", {}, "证据"), el("pre", { class: "log" }, JSON.stringify(k.evidence, null, 2))) : null,
-    el("h3", {}, "关联"), el("div", {}, k.links.map(l => l.target_kind === "issue" ? el("a", { href: "#", onclick: e => { e.preventDefault(); issueDrawer(l.target_id); }, style: { marginRight: "10px" } }, l.target_id) : el("span", { class: "mono small", style: { marginRight: "10px" } }, l.target_id.slice(0, 16) + "…"))));
+    el("h3", {}, "关联"), el("div", {}, k.links.map(l => l.target_kind === "issue" ? el("a", { href: "#", onclick: e => { e.preventDefault(); issueDrawer(l.target_id); }, style: { marginRight: "10px" } }, l.target_id) : el("a", { href: "#", class: "mono small", style: { marginRight: "10px" }, onclick: e => { e.preventDefault(); openCase(l.target_id); } }, l.target_id))));
 }
 
 // =====================================================================
@@ -720,19 +955,91 @@ PAGES.ops = async root => {
     try { const r = await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [...selected], version: version.value.trim() } }); alert(`已通知 ${r.requested} 个客户端，下一次心跳时更新`); render(); }
     catch (err) { alert(err.message); } } }, "一键更新");
   root.append(el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "用户", "主机", "芯片", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "最后心跳"].map(t => el("th", {}, t)))),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "主机", "芯片", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "最后心跳"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id) }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
-        el("td", {}, c.user_id), el("td", { class: "small" }, c.hostname || c.machine_id.slice(0, 12)), el("td", {}, c.npu_arch || "—"),
+        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.machine_id }, (c.hostname || c.machine_id).slice(0, 16)), el("td", {}, c.npu_arch || "—"),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
         el("td", {}, fmt(c.last_24h.executions)), el("td", {}, fmt(c.last_24h.upload_errors)), el("td", {}, fmt(c.pending_uploads)),
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at)))))))));
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
+  root.append(fleetPanel(data.clients));
+  const effBox = el("section", { class: "panel" });
+  root.append(effBox);
+  renderEfficiency(effBox, (await api("/api/ops/efficiency")).windows);
   if (isAdmin()) root.append(await settingsPanel());
 };
+function fleetPanel(clients) {
+  const live = clients.filter(c => (c.runtime || []).length);
+  const box = el("section", { class: "panel" }, el("h2", {}, "节点运行情况", el("span", { class: "muted small" }, "来自客户端心跳中的运行快照，约每分钟更新")));
+  if (!live.length) { box.append(el("div", { class: "empty" }, "暂无正在上报运行快照的节点")); return box; }
+  for (const c of live) {
+    const card = el("div", { class: "fleet-card" }, el("h3", {}, c.display_name || c.machine_id, el("span", { class: "muted small" }, ` · ${c.user_id} · ${c.npu_arch || ""} · 快照于 ${time(c.runtime_at)}`)));
+    const rows = c.runtime.map(r => el("tr", {},
+      el("td", { class: "mono small", "data-tooltip": r.run_id }, String(r.run_id || "").slice(0, 8)),
+      el("td", {}, el("span", { class: "chip " + (r.state === "running" ? "ok" : "gray") }, r.state)),
+      el("td", {}, (r.backend || []).map(label).join(" · ")),
+      el("td", {}, el("div", { class: "device-dots" }, (r.devices || []).map(d => el("span", { class: "device-dot" + (d.busy ? " busy" : ""), "data-tooltip": d.uuid }, `${d.logical} ${d.model || ""}`)))),
+      el("td", {}, Object.entries(r.stages || {}).map(([k, v]) => `${stageName(k)} ×${v}`).join("，") || "—"),
+      el("td", {}, `${fmt(r.success)} / ${fmt(r.completed)}`),
+      el("td", {}, r.elapsed > 0 ? (r.completed * 60 / r.elapsed).toFixed(2) : "—"),
+      el("td", {}, fmt(r.queued)), el("td", {}, fmt(r.case_errors)), el("td", { class: "small" }, Math.round(r.elapsed / 60) + " 分钟")));
+    card.append(el("div", { class: "table-wrap" }, el("table", { class: "grid" },
+      el("thead", {}, el("tr", {}, ["运行", "状态", "后端", "设备（绿=忙）", "进行中阶段", "成功 / 完成 Shape", "Shape/min", "排队", "Case 错误", "已运行"].map(t => el("th", {}, t)))), el("tbody", {}, rows))));
+    box.append(card);
+  }
+  return box;
+}
+
+// Tool efficiency (ported): finished stage windows grouped by backend / environment / Shape mode.
+function renderEfficiency(box, windows) {
+  box.replaceChildren(el("h2", {}, "工具效率", el("span", { class: "muted small" }, "已完成运行窗口的吞吐与延迟分位数")));
+  if (!windows.length) { box.append(el("div", { class: "empty" }, "暂无已完成运行窗口的效率数据（持续运行的任务在窗口结束后上报）。")); return; }
+  let chosen = windows[0];
+  const pick = select(windows.map((w, i) => [w.window_id + "|" + w.client_id, `${i === 0 ? "最新" : "历史 " + i} · ${w.client_name || w.client_id} · ${w.window_id.slice(0, 12)}`]), "", v => { chosen = windows.find(w => w.window_id + "|" + w.client_id === v); draw(); });
+  const filter = el("input", { type: "search", placeholder: "筛选后端 / 环境 / static / dynamic", oninput: () => draw() });
+  const body = el("div");
+  box.append(el("div", { class: "toolbar" }, "运行窗口", pick, filter), body);
+  const seconds = v => v == null ? "未采集" : (v / 1e9).toFixed(2) + "s";
+  const draw = () => {
+    const rows = chosen.rows || [];
+    if (!rows.length) { body.replaceChildren(el("div", { class: "muted" }, "该窗口没有可统计的记录")); return; }
+    const w = rows[0], duration = Number(w.window_seconds);
+    const devices = Object.entries(w.npu_slot_utilization || {});
+    const tokens = filter.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const groups = new Map();
+    for (const r of rows) {
+      const k = JSON.stringify([r.backend, r.environment_id, r.mode]);
+      if (!groups.has(k)) groups.set(k, { backend: r.backend, environment_id: r.environment_id || "", mode: r.mode, rows: [], success: 0, failed: 0, case_errors: 0, completed: 0 });
+      const g = groups.get(k); g.rows.push(r);
+      for (const n of ["success", "failed", "case_errors", "completed"]) g[n] += Number(r[n] || 0);
+    }
+    const list = [...groups.values()].filter(g => tokens.every(t => [g.backend, g.environment_id, g.mode, ...g.rows.map(r => r.hardware || "")].join(" ").toLowerCase().includes(t)));
+    const rate = n => duration > 0 ? (n * 60 / duration).toFixed(2) : "未采集";
+    const latency = (g, k) => g.rows.length === 1 ? `${seconds(g.rows[0][k + "_p50_ns"])} / ${seconds(g.rows[0][k + "_p95_ns"])}` : "见明细";
+    body.replaceChildren(
+      el("div", { class: "muted small" }, `窗口 ${chosen.window_id} · 节点 ${chosen.client_name || chosen.client_id} · 时长 ${Number.isFinite(duration) ? duration.toFixed(1) + " s" : "未采集"}。吞吐按完整窗口时长计算；资源占用属于整个窗口，不随筛选变化。`),
+      el("div", { class: "tiles" }, [["CPU 资源池使用率", w.cpu_pool_utilization == null ? "未采集" : (100 * w.cpu_pool_utilization).toFixed(1) + "%"],
+        ...devices.map(([uuid, v], i) => [`NPU ${i + 1} 执行槽使用率`, (100 * v).toFixed(1) + "%", uuid]),
+        ["窗口取消 / 写库失败", `${w.cancelled_attempts ?? "未采集"} / ${w.record_failed_attempts ?? "未采集"}`]].map(([k, v, tip]) => el("div", { class: "tile", "data-tooltip": tip || null }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))),
+      el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端 / Shape 模式", "环境", "成功 / 失败 Shape / Case 错误", "成功 Shape/min", "已完成 Shape/min", "处理 P50 / P95", "端到端 P50 / P95"].map(t => el("th", {}, t)))),
+        el("tbody", {}, list.map(g => el("tr", {}, el("td", {}, `${label(g.backend)} / ${g.mode}`), el("td", { class: "mono small", "data-tooltip": g.environment_id }, g.environment_id.slice(0, 12)),
+          el("td", {}, `${g.success} / ${g.failed} / ${g.case_errors}`), el("td", {}, rate(g.success)), el("td", {}, rate(g.completed)), el("td", {}, latency(g, "processing")), el("td", {}, latency(g, "e2e"))))))),
+      el("details", {}, el("summary", {}, "诊断明细：冷 / 热、状态、延迟与环境"),
+        ...list.map(g => el("div", {}, el("h3", {}, `${label(g.backend)} / ${g.mode} · ${g.environment_id.slice(0, 12)}`),
+          el("pre", { class: "log" }, JSON.stringify({ environment_id: g.environment_id, hardware: g.rows[0].hardware, software: g.rows[0].software }, null, 2)),
+          el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["冷 / 热 · 状态", "成功 / 失败 / Case 错误", "处理 P50 / P95", "端到端 P50 / P95", "唯一 Shape / 重试", "摊销秒/Shape", "冷 / 热调用数"].map(t => el("th", {}, t)))),
+            el("tbody", {}, g.rows.map(r => el("tr", {}, el("td", {}, `${r.temperature} / ${r.status}`), el("td", {}, `${r.success} / ${r.failed} / ${r.case_errors}`),
+              el("td", {}, `${seconds(r.processing_p50_ns)} / ${seconds(r.processing_p95_ns)}`), el("td", {}, `${seconds(r.e2e_p50_ns)} / ${seconds(r.e2e_p95_ns)}`),
+              el("td", {}, `${r.unique_shapes ?? "—"} / ${r.retry_attempts ?? "—"}`), el("td", {}, r.amortized_seconds_per_shape == null ? "—" : Number(r.amortized_seconds_per_shape).toFixed(2)),
+              el("td", {}, `${r.cold ?? "—"} / ${r.warm ?? "—"}`)))))))));
+  };
+  draw();
+}
+
 function hourly(series) {
   if (!series.length) return el("div", { class: "empty" }, "暂无心跳数据");
   const W = 900, H = 160, pad = 26, max = Math.max(1, ...series.map(s => s.executions));
@@ -769,7 +1076,7 @@ async function settingsPanel() {
   };
   return el("section", { class: "panel" }, el("h2", {}, "设置（管理员）"), grid, el("div", { class: "toolbar", style: { marginTop: "12px" } }, el("button", { class: "primary", onclick: save }, "保存"), out),
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
-    pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", { class: "mono small" }, p.case_key.slice(0, 22) + "…"),
+    pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
         try { await api("/api/regression/pins/" + p.pin_id, { method: "DELETE", body: { request_key: rkey() } }); render(); } catch (err) { alert(err.message); } } }, "移除")))))) : el("div", { class: "muted" }, "在问题发现页选中用例后可加入回归集"));
 }
@@ -781,6 +1088,31 @@ PAGES.models = async root => {
   root.append(el("section", { class: "panel" }, el("h2", {}, "整网分析"), el("div", { class: "empty" },
     "规划中：执行完整推荐类模型与 LLM，接入 autofusex 的图转储、精度对比与 HTML 报告。接口已预留（/api/models/jobs），本期返回 501。")));
 };
+
+// ---------- field tooltip (ported: full text for truncated cells, logs and DAG nodes) ----------
+const fieldTooltip = el("div", { class: "field-tooltip", role: "tooltip", id: "field-tooltip" });
+fieldTooltip.hidden = true;
+document.body.append(fieldTooltip);
+let tooltipTarget = null;
+function hideFieldTooltip() { if (tooltipTarget) tooltipTarget.removeAttribute("aria-describedby"); tooltipTarget = null; fieldTooltip.hidden = true; }
+function showFieldTooltip(event) {
+  const target = event.target.closest && event.target.closest("[data-tooltip], [title]");
+  if (!target || target.closest("#field-tooltip")) return;
+  if (target.hasAttribute("title")) { target.dataset.tooltip = target.getAttribute("title"); target.removeAttribute("title"); }
+  const content = target.dataset.tooltip;
+  if (!content || !content.trim()) return;
+  hideFieldTooltip(); tooltipTarget = target;
+  fieldTooltip.textContent = content; fieldTooltip.hidden = false; target.setAttribute("aria-describedby", "field-tooltip");
+  const tip = fieldTooltip.getBoundingClientRect(), bounds = target.getBoundingClientRect();
+  const x = event.clientX ?? bounds.left, y = event.clientY ?? bounds.bottom;
+  fieldTooltip.style.left = Math.max(8, Math.min(x, innerWidth - tip.width - 8)) + "px";
+  fieldTooltip.style.top = Math.max(8, Math.min(y + 14, innerHeight - tip.height - 8)) + "px";
+}
+document.addEventListener("pointerover", showFieldTooltip);
+document.addEventListener("focusin", showFieldTooltip);
+document.addEventListener("pointerout", e => { if (tooltipTarget && !tooltipTarget.contains(e.relatedTarget) && !fieldTooltip.contains(e.relatedTarget)) hideFieldTooltip(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") hideFieldTooltip(); });
+window.addEventListener("scroll", hideFieldTooltip, true);
 
 // ---------- boot ----------
 window.addEventListener("hashchange", render);

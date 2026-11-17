@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from importlib import resources
 
@@ -34,6 +34,8 @@ _TASK_PATH = re.compile(r"^/api/client/retests/(\d{1,12})/complete$")
 _KNOWLEDGE_PATH = re.compile(r"^/api/knowledge/(KB-\d{6})$")
 _ADMIN_KNOWLEDGE_PATH = re.compile(r"^/api/admin/knowledge/(KB-\d{6})/status$")
 _PIN_PATH = re.compile(r"^/api/regression/pins/(\d{1,12})$")
+_CASE_PATH = re.compile(r"^/api/cases/([^/]{1,600})/(history|spec)$")
+_CASE_KEY = re.compile(r"^(?:[EF][0-9A-Z]{26}|[BM]:[^\x00-\x1f]{1,256})$")
 
 
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -385,6 +387,17 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if path == "/api/ops/summary":
             return ops.summary(store)
+        if path == "/api/ops/efficiency":
+            return ops.efficiency(store, _param(params, "client_id", integer=True))
+        match = _CASE_PATH.match(path)
+        if match:
+            key = unquote(match.group(1))
+            if not _CASE_KEY.match(key):
+                raise HTTPError(400, "invalid", "invalid case key")
+            if match.group(2) == "history":
+                return queries.case_history(store, key, after=_param(params, "after", integer=True),
+                                            limit=_param(params, "limit", integer=True) or 50)
+            return queries.case_spec(store, key)
         if path == "/api/retests":
             return retests.list_manual(store, principal)
         if path == "/api/profile/axes":

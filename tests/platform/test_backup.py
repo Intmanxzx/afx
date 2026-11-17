@@ -1,6 +1,14 @@
 import json
 import tarfile
 
+def _short(n):
+    digits, alphabet = "", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    while n:
+        n, d = divmod(n, 36)
+        digits = alphabet[d] + digits
+    return "E" + (digits or "0").zfill(26)
+
+
 import pytest
 
 from autofusex.platform import auth, backup, queries
@@ -12,7 +20,7 @@ ENV = {"cann": "8.2", "torch": "2.6"}
 
 
 def _item(i, log=None):
-    seed = str(10 * 2**160 + i)
+    seed = _short(i)
     out = {"exec_uuid": f"exec-{i:06d}", "backend": "af-mlir", "npu_arch": "910b", "env": ENV,
            "function_status": "pass", "accuracy_status": "pass", "e2e_ns": 1, "kernel_ns": 5, "created_at": 1 + i,
            "case": {"case_key": seed, "case_source": "nnsmith", "is_dynamic": False, "shape_count": 1,

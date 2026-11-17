@@ -2,6 +2,14 @@ import json
 import threading
 import http.client as httpclient
 
+def _short(n):
+    digits, alphabet = "", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    while n:
+        n, d = divmod(n, 36)
+        digits = alphabet[d] + digits
+    return "E" + (digits or "0").zfill(26)
+
+
 import pytest
 
 from autofusex.platform import auth, issues, knowledge, regression, retests
@@ -16,7 +24,7 @@ INSTALLED = {"af-mlir": {"version": FIX["fix_version"], "sha256": FIX["fix_sha25
 
 
 def seed(n):
-    return str(10 * 2**160 + n)
+    return _short(n)
 
 
 def case(n, category="elementwise", ops=("add", "mul"), dtypes=("float16",), nodes=6):
@@ -68,7 +76,7 @@ class World:
         """Upload a result for each task and complete it. outcome(case_key) -> function_status."""
         results = []
         for task in tasks:
-            n = int(task["case_key"]) - 10 * 2**160
+            n = int(task["case_key"][1:], 36)
             status = outcome(task["case_key"])
             uuid = f"t{task['task_id']:06d}x{self.keys}"
             self.upload([item(uuid, n, status=status, summary="error at 0x1f tile 32" if status != "pass" else None,
@@ -135,7 +143,7 @@ def test_full_lifecycle(world):
     claim_body = {"request_key": "claim-1", "agent_id": "agent-1"}
     claimed = issues.claim(world.store, world.agent, dict(claim_body))
     assert claimed["issue_id"] == issue_id and claimed["status"] == "claimed"
-    assert claimed["repro"]["cases"][0]["command"].startswith("afx fuzz replay 1")
+    assert claimed["repro"]["cases"][0]["command"].startswith("afx fuzz replay E")
     assert issues.claim(world.store, world.agent, dict(claim_body)) == claimed  # retry is idempotent
     with pytest.raises(IssueError) as busy:
         issues.claim(world.store, world.agent, {"request_key": "claim-2", "agent_id": "agent-1"})
@@ -349,7 +357,7 @@ def test_device_busy_is_invalid_not_failure(world):
     issues.verify(world.store, world.agent, issue_id, dict(FIX, request_key="v1", lease_id=lease))
     tasks = world.claim_tasks()
     for task in tasks:
-        n = int(task["case_key"]) - 10 * 2**160
+        n = int(task["case_key"][1:], 36)
         uuid = f"busy{task['task_id']:06d}"
         world.upload([item(uuid, n, status="runtime_fail", fail_stage="capability",
                            summary="ValueError: device busy: another managed test owns this physical NPU",

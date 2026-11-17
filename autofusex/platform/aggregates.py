@@ -11,7 +11,7 @@ import math
 import sqlite3
 
 # Discrete features that become dimensions of the overview charts.
-GROUPABLE = ("op_category", "dtype", "size_bucket", "dynamic", "source")
+GROUPABLE = ("op_category", "op_display", "dtype", "size_bucket", "dim_bucket", "dynamic", "source")
 RATIO_BINS_PER_OCTAVE = 4
 RATIO_BIN_LIMIT = 24  # +-6 octaves (64x) before clipping
 

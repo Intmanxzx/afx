@@ -139,10 +139,16 @@ def dims(store: Store) -> list:
 
 
 _CASE_COLUMNS = ("case_id, case_key, case_source, case_revision, is_dynamic, shape_count, node_count, op_types, "
-                 "dtypes, max_dim, max_numel, external_ref, first_seen_at, updated_at")
+                 "dtypes, max_dim, max_numel, external_ref, first_seen_at, updated_at, "
+                 "(SELECT group_concat(v.value, ',') FROM case_features f JOIN feature_registry r "
+                 "ON r.feature_id=f.feature_id JOIN feature_values v ON v.value_id=f.value_id "
+                 "WHERE f.case_id=cases.case_id AND r.name='op_display') AS op_display")
 _EXEC_COLUMNS = ("e.exec_id, e.exec_uuid, e.case_revision, e.backend, e.npu_arch, e.user_id, e.client_id, "
                  "e.run_id, e.run_kind, e.function_status, e.fail_stage, e.accuracy_status, e.accuracy_ref, "
-                 "e.max_abs_err, e.max_rel_err, e.compile_ns, e.kernel_ns, e.e2e_ns, e.log_summary, e.created_at")
+                 "e.max_abs_err, e.max_rel_err, e.compile_ns, e.kernel_ns, e.e2e_ns, e.log_summary, e.created_at, "
+                 "(SELECT COALESCE(u.display_name, u.user_id) FROM users u WHERE u.user_id=e.user_id) AS user_name, "
+                 "(SELECT c.display_name FROM clients c WHERE c.client_id=e.client_id) AS client_name, "
+                 "(e.detail_content_id IS NOT NULL) AS has_detail")
 
 
 def case_page(store: Store, *, after: int | None = None, limit: int = 50, backend: str | None = None,
@@ -214,6 +220,11 @@ def execution_detail(store: Store, exec_uuid: str, *, log_limit: int = 64 * 1024
     out["shapes"] = [dict(r) for r in conn.execute(
         "SELECT shape_index, function_status, accuracy_status, max_abs_err, max_rel_err, kernel_ns, e2e_ns "
         "FROM execution_shapes WHERE exec_id=? ORDER BY shape_index", (out["exec_id"],))]
+    detail_id = conn.execute("SELECT detail_content_id FROM executions WHERE exec_id=?",
+                             (out["exec_id"],)).fetchone()[0]
+    if detail_id is not None:
+        data = get_content(conn, detail_id)
+        out["detail"] = json.loads(data) if data is not None else None
     log_id = out.pop("log_content_id")
     if log_id is not None:
         data = get_content(conn, log_id)
@@ -225,10 +236,43 @@ def execution_detail(store: Store, exec_uuid: str, *, log_limit: int = 64 * 1024
     return out
 
 
+def case_history(store: Store, case_key: str, *, after=None, limit: int = 50) -> dict:
+    """Every execution of one case, newest first, cursor = exec_id of the last row."""
+    if not 1 <= limit <= 200:
+        raise QueryError("limit must be 1..200")
+    conn = store.reader()
+    case = conn.execute(f"SELECT {_CASE_COLUMNS} FROM cases WHERE case_key=?", (case_key,)).fetchone()
+    if case is None:
+        raise QueryError("case not found")
+    case = dict(case)
+    rows = [dict(r) for r in conn.execute(
+        f"SELECT {_EXEC_COLUMNS} FROM executions e WHERE e.case_id=? AND e.exec_id<? ORDER BY e.exec_id DESC LIMIT ?",
+        (case["case_id"], after if after is not None else 1 << 62, limit))]
+    heads = {r[0] for r in conn.execute("SELECT exec_id FROM execution_heads WHERE case_id=?", (case["case_id"],))}
+    for row in rows:
+        row["is_head"] = row["exec_id"] in heads
+        row["stale_graph"] = row["case_revision"] != case["case_revision"]
+    total = conn.execute("SELECT COUNT(*) FROM executions WHERE case_id=?", (case["case_id"],)).fetchone()[0]
+    return {"case": case, "executions": rows, "total": total,
+            "next_cursor": rows[-1]["exec_id"] if len(rows) == limit else None}
+
+
+def case_spec(store: Store, case_key: str) -> dict:
+    """Graph metadata saved with the case (nodes with display names, shape variants, weights)."""
+    conn = store.reader()
+    row = conn.execute("SELECT spec_content_id FROM cases WHERE case_key=?", (case_key,)).fetchone()
+    if row is None:
+        raise QueryError("case not found")
+    if row[0] is None:
+        return {}
+    data = get_content(conn, row[0])
+    return json.loads(data) if data is not None else {}
+
+
 def clients(store: Store) -> list:
     return [dict(row) for row in store.reader().execute(
-        "SELECT client_id, user_id, machine_id, hostname, npu_arch, afx_version, first_seen_at, last_seen_at "
-        "FROM clients ORDER BY last_seen_at DESC")]
+        "SELECT client_id, user_id, machine_id, display_name, hostname, npu_arch, afx_version, first_seen_at, "
+        "last_seen_at FROM clients ORDER BY last_seen_at DESC")]
 
 
 def settings(store: Store) -> dict:

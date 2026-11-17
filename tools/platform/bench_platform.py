@@ -10,6 +10,14 @@ usage: python tools/platform/bench_platform.py DATA_DIR --cases 1000000
 """
 from __future__ import annotations
 
+def _short(n):
+    digits, alphabet = "", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    while n:
+        n, d = divmod(n, 36)
+        digits = alphabet[d] + digits
+    return "E" + (digits or "0").zfill(26)
+
+
 import argparse
 import json
 import random
@@ -35,7 +43,7 @@ ALPHABET = string.digits + string.ascii_lowercase
 
 
 def seed(rng: random.Random) -> str:
-    return str(10 * 2**160 + rng.getrandbits(150))
+    return _short(rng.getrandbits(128))
 
 
 def make_items(rng: random.Random, start: int, count: int):

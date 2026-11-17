@@ -13,6 +13,7 @@ from .store import Store, canonical_json, now_ms, put_content
 MAX_ITEMS = 500
 MAX_LOG_BYTES = 256 * 1024
 MAX_SPEC_BYTES = 512 * 1024
+MAX_DETAIL_BYTES = 1024 * 1024
 MAX_SUMMARY = 512
 MAX_SHAPES = 8
 
@@ -27,7 +28,7 @@ ENV_FIELDS = ("cann", "python", "torch", "torch_npu", "backend_version", "afx", 
 NUMERIC_FEATURES = ("node_count", "max_numel", "max_dim", "shape_count")
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
-_SEED = re.compile(r"^[1-9][0-9]{19,59}$")
+_SEED = re.compile(r"^[EF][0-9A-Z]{26}$")  # Seed.short: E static / F dynamic + base36 entropy
 _KEY_PREFIX = {"baize_tf": "B:", "baize_torch": "B:", "model": "M:"}
 _TEXT = re.compile(r"^[^\x00-\x08\x0b\x0c\x0e-\x1f]*$")
 
@@ -101,7 +102,7 @@ def validate_case(case) -> dict:
     key = _str(case, "case_key", limit=256)
     if source == "nnsmith":
         if not _SEED.match(key):
-            raise UploadError("invalid", "nnsmith case_key must be a decimal seed")
+            raise UploadError("invalid", "nnsmith case_key must be a short seed (E/F + 26 base36 chars)")
     elif not key.startswith(_KEY_PREFIX[source]) or len(key) < 3:
         raise UploadError("invalid", f"{source} case_key must start with {_KEY_PREFIX[source]}")
     fingerprint = _str(case, "graph_fingerprint", required=source != "nnsmith", limit=64,
@@ -176,7 +177,12 @@ def validate_item(item) -> dict:
     arch = _str(item, "npu_arch", required=False, limit=32) or ""
     if backend == "cpu":
         arch = ""
+    detail = item.get("detail")
+    detail_bytes = canonical_json(detail) if detail is not None else None
+    if detail is not None and (not isinstance(detail, dict) or len(detail_bytes) > MAX_DETAIL_BYTES):
+        raise UploadError("too_large", "detail must be an object of at most 1 MiB")
     return {
+        "detail": detail_bytes,
         "exec_uuid": _str(item, "exec_uuid", limit=64, pattern=re.compile(r"^[A-Za-z0-9_-]{8,64}$")),
         "case": validate_case(item.get("case")),
         "backend": backend, "npu_arch": arch, "env": env,
@@ -383,6 +389,8 @@ class Ingestor:
         labels["dynamic"] = ["dynamic" if case["is_dynamic"] else "static"]
         if case["max_numel"] is not None:
             labels["size_bucket"] = [size_bucket(case["max_numel"])]
+        if case["max_dim"] is not None:
+            labels["dim_bucket"] = [dim_bucket(case["max_dim"])]
         for name, values_ in labels.items():
             feature_id = self._feature(conn, name, "discrete")
             for value in values_:
@@ -417,6 +425,7 @@ class Ingestor:
             return ("duplicate" if existing[0] == item["content_hash"] else "conflict"), False
         case_id, revision, current = self._case(conn, item["case"], tie)
         log_id = put_content(conn, item["log"]) if item["log"] else None
+        detail_id = put_content(conn, item["detail"]) if item["detail"] else None
         exec_id = conn.execute(
             "INSERT INTO executions(exec_uuid, content_hash, case_id, case_revision, backend, npu_arch, user_id, "
             "client_id, run_id, run_kind, env_id, function_status, fail_stage, accuracy_status, accuracy_ref, "
@@ -427,6 +436,8 @@ class Ingestor:
              item["accuracy_status"], item["accuracy_ref"], item["max_abs_err"], item["max_rel_err"],
              item["compile_ns"], item["kernel_ns"], item["e2e_ns"], item["log_summary"], log_id,
              item["created_at"], now_ms())).lastrowid
+        if detail_id is not None:
+            conn.execute("UPDATE executions SET detail_content_id=? WHERE exec_id=?", (detail_id, exec_id))
         if item["shapes"]:
             conn.executemany(
                 "INSERT INTO execution_shapes VALUES(?,?,?,?,?,?,?,?)",
@@ -466,7 +477,17 @@ class Ingestor:
 
 
 def upsert_client(conn, user_id: str, client: dict) -> int:
+    """Clients get a stable display name '<user display name>-npu<N>' in order of first appearance."""
     now = now_ms()
+    exists = conn.execute("SELECT client_id FROM clients WHERE user_id=? AND machine_id=?",
+                          (user_id, client["machine_id"])).fetchone()
+    if exists is None:
+        ordinal = conn.execute("SELECT COALESCE(MAX(ordinal)+1, 0) FROM clients WHERE user_id=?",
+                               (user_id,)).fetchone()[0]
+        user = conn.execute("SELECT COALESCE(display_name, user_id) FROM users WHERE user_id=?", (user_id,)).fetchone()
+        conn.execute("INSERT INTO clients(user_id, machine_id, first_seen_at, last_seen_at, ordinal, display_name) "
+                     "VALUES(?,?,?,?,?,?)", (user_id, client["machine_id"], now, now, ordinal,
+                                             f"{user[0] if user else user_id}-npu{ordinal}"))
     conn.execute(
         "INSERT INTO clients(user_id, machine_id, hostname, npu_arch, afx_version, first_seen_at, last_seen_at) "
         "VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id, machine_id) DO UPDATE SET "
@@ -476,6 +497,13 @@ def upsert_client(conn, user_id: str, client: dict) -> int:
          now, now))
     return conn.execute("SELECT client_id FROM clients WHERE user_id=? AND machine_id=?",
                         (user_id, client["machine_id"])).fetchone()[0]
+
+
+def dim_bucket(dim: int) -> str:
+    for limit in (8, 64, 512, 4096, 32768):
+        if dim <= limit:
+            return f"<={limit}"
+    return ">32768"
 
 
 def size_bucket(numel: int) -> str:

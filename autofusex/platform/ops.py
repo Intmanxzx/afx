@@ -5,6 +5,7 @@ into one row per client per hour and expired after ROLLUP_DAYS.
 """
 from __future__ import annotations
 
+import json
 import re
 
 from .auth import Principal
@@ -36,10 +37,18 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
     if not isinstance(counters, dict) or set(counters) - set(COUNTERS) or not all(
             isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10**7 for v in counters.values()):
         raise IssueError("invalid", f"counters must map {', '.join(COUNTERS)} to non-negative integers")
+    runtime = body.get("runtime")
+    if runtime is not None and (not isinstance(runtime, list) or len(runtime) > 32 or not all(
+            isinstance(r, dict) for r in runtime) or len(json.dumps(runtime)) > 128 * 1024):
+        raise IssueError("invalid", "runtime must be a list of at most 32 run snapshots (128 KiB)")
+    windows = body.get("windows") or []
+    if not isinstance(windows, list) or len(windows) > 20 or not all(
+            isinstance(w, dict) and isinstance(w.get("window_id"), str) and 1 <= len(w["window_id"]) <= 64
+            and isinstance(w.get("rows"), list) for w in windows) or len(json.dumps(windows)) > 512 * 1024:
+        raise IssueError("invalid", "windows must list at most 20 {window_id, rows} (512 KiB)")
     pending = body.get("pending_uploads")
     if pending is not None and (isinstance(pending, bool) or not isinstance(pending, int) or pending < 0):
         raise IssueError("invalid", "pending_uploads must be a non-negative integer")
-    import json
     from .ingest import upsert_client
     now = now_ms()
     with store.write() as conn:
@@ -50,6 +59,19 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
                      "busy=?, pending_uploads=? WHERE client_id=?",
                      (json.dumps(versions, sort_keys=True) if versions else None, now, int(bool(body.get("busy"))),
                       pending, client_id))
+        if runtime is not None:
+            conn.execute("UPDATE clients SET runtime=?, runtime_at=? WHERE client_id=?",
+                         (json.dumps(runtime), now, client_id))
+        accepted = []
+        for window in windows:
+            conn.execute("INSERT OR REPLACE INTO efficiency_windows VALUES(?,?,?,?)",
+                         (client_id, window["window_id"], now, json.dumps(window["rows"])))
+            accepted.append(window["window_id"])
+        if accepted:
+            # keep the most recent 100 windows per client
+            conn.execute("DELETE FROM efficiency_windows WHERE client_id=? AND window_id NOT IN (SELECT window_id "
+                         "FROM efficiency_windows WHERE client_id=? ORDER BY received_at DESC LIMIT 100)",
+                         (client_id, client_id))
         if any(counters.values()):
             hour = now // 3_600_000
             values = [counters.get(name, 0) for name in COUNTERS]
@@ -67,7 +89,7 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                          (now, principal.user_id, "client.updated", f"client {client_id} -> {target}"))
             target = None
-    return {"client_id": client_id, "update_to": target, "server_time": now}
+    return {"client_id": client_id, "update_to": target, "server_time": now, "windows_accepted": accepted}
 
 
 def request_update(store: Store, principal: Principal, body: dict):
@@ -96,12 +118,13 @@ def summary(store: Store) -> dict:
     hour = now // 3_600_000
     clients = []
     for row in conn.execute(
-            "SELECT client_id, user_id, machine_id, hostname, npu_arch, afx_version, backend_versions, "
-            "target_afx_version, last_heartbeat_at, last_seen_at, busy, pending_uploads FROM clients "
+            "SELECT client_id, user_id, machine_id, display_name, hostname, npu_arch, afx_version, backend_versions, "
+            "target_afx_version, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at "
+            "FROM clients "
             "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
         item = dict(row)
-        import json
         item["backend_versions"] = json.loads(item["backend_versions"]) if item["backend_versions"] else {}
+        item["runtime"] = json.loads(item["runtime"]) if item["runtime"] else []
         seen = max(item["last_heartbeat_at"] or 0, item["last_seen_at"] or 0)
         item["online"] = now - seen <= ONLINE_MS
         totals = conn.execute(
@@ -125,6 +148,23 @@ def summary(store: Store) -> dict:
         "retest_queue": queue, "db_bytes": sizes, "latest_afx_version": latest,
         "clients": clients, "hourly": series,
     }
+
+
+def efficiency(store: Store, client_id=None, limit: int = 100) -> dict:
+    """Finished stage windows reported by clients (same rows the old tool-efficiency page used)."""
+    conn = store.reader()
+    sql = ("SELECT w.client_id, c.display_name, w.window_id, w.received_at, w.payload FROM efficiency_windows w "
+           "JOIN clients c ON c.client_id=w.client_id")
+    args = []
+    if client_id is not None:
+        sql += " WHERE w.client_id=?"
+        args.append(client_id)
+    windows = []
+    for row in conn.execute(sql + " ORDER BY w.received_at DESC LIMIT ?", args + [min(limit, 200)]):
+        windows.append({"client_id": row["client_id"], "client_name": row["display_name"],
+                        "window_id": row["window_id"], "received_at": row["received_at"],
+                        "rows": json.loads(row["payload"])})
+    return {"windows": windows}
 
 
 def _version_key(version: str):

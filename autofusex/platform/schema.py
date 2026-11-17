@@ -419,6 +419,21 @@ CREATE TABLE model_reports(
   PRIMARY KEY(job_id, metric)
 ) WITHOUT ROWID;
 """),
+    (4, """
+ALTER TABLE clients ADD COLUMN ordinal INTEGER;
+ALTER TABLE clients ADD COLUMN display_name TEXT;
+ALTER TABLE clients ADD COLUMN runtime TEXT;
+ALTER TABLE clients ADD COLUMN runtime_at INTEGER;
+ALTER TABLE executions ADD COLUMN detail_content_id INTEGER;
+CREATE TABLE efficiency_windows(
+  client_id INTEGER NOT NULL,
+  window_id TEXT NOT NULL,
+  received_at INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY(client_id, window_id)
+) WITHOUT ROWID;
+CREATE INDEX efficiency_windows_time ON efficiency_windows(received_at);
+"""),
 ]
 
 CONTENT = [

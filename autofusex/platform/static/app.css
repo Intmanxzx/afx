@@ -142,7 +142,8 @@ tr:hover .row-actions, .touch .row-actions { visibility: visible; }
 .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 100%); background: var(--panel); border-left: 1px solid var(--line); z-index: 50; overflow-y: auto; padding: 18px 20px; box-shadow: -8px 0 30px rgba(0,0,0,.15); }
 .drawer .close { float: right; }
 .drawer h3 { margin: 18px 0 8px; font-size: 14px; }
-.kv { display: grid; grid-template-columns: 130px 1fr; gap: 4px 12px; font-size: 13px; }
+.kv { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 4px 12px; font-size: 13px; }
+.kv > div { overflow-wrap: anywhere; }
 .kv div:nth-child(odd) { color: var(--muted); }
 pre.log { background: var(--panel-2); padding: 10px; border-radius: 8px; overflow: auto; max-height: 360px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 .timeline { list-style: none; padding: 0; margin: 0; font-size: 12px; }
@@ -175,3 +176,44 @@ canvas.scatter { width: 100%; height: 480px; border: 1px solid var(--line); bord
   .hbar { grid-template-columns: 90px 1fr 54px; }
   .chart-grid { grid-template-columns: 1fr; }
 }
+
+/* case DAG (ported) */
+.dag-scroll { overflow: auto; max-height: 640px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.dag-scroll svg { display: block; max-width: none; }
+.dag-node rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.dag-node.input rect { fill: var(--ok-soft); }
+.dag-node.weight rect { fill: var(--warn-soft); }
+.dag-node:focus { outline: none; }
+.dag-node:focus rect, .dag-node:hover rect { stroke: var(--accent); stroke-width: 2.5; }
+.dag-edge { fill: none; stroke: var(--tie); stroke-width: 1.5; }
+.dag-arrowhead { fill: var(--tie); }
+.dag-node text { fill: var(--text); font-family: var(--mono); font-size: 12px; }
+.dag-node .dag-op { font-size: 14px; font-weight: 650; }
+.dag-node .dag-name, .dag-node .dag-tensor { fill: var(--muted); }
+
+/* stage timeline (ported) */
+.stage-lanes { min-width: 650px; margin-top: 12px; }
+.stage-lane { display: flex; align-items: center; gap: 12px; margin: 6px 0; font-size: 12px; }
+.stage-lane > span { width: 220px; flex: none; color: var(--muted); }
+.stage-track { position: relative; flex: 1; height: 16px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+.stage-track > span { position: absolute; height: 100%; min-width: 1px; }
+.stage-dependency { background: var(--tie); opacity: .5; }
+.stage-resource { background: var(--warn); }
+.stage-running { background: var(--ok); }
+.stage-failed { background: var(--bad); }
+
+/* field tooltip (ported) */
+.field-tooltip { position: fixed; z-index: 90; max-width: min(560px, calc(100vw - 16px)); max-height: 50vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  background: var(--text); color: var(--bg); font-size: 12px; padding: 8px 10px; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.25); pointer-events: auto; }
+
+/* donut + fleet */
+.donut-wrap { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.fleet-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+.fleet-card h3 { margin: 0 0 6px; font-size: 14px; }
+.device-dots { display: flex; gap: 6px; flex-wrap: wrap; }
+.device-dot { padding: 1px 8px; border-radius: 10px; font-size: 11px; background: var(--panel-2); color: var(--muted); }
+.device-dot.busy { background: var(--ok-soft); color: var(--ok); }
+
+.chart.wide { grid-column: 1 / -1; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+svg text.donut-center { fill: var(--text); font-size: 16px; font-weight: 700; }

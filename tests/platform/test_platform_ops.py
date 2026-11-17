@@ -2,6 +2,14 @@ import http.client as httpclient
 import json
 import threading
 
+def _short(n):
+    digits, alphabet = "", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    while n:
+        n, d = divmod(n, 36)
+        digits = alphabet[d] + digits
+    return "E" + (digits or "0").zfill(26)
+
+
 import pytest
 
 from autofusex.platform import auth, ops, profile, queries, retests, search
@@ -15,7 +23,7 @@ ENV = {"cann": "8.2", "backend_version": "0.3.0"}
 
 
 def seed(n):
-    return str(10 * 2**160 + n)
+    return _short(n)
 
 
 def item(uuid, n, backend="af-mlir", status="pass", accuracy="pass", kernel=None, category="reduce", op="aten.sum.dim_IntList"):
@@ -276,3 +284,39 @@ def test_reads_are_public_writes_need_login(world):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_display_names_history_spec_and_windows(tmp_path):
+    store = Store(tmp_path / "data")
+    auth.add_user(store, "dev", "developer", "张三")
+    client = auth.authenticate(store, "Bearer " + auth.issue_token(store, "dev", "client"))
+    spec = {"graph": {"nodes": [{"op": "aten.add.Tensor", "display_name": "add", "inputs": ["x"], "outputs": ["y"]}],
+                      "outputs": ["y"]}, "input_shapes": {"x": [2, 3]}, "input_dtypes": {"x": "float16"}, "weights": []}
+    ingestor = Ingestor(store)
+    for i, machine in enumerate(("m-a", "m-b", "m-a")):
+        it = item(f"exec-h{i:04d}", 7)
+        it["case"]["spec"] = spec
+        it["case"]["features"]["op_display"] = ["add"]
+        it["created_at"] = 1000 + i
+        it["detail"] = {"diagnostic_view": {"shape_log": "ascir text"}, "stage_timeline": []}
+        body = {"request_key": f"r{i}", "client": {"machine_id": machine}, "run": {"run_uuid": f"run-000{i}", "kind": "fuzz"},
+                "items": [it]}
+        ingestor.upload(client, body, json.dumps(body).encode())
+    names = sorted(c["display_name"] for c in queries.clients(store))
+    assert names == ["张三-npu0", "张三-npu1"]
+    history = queries.case_history(store, seed(7), limit=2)
+    assert history["total"] == 3 and len(history["executions"]) == 2 and history["next_cursor"]
+    assert history["executions"][0]["user_name"] == "张三" and history["executions"][0]["client_name"] == "张三-npu0"
+    rest = queries.case_history(store, seed(7), limit=2, after=history["next_cursor"])
+    assert len(rest["executions"]) == 1 and rest["next_cursor"] is None
+    assert queries.case_spec(store, seed(7))["graph"]["nodes"][0]["display_name"] == "add"
+    assert queries.execution_detail(store, "exec-h0002")["detail"]["diagnostic_view"]["shape_log"] == "ascir text"
+    assert queries.case_page(store, q="op:add")["groups"][0]["case"]["op_display"] == "add"
+    assert queries.case_page(store, q=seed(7)[:10])["groups"][0]["case"]["case_key"] == seed(7)
+    reply = ops.heartbeat(store, client, {"machine_id": "m-a", "runtime": [{"run_id": "r1", "state": "running", "elapsed": 60, "completed": 6}],
+                                          "windows": [{"window_id": "w1", "rows": [{"backend": "af-mlir", "window_seconds": 60}]}]})
+    assert reply["windows_accepted"] == ["w1"]
+    summary = ops.summary(store)
+    a = next(c for c in summary["clients"] if c["display_name"] == "张三-npu0")
+    assert a["runtime"][0]["run_id"] == "r1"
+    assert ops.efficiency(store)["windows"][0]["client_name"] == "张三-npu0"

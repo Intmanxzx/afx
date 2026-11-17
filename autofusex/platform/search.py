@@ -21,8 +21,8 @@ MAX_VALUES = 50
 TIMEOUT_SECONDS = 2.0
 
 HEAD_FIELDS = {"backend": "e.backend", "arch": "e.npu_arch", "user": "e.user_id", "stage": "e.fail_stage"}
-FEATURE_FIELDS = {"op": "op", "dtype": "dtype", "category": "op_category", "source": "source",
-                  "dynamic": "dynamic", "size": "size_bucket"}
+FEATURE_FIELDS = {"op": ("op", "op_display"), "dtype": ("dtype",), "category": ("op_category",),
+                  "source": ("source",), "dynamic": ("dynamic",), "size": ("size_bucket",), "dim": ("dim_bucket",)}
 STATUS = {
     "pass": "(e.function_status='pass' AND COALESCE(e.accuracy_status,'')<>'fail')",
     "fail": "(e.function_status NOT IN ('pass','unsupported') OR e.accuracy_status='fail')",
@@ -73,10 +73,9 @@ def parse(text: str | None) -> Query | None:
         raise SearchError(f"at most {MAX_TERMS} terms")
     query = Query(text=text.strip())
     for position, term in enumerate(terms):
-        if term.isdigit():
-            if len(term) < 4 or len(term) > 60:
-                raise SearchError("case number prefix must be 4..60 digits")
-            query.case.append(("c.case_key >= ? AND c.case_key < ?", [term, term[:-1] + chr(ord(term[-1]) + 1)]))
+        if re.fullmatch(r"[EFef][0-9A-Za-z]{3,26}", term) or re.fullmatch(r"[BM]:\S{1,200}", term):
+            prefix = term if term[1] == ":" else term.upper()
+            query.case.append(("c.case_key >= ? AND c.case_key < ?", [prefix, prefix + "\uffff"]))
             continue
         match = _TERM.match(term)
         if not match:
@@ -101,10 +100,11 @@ def parse(text: str | None) -> Query | None:
         elif name in HEAD_FIELDS:
             query.head.append((f"{HEAD_FIELDS[name]} {'NOT ' if negate else ''}IN ({marks})", values))
         elif name in FEATURE_FIELDS:
+            names = FEATURE_FIELDS[name]
             sql = ("EXISTS (SELECT 1 FROM case_features f JOIN feature_registry r ON r.feature_id=f.feature_id "
-                   "JOIN feature_values v ON v.value_id=f.value_id WHERE f.case_id=c.case_id AND r.name=? "
-                   f"AND v.value IN ({marks}))")
-            query.case.append(((f"NOT {sql}" if negate else sql), [FEATURE_FIELDS[name], *values]))
+                   "JOIN feature_values v ON v.value_id=f.value_id WHERE f.case_id=c.case_id "
+                   f"AND r.name IN ({','.join('?' * len(names))}) AND v.value IN ({marks}))")
+            query.case.append(((f"NOT {sql}" if negate else sql), [*names, *values]))
         elif name == "case":
             query.case.append(("c.case_key " + ("<>" if negate else "=") + " ?", [values[0]]))
         else:

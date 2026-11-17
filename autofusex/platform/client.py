@@ -30,6 +30,7 @@ from pathlib import Path
 log = logging.getLogger("afx.platform.client")
 
 BATCH = 100
+UPLOAD_BUDGET = 1500 * 1024  # stay below the proxy's 2 MiB request limit
 MAX_LOG = 200 * 1024
 AF_BACKENDS = ("af-mlir", "af-legacy")
 _STAGE = re.compile(r"[^a-z0-9_.-]+")
@@ -120,21 +121,31 @@ def nnsmith_version() -> str | None:
 
 
 def case_payload(case_spec_json: str, seed: str) -> dict:
-    """Case description from the stored CaseSpec; never re-generates the graph."""
+    """Case description from the stored CaseSpec; never re-generates the graph.
+
+    The case key is the short seed (E/F + base36), the same identity `afx fuzz replay` and
+    the old pages use. `spec` is the old reporting metadata: graph nodes with operator
+    display names, shape variants and weights, used to draw the case DAG.
+    """
     from autofusex.fuzz.client.case_spec import decode
+    from autofusex.fuzz.client.contracts import Seed
     from autofusex.fuzz.client.generation.categories import categories
+    from autofusex.fuzz.server.reporting.report import spec_metadata
     spec = decode(case_spec_json)
-    graph = json.loads(spec.graph_json)
+    metadata = spec_metadata(spec)
+    graph = metadata["graph"]
     ops = sorted({node["op"] for node in graph.get("nodes", [])})
     samples = spec.shape_samples or (spec.inputs,)
     tensors = [t for sample in samples for t in sample] + list(spec.weights)
     dtypes = sorted({t.dtype for t in (*spec.inputs, *spec.weights)})
     max_dim = max((d for t in tensors for d in t.shape), default=1)
     max_numel = max((_numel(t.shape) for t in tensors), default=1)
-    return {"case_key": seed, "case_source": "nnsmith", "is_dynamic": spec.seed.dynamic,
+    display = sorted({str(name)[:64] for name in metadata["op_types"] if name})
+    return {"case_key": Seed.parse(seed).short, "case_source": "nnsmith", "is_dynamic": spec.seed.dynamic,
             "shape_count": max(1, len(spec.shape_samples) or 1), "node_count": len(graph.get("nodes", [])),
             "op_types": [op[:64] for op in ops][:256], "dtypes": dtypes, "max_dim": max_dim, "max_numel": max_numel,
-            "features": {"op_category": [c.lower() for c in categories(spec)]}}
+            "features": {"op_category": [c.lower() for c in categories(spec)], "op_display": display[:256]},
+            "spec": metadata}
 
 
 def _numel(shape) -> int:
@@ -212,8 +223,22 @@ def function_status(backend, status, stage, summary, diagnostics, index):
     return "runtime_fail", _STAGE.sub("_", (stage or "unknown").lower())[:32] or "unknown", None
 
 
+DETAIL_BUDGET = 700 * 1024
+
+
+def _cap_strings(value, limit):
+    if isinstance(value, str):
+        return value if len(value) <= limit else value[:limit] + "\n…[truncated]"
+    if isinstance(value, dict):
+        return {k: _cap_strings(v, limit) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cap_strings(v, limit) for v in value]
+    return value
+
+
 class Mapper:
     def __init__(self, results_db: str):
+        self.path = results_db
         self.conn = sqlite3.connect(f"file:{results_db}?mode=ro", uri=True, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self._contexts: dict = {}
@@ -228,6 +253,32 @@ class Mapper:
                 self._contexts.clear()
             self._contexts[context_id] = cached
         return cached
+
+    def detail(self, attempt_id: str):
+        """The same per-attempt view the old detail page rendered (ResultQueries.detail), trimmed:
+        case metadata goes with the case, and long texts are capped so one item stays < 1 MiB."""
+        from autofusex.fuzz.client.failure_details import diagnostic_view
+        from autofusex.fuzz.client.storage.queries import ResultQueries
+        try:
+            result = ResultQueries(self.path).detail(attempt_id)
+        except Exception as exc:  # detail is best effort; the execution itself still uploads
+            log.warning("detail for %s unavailable: %s", attempt_id, exc)
+            return None
+        result.pop("metadata", None)
+        execution = result.get("contexts", {}).get("execution", {})
+        execution.pop("case_spec", None)
+        diagnostics = _diagnostics(execution.get("diagnostics"))
+        result["shape_views"] = {
+            str(s["shape_index"]): diagnostic_view(diagnostics, s["shape_index"], s.get("error_summary") or "")
+            for s in result.get("shape_results", [])[:8]}
+        encoded = json.dumps(result, default=str)
+        if len(encoded) > DETAIL_BUDGET:
+            execution["diagnostics"] = None
+            result = _cap_strings(result, 64 * 1024)
+            encoded = json.dumps(result, default=str)
+            if len(encoded) > DETAIL_BUDGET:
+                result = _cap_strings(result, 8 * 1024)
+        return json.loads(json.dumps(result, default=str))
 
     def attempts_after(self, rowid: int, limit: int = BATCH):
         return self.conn.execute("SELECT rowid, * FROM attempts WHERE rowid>? ORDER BY rowid LIMIT ?",
@@ -299,6 +350,7 @@ class Mapper:
         }
         if item["log"] and len(item["log"].encode()) > MAX_LOG:
             item["log"] = item["log"].encode()[:MAX_LOG].decode(errors="ignore")
+        item["detail"] = self.detail(attempt["id"])
         run = {"run_uuid": (execution.get("batch_id") or "local")[:64], "kind": "fuzz"}
         return item, {"machine_id": environment.get("installation_id") or socket.gethostname(),
                       "npu_arch": environment.get("device_model"), "afx_version": environment.get("package_version"),
@@ -312,6 +364,7 @@ class State:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("CREATE TABLE IF NOT EXISTS progress(key TEXT PRIMARY KEY, value INTEGER NOT NULL)")
         self.conn.execute("CREATE TABLE IF NOT EXISTS rejected(attempt_id TEXT PRIMARY KEY, reason TEXT, at INTEGER)")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS sent_windows(window_id TEXT PRIMARY KEY, at INTEGER)")
 
     def get(self, key, default=0) -> int:
         row = self.conn.execute("SELECT value FROM progress WHERE key=?", (key,)).fetchone()
@@ -367,7 +420,19 @@ def upload_new(api: API, mapper: Mapper, state: State, counters: Counters, *, ke
                 continue
             run = run_override or info["run"]
             groups.setdefault((run["run_uuid"], run["kind"], info["machine_id"]), (run, info, []))[2].append(item)
-        for (run_uuid, kind, machine), (run, info, items) in groups.items():
+        batches = []
+        for key, (run, info, items) in groups.items():
+            chunk, size = [], 0
+            for entry in items:
+                entry_size = len(json.dumps(entry, default=str))
+                if chunk and size + entry_size > UPLOAD_BUDGET:
+                    batches.append((key, run, info, chunk))
+                    chunk, size = [], 0
+                chunk.append(entry)
+                size += entry_size
+            if chunk:
+                batches.append((key, run, info, chunk))
+        for (run_uuid, kind, machine), run, info, items in batches:
             body = {"request_key": key_prefix + ":" + hashlib.sha256(
                         "|".join(sorted(i["exec_uuid"] for i in items)).encode()).hexdigest()[:40],
                     "client": {"machine_id": machine[:128], "hostname": socket.gethostname()[:128],
@@ -467,17 +532,70 @@ class Client:
             mapper = Mapper(self.results_db)
             pending = mapper.conn.execute("SELECT COUNT(*) FROM attempts WHERE rowid>?",
                                           (self.state.get("fuzz:cursor"),)).fetchone()[0]
+        windows = self.unsent_windows()
         body = {"machine_id": (env.get("installation_id") or socket.gethostname())[:128],
                 "hostname": socket.gethostname()[:128], "npu_arch": env.get("device_model"),
                 "afx_version": env.get("package_version"),
                 "backend_versions": {"af-mlir": env.get("cann"), "triton-npu": env.get("triton"),
                                      "cpu": env.get("torch")},
-                "counters": counters, "busy": self.busy, "pending_uploads": pending}
+                "counters": counters, "busy": self.busy, "pending_uploads": pending,
+                "runtime": self.runtime_snapshots(), "windows": windows}
         try:
-            return self.api.call("POST", "/api/client/heartbeat", body)
+            reply = self.api.call("POST", "/api/client/heartbeat", body)
         except Exception:
             self.counters.restore(counters)
             raise
+        now = int(time.time())
+        self.state.conn.executemany("INSERT OR IGNORE INTO sent_windows VALUES(?,?)",
+                                    [(w, now) for w in reply.get("windows_accepted", [])])
+        return reply
+
+    def home(self) -> Path:
+        return Path(os.environ.get("AUTOFUSEX_HOME") or Path(self.results_db).resolve().parent.parent)
+
+    def runtime_snapshots(self) -> list:
+        """Live run samples the fuzz scheduler publishes in HOME/runtime (the old fleet view's source)."""
+        try:
+            from autofusex.fuzz.client.runtime import boot_id
+            boot = boot_id()
+        except Exception:
+            return []
+        now, runs = time.monotonic(), []
+        paths = sorted((self.home() / "runtime").glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in paths[:64]:
+            try:
+                saved = json.loads(path.read_text())
+                age = now - saved["monotonic"]
+                if saved["boot"] != boot or age < 0 or age > 86400:
+                    continue
+                runs.append(dict(saved["sample"], age=age))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if len(runs) >= 32:
+                break
+        return runs
+
+    def unsent_windows(self, limit: int = 10) -> list:
+        """Finished stage-window aggregates (tool efficiency) not yet acknowledged by the server."""
+        if not Path(self.results_db).exists():
+            return []
+        mapper = Mapper(self.results_db)
+        if not mapper.conn.execute("SELECT 1 FROM sqlite_master WHERE name='stage_window_aggregates_v1'").fetchone():
+            return []
+        sent = {r[0] for r in self.state.conn.execute("SELECT window_id FROM sent_windows")}
+        out = []
+        for window_id, payload in mapper.conn.execute(
+                "SELECT window_id, payload FROM stage_window_aggregates_v1 ORDER BY rowid DESC LIMIT 200"):
+            if window_id in sent:
+                continue
+            try:
+                rows = json.loads(payload)
+            except ValueError:
+                continue
+            out.append({"window_id": window_id[:64], "rows": rows if isinstance(rows, list) else [rows]})
+            if len(out) >= limit or len(json.dumps(out)) > 400 * 1024:
+                break
+        return out
 
     def retest_once(self) -> int:
         """Claim and run retest tasks this client can serve. Returns the number of tasks finished."""
@@ -514,8 +632,9 @@ class Client:
             if done.returncode not in (0, 1):
                 log.warning("replay %s exited %s: %s", task["case_key"], done.returncode, done.stderr[-2000:])
         mapper = Mapper(self.retest_db)
+        from autofusex.fuzz.client.contracts import Seed
         ids = [r[0] for r in mapper.conn.execute(
-            "SELECT id FROM attempts WHERE rowid>? AND seed=?", (mapper_before, task["case_key"]))]
+            "SELECT id FROM attempts WHERE rowid>? AND seed=?", (mapper_before, str(Seed.parse(task["case_key"]))))]
         if not ids:
             log.warning("task %s produced no results", task["task_id"])
             return
