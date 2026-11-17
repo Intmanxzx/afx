@@ -651,6 +651,12 @@ class Client:
         self.counters.add("retests")
 
     def run(self, *, retest: bool) -> None:
+        # Ask the fuzz scheduler in this home to publish run snapshots for the fleet view.
+        try:
+            marker = self.home() / "platform-client.json"
+            marker.write_text(json.dumps({"endpoint": self.api.endpoint, "pid": os.getpid()}))
+        except OSError as exc:
+            log.warning("cannot write %s: %s", marker, exc)
         last_beat = 0.0
         while not self.stop.is_set():
             try:

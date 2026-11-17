@@ -49,7 +49,8 @@ class Reporter:
         self.home=Path(home);self.identity=str(uuid.uuid4());self.path=self.home/'runtime'/f'{self.identity}.json'
         self.devices=devices;self.start=time.monotonic();self.last=0;self.sequence=0
         self.completed=0;self.success=0;self.case_errors=0;self.backends=set()
-        self.enabled=(self.home/'sync.json').is_file()
+        # Publish run snapshots when either the legacy sync or the platform client reports them.
+        self.enabled=(self.home/'sync.json').is_file() or (self.home/'platform-client.json').is_file()
         self.versions={}
         if self.enabled:
             from .environment import collect
