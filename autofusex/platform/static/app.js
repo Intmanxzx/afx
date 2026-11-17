@@ -237,6 +237,7 @@ function pipelineSvg(data, lanes, columns, link) {
   const W = Math.max(1100, laneStart + columns.length * 120 + endPad), H = top + lanes.length * laneH + 10;
   const colX = i => laneStart + 60 + i * ((W - endPad - laneStart - 60) / Math.max(1, columns.length));
   const th = n => n > 0 ? Math.max(2.5, maxT * n / total) : 0;
+  const pipeT = n => n > 0 ? Math.max(8, th(n)) : 0;  // keep small lanes readable as pipes
   const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", class: "pipe-svg", role: "img", "aria-label": "各后端功能与精度流失管道" });
   const defs = svg("defs");
   root.append(defs);
@@ -264,7 +265,7 @@ function pipelineSvg(data, lanes, columns, link) {
   lanes.forEach((lane, i) => {
     const color = LANE_COLOR[lane.backend] || "var(--accent)";
     const yTop = top + i * laneH + 14;
-    const t0 = th(lane.executed);
+    const t0 = pipeT(lane.executed);
     const gid = "lane-grad-" + i;
     defs.append(svg("linearGradient", { id: gid, x1: 0, x2: 1, y1: 0, y2: 0 },
       svg("stop", { offset: "0%", "stop-color": color, "stop-opacity": 0.55 }), svg("stop", { offset: "100%", "stop-color": color, "stop-opacity": 0.95 })));
@@ -277,16 +278,16 @@ function pipelineSvg(data, lanes, columns, link) {
     // main pipe: top edge flat, bottom edge steps up at each loss
     let remaining = lane.executed, d = `M ${laneStart} ${yTop} L ${W - endPad + 20} ${yTop}`;
     const bottoms = [];
-    let x = laneStart, t = th(remaining);
+    let x = laneStart, t = pipeT(remaining);
     const drops = [];
     columns.forEach((c, ci) => {
       const loss = c.value(lane);
       const cx = colX(ci);
       bottoms.push([x, t], [cx, t]);
       if (loss > 0) {
-        drops.push({ c, ci, cx, loss, yFrom: yTop + th(remaining) - th(loss), t: th(loss) });
+        drops.push({ c, ci, cx, loss, yFrom: yTop + pipeT(remaining) - th(loss), t: th(loss) });
         remaining -= loss;
-        t = th(remaining);
+        t = pipeT(remaining);
         bottoms.push([cx + 26, t]);
         x = cx + 26;
       }
