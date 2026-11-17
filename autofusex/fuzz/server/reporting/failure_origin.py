@@ -7,7 +7,7 @@ Missing/truncated evidence stays unknown; immutable result records are untouched
 import json
 import re
 
-VERSION = 5  # Included in the disposable public-statistics cache identity.
+VERSION = 8  # Included in the disposable public-statistics cache identity.
 AF_BACKENDS = {'af-mlir', 'af-legacy'}
 TORCH_CAUSES = re.compile(
     r'UnsupportedIndexExpr|Unsupported index_expr|unknown SymPy node|'
@@ -38,9 +38,26 @@ def explicit_mlir_results(text):
     return results
 
 
+MLIR_PIPELINE_FAILURE = re.compile(
+    r'\bRunMlirCodegen\b[^\n]*\bfailed\b|'
+    r'\bAF_MLIR_STRICT\s+gate=(?:pipeline-session|lowering|artifact-assembly|exception)\s+'
+    r'shortfall=(?:yes|no|unknown)\b|'
+    r"\berror:\s*['\"][a-zA-Z_]\w*\.\w+['\"]\s+op\b", re.I)
+
+
+def mlir_failed_line(text):
+    for state, line in explicit_mlir_results(text):
+        if state == 'kfailed':
+            return line
+    for line in text.splitlines():
+        if 'Failed to execute graph code:' not in line and MLIR_PIPELINE_FAILURE.search(line):
+            return line
+    return ''
+
+
 def af_failure(evidence):
     lowered = evidence.lower()
-    if any(state == 'kfailed' for state, _ in explicit_mlir_results(evidence)):
+    if mlir_failed_line(evidence):
         return True
     if MLIR_FAILED_GATE.search(evidence):
         return True
@@ -139,9 +156,9 @@ MLIR_FAILED_GATE = re.compile(
 def mlir_failure_evidence(backend, status, stage='', summary='', diagnostics=None, index=-1, shape_count=None):
     """A subcategory of function_failed, never inferred from backend selection.
 
-    Shared stderr is eligible only for a single Shape (or an unshaped attempt).
-    It cannot identify the failed Shape in a multi-Shape attempt. The returned
-    line is a diagnostic, not a claim that all preceding pipeline stages passed.
+    A failure inside MLIR bounds an AF functional failure to MLIR even when
+    stderr is shared by multiple Shapes. Scope preserves the evidence source;
+    it does not claim that the log identifies a particular Shape.
     """
     if classify(backend, status, stage, summary, diagnostics, index) != 'function_failed':
         return {'path': 'not_applicable', 'scope': '', 'evidence': ''}
@@ -156,12 +173,16 @@ def mlir_failure_evidence(backend, status, stage='', summary='', diagnostics=Non
     sources = [('shape', local)]
     # An explicit AF graph-validation failure is not moved into MLIR by stderr
     # from another subgraph in the same invocation.
-    if (not re.search(r'Check dtype failed|Check shape failed', local, re.I) and
-            ((index == -1 and not shapes and shape_count in (None, 0)) or
-             (index >= 0 and shape_count == 1))):
+    if not re.search(r'Check dtype failed|Check shape failed', local, re.I):
         sources.append(('run', diagnostics.get('error', '')))
     from ...client.failure_details import redact
-    # Require a producer verdict from an attributable source.
+    # Any concrete failure inside MLIR is sufficient, regardless of later
+    # successful codegen calls in the same run.
+    for scope, text in sources:
+        line = mlir_failed_line(text)
+        if line:
+            return {'path': 'mlir_failed', 'scope': scope,
+                    'evidence': redact(line.strip())[:1600]}
     explicit = [(scope, state, line) for scope, text in sources
                 for state, line in explicit_mlir_results(text)]
     if explicit:
