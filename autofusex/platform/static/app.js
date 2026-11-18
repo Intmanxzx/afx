@@ -166,13 +166,23 @@ function updateWho() {
 const isAdmin = () => me && me.role === "admin";
 
 // ---------- drawer & action bar ----------
+let drawerOutsideHandler = null;
 function openDrawer(...children) {
   const d = $("#drawer");
   d.replaceChildren(el("button", { class: "close", onclick: closeDrawer }, "关闭"), ...children);
   d.classList.remove("hidden");
   d.scrollTop = 0;
+  if (drawerOutsideHandler) document.removeEventListener("click", drawerOutsideHandler);
+  // Registered next tick so the click that opened the drawer doesn't immediately close it.
+  setTimeout(() => {
+    drawerOutsideHandler = e => { if (!d.contains(e.target)) closeDrawer(); };
+    document.addEventListener("click", drawerOutsideHandler);
+  }, 0);
 }
-function closeDrawer() { $("#drawer").classList.add("hidden"); }
+function closeDrawer() {
+  $("#drawer").classList.add("hidden");
+  if (drawerOutsideHandler) { document.removeEventListener("click", drawerOutsideHandler); drawerOutsideHandler = null; }
+}
 function showActionBar(...children) { const b = $("#actionbar"); b.replaceChildren(...children); b.classList.remove("hidden"); }
 function hideActionBar() { $("#actionbar").classList.add("hidden"); }
 let openMenu = null;
@@ -697,6 +707,8 @@ PAGES.case = async (root, params) => {
   let shape = Number(params.get("shape") || (shapes ? 0 : -1));
   const command = `afx fuzz replay ${c.case_key}`;
   const copy = el("button", { onclick: () => navigator.clipboard && navigator.clipboard.writeText(command).then(() => { copy.textContent = "已复制"; }) }, "复制");
+  root.append(el("button", { class: "back-btn",
+    onclick: () => { if (window.history.length > 1) window.history.back(); else go("discovery"); } }, "← 返回"));
   root.append(el("section", { class: "panel" },
     el("h2", {}, "用例详情 · ", el("span", { class: "mono" }, c.case_key + (shape >= 0 && c.is_dynamic ? String(shape) : "")), el("span", { class: "spacer" }),
       el("button", { onclick: () => retestDrawer([c.case_key], [{ case: c, executions }]) }, "⟳ 复测"),
