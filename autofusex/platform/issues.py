@@ -544,17 +544,27 @@ _ISSUE_COLUMNS = ("issue_id, dimension, backend, category, title, log_summary, s
 
 
 def list_issues(store: Store, *, dimension=None, backend=None, status=None, after=None, limit=50) -> dict:
+    """List issues ordered by affected-case count (most impactful first), then recency."""
     if not 1 <= limit <= 200:
         raise IssueError("invalid", "limit must be 1..200")
-    where, args = ["issue_no<?"], [after if after is not None else 1 << 62]
+    where, args = [], []
     for column, value in (("dimension", dimension), ("backend", backend), ("status", status)):
         if value is not None:
             where.append(f"{column}=?")
             args.append(value)
-    rows = store.reader().execute(f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues WHERE {' AND '.join(where)} "
-                                  "ORDER BY issue_no DESC LIMIT ?", args + [limit]).fetchall()
+    if after is not None:
+        try:
+            after_count, after_no = (int(part) for part in str(after).split(":", 1))
+        except ValueError:
+            raise IssueError("invalid", "after must be '<case_count>:<issue_no>'")
+        where.append("(case_count<? OR (case_count=? AND issue_no<?))")
+        args += [after_count, after_count, after_no]
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = store.reader().execute(
+        f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues {clause} "
+        "ORDER BY case_count DESC, issue_no DESC LIMIT ?", args + [limit]).fetchall()
     items = [dict(row) for row in rows]
-    cursor = items[-1]["issue_no"] if len(items) == limit else None
+    cursor = f"{items[-1]['case_count']}:{items[-1]['issue_no']}" if len(items) == limit else None
     for item in items:
         item.pop("issue_no")
     return {"issues": items, "next_cursor": cursor}

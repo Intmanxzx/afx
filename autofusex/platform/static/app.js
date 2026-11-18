@@ -5,7 +5,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const TOKEN_KEY = "afx.token";
 const COLS_KEY = "afx.discovery.columns";
 const VIEW_KEY = "afx.discovery.view";
-const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "AF-Legacy", "af-mlir": "AF-MLIR", "triton-npu": "TritonNPU" };
+const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "Legacy", "af-mlir": "MLIR", "triton-npu": "TritonNPU" };
 const STAGE_LABEL = { schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
   tiling: "Tiling", autofuse: "AF 其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知" };
 const DIM_LABEL = { all: "全部", op_category: "算子类别", op_display: "算子覆盖", dtype: "数据类型", dim_bucket: "最大维度", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
@@ -13,6 +13,16 @@ const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "op_categ
 const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };
 let me = null;
 
+// ---------- global search field catalog (mirrors autofusex/platform/search.py) ----------
+const SEARCH_RESULT_LABEL = { pass: "通过", fail: "失败（功能或精度）", function_fail: "功能失败", accuracy_fail: "精度失败", unsupported: "不支持" };
+const SEARCH_SOURCE_LABEL = { nnsmith: "NNSmith 随机生成", baize_tf: "Baize TF 导入", baize_torch: "Baize Torch 导入", model: "整网模型导入" };
+const SEARCH_DYNAMIC_LABEL = { dynamic: "动态 Shape", static: "静态 Shape" };
+let searchFieldValues = {};  // op/dtype/category/size/dim/arch/user, fetched lazily from /api/search/fields
+let searchFieldValuesPromise = null;
+function loadSearchFieldValues() {
+  if (!searchFieldValuesPromise) searchFieldValuesPromise = api("/api/search/fields").then(v => { searchFieldValues = v; }).catch(() => {});
+  return searchFieldValuesPromise;
+}
 // ---------- DOM helpers ----------
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
@@ -38,6 +48,23 @@ function svg(tag, attrs, ...children) {
 const fmt = n => n == null ? "—" : Number(n).toLocaleString("zh-CN");
 const pct = (a, b) => b ? (100 * a / b).toFixed(1) + "%" : "—";
 const label = b => BACKEND_LABEL[b] || b;
+const archLabel = a => { if (!a) return a || "—"; const s = String(a).toLowerCase(); return s.includes("910") ? "A2A3" : s.includes("950") ? "A5" : a; };
+const SEARCH_FIELDS = [
+  { name: "backend", label: "后端", example: "backend:af-mlir", enum: () => Object.keys(BACKEND_LABEL), text: label },
+  { name: "status", label: "结果", example: "status:fail", enum: () => Object.keys(SEARCH_RESULT_LABEL), text: v => SEARCH_RESULT_LABEL[v] || v },
+  { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => Object.keys(STAGE_LABEL), text: v => STAGE_LABEL[v] || v },
+  { name: "arch", label: "芯片", example: "arch:910b", enum: () => searchFieldValues.arch || [], text: archLabel },
+  { name: "user", label: "用户", example: "user:alice", enum: () => searchFieldValues.user || [] },
+  { name: "op", label: "算子", example: "op:aten.add.Tensor", enum: () => searchFieldValues.op || [] },
+  { name: "dtype", label: "数据类型", example: "dtype:bfloat16", enum: () => searchFieldValues.dtype || [] },
+  { name: "category", label: "算子类别", example: "category:reduce", enum: () => searchFieldValues.category || [] },
+  { name: "source", label: "用例来源", example: "source:nnsmith", enum: () => Object.keys(SEARCH_SOURCE_LABEL), text: v => SEARCH_SOURCE_LABEL[v] || v },
+  { name: "dynamic", label: "动态/静态", example: "dynamic:static", enum: () => Object.keys(SEARCH_DYNAMIC_LABEL), text: v => SEARCH_DYNAMIC_LABEL[v] || v },
+  { name: "size", label: "张量规模", example: "size:<=64K", enum: () => searchFieldValues.size || [] },
+  { name: "dim", label: "最大维度", example: "dim:<=512", enum: () => searchFieldValues.dim || [] },
+  { name: "error", label: "错误文本", example: "error:tiling", desc: "日志摘要中包含的文本，3..64 个字符" },
+  { name: "case", label: "用例 ID", example: "case:E000000000000000000000000A", desc: "精确匹配一个用例 ID" },
+];
 const time = ms => ms ? new Date(ms).toLocaleString("zh-CN", { hour12: false }) : "—";
 const ns = v => v == null ? "—" : v >= 1e9 ? (v / 1e9).toFixed(2) + "s" : v >= 1e6 ? (v / 1e6).toFixed(1) + "ms" : (v / 1e3).toFixed(1) + "µs";
 const store = {
@@ -194,7 +221,7 @@ PAGES.overview = async (root, params) => {
   const arch = params.get("arch") || arches[0] || "";
   const pipeline = await api("/api/overview/pipeline" + qs({ arch, q }));
   const head = el("h2", {}, "用例总览", el("span", { class: "spacer" }),
-    arches.length ? select(arches.map(a => [a, a]), arch, v => go("overview", { arch: v })) : null);
+    arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => go("overview", { arch: v })) : null);
   const hero = el("section", { class: "panel hero" }, head);
   root.append(hero);
   hero.append(renderPipeline(pipeline, q, hero.clientWidth - 44));
@@ -496,7 +523,7 @@ PAGES.discovery = async (root, params) => {
   if (params.get("sub") === "retests") return renderRetests(root);
   const q = params.get("q");
   const view = store.get(VIEW_KEY, "expanded");
-  const visible = new Set(store.get(COLS_KEY, COLUMNS.map(c => c[0])));
+  const visible = new Set(store.get(COLS_KEY, COLUMNS.map(c => c[0]).filter(k => k !== "client" && k !== "run")));
   const panel = el("section", { class: "panel" });
   root.append(panel);
   const selected = new Set();
@@ -534,17 +561,19 @@ function caseCell(group, selected, updateBar, rowSpan) {
   const c = group.case;
   const box = el("input", { type: "checkbox", checked: selected.has(c.case_key), "aria-label": "选择用例",
     onchange: e => { e.target.checked ? selected.add(c.case_key) : selected.delete(c.case_key); updateBar(); } });
-  const menuBtn = el("button", { class: "icon-btn", title: "更多操作", onclick: e => popMenu(e.currentTarget, [
-    ["复测", () => retestDrawer([c.case_key], [group])],
-    ["复制复现命令", () => navigator.clipboard && navigator.clipboard.writeText(`afx fuzz replay ${c.case_key}`)],
-    ...(isAdmin() ? [["加入回归集", () => pinGlobal([c.case_key])]] : []),
-    ["查看用例详情", () => caseDrawer(group)],
-  ]) }, "⋯");
+  const copyBtn = el("button", { class: "mini-btn" }, "复现命令");
+  copyBtn.addEventListener("click", () => { if (!navigator.clipboard) return; navigator.clipboard.writeText(`afx fuzz replay ${c.case_key}`); copyBtn.textContent = "已复制"; setTimeout(() => { copyBtn.textContent = "复现命令"; }, 1200); });
+  const menuBtn = isAdmin() ? el("button", { class: "icon-btn", title: "更多操作", onclick: e => popMenu(e.currentTarget, [
+    ["加入回归集", () => pinGlobal([c.case_key])],
+  ]) }, "⋯") : null;
   return el("td", { class: "case-cell", rowspan: rowSpan },
-    el("div", {}, box, " ", el("a", { href: "#", class: "mono", title: c.case_key, onclick: e => { e.preventDefault(); caseDrawer(group); } }, c.case_key),
-      el("span", { class: "row-actions" }, el("button", { class: "icon-btn", title: "复测", onclick: () => retestDrawer([c.case_key], [group]) }, "⟳")), menuBtn),
+    el("div", {}, box, " ", el("a", { href: "#", class: "mono", title: c.case_key, onclick: e => { e.preventDefault(); caseDrawer(group); } }, c.case_key), menuBtn),
     el("div", { class: "muted small" }, `${c.case_source} · ${c.is_dynamic ? "动态" : "静态"} · ${c.node_count ?? "?"} 节点 · ${c.dtypes || ""}`),
-    el("div", { class: "muted small", "data-tooltip": (c.op_display || "") + "\n" + (c.op_types || "") }, (c.op_display || c.op_types || "").split(",").slice(0, 6).join(" · ")));
+    el("div", { class: "muted small", "data-tooltip": (c.op_display || "") + "\n" + (c.op_types || "") }, (c.op_display || c.op_types || "").split(",").slice(0, 6).join(" · ")),
+    el("div", { class: "mini-actions" },
+      el("button", { class: "mini-btn", onclick: () => retestDrawer([c.case_key], [group]) }, "复测"),
+      copyBtn,
+      el("button", { class: "mini-btn", onclick: () => caseDrawer(group) }, "查看详情")));
 }
 function batchClasses(executions) {
   const order = [];
@@ -577,7 +606,7 @@ function execValue(e, k) {
     case "compile_ns": case "kernel_ns": case "e2e_ns": return ns(e[k]);
     case "run": return el("span", {}, `#${e.run_id}`, e.run_kind !== "fuzz" ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, { retest: "复测", verify: "验证", regress: "回归", import: "导入" }[e.run_kind] || e.run_kind) : null);
     case "created_at": return el("span", { class: "small" }, time(e.created_at));
-    case "npu_arch": return e.npu_arch || "—";
+    case "npu_arch": return archLabel(e.npu_arch);
     case "user_id": return el("span", { "data-tooltip": e.user_id }, e.user_name || e.user_id);
     case "client": return e.client_name || "—";
     default: return e[k] ?? "—";
@@ -761,7 +790,7 @@ function renderExecution(d, shape) {
   out.push(el("h3", {}, "报错日志摘要"), el("pre", { class: "log" }, runLog || "未保存报错日志"));
   // provenance
   const env = (detail.contexts || {}).environment || {};
-  const envRows = [["用户", d.user_name || d.user_id], ["节点", d.client_name], ["芯片", d.npu_arch || env.device_model], ["CANN", d.env.cann || env.cann], ["Torch", d.env.torch || env.torch],
+  const envRows = [["用户", d.user_name || d.user_id], ["节点", d.client_name], ["芯片", archLabel(d.npu_arch || env.device_model)], ["CANN", d.env.cann || env.cann], ["Torch", d.env.torch || env.torch],
     ["Torch NPU", d.env.torch_npu || env.torch_npu], ["后端版本", d.env.backend_version], ["Autofuse commit", env.autofuse_commit], ["Autofuse binary", env.autofuse_binary],
     ["Triton", env.triton], ["Python", d.env.python || env.python], ["AutofuseX", d.env.afx || env.package_version], ["NNSmith", d.env.nnsmith], ["OS", d.env.os],
     ["CPU 架构", d.env.cpu_arch || env.machine], ["GCC", d.env.gcc]].filter(([, v]) => v);
@@ -919,7 +948,7 @@ async function issueDrawer(issueId) {
     const tasks = el("div");
     box.append(el("button", { class: "icon-btn", onclick: async () => {
       const list = await api(`/api/issues/${issueId}/rounds/${r.round_no}/tasks`);
-      tasks.replaceChildren(el("table", { class: "grid" }, el("tbody", {}, list.map(t => el("tr", {}, el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(t.case_key); } }, t.case_key)), el("td", {}, t.npu_arch), el("td", {}, t.result || t.status), el("td", { class: "small muted" }, t.detail || ""))))));
+      tasks.replaceChildren(el("table", { class: "grid" }, el("tbody", {}, list.map(t => el("tr", {}, el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(t.case_key); } }, t.case_key)), el("td", {}, archLabel(t.npu_arch)), el("td", {}, t.result || t.status), el("td", { class: "small muted" }, t.detail || ""))))));
     } }, "查看任务"), tasks);
     rounds.append(box);
   }
@@ -928,7 +957,7 @@ async function issueDrawer(issueId) {
     el("button", { onclick: async () => { const into = prompt("合并到哪个问题 ID？"); if (!into) return; try { await api(`/api/admin/issues/${issueId}/merge`, { method: "POST", body: { request_key: rkey(), into: into.trim() } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "合并到…")) : null;
   openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status])), el("div", {}, issue.title), subway(issue),
     el("div", { class: "kv", style: { marginTop: "12px" } }, [["维度", { function: "功能", accuracy: "精度", performance: "性能" }[issue.dimension]], ["后端", label(issue.backend)], ["分类", issue.category],
-      ["用例数", fmt(issue.case_count)], ["芯片", issue.arches.join(", ") || "—"], ["领取", issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"],
+      ["用例数", fmt(issue.case_count)], ["芯片", issue.arches.map(archLabel).join(", ") || "—"], ["领取", issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"],
       ["修复版本", issue.fix_version || "—"], ["代码链接", issue.fix_ref ? el("a", { href: issue.fix_ref, target: "_blank", rel: "noopener noreferrer" }, issue.fix_ref) : "—"],
       ["知识", issue.knowledge_id ? el("a", { href: "#", onclick: e => { e.preventDefault(); knowledgeDrawer(issue.knowledge_id); } }, issue.knowledge_id) : "—"],
       ["首次出现", time(issue.first_seen_at)]].flat().map(v => el("div", {}, v))),
@@ -941,7 +970,7 @@ async function issueDrawer(issueId) {
 function caseList(cases) {
   return el("table", { class: "grid" }, el("tbody", {}, cases.map(c => el("tr", {},
     el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
-    el("td", {}, c.npu_arch), el("td", {}, c.pick_reason || ""), el("td", {}, c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
+    el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.pick_reason || ""), el("td", {}, c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
     el("td", {}, c.result ? el("span", { class: "chip " + (c.result === "pass" ? "ok" : c.result === "fail" ? "bad" : "warn") }, c.result) : "")))));
 }
 
@@ -1009,7 +1038,7 @@ PAGES.profile = async (root, params) => {
   const set = patch => go("profile", { arch, x, y, fx, fy, ...patch });
   const opts = backends.map(b => [b, label(b)]);
   const head = el("h2", {}, select(opts, x, v => set({ x: v })), "相对", select(opts, y, v => set({ y: v })), "的 Kernel 性能画像", el("span", { class: "spacer" }),
-    arches.length ? select(arches.map(a => [a, a]), arch, v => set({ arch: v })) : null);
+    arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => set({ arch: v })) : null);
   const canvas = el("canvas", { class: "scatter", "aria-label": "性能点云" });
   const info = el("div", { class: "muted small" });
   const side = el("div");
@@ -1097,7 +1126,7 @@ PAGES.ops = async root => {
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id) }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
-        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.machine_id }, (c.hostname || c.machine_id).slice(0, 16)), el("td", {}, c.npu_arch || "—"),
+        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.machine_id }, (c.hostname || c.machine_id).slice(0, 16)), el("td", {}, archLabel(c.npu_arch)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
@@ -1115,7 +1144,7 @@ function fleetPanel(clients) {
   const box = el("section", { class: "panel" }, el("h2", {}, "节点运行情况", el("span", { class: "muted small" }, "来自客户端心跳中的运行快照，约每分钟更新")));
   if (!live.length) { box.append(el("div", { class: "empty" }, "暂无正在上报运行快照的节点")); return box; }
   for (const c of live) {
-    const card = el("div", { class: "fleet-card" }, el("h3", {}, c.display_name || c.machine_id, el("span", { class: "muted small" }, ` · ${c.user_id} · ${c.npu_arch || ""} · 快照于 ${time(c.runtime_at)}`)));
+    const card = el("div", { class: "fleet-card" }, el("h3", {}, c.display_name || c.machine_id, el("span", { class: "muted small" }, ` · ${c.user_id} · ${archLabel(c.npu_arch)} · 快照于 ${time(c.runtime_at)}`)));
     const rows = c.runtime.map(r => el("tr", {},
       el("td", { class: "mono small", "data-tooltip": r.run_id }, String(r.run_id || "").slice(0, 8)),
       el("td", {}, el("span", { class: "chip " + (r.state === "running" ? "ok" : "gray") }, r.state)),
@@ -1258,9 +1287,92 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(() => { if (route().page === "overview" || route().page === "") render(); }, 300);
 });
 
+// ---------- global search: field picker / autocomplete ----------
+// Most people don't remember the field:value syntax, so focusing the (empty) box lists every
+// field with a one-line example, and typing narrows it to matching fields, then matching values.
+const searchPanel = el("div", { class: "search-suggest hidden", role: "listbox" });
+document.body.append(searchPanel);
+let searchActiveIndex = -1;
+function currentTerm(input) {
+  const pos = input.selectionStart ?? input.value.length, text = input.value;
+  const start = text.lastIndexOf(" ", pos - 1) + 1;
+  let end = text.indexOf(" ", pos);
+  if (end === -1) end = text.length;
+  return { start, end, term: text.slice(start, end) };
+}
+function searchMatches(term) {
+  const negate = term.startsWith("-") ? "-" : "";
+  const body = negate ? term.slice(1) : term;
+  const colon = body.indexOf(":");
+  if (colon === -1) {
+    const q = body.toLowerCase();
+    return { kind: "field", negate, items: SEARCH_FIELDS.filter(f => !q || f.name.startsWith(q)) };
+  }
+  const field = SEARCH_FIELDS.find(f => f.name === body.slice(0, colon));
+  if (!field || !field.enum) return { kind: "none" };
+  const already = body.slice(colon + 1), lastComma = already.lastIndexOf(","), typed = already.slice(lastComma + 1);
+  const q = typed.toLowerCase();
+  const items = field.enum().filter(v => !q || String(v).toLowerCase().includes(q)).slice(0, 30);
+  return { kind: "value", negate, field, keep: already.slice(0, lastComma + 1), items };
+}
+function applySearchPick(input, start, end, text) {
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  const pos = start + text.length;
+  input.setSelectionRange(pos, pos);
+  input.focus();
+  updateSearchPanel(input);
+}
+function renderSearchPanel(input, match, bounds) {
+  searchActiveIndex = -1;
+  if (match.kind === "none" || !match.items.length) { searchPanel.classList.add("hidden"); return; }
+  const rows = match.kind === "field"
+    ? match.items.map(f => el("button", { class: "search-sug-item", type: "button",
+        onclick: () => applySearchPick(input, bounds.start, bounds.end, match.negate + f.name + ":") },
+        el("span", { class: "sf-name" }, f.name + ":"), el("span", { class: "sf-label" }, f.label),
+        el("span", { class: "sf-example" }, f.desc || f.example)))
+    : match.items.map(v => el("button", { class: "search-sug-item", type: "button",
+        onclick: () => applySearchPick(input, bounds.start, bounds.end,
+          match.negate + match.field.name + ":" + match.keep + v + " ") },
+        el("span", { class: "sf-name" }, String(v)), match.field.text ? el("span", { class: "sf-label" }, match.field.text(v)) : null));
+  searchPanel.replaceChildren(...rows);
+  const rect = input.getBoundingClientRect();
+  searchPanel.style.left = (rect.left + scrollX) + "px";
+  searchPanel.style.top = (rect.bottom + scrollY + 4) + "px";
+  searchPanel.style.width = Math.max(320, rect.width) + "px";
+  searchPanel.classList.remove("hidden");
+}
+function updateSearchPanel(input) {
+  const bounds = currentTerm(input);
+  renderSearchPanel(input, searchMatches(bounds.term), bounds);
+}
+(() => {
+  const input = $("#search");
+  input.addEventListener("focus", () => { loadSearchFieldValues().then(() => updateSearchPanel(input)); updateSearchPanel(input); });
+  input.addEventListener("input", () => updateSearchPanel(input));
+  input.addEventListener("click", () => updateSearchPanel(input));
+  input.addEventListener("keydown", e => {
+    const items = [...searchPanel.children];
+    if (searchPanel.classList.contains("hidden") || !items.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      searchActiveIndex = (searchActiveIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items.forEach((it, i) => it.classList.toggle("active", i === searchActiveIndex));
+      items[searchActiveIndex].scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && searchActiveIndex >= 0) {
+      e.preventDefault();
+      items[searchActiveIndex].click();
+    } else if (e.key === "Escape") {
+      searchPanel.classList.add("hidden");
+    }
+  });
+  // A suggestion click re-renders the panel's children (detaching the clicked button) and
+  // refocuses the input before this bubbles here, so check focus rather than DOM containment.
+  document.addEventListener("click", e => { if (e.target !== input && document.activeElement !== input) searchPanel.classList.add("hidden"); });
+})();
+
 // ---------- boot ----------
 window.addEventListener("hashchange", render);
-$("#search-form").addEventListener("submit", e => { e.preventDefault(); const { page } = route(); go(page === "models" ? "discovery" : page, { q: $("#search").value.trim() || null }); });
+$("#search-form").addEventListener("submit", e => { e.preventDefault(); const { page } = route(); go(page === "models" ? "discovery" : page, { q: $("#search").value.trim() || null }); searchPanel.classList.add("hidden"); });
 $("#logout").addEventListener("click", () => {
   if (!me) return showLogin();
   try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }

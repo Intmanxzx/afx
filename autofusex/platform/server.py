@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from importlib import resources
 
-from . import issues, knowledge, ops, profile, queries, regression, retests
+from . import issues, knowledge, ops, profile, queries, regression, retests, search
 from .issues import IssueError
 from .search import SearchError
 from .auth import ANONYMOUS, AuthError, Principal, authenticate
@@ -342,6 +342,8 @@ class Handler(BaseHTTPRequestHandler):
                 return queries.clients(store), 200
             if path == "/api/settings":
                 return queries.settings(store), 200
+            if path == "/api/search/fields":
+                return search.field_values(store), 200
             routed = self._get_lifecycle(path, params, principal)
             if routed is not None:
                 return routed, 200
@@ -372,7 +374,7 @@ class Handler(BaseHTTPRequestHandler):
         store = self.server.store
         if path == "/api/issues":
             return issues.list_issues(store, dimension=_param(params, "dimension"), backend=_param(params, "backend"),
-                                      status=_param(params, "status"), after=_param(params, "after", integer=True),
+                                      status=_param(params, "status"), after=_param(params, "after"),
                                       limit=_param(params, "limit", integer=True) or 50)
         match = _ROUND_PATH.match(path)
         if match:

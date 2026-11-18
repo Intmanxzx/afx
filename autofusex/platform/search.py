@@ -172,6 +172,32 @@ def filtered_buckets(conn, query: Query, *, backend=None, arch=None, dim="all"):
             args).fetchall()
 
 
+def field_values(store) -> dict:
+    """Known values for the search fields whose vocabulary isn't a small fixed set in the UI.
+
+    feature_values is a dedup dictionary (one row per distinct value ever seen), so these reads
+    are cheap regardless of how many executions exist. backend/status/stage/source/dynamic are
+    left out: their vocabulary is already a short fixed list the UI keeps alongside its labels.
+    """
+    conn = store.reader()
+
+    def feature(name):
+        return [r[0] for r in conn.execute(
+            "SELECT v.value FROM feature_values v JOIN feature_registry r USING(feature_id) "
+            "WHERE r.name=? ORDER BY v.value", (name,))]
+
+    return {
+        "op": feature("op"),
+        "dtype": feature("dtype"),
+        "category": feature("op_category"),
+        "size": feature("size_bucket"),
+        "dim": feature("dim_bucket"),
+        "arch": [r[0] for r in conn.execute(
+            "SELECT DISTINCT npu_arch FROM stats.stat_buckets WHERE npu_arch<>'' ORDER BY npu_arch")],
+        "user": [r[0] for r in conn.execute("SELECT user_id FROM users ORDER BY user_id")],
+    }
+
+
 def filtered_case_count(conn, query: Query) -> int:
     case_sql, case_args = query.case_sql()
     with time_limit(conn):

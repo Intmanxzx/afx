@@ -113,16 +113,23 @@ table.grid td.batch { border-left: 4px solid transparent; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); } .chip.info { background: var(--accent-soft); color: var(--accent); }
 .chip.gray { background: var(--panel-2); color: var(--muted); }
 .float-tag { font-size: 10px; padding: 0 5px; border-radius: 6px; background: var(--info); color: #fff; margin-left: 4px; vertical-align: 1px; }
-.row-actions { visibility: hidden; }
-tr:hover .row-actions, .touch .row-actions { visibility: visible; }
 .icon-btn { border: none; background: none; padding: 2px 6px; color: var(--muted); }
 .icon-btn:hover { color: var(--accent); }
+.mini-actions { display: flex; gap: 6px; margin-top: 4px; }
+.mini-btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); border-radius: 6px; padding: 1px 7px; font-size: 11px; line-height: 1.6; }
+.mini-btn:hover { color: var(--accent); border-color: var(--accent); }
 .menu { position: absolute; z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; min-width: 150px; }
 .menu button { display: block; width: 100%; text-align: left; border: none; padding: 6px 10px; }
 .menu button:hover { background: var(--accent-soft); }
 .actionbar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--text); color: var(--bg); border-radius: 12px; padding: 8px 14px; display: flex; gap: 10px; align-items: center; z-index: 40; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
 .actionbar button { background: transparent; color: inherit; border-color: rgba(255,255,255,.35); }
 .colpick { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.search-suggest { position: absolute; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; max-height: 320px; overflow-y: auto; }
+.search-sug-item { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; border: none; background: none; padding: 6px 10px; border-radius: 6px; }
+.search-sug-item:hover, .search-sug-item.active { background: var(--accent-soft); }
+.search-sug-item .sf-name { font-family: var(--mono, monospace); color: var(--accent); white-space: nowrap; }
+.search-sug-item .sf-label { color: var(--text); white-space: nowrap; }
+.search-sug-item .sf-example { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* subway */
 .subway { display: flex; align-items: center; min-width: 320px; }
