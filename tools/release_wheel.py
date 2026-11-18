@@ -1,4 +1,9 @@
-"""Validate a tagged wheel; publishing is opt-in. Requires Python 3.11+."""
+"""Validate a tagged wheel; publishing is opt-in. Requires Python 3.11+.
+
+--host picks which forge receives the Release attachment. Releases are cut from
+the GitHub mirror, so the GitHub workflow passes --host github; the GitCode
+default keeps older local invocations working.
+"""
 import argparse
 import configparser
 import email
@@ -17,6 +22,8 @@ from urllib.request import Request, urlopen
 import zipfile
 
 API = 'https://api.gitcode.com/api/v5'
+GITHUB_API = 'https://api.github.com'
+GITHUB_UPLOADS = 'https://uploads.github.com'
 
 
 def digest(data):
@@ -140,26 +147,90 @@ def publish_release(wheel, tag, repository, token):
     raise RuntimeError("Release upload not visible; PyPI not attempted; retry identical wheel")
 
 
+def github_request(path, token, *, method='GET', data=None, extra_headers=None, missing=False, base=GITHUB_API):
+    # Never log URLs, response bodies or exception text: these can contain credentials.
+    headers = {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': f'Bearer {token}',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'autofusex-release',
+    }
+    headers.update(extra_headers or {})
+    raw = request(base + path, method=method, data=data, headers=headers, missing=missing)
+    return json.loads(raw) if raw is not None else None
+
+
+def github_assets(release):
+    return release.get('assets') or []
+
+
+def github_asset_bytes(asset, token):
+    # The API URL plus an octet-stream Accept returns the asset for private and
+    # public repositories alike; browser_download_url needs a session otherwise.
+    return request(asset['url'], headers={
+        'Accept': 'application/octet-stream',
+        'Authorization': f'Bearer {token}',
+        'User-Agent': 'autofusex-release',
+    })
+
+
+def publish_github_release(wheel, tag, repository, token):
+    if not re.fullmatch(r'[\w.-]+/[\w.-]+', repository):
+        raise ValueError('repository must be owner/name')
+    matches = github_request(f'/repos/{repository}/releases/tags/{quote(tag, safe="")}', token, missing=True)
+    if matches is None:
+        matches = github_request(f'/repos/{repository}/releases', token, method='POST',
+                                 data=json.dumps({'tag_name': tag, 'name': tag,
+                                                  'body': f'{wheel.name}\nSHA256: {digest(wheel.read_bytes())}'}).encode(),
+                                 extra_headers={'Content-Type': 'application/json'})
+    for asset in github_assets(matches):
+        if asset.get('name') == wheel.name:
+            if digest(github_asset_bytes(asset, token)) != digest(wheel.read_bytes()):
+                raise ValueError('existing Release asset differs; refusing overwrite')
+            return
+    upload = (f'/repos/{repository}/releases/{matches["id"]}/assets'
+              f'?name={quote(wheel.name, safe="")}')
+    github_request(upload, token, method='POST', data=wheel.read_bytes(), base=GITHUB_UPLOADS,
+                   extra_headers={'Content-Type': 'application/octet-stream'})
+    for attempt in range(3):
+        current = github_request(f'/repos/{repository}/releases/tags/{quote(tag, safe="")}', token)
+        for asset in github_assets(current):
+            if asset.get('name') == wheel.name:
+                if digest(github_asset_bytes(asset, token)) == digest(wheel.read_bytes()):
+                    return
+                raise ValueError('uploaded Release asset digest mismatch')
+        if attempt < 2:
+            time.sleep(2)
+    raise RuntimeError('Release upload not visible; PyPI not attempted; retry identical wheel')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tag', required=True)
     parser.add_argument('--repository', required=True)
     parser.add_argument('--dist', type=Path, default=Path('dist'))
     parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--host', choices=('gitcode', 'github'), default='gitcode',
+                        help='which forge receives the Release attachment')
     args = parser.parse_args(argv)
     wheel, version = validate(Path.cwd(), args.tag, args.dist)
     if not re.fullmatch(r'[\w.-]+/[\w.-]+', args.repository):
         raise ValueError('repository must be owner/name')
     print(f'Validated {wheel.name}; SHA256 {digest(wheel.read_bytes())}')
     if not args.publish:
-        print('Plan only: GitCode Release attachment, then PyPI. No network writes.')
+        print(f'Plan only: {args.host} Release attachment, then PyPI. No network writes.')
         return
-    gitcode = os.environ.get('GITCODE_RELEASE_TOKEN')
     pypi = os.environ.get('PYPI_API_TOKEN')
-    if not gitcode or not pypi:
-        raise ValueError('both GitCode and PyPI credentials are required')
+    if args.host == 'github':
+        forge_token = os.environ.get('GITHUB_TOKEN')
+        publish = lambda: publish_github_release(wheel, args.tag, args.repository, forge_token)
+    else:
+        forge_token = os.environ.get('GITCODE_RELEASE_TOKEN')
+        publish = lambda: publish_release(wheel, args.tag, args.repository, forge_token)
+    if not forge_token or not pypi:
+        raise ValueError(f'both {args.host} and PyPI credentials are required')
     present = pypi_present(wheel, version)  # detect version conflicts before any writes
-    publish_release(wheel, args.tag, args.repository, gitcode)
+    publish()
     if not present:
         env = dict(os.environ, TWINE_USERNAME='__token__', TWINE_PASSWORD=pypi,
                    TWINE_NON_INTERACTIVE='1')

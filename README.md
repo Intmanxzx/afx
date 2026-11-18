@@ -32,20 +32,20 @@ afx fuzz view ./results.sqlite
 
 ### 方式一：wheel 包安装
 
-从当前项目 Release 下载所需版本的 wheel，或按 [Fuzz 运维说明](docs/fuzz/operations.md) 构建。本次重构尚未发布；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能。以下文件名用实际版本替换：
+从 [GitHub Release](https://github.com/Intmanxzx/afx/releases) 下载所需版本的 wheel，或按 [Fuzz 运维说明](docs/fuzz/operations.md) 构建。当前版本为 v0.2.0；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能：
 
 ```bash
-python3 -m pip install ./autofusex-0.1.2-py3-none-any.whl
+python3 -m pip install ./autofusex-0.2.0-py3-none-any.whl
 ```
 
 发行包名称为 `autofusex`，命令为 `afx`，也支持 `python3 -m afx`。
 源码包和目录统一为 `autofusex`，环境变量使用 `AUTOFUSEX_*`。此版本按全新数据环境使用，不提供旧包路径或历史数据兼容。
-发布到 PyPI 后可用 `python3 -m pip install autofusex` 安装；尚未发布时使用本项目构建或 Release 提供的 wheel。
+也可使用 `python3 -m pip install autofusex` 从 PyPI 安装。
 
 执行 fuzz 时安装 execution 扩展，pip 会从 PyPI 安装固定版本的 `nnsmith-autofusex` 及其依赖：
 
 ```bash
-python3 -m pip install './autofusex-0.1.2-py3-none-any.whl[execution]'
+python3 -m pip install './autofusex-0.2.0-py3-none-any.whl[execution]'
 # 源码开发环境
 python3 -m pip install -e '.[execution]'
 ```
@@ -56,8 +56,8 @@ NNSmith 的修改直接维护在 fork 中，本项目不再携带或应用补丁
 ### 方式二：源码安装
 
 ```bash
-git clone https://gitcode.com/niuyuhu/Autofuse-Debugger.git
-cd ${HOME}/Autofuse-Debugger    # ${HOME}表示用户拉取工具代码的目录
+git clone https://github.com/Intmanxzx/afx.git
+cd afx
 python3 -m pip install -e .
 ```
 

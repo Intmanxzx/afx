@@ -149,3 +149,75 @@ def test_publish_requires_both_credentials_before_network(artifact, monkeypatch)
     monkeypatch.setattr(release, 'request', lambda *a, **k: pytest.fail('unexpected network'))
     with pytest.raises(ValueError, match='credentials'):
         release.main(['--tag', 'v0.1.2', '--repository', 'owner/repo', '--publish'])
+
+
+def test_github_publish_requires_its_own_credentials(artifact, monkeypatch):
+    root, _ = artifact
+    monkeypatch.chdir(root)
+    monkeypatch.delenv('GITHUB_TOKEN', raising=False)
+    monkeypatch.setenv('GITCODE_RELEASE_TOKEN', 'irrelevant')
+    monkeypatch.delenv('PYPI_API_TOKEN', raising=False)
+    monkeypatch.setattr(release, 'request', lambda *a, **k: pytest.fail('unexpected network'))
+    with pytest.raises(ValueError, match='github'):
+        release.main(['--tag', 'v0.1.2', '--repository', 'owner/repo', '--host', 'github', '--publish'])
+
+
+def test_github_plan_names_its_host(artifact, monkeypatch, capsys):
+    root, _ = artifact
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(release, 'request', lambda *a, **k: pytest.fail('dry run used network'))
+    release.main(['--tag', 'v0.1.2', '--repository', 'owner/repo', '--host', 'github'])
+    assert 'github Release' in capsys.readouterr().out
+
+
+def test_github_release_create_and_upload(artifact, monkeypatch):
+    _, wheel = artifact
+    calls = []
+    def request(url, **kw):
+        calls.append((url, kw))
+        if url.endswith('/releases/tags/v0.1.2'):
+            if len(calls) == 1:
+                return None
+            return json.dumps({'id': 7, 'assets': [{'name': wheel.name, 'url': 'https://api.github.com/asset/1'}]}).encode()
+        if url == 'https://api.github.com/repos/owner/repo/releases':
+            assert kw['method'] == 'POST'
+            return json.dumps({'id': 7, 'assets': []}).encode()
+        if url.startswith('https://uploads.github.com/repos/owner/repo/releases/7/assets'):
+            assert kw['method'] == 'POST' and kw['data'] == wheel.read_bytes()
+            assert kw['headers']['Content-Type'] == 'application/octet-stream'
+            return b'{}'
+        if url == 'https://api.github.com/asset/1':
+            assert kw['headers']['Accept'] == 'application/octet-stream'
+            return wheel.read_bytes()
+        raise AssertionError(url)
+    monkeypatch.setattr(release, 'request', request)
+    release.publish_github_release(wheel, 'v0.1.2', 'owner/repo', 'secret')
+    # tag lookup (missing) -> create -> upload -> tag lookup (verify) -> asset download
+    assert len(calls) == 5
+
+
+def test_github_existing_release_never_overwritten(artifact, monkeypatch):
+    _, wheel = artifact
+    asset = {'name': wheel.name, 'url': 'https://api.github.com/asset/1'}
+    monkeypatch.setattr(release, 'request', lambda url, **kw: json.dumps({'id': 7, 'assets': [asset]}).encode()
+                        if '/releases/tags/' in url else wheel.read_bytes())
+    release.publish_github_release(wheel, 'v0.1.2', 'owner/repo', 'secret')
+    monkeypatch.setattr(release, 'request', lambda url, **kw: json.dumps({'id': 7, 'assets': [asset]}).encode()
+                        if '/releases/tags/' in url else b'wrong')
+    with pytest.raises(ValueError, match='refusing overwrite'):
+        release.publish_github_release(wheel, 'v0.1.2', 'owner/repo', 'secret')
+
+
+def test_github_token_is_never_placed_in_the_url(artifact, monkeypatch):
+    _, wheel = artifact
+    seen = []
+    def request(url, **kw):
+        seen.append((url, kw.get('headers') or {}))
+        if url.endswith('/releases/tags/v0.1.2'):
+            return json.dumps({'id': 7, 'assets': [{'name': wheel.name, 'url': 'https://api.github.com/asset/1'}]}).encode()
+        return wheel.read_bytes()
+    monkeypatch.setattr(release, 'request', request)
+    release.publish_github_release(wheel, 'v0.1.2', 'owner/repo', 'topsecret')
+    for url, headers in seen:
+        assert 'topsecret' not in url
+        assert headers['Authorization'] == 'Bearer topsecret'
