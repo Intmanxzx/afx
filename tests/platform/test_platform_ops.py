@@ -386,3 +386,39 @@ def test_schedule_stage_from_optimize_module_logs():
     check = ("InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir\n"
              "Check dtype failed for graph_hint/cast Cast; input_dtypes: [DT_INT64]\nRuntimeError: Optimize fail")
     assert function_status("af-mlir", "error", "", check, None, -1)[1] == "graph_check"
+
+
+def test_plog_errors_by_worker_pid_and_window(tmp_path):
+    import time as _time
+    from autofusex.platform.client import attempt_window, plog_errors, function_status
+    root = tmp_path / "plog"
+    root.mkdir()
+    base = _time.mktime((2026, 11, 18, 8, 56, 45, 0, 0, -1))
+    stamp = lambda t: _time.strftime("%Y-%m-%d-%H:%M:%S", _time.localtime(t)) + ".971.759"
+    (root / "plog-4025872_20261118085646150.log").write_text("\n".join([
+        f"[ERROR] GE(4025872,python):{stamp(base - 60)} [./autofuse/optimize/x.cpp:1]4025872 Old: earlier case",
+        f"[ERROR] GE(4025872,python):{stamp(base + 1)} [./autofuse/optimize/autoschedule/autoschedule.cpp:431]4025872 "
+        "PrepareTilingCases: ErrorNo: 4294967295(failed)No valid tiling cases for graph",
+        f"[INFO] GE(4025872,python):{stamp(base + 2)} [a.cpp:1]4025872 noise",
+    ]))
+    (root / "plog-999_20261118085646150.log").write_text(
+        f"[ERROR] GE(999,python):{stamp(base + 1)} [./autofuse/optimize/y.cpp:2]999 other worker\n")
+    import os as _os
+    for f in root.iterdir():
+        _os.utime(f, (base + 10, base + 10))  # files are modified after their own lines
+    detail = {"stage_timeline": [{"kind": "first_call_combined", "worker_pid": 4025872, "lease": {"device_uuid": "u"}},
+                                 {"kind": "reference", "worker_pid": 999, "lease": {}}],
+              "lifecycle": [{"event": "dispatched", "wall_time": datetime_iso(base)},
+                            {"event": "finished", "wall_time": datetime_iso(base + 5)}]}
+    pids, start, end = attempt_window(detail)
+    assert pids == {4025872}
+    lines = plog_errors(pids, start, end, root=root)
+    assert len(lines) == 1 and "PrepareTilingCases" in lines[0]
+    status, stage, line = function_status("af-mlir", "error", "first_call_combined",
+                                          "RuntimeError: Codegen generate kernel failed", None, -1, "\n".join(lines))
+    assert stage == "schedule" and "autoschedule.cpp" in line
+
+
+def datetime_iso(epoch):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat()

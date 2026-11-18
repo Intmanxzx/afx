@@ -755,6 +755,7 @@ function renderExecution(d, shape) {
     if (explanation) out.push(el("div", { class: "filter-note" }, explanation));
     if (d.log_summary) out.push(el("div", { class: "mono small" }, "摘要：" + d.log_summary));
   }
+  if ((detail.plog_errors || []).length) out.push(el("h3", {}, "CANN plog 错误"), el("pre", { class: "log" }, detail.plog_errors.join("\n")));
   out.push(el("h3", {}, "ASCIR 表达的图结构"), el("pre", { class: "log" }, view.shape_log || "未保存当前 Shape 的 ASCIR / 图结构文本"));
   const runLog = view.run_log || view.shared_log || (view.shared_lines || []).join("\n") || d.log || view.summary;
   out.push(el("h3", {}, "报错日志摘要"), el("pre", { class: "log" }, runLog || "未保存报错日志"));

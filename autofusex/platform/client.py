@@ -254,14 +254,70 @@ def schedule_error_line(evidence: str) -> str | None:
     return found.group(0).strip()[:500] if found else None
 
 
-def function_status(backend, status, stage, summary, diagnostics, index):
-    """Map the client's status + failure attribution to (function_status, fail_stage, summary line)."""
+# --- CANN plog: GE errors are written to $ASCEND_PROCESS_LOG_PATH|~/ascend/log/debug/plog/plog-<pid>_*.log
+# when ASCEND_GLOBAL_LOG_LEVEL=3 (ERROR only). Stage workers are reused across cases, so lines are
+# attributed to an attempt by the worker pid that ran its NPU stage AND the attempt's wall-clock window.
+_PLOG_TIME = re.compile(r"^\[ERROR\]\s+\S+\(\d+,[^)]*\):(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2}):(\d{2})\.(\d{3})")
+PLOG_MAX_LINES = 200
+PLOG_MAX_BYTES = 32 * 1024
+
+
+def plog_root() -> Path:
+    return Path(os.environ.get("ASCEND_PROCESS_LOG_PATH") or Path.home() / "ascend" / "log") / "debug" / "plog"
+
+
+def plog_errors(pids, start: float, end: float, root: Path | None = None) -> list:
+    """ERROR lines written by the given worker pids between start and end (epoch seconds, local clock)."""
+    root = root or plog_root()
+    out, size = [], 0
+    for pid in sorted({int(p) for p in pids if p}):
+        for path in sorted(root.glob(f"plog-{pid}_*.log")):
+            try:
+                if path.stat().st_mtime < start - 5:
+                    continue
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                m = _PLOG_TIME.match(line)
+                if not m:
+                    continue
+                y, mo, d, h, mi, sec, ms = (int(g) for g in m.groups())
+                ts = time.mktime((y, mo, d, h, mi, sec, 0, 0, -1)) + ms / 1000
+                if start - 1 <= ts <= end + 1:
+                    out.append(line[:1000])
+                    size += len(line)
+                    if len(out) >= PLOG_MAX_LINES or size >= PLOG_MAX_BYTES:
+                        return out
+    return out
+
+
+def attempt_window(detail: dict | None):
+    """(worker pids, start, end) of an attempt's NPU stages, from its stage timeline and lifecycle."""
+    if not detail:
+        return set(), None, None
+    pids = {f.get("worker_pid") for f in detail.get("stage_timeline") or []
+            if f.get("worker_pid") and (f.get("lease") or {}).get("device_uuid")}
+    times = {}
+    for event in detail.get("lifecycle") or []:
+        try:
+            times[event["event"]] = datetime.fromisoformat(str(event["wall_time"]).replace("Z", "+00:00")).timestamp()
+        except (KeyError, ValueError, TypeError):
+            continue
+    start = times.get("dispatched") or times.get("started") or times.get("admitted")
+    end = times.get("finished") or times.get("persisted")
+    return pids, start, end
+
+
+def function_status(backend, status, stage, summary, diagnostics, index, extra: str = ""):
+    """Map the client's status + failure attribution to (function_status, fail_stage, summary line).
+    `extra` carries GE ERROR lines from plog for the same attempt."""
     from autofusex.fuzz.server.reporting.failure_origin import classify, failure_path
     if status in ("ok", "fail"):
         return "pass", None, None
     if status == "unsupported":
         return "unsupported", None, None
-    evidence = _evidence(summary, diagnostics)
+    evidence = _evidence(summary, diagnostics) + ("\n" + extra if extra else "")
     if re.search(r"\btimed? ?out\b|\btimeout\b", summary or "", re.I):
         return "timeout", "timeout", None
     if backend in AF_BACKENDS:
@@ -360,8 +416,15 @@ class Mapper:
         shapes = self.conn.execute("SELECT * FROM shapes WHERE attempt_id=? ORDER BY shape_index",
                                    (attempt["id"],)).fetchall()
         diagnostics = _diagnostics(execution.get("diagnostics"))
+        detail = self.detail(attempt["id"])
+        plog = []
+        if backend in AF_BACKENDS and attempt["status"] not in ("ok", "fail"):
+            pids, start, end = attempt_window(detail)
+            if pids and start and end:
+                plog = plog_errors(pids, start, end)
+        plog_text = "\n".join(plog)
         status, stage, af_line = function_status(backend, attempt["status"], attempt["error_stage"],
-                                                 attempt["error_summary"], diagnostics, -1)
+                                                 attempt["error_summary"], diagnostics, -1, plog_text)
         shape_items, worst_shape = [], None
         for shape in shapes:
             s_status = status if shape["correctness"] != "error" else function_status(
@@ -377,7 +440,7 @@ class Mapper:
         if status != "pass" and worst_shape is not None:
             status, stage, af_line = function_status(backend, "error", worst_shape["error_stage"],
                                                      worst_shape["error_summary"], diagnostics,
-                                                     worst_shape["shape_index"])
+                                                     worst_shape["shape_index"], plog_text)
         accuracy = None
         if status == "pass" and backend != "cpu":
             corr = [s["correctness"] for s in shapes]
@@ -386,7 +449,8 @@ class Mapper:
         kernels = [s["mean_wall_ns"] for s in shapes if s["mean_wall_ns"]]
         summary_text = (worst_shape["error_summary"] if worst_shape is not None else None) or attempt["error_summary"]
         log_text = "\n\n".join(t for t in (attempt["error_summary"], *(s["error_summary"] for s in shapes),
-                                           diagnostics.get("error"))
+                                           diagnostics.get("error"),
+                                           ("# CANN plog (ERROR)\n" + plog_text) if plog_text else None)
                                if t)
         versions = {"af-mlir": environment.get("cann"), "af-legacy": environment.get("cann"),
                     "triton-npu": environment.get("triton"), "eager-npu": environment.get("cann"),
@@ -414,7 +478,9 @@ class Mapper:
         }
         if item["log"] and len(item["log"].encode()) > MAX_LOG:
             item["log"] = item["log"].encode()[:MAX_LOG].decode(errors="ignore")
-        item["detail"] = self.detail(attempt["id"])
+        if detail is not None and plog:
+            detail["plog_errors"] = plog
+        item["detail"] = detail
         run = {"run_uuid": (execution.get("batch_id") or "local")[:64], "kind": "fuzz"}
         return item, {"machine_id": environment.get("installation_id") or socket.gethostname(),
                       "npu_arch": environment.get("device_model"), "afx_version": environment.get("package_version"),
