@@ -4,8 +4,32 @@ from dataclasses import asdict
 import json
 import pytest
 from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.campaign import initialize,refill,stop
+from autofusex.fuzz.client.scheduling.campaign import initialize,read,refill,stop
 from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
+
+
+def test_read_roundtrips_budget_and_started_at(tmp_path):
+    # Nothing silently falls back to a CLI default once saved: everything --continue
+    # (and `fuzz status`) need to reconstruct the exact launch is actually on disk.
+    ledger=TaskLedger(tmp_path/'queue')
+    assert read(ledger) is None
+    configs=[ExecutionConfig(b,'cpu' if b=='cpu' else 'npu:0') for b in ['cpu','af-mlir']]
+    budget={'compile_threads':4,'cpu_workers':2,'worker_max_tasks':8}
+    initialize(ledger,configs,EvaluationConfig(),3,devices=['npu:0'],sampling=asdict(SamplingConfig.profile('small')),budget=budget)
+    saved=read(ledger)
+    assert saved['remaining']==3 and not saved['stopped']
+    assert saved['budget']==budget and saved['devices']==['npu:0']
+    assert saved['sampling']['dim_dist_mode']==SamplingConfig.profile('small').dim_dist_mode
+    assert [c['backend'] for c in saved['configs']]==['cpu','af-mlir']
+    assert saved['started_at']  # ISO timestamp, not a guess the operator has to make later
+    stop(ledger)
+    assert read(ledger)['stopped']
+
+
+def test_read_tolerates_a_campaign_saved_before_budget_was_persisted(tmp_path):
+    ledger=TaskLedger(tmp_path/'queue')
+    initialize(ledger,[ExecutionConfig('cpu','cpu')],EvaluationConfig(),None)  # no budget= kwarg, as old callers do
+    assert read(ledger)['budget'] is None
 
 
 def test_finite_campaign_bounded_queue(tmp_path):

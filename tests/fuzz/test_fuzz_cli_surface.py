@@ -129,15 +129,61 @@ def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeyp
         return {'state': 'test'}
     monkeypatch.setattr('autofusex.fuzz.client.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
-    configs, evaluation, count, devices, excluded, sampling, ops = observed[-1]['campaign']
-    assert ops is None
+    configs, evaluation, count, devices, excluded, sampling, ops, budget = observed[-1]['campaign']
+    assert ops is None and budget['worker_max_tasks'] == 16
     assert sampling['dim_dist_mode'] == 'half_normal'
     assert sampling['dim_max'] == 131072
     assert count is None and observed[-1]['foreground']
     assert all(not c.save_results for c in configs)
     assert main(['run', '--count', '3', '--save']) == 0
-    configs, _, count, devices, excluded, sampling, ops = observed[-1]['campaign']
+    configs, _, count, devices, excluded, sampling, ops, budget = observed[-1]['campaign']
     assert count == 3 and all(c.save_results for c in configs)
+
+
+def test_continue_reuses_the_saved_campaign_without_retyping_flags(tmp_path, monkeypatch, capsys):
+    # Regression for a real incident: after a host restart nobody could recall the exact
+    # generation/backend/device/budget flags a multi-hour campaign had been started with,
+    # and retyping from memory would have silently fallen back to CLI defaults for anything
+    # forgotten. --continue must reconstruct everything from what was actually persisted.
+    from autofusex.fuzz.client.scheduling.campaign import initialize as initialize_campaign
+    monkeypatch.setattr('autofusex.fuzz.client.generation.runtime.source_evidence', lambda: {})
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
+    monkeypatch.setattr('autofusex.fuzz.client.scheduling.devices.select_devices', lambda _: ['npu:0', 'npu:1'])
+    observed = []
+    def launch(ledger, database, specifications, **kwargs):
+        if kwargs.get('campaign') is not None:
+            initialize_campaign(ledger, *kwargs['campaign'])
+        observed.append(kwargs)
+        return {'state': 'test'}
+    monkeypatch.setattr('autofusex.fuzz.client.scheduling.hosting.launch', launch)
+    assert main(['run', '--fg', '--backend', 'af-legacy', '--tensor-scale', 'small', '--worker-max-tasks', '4']) == 0
+    assert 'note: replacing' not in capsys.readouterr().err  # nothing saved yet on the first launch
+    first = observed[-1]['campaign']
+    assert main(['run', '--continue', '--fg']) == 0
+    assert observed[-1]['devices'] == ['npu:0', 'npu:1']
+    second = observed[-1]['campaign']
+    assert [c.backend for c in second[0]] == [c.backend for c in first[0]]
+    assert [c.compile_threads for c in second[0]] == [c.compile_threads for c in first[0]]
+    assert second[0][0].batch_id != first[0][0].batch_id  # relaunch still gets its own grouping id
+    assert second[5] == first[5]  # sampling profile ('small') preserved exactly
+    assert second[7] == first[7] == {**first[7], 'worker_max_tasks': 4}  # budget preserved
+    # Replacing a still-live saved campaign without --continue is flagged, not silent.
+    assert main(['run', '--fg', '--backend', 'af-mlir']) == 0
+    assert 'note: replacing the saved campaign' in capsys.readouterr().err
+
+
+def test_continue_without_a_saved_campaign_is_a_clear_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
+    assert main(['run', '--continue']) == 2
+    assert 'no saved campaign' in capsys.readouterr().err
+
+
+def test_continue_rejects_flags_it_would_otherwise_silently_ignore(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
+    assert main(['run', '--continue', '--backend', 'af-mlir']) == 2
+    assert 'backend' in capsys.readouterr().err
+    assert main(['run', '--continue', 'C16']) == 2
+    assert 'seeds' in capsys.readouterr().err
 
 
 def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypatch, capsys):

@@ -12,6 +12,11 @@ def register(sub, maintenance):
         parser.add_argument('--queue', help=__import__('argparse').SUPPRESS)
         if name == 'run':
             parser.add_argument('seeds', nargs='*', help='self-contained short seeds')
+            parser.add_argument('--continue', dest='continue_campaign', action='store_true',
+                                help="relaunch the saved random campaign exactly as it last ran (backends, devices, "
+                                     "sampling, resource budget); use after a restart instead of retyping flags from "
+                                     "memory. Conflicts with seeds and any other generation/backend/device/resource flag; "
+                                     "see `afx fuzz status` for what is saved")
             from ..generation.sampling import PROFILES, DIM_MODES, VALUE_MODES, DTYPE_MODES
             parser.add_argument('--tensor-scale', choices=tuple(PROFILES))
             parser.add_argument('--dim-range', nargs=2, type=int, metavar=('MIN', 'MAX'))
@@ -53,6 +58,61 @@ def register(sub, maintenance):
             parser.add_argument('--database', help=__import__('argparse').SUPPRESS)
 
 
+# Flags a saved campaign already pins down; `--continue` refuses to guess which
+# one the operator actually meant to change, so it allows none of them at all.
+# default=None here must match each flag's own argparse default above.
+_CONTINUE_CONFLICTS = {
+    'tensor_scale': None, 'dim_range': None, 'dim_dist_mode': None, 'dtype_mode': None,
+    'value_dist_mode': None, 'max_elem_per_tensor': None, 'max_nodes': None, 'generation_timeout': None,
+    'dynamic_variants': None, 'method': None, 'exclude_op': None, 'ops': None, 'backend': None,
+    'device': None, 'auto_resources': None, 'count': None, 'static_only': False, 'performance': False,
+    'worker_max_tasks': 16, 'workers': None, 'compile_threads': None, 'device_memory_bytes': None,
+    'scheduling': 'staged', 'save': False,
+}
+
+
+def _continue_campaign(args, ledger, database):
+    changed = [name for name, default in _CONTINUE_CONFLICTS.items() if getattr(args, name, default) != default]
+    if args.seeds or changed:
+        raise ValueError('--continue reuses the saved campaign exactly; it takes no seeds and no other '
+                          'generation/backend/device/resource flag (set: ' +
+                          ', '.join((['seeds'] if args.seeds else []) + changed) + ')')
+    from .campaign import read as read_campaign
+    saved = read_campaign(ledger)
+    if saved is None:
+        raise ValueError('no saved campaign in this queue to continue (--queue/--data-dir ' + str(ledger.path) +
+                          '); this host has never run `afx fuzz run` without --continue here')
+    import sys
+    import uuid
+    from dataclasses import asdict
+    from ..contracts import canonical_json, ExecutionConfig, EvaluationConfig
+    from ..generation.sampling import SamplingConfig
+    from ..generation.runtime import source_evidence
+    from .supervisor import _validate_task
+    source_evidence()
+    configs = [ExecutionConfig(**{**c, 'batch_id': str(uuid.uuid4())}) for c in saved['configs']]
+    evaluation = EvaluationConfig(**saved['evaluation'])
+    devices = saved['devices']
+    sampling = SamplingConfig(**saved['sampling'])
+    ops = saved['ops'] or None
+    exclude_ops = saved['exclude_ops'] or None
+    from .budgets import Budget
+    if saved.get('budget'):
+        budget = Budget(**saved['budget'])
+    else:
+        from ..config import load_config, data_home
+        from ..resources import adaptive_defaults
+        home = data_home(args.data_dir)
+        budget = Budget.configured(load_config(home) or adaptive_defaults(home), None)
+        print('warning: saved campaign predates budget persistence; resuming with the current default '
+              'worker/compile-thread settings, not necessarily the ones it actually ran with', file=sys.stderr)
+    for config in configs:
+        _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
+    from .hosting import launch
+    return launch(ledger, database, [], timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
+                  campaign=(configs, evaluation, saved['remaining'], devices, exclude_ops, asdict(sampling), ops, asdict(budget)))
+
+
 def dispatch(args):
     home = data_home(args.data_dir)
     ledger = TaskLedger(args.queue or home/'tasks/tasks.sqlite')
@@ -60,7 +120,8 @@ def dispatch(args):
         if args.task:
             return ledger.get(args.task)
         from .hosting import status
-        return dict(ledger.page(limit=args.limit, after=args.after), supervisor=status(ledger))
+        from .campaign import read as read_campaign
+        return dict(ledger.page(limit=args.limit, after=args.after), supervisor=status(ledger), campaign=read_campaign(ledger))
     if args.command == 'stop':
         if args.task:
             ledger.stop(args.task)
@@ -82,6 +143,8 @@ def dispatch(args):
         return resume(ledger, database, args.task)
     from dataclasses import asdict
     from ..contracts import canonical_json
+    if args.command == 'run' and getattr(args, 'continue_campaign', False):
+        return _continue_campaign(args, ledger, database)
     import math
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError('timeout must be finite and positive')
@@ -146,10 +209,21 @@ def dispatch(args):
         import json
         import sys
         print(json.dumps({'resource_plan': resource_plan}), file=sys.stderr, flush=True)
+    if not seeds or ops:
+        from .campaign import read as read_campaign
+        previous = read_campaign(ledger)
+        if previous is not None and not previous['stopped']:
+            # Silent clobbering of a still-live campaign is exactly the footgun `--continue` exists to
+            # avoid; anyone who skips --continue and types fresh flags still gets told what they are
+            # replacing, in case that was not the intent (e.g. after a host restart, typed from memory).
+            import sys
+            print(f"note: replacing the saved campaign started at {previous.get('started_at', 'unknown time')} "
+                  f"(backends {sorted({c['backend'] for c in previous['configs']})}, devices {previous['devices']}); "
+                  "use `afx fuzz run --continue` to resume it unchanged instead", file=sys.stderr)
     result = launch(ledger, database, ((seed, replace(config,static_only=args.static_only or not Seed.parse(seed).dynamic,device='cpu' if config.device=='cpu' else devices[i%len(devices)]), evaluation, None) for i,seed in enumerate(seeds) for config in configs),
                   timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
                   campaign=(configs,evaluation,0 if seeds and ops else count,devices,
-                            getattr(args,'exclude_op',None),asdict(sampling),ops) if (not seeds or ops) else None)
+                            getattr(args,'exclude_op',None),asdict(sampling),ops,asdict(budget)) if (not seeds or ops) else None)
 
     if resource_plan is not None:
         result["resource_plan"] = resource_plan
