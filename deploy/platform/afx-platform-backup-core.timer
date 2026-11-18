@@ -1,0 +1,11 @@
+[Unit]
+Description=Six-hourly core-only AutofuseX platform backup
+
+[Timer]
+OnCalendar=*-*-* 09,15,21:30:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=afx-platform-backup@core.service
+
+[Install]
+WantedBy=timers.target

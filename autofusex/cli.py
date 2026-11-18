@@ -391,6 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command_name", required=True)
 
     sub.add_parser("fuzz", help="setup, doctor, replay and seed diagnostics; use fuzz --help")
+    sub.add_parser("platform", help="platform server and user/token admin; use platform --help")
     make = sub.add_parser("make-manifest", help="build a manifest from graph JSON and an npy dump directory")
     make.add_argument(
         "--side",
@@ -569,6 +570,9 @@ def main(argv: list[str] | None = None) -> int:
     if raw_argv and raw_argv[0] == "fuzz":
         from autofusex.fuzz.client.cli import main as fuzz_main
         return fuzz_main(raw_argv[1:])
+    if raw_argv and raw_argv[0] == "platform":
+        from autofusex.platform.cli import main as platform_main
+        return platform_main(raw_argv[1:])
     from autofusex.script_runner import (
         default_direct_output_paths,
         parse_python_script_invocation,
