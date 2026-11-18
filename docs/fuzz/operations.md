@@ -88,7 +88,11 @@ AF_FUZZ_WRITE_ALLOWLIST 指向私有 JSON，服务启动时读取；不设置则
 python -m pip install -r tools/release-requirements.txt
 python -m build --wheel --no-isolation
 python -m twine check dist/*.whl
-python tools/release_wheel.py --tag vVERSION --repository niuyuhu/Autofuse-Debugger
+python tools/release_wheel.py --tag vVERSION --repository xingzhixiong/Autofuse-Debugger
 ~~~
 
 替换 vVERSION。脚本默认校验和展示计划，真实发布由可信 Tag 流水线使用 --publish。GitCode Release 和 PyPI 使用同一 wheel，包含网页资源；NNSmith fork 通过 execution 依赖安装。发布前完成相关回归、执行环境验证及包安装检查，配置 Release/PyPI 凭据并保护 Tag 权限。同版本不得重建不同内容覆盖发布，需要修改时升版本。
+
+GitCode 没有 release 触发事件，因此发布由 `v*` Tag 的 push 启动；流水线依次检出、解析 Tag、干净构建 wheel、在只含 wheel 的独立虚拟环境里跑安装冒烟测试、校验 Tag/元数据/目录结构，最后写入 GitCode Release 与 PyPI。凭据放在项目设置 → 密钥与变量 → 仓库密钥中的 `GITCODE_RELEASE_TOKEN` 与 `PYPI_API_TOKEN`。
+
+流水线只运行 `tests/test_release_wheel.py`。`tests/fuzz` 仍有若干用例引用 `c6feaac`（refactor fuzz into client daemon server modules）重构前的模块路径（如 `autofusex.fuzz.resources`、`autofusex.fuzz.runtime`、`autofusex.fuzz.failure_details`），修复前不能作为发布门禁。

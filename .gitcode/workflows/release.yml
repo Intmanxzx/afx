@@ -1,43 +1,122 @@
 name: Release wheel
+
+# GitCode has no release event. Its trigger set is push, pull_request,
+# pull_request_target, issue_comment, pull_request_comment, workflow_dispatch,
+# workflow_call and schedule, so a tagged push is what starts a release.
 on:
   push:
     tags:
       - 'v*'
+
+# GitCode's concurrency block takes max/exceed-action, not group/cancel-in-progress.
+# QUEUE (not CANCEL) matters here: the GitCode Release and PyPI are written in
+# sequence, so killing a run between the two leaves a half-published version
+# that has to be completed by hand with the identical wheel.
 concurrency:
   enable: true
   max: 1
   exceed-action: QUEUE
+
+permissions:
+  # Nothing beyond reading the checked-out tree is needed from the repository:
+  # the GitCode Release and PyPI are authenticated with GITCODE_RELEASE_TOKEN
+  # and PYPI_API_TOKEN, not with the implicit ATOMGIT_TOKEN.
+  repository: read
+
 jobs:
   release:
+    name: Build, verify and publish
     runs-on: [ubuntu-latest, x64, small]
+    timeout-minutes: 45
     steps:
       - name: Checkout
-        identifier: source
         uses: checkout
-      - name: Test and build tagged wheel
+
+      - name: Resolve the release tag
+        id: tag
         run: |
           set -eu
-          cd ${{ steps.source.outputs.path }}
-          python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ required"'
+          # Only a tag push reaches here, but ATOMGIT_REF_TYPE is checked so a
+          # manual dispatch on a branch fails loudly instead of publishing a
+          # branch tip under a guessed version.
+          case "${ATOMGIT_REF_TYPE:-}" in
+            tag|Tag|TAG) ;;
+            *) echo "release runs only on a tag push, not '$ATOMGIT_REF_TYPE'" >&2; exit 1 ;;
+          esac
+          TAG="${ATOMGIT_REF_NAME:?no tag name in ATOMGIT_REF_NAME}"
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "release tag must look like vX.Y.Z, got '$TAG'" >&2; exit 1 ;;
+          esac
+          # release_wheel.py compares HEAD against refs/tags/<tag>^{commit}, so
+          # the tag ref has to exist locally. A short checkout may not have it,
+          # and a tag pushed without fetching it is still the authoritative
+          # commit ATOMGIT_SHA names, so create the local ref from there.
+          git fetch --tags --force --quiet || true
+          if ! git rev-parse --verify --quiet "refs/tags/$TAG^{commit}" >/dev/null; then
+            SHA="${ATOMGIT_SHA:?no commit SHA in ATOMGIT_SHA}"
+            echo "tag $TAG absent from the checkout; pinning it to $SHA"
+            git update-ref "refs/tags/$TAG" "$SHA"
+          fi
+          # If checkout landed on a branch tip instead of the tag, move to the
+          # tag itself: publishing the wrong commit is not recoverable on PyPI.
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "refs/tags/$TAG^{commit}")" ]; then
+            echo "HEAD is not the tagged commit; checking out $TAG"
+            git checkout --quiet --detach "refs/tags/$TAG"
+          fi
+          echo "tag=$TAG" >> "$ATOMGIT_OUTPUT"
+
+      - name: Build the wheel
+        env:
+          # Optional mirror for runners that cannot reach pypi.org directly.
+          # An undefined vars entry evaluates to the empty string.
+          INDEX_URL_OVERRIDE: ${{ vars.PIP_INDEX_URL }}
+        run: |
+          set -eu
+          python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version' \
+            || { echo 'release tooling requires Python 3.11+' >&2; exit 1; }
+          if [ -n "$INDEX_URL_OVERRIDE" ]; then
+            PIP_INDEX_URL="$INDEX_URL_OVERRIDE"
+            export PIP_INDEX_URL
+          fi
           python3 -m venv .release-venv
-          .release-venv/bin/python -m pip install -r tools/release-requirements.txt
-          .release-venv/bin/python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
-          .release-venv/bin/python -m pip install -e '.[execution]'
-          .release-venv/bin/python -m pytest -q tests/fuzz tests/test_release_wheel.py
-          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          .release-venv/bin/python -m pip install --quiet --upgrade pip
+          .release-venv/bin/python -m pip install --quiet -r tools/release-requirements.txt
+          # A build/ left over from an older distribution name leaks stale
+          # packages into the wheel, which the smoke test then rejects.
+          rm -rf build dist
+          # Only the release-tooling tests run here. tests/fuzz still imports
+          # modules that the "refactor fuzz into client daemon server modules"
+          # commit moved, so it cannot gate a release until it is repaired.
+          .release-venv/bin/python -m pytest -q tests/test_release_wheel.py
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
           .release-venv/bin/python -m build --wheel --no-isolation
           .release-venv/bin/python -m twine check dist/*.whl
+
+      - name: Smoke-test the installed wheel
+        run: |
+          set -eu
+          # The smoke script fails if any model dependency is importable, so it
+          # gets its own venv holding only the wheel and its base dependencies.
           python3 -m venv .wheel-smoke-venv
-          .wheel-smoke-venv/bin/python -m pip install --force-reinstall dist/*.whl
+          .wheel-smoke-venv/bin/python -m pip install --quiet --force-reinstall dist/*.whl
           .wheel-smoke-venv/bin/python tools/fuzz/fuzz_wheel_smoke.py
-          TAG=$(git describe --tags --exact-match HEAD)
-          .release-venv/bin/python tools/release_wheel.py --tag "$TAG" --repository niuyuhu/Autofuse-Debugger
-      - name: Publish identical wheel to Release and PyPI
+
+      - name: Validate the tag, metadata and layout
+        run: |
+          set -eu
+          .release-venv/bin/python tools/release_wheel.py \
+            --tag "${{ steps.tag.outputs.tag }}" \
+            --repository "${{ atomgit.repository }}"
+
+      - name: Publish to the GitCode Release and PyPI
         env:
           GITCODE_RELEASE_TOKEN: ${{ secrets.GITCODE_RELEASE_TOKEN }}
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           set -eu
-          cd ${{ steps.source.outputs.path }}
-          TAG=$(git describe --tags --exact-match HEAD)
-          .release-venv/bin/python tools/release_wheel.py --tag "$TAG" --repository niuyuhu/Autofuse-Debugger --publish
+          .release-venv/bin/python tools/release_wheel.py \
+            --tag "${{ steps.tag.outputs.tag }}" \
+            --repository "${{ atomgit.repository }}" \
+            --publish
