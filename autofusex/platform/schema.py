@@ -434,6 +434,23 @@ CREATE TABLE efficiency_windows(
 ) WITHOUT ROWID;
 CREATE INDEX efficiency_windows_time ON efficiency_windows(received_at);
 """),
+    # Short IDs: ISS-F-000254 -> F254, KB-000012 -> K12 (one token, double-click copies it).
+    (5, """
+UPDATE issues SET issue_id=substr(issue_id,5,1) || CAST(substr(issue_id,7) AS INTEGER) WHERE issue_id LIKE 'ISS-%';
+UPDATE issues SET caused_by=substr(caused_by,5,1) || CAST(substr(caused_by,7) AS INTEGER) WHERE caused_by LIKE 'ISS-%';
+UPDATE issues SET duplicate_of=substr(duplicate_of,5,1) || CAST(substr(duplicate_of,7) AS INTEGER) WHERE duplicate_of LIKE 'ISS-%';
+UPDATE issues SET knowledge_id='K' || CAST(substr(knowledge_id,4) AS INTEGER) WHERE knowledge_id LIKE 'KB-%';
+UPDATE issue_signature_alias SET issue_id=substr(issue_id,5,1) || CAST(substr(issue_id,7) AS INTEGER) WHERE issue_id LIKE 'ISS-%';
+UPDATE issue_cases SET issue_id=substr(issue_id,5,1) || CAST(substr(issue_id,7) AS INTEGER) WHERE issue_id LIKE 'ISS-%';
+UPDATE issue_rounds SET issue_id=substr(issue_id,5,1) || CAST(substr(issue_id,7) AS INTEGER) WHERE issue_id LIKE 'ISS-%';
+UPDATE issue_events SET issue_id=substr(issue_id,5,1) || CAST(substr(issue_id,7) AS INTEGER) WHERE issue_id LIKE 'ISS-%';
+UPDATE retest_tasks SET issue_id=substr(issue_id,5,1) || CAST(substr(issue_id,7) AS INTEGER) WHERE issue_id LIKE 'ISS-%';
+UPDATE regression_pins SET scope_value=substr(scope_value,5,1) || CAST(substr(scope_value,7) AS INTEGER) WHERE scope='issue' AND scope_value LIKE 'ISS-%';
+UPDATE knowledge SET knowledge_id='K' || CAST(substr(knowledge_id,4) AS INTEGER) WHERE knowledge_id LIKE 'KB-%';
+UPDATE knowledge_links SET knowledge_id='K' || CAST(substr(knowledge_id,4) AS INTEGER) WHERE knowledge_id LIKE 'KB-%';
+UPDATE knowledge_links SET target_id=substr(target_id,5,1) || CAST(substr(target_id,7) AS INTEGER) WHERE target_kind='issue' AND target_id LIKE 'ISS-%';
+UPDATE knowledge_links SET target_id='K' || CAST(substr(target_id,4) AS INTEGER) WHERE target_kind='knowledge' AND target_id LIKE 'KB-%';
+"""),
 ]
 
 CONTENT = [

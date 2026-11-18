@@ -1,3 +1,4 @@
+import re
 import json
 import threading
 import http.client as httpclient
@@ -112,7 +113,7 @@ def test_clustering_groups_same_normalized_error(world):
     by_category = seed_failures(world)
     assert set(by_category) == {"schedule", "runtime_fail"}
     schedule = by_category["schedule"]
-    assert schedule["case_count"] == 2 and schedule["status"] == "open" and schedule["issue_id"].startswith("ISS-F-")
+    assert schedule["case_count"] == 2 and schedule["status"] == "open" and re.fullmatch(r"F\d+", schedule["issue_id"])
     assert schedule["dimension"] == "function" and schedule["backend"] == "af-mlir"
     assert issues.normalize("Error at 0x1F in /usr/lib/x.so: shape [3, 4] 'foo'") == \
         "error at <hex> in <path>: shape <shape> <str>"
@@ -340,7 +341,7 @@ def test_http_issue_flow(world):
         assert status == 200 and len(tasks["data"]["tasks"]) == 2
         status, rounds = call("GET", f"/api/issues/{issue_id}/rounds/1/tasks")
         assert {t["status"] for t in rounds["data"]} == {"leased"}
-        assert call("GET", "/api/issues/ISS-F-999999")[0] == 404
+        assert call("GET", "/api/issues/F999999")[0] == 404
         assert call("POST", f"/api/admin/issues/{issue_id}/close", {"request_key": "h4", "reason": "x"})[0] == 403
         status, search = call("GET", "/api/knowledge/search?q=%E8%9E%8D%E5%90%88")
         assert status == 200 and search["data"]["items"] == []
@@ -367,3 +368,23 @@ def test_device_busy_is_invalid_not_failure(world):
         assert result["result"] == "invalid"
     detail = world.issue(issue_id)
     assert detail["rounds"][0]["outcome"] == "invalid" and detail["status"] == "claimed"
+
+
+def test_short_id_migration_renames_everywhere(tmp_path):
+    import sqlite3
+    from autofusex.platform import schema
+    store = Store(tmp_path / "data")
+    with store.write() as conn:
+        conn.execute("INSERT INTO issues(issue_id, dimension, backend, signature, category, title, status, first_seen_at, "
+                     "last_seen_at, updated_at, knowledge_id) VALUES('ISS-F-000254','function','af-mlir',x'01','c','t',"
+                     "'resolved',0,0,0,'KB-000012')")
+        conn.execute("INSERT INTO issue_cases(issue_id, case_id, role, npu_arch, case_revision, added_at) "
+                     "VALUES('ISS-F-000254', 1, 'affected', 'a', 1, 0)")
+        conn.execute("INSERT INTO knowledge_links VALUES('KB-000012','issue','ISS-F-000254')")
+        conn.execute("DELETE FROM schema_migrations WHERE version=5")
+    with store.connect(readonly=False) as conn:
+        schema.apply(conn, "main", schema.CORE)
+    r = store.reader()
+    assert r.execute("SELECT issue_id, knowledge_id FROM issues").fetchone()[:] == ("F254", "K12")
+    assert r.execute("SELECT issue_id FROM issue_cases").fetchone()[0] == "F254"
+    assert r.execute("SELECT knowledge_id, target_id FROM knowledge_links").fetchone()[:] == ("K12", "F254")

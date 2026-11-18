@@ -99,7 +99,7 @@ def create(conn, principal: Principal, fields: dict, *, confidence: str, status:
          fields["version_range"] or (f">={issue['fix_version']}" if issue is not None and issue["fix_version"]
                                      else None),
          confidence, status, principal.user_id, agent_id, body, now, now))
-    knowledge_id = f"KB-{cur.lastrowid:06d}"
+    knowledge_id = f"K{cur.lastrowid}"
     conn.execute("UPDATE knowledge SET knowledge_id=? WHERE knowledge_no=?", (knowledge_id, cur.lastrowid))
     conn.execute("INSERT INTO knowledge_fts(rowid, title, keywords, body) VALUES(?,?,?,?)",
                  (cur.lastrowid, fields["title"], " ".join(fields["keywords"]), body))

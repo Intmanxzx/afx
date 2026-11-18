@@ -232,7 +232,7 @@ execution_heads(case_id, backend, npu_arch, exec_id,
 
 ```sql
 issues(
-  issue_id TEXT PRIMARY KEY,          -- 如 ISS-F-000123（F/A/P 对应功能/精度/性能）
+  issue_id TEXT PRIMARY KEY,          -- 如 F123（F/A/P 对应功能/精度/性能，后接序号）
   dimension TEXT NOT NULL,            -- function | accuracy | performance
   backend TEXT NOT NULL,              -- af-legacy | af-mlir
   signature BLOB NOT NULL,            -- 聚类签名；与 dimension、backend 共同唯一
@@ -283,7 +283,7 @@ issue_events(event_id INTEGER PRIMARY KEY, issue_id, at, actor, kind, from_statu
 
 ```sql
 knowledge(
-  knowledge_id TEXT PRIMARY KEY,      -- KB-000123
+  knowledge_id TEXT PRIMARY KEY,      -- K123
   kind TEXT NOT NULL,                 -- bugfix_function | bugfix_accuracy | perf_tuning
                                       -- | fusion_pattern | capability | best_practice | pitfall
   title TEXT NOT NULL,
@@ -381,10 +381,10 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 领取返回示例（关键字段）：
 
 ```json
-{"issue_id":"ISS-F-000123","lease_id":"…","dimension":"function","backend":"af-mlir",
+{"issue_id":"F123","lease_id":"…","dimension":"function","backend":"af-mlir",
  "title":"schedule: tiling axis mismatch on broadcast reduce","case_count":37,
  "repro":{"command":"afx fuzz replay E0ABC… --backend af-mlir","cases":["E0ABC…","F1XYZ…"]},
- "log_summary":"…","related_knowledge":[{"knowledge_id":"KB-000041","title":"…"}]}
+ "log_summary":"…","related_knowledge":[{"knowledge_id":"K41","title":"…"}]}
 ```
 
 ## 6. 页面设计

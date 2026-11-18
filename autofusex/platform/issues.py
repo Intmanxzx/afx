@@ -213,7 +213,7 @@ def _attach(conn, dimension, backend, sig, category, title, summary, execution, 
             "INSERT INTO issues(issue_id, dimension, backend, signature, category, title, log_summary, status, "
             "first_seen_at, last_seen_at, updated_at) VALUES('', ?,?,?,?,?,?, 'open', ?,?,?)",
             (dimension, backend, sig, category, title[:300], (summary or "")[:512], now, now, now))
-        issue_id = f"ISS-{DIMENSION_PREFIX[dimension]}-{cur.lastrowid:06d}"
+        issue_id = f"{DIMENSION_PREFIX[dimension]}{cur.lastrowid}"  # e.g. F254: one token, easy to copy
         conn.execute("UPDATE issues SET issue_id=? WHERE issue_no=?", (issue_id, cur.lastrowid))
         event(conn, issue_id, "system", "created", None, "open", title[:300])
         issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
