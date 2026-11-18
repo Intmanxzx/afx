@@ -422,3 +422,27 @@ def test_plog_errors_by_worker_pid_and_window(tmp_path):
 def datetime_iso(epoch):
     from datetime import datetime, timezone
     return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+
+
+def test_environment_errors_are_not_uploaded(tmp_path):
+    import sqlite3
+    from pathlib import Path as _Path
+    from autofusex.platform.client import Mapper, State, Counters, upload_new
+    db = tmp_path / "results.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE attempts(id TEXT PRIMARY KEY, seed TEXT, backend TEXT, status TEXT, error_summary TEXT, "
+                 "execution_id TEXT, evaluation_id TEXT, environment_id TEXT, prepare_ns INT, error_stage TEXT, created_at TEXT)")
+    conn.execute("CREATE TABLE shapes(attempt_id TEXT, shape_index INT, correctness TEXT, error_summary TEXT)")
+    conn.execute("CREATE TABLE contexts(id TEXT PRIMARY KEY, kind TEXT, payload TEXT)")
+    conn.execute("INSERT INTO attempts(id, backend, status, error_summary) VALUES('a1','af-mlir','error',"
+                 "'AttributeError: module ''triton'' has no attribute ''language''')")
+    conn.commit()
+
+    class NoAPI:
+        def call(self, *a, **k):
+            raise AssertionError("environment failures must not be uploaded")
+
+    state = State(_Path(tmp_path / "state.sqlite"))
+    statuses = upload_new(NoAPI(), Mapper(str(db)), state, Counters(), key_prefix="fuzz")
+    assert statuses == {"a1": "environment"}
+    assert state.conn.execute("SELECT reason FROM rejected").fetchone()[0].startswith("environment:")

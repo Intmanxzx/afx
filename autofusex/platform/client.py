@@ -32,6 +32,11 @@ log = logging.getLogger("afx.platform.client")
 BATCH = 100
 UPLOAD_BUDGET = 1500 * 1024
 RETEST_TRIES = 8
+# Failures caused by the test machine, not by the backend under test. Such attempts are not uploaded
+# (they would count as backend failures); they are recorded locally with the reason instead.
+ENVIRONMENT_ERRORS = re.compile(
+    r"module 'triton' has no attribute 'language'"
+    r"|device busy: another managed test owns this physical NPU", re.I)
 BUSY = re.compile(r"device busy|owns this physical NPU", re.I)  # stay below the proxy's 2 MiB request limit
 MAX_LOG = 200 * 1024
 AF_BACKENDS = ("af-mlir", "af-legacy")
@@ -540,6 +545,12 @@ def upload_new(api: API, mapper: Mapper, state: State, counters: Counters, *, ke
             return statuses
         groups: dict = {}
         for row in rows:
+            env_error = environment_error(mapper, row)
+            if env_error:
+                state.conn.execute("INSERT OR REPLACE INTO rejected VALUES(?,?,?)",
+                                   (row["id"], f"environment: {env_error}"[:500], int(time.time())))
+                statuses[row["id"]] = "environment"
+                continue
             try:
                 item, info = mapper.item(row)
             except Exception as exc:  # malformed local record: remember and skip, never block the queue
@@ -590,6 +601,17 @@ def upload_new(api: API, mapper: Mapper, state: State, counters: Counters, *, ke
             return statuses
         state.set(key_prefix + ":cursor", rows[-1]["rowid"])
         counters.add("executions", len(rows))
+
+
+def environment_error(mapper, attempt) -> str | None:
+    texts = [attempt["error_summary"] or ""]
+    texts += [r[0] or "" for r in mapper.conn.execute("SELECT error_summary FROM shapes WHERE attempt_id=?",
+                                                       (attempt["id"],))]
+    for text in texts:
+        found = ENVIRONMENT_ERRORS.search(text)
+        if found:
+            return found.group(0)
+    return None
 
 
 def installed_packages(env: dict | None = None) -> dict:
