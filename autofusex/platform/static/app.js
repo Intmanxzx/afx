@@ -167,7 +167,7 @@ async function loadMe() {
   updateWho();
 }
 function updateWho() {
-  $("#who").textContent = me ? `${me.user_id} · ${me.role === "admin" ? "管理员" : me.role}` : "访客（只读）";
+  $("#who").textContent = me ? `${me.user_id} · ${me.role === "admin" ? "管理员" : me.role}` : "";
   $("#logout").textContent = me ? "退出" : "登录";
 }
 const isAdmin = () => me && me.role === "admin";
@@ -307,8 +307,7 @@ function pipelineSvg(data, lanes, columns, link, width) {
   for (const [fam, idx] of Object.entries(families)) {
     if (idx.length < 2) continue;
     const y0 = top + Math.min(...idx) * laneH - 18, y1 = top + (Math.max(...idx) + 1) * laneH - 26;
-    root.append(svg("rect", { x: laneStart - 150, y: y0, width: W - laneStart + 130, height: y1 - y0, rx: 16, class: "pipe-family" }),
-      svg("text", { x: laneStart - 138, y: y1 - 12, class: "pipe-family-label" }, `${fam.toUpperCase()} 族 · 共享前端`));
+    root.append(svg("rect", { x: laneStart - 150, y: y0, width: W - laneStart + 130, height: y1 - y0, rx: 16, class: "pipe-family" }));
   }
   // total source bar
   const srcTop = top - 6, srcH = lanes.length * laneH - 60;
@@ -554,7 +553,7 @@ PAGES.discovery = async (root, params) => {
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
   const colpick = el("div", { class: "colpick hidden" }, COLUMNS.map(([k, t]) => el("label", {},
     el("input", { type: "checkbox", checked: visible.has(k), onchange: e => { e.target.checked ? visible.add(k) : visible.delete(k); store.set(COLS_KEY, [...visible]); redraw(); } }), t)));
-  panel.append(el("h2", {}, "执行记录", el("span", { class: "muted small" }, "按用例分组，组内按时间倒序，同色为同一批次"), el("span", { class: "spacer" }),
+  panel.append(el("h2", {}, "执行记录", el("span", { class: "spacer" }),
     select([["expanded", "展开视图"], ["pivot", "后端透视"]], view, v => { store.set(VIEW_KEY, v); render(); }),
     el("button", { onclick: () => { colpick.classList.toggle("hidden"); if (colpick.classList.contains("hidden")) delete panel.dataset.custom; else panel.dataset.custom = "1"; } }, "显示列")), colpick, table, more);
   let groups = [];
@@ -752,7 +751,7 @@ PAGES.case = async (root, params) => {
     for (const e of executions) if (!latest[e.backend] || (e.is_head && !latest[e.backend].is_head)) latest[e.backend] = latest[e.backend] || e;
     for (const e of executions) if (e.is_head) latest[e.backend] = e;
     const rows = Object.values(latest).sort((a, b) => a.backend.localeCompare(b.backend));
-    cmpBox.replaceChildren(el("h2", {}, "后端对比", el("span", { class: "muted small" }, "每个后端取当前结果；点击行查看该次执行")),
+    cmpBox.replaceChildren(el("h2", {}, "后端对比"),
       el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端", "结果", "编译", "Kernel", "E2E", "节点", "时间"].map(t => el("th", {}, t)))),
         el("tbody", {}, rows.map(e => el("tr", { style: { cursor: "pointer" }, onclick: () => selectExec(e.exec_uuid) }, el("td", {}, label(e.backend)), el("td", {}, statusChip(e)),
           el("td", {}, ns(e.compile_ns)), el("td", {}, ns(e.kernel_ns)), el("td", {}, ns(e.e2e_ns)), el("td", {}, e.client_name || "—"), el("td", { class: "small" }, time(e.created_at)))))));
@@ -770,7 +769,7 @@ PAGES.case = async (root, params) => {
   // history
   const histBody = el("tbody");
   const more = el("div", { class: "toolbar", style: { marginTop: "8px" } });
-  root.append(el("section", { class: "panel" }, el("h2", {}, `执行历史（${fmt(history.total)}）`, el("span", { class: "muted small" }, "同色为同一批次")),
+  root.append(el("section", { class: "panel" }, el("h2", {}, `执行历史（${fmt(history.total)}）`),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端", "结果", "用户", "节点", "批次", "版本", "时间"].map(t => el("th", {}, t)))), histBody)), more));
   const drawHistory = () => {
     const batchOf = batchClasses(executions);
@@ -946,7 +945,7 @@ PAGES.repair = async (root, params) => {
   const tabs = el("div", { class: "tabs" }, [["function", "功能问题"], ["accuracy", "精度问题"], ["performance", "性能问题"]].map(([k, t]) =>
     el("button", { class: k === dimension ? "active" : "", onclick: () => go("repair", { dimension: k, status }) }, t)));
   const filter = select([["", "全部状态"], ...Object.entries(STATUS_LABEL)], status, v => go("repair", { dimension, status: v }));
-  const panel = el("section", { class: "panel" }, el("h2", {}, "问题列表", el("span", { class: "muted small" }, "每行是一类问题，Agent 一次领取一类"), el("span", { class: "spacer" }), filter), tabs);
+  const panel = el("section", { class: "panel" }, el("h2", {}, "问题列表", el("span", { class: "spacer" }), filter), tabs);
   root.append(panel);
   const body = el("tbody");
   const table = el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["问题", "后端", "用例数", "状态", "领取人", "更新时间"].map(t => el("th", {}, t)))), body);
@@ -1018,8 +1017,7 @@ PAGES.knowledge = async (root, params) => {
     select([["", "全部类型"], ...Object.entries(KB_KIND)], filters.kind, v => { filters.kind = v; apply(); }),
     select([["", "全部后端"], ...Object.entries(BACKEND_LABEL)], filters.backend, v => { filters.backend = v; apply(); }),
     select([["", "全部可信度"], ...Object.entries(KB_CONF).map(([k, [t]]) => [k, t])], filters.confidence, v => { filters.confidence = v; apply(); }), opInput),
-    el("div", { class: "toolbar", style: { marginTop: "12px" } }, el("button", { onclick: exportKb }, "导出 JSONL")),
-    el("div", { class: "muted small" }, "Agent 检索：GET /api/knowledge/search?q=…&op=…&backend=…"));
+    el("div", { class: "toolbar", style: { marginTop: "12px" } }, el("button", { onclick: exportKb }, "导出 JSONL")));
   const list = el("div");
   root.append(el("div", { class: "kb-layout" }, side, el("section", { class: "panel" }, el("h2", {}, "知识条目"), list)));
   const page = await api("/api/knowledge/search" + qs({ ...filters, limit: 50 }));
@@ -1140,11 +1138,12 @@ function drawScatter(canvas, data, info) {
 // 平台运维
 // =====================================================================
 PAGES.ops = async root => {
-  const data = await api("/api/ops/summary");
+  const fleetScope = isAdmin() ? store.get(FLEET_SCOPE_KEY, "mine") : "mine";
+  const data = await api("/api/ops/summary" + qs({ scope: fleetScope === "all" ? "all" : null }));
   const mb = Object.values(data.db_bytes).reduce((a, b) => a + b, 0) / 1048576;
-  root.append(el("div", { class: "tiles" }, [["在线客户端", fmt(data.online_clients)], ["近 24 小时执行", fmt(data.executions_24h)], ["待上传", fmt(data.pending_uploads)],
-    ["复测队列", `${fmt(data.retest_queue.pending || 0)} 等待 / ${fmt(data.retest_queue.leased || 0)} 执行中`], ["数据库", mb.toFixed(1) + " MB"]].map(([k, v]) =>
-    el("div", { class: "tile" }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))));
+  root.append(el("div", { class: "tiles" }, [["在线客户端", fmt(data.online_clients)], ["近 24 小时执行", fmt(data.executions_24h), "按执行发生时间统计，不含 CPU 基线；含复测"], ["待上传", fmt(data.pending_uploads)],
+    ["复测队列", `${fmt(data.retest_queue.pending || 0)} 等待 / ${fmt(data.retest_queue.leased || 0)} 执行中`], ["数据库", mb.toFixed(1) + " MB"]].map(([k, v, tip]) =>
+    el("div", { class: "tile", "data-tooltip": tip }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))));
   const selected = new Set();
   const version = el("input", { placeholder: "目标 afx 版本，如 " + (data.latest_afx_version || "0.2.0"), style: { width: "220px" }, oninput: () => { clientsPanel.dataset.custom = "1"; } });
   const updateBtn = el("button", { class: "primary", onclick: async () => {
@@ -1164,16 +1163,19 @@ PAGES.ops = async root => {
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
   root.append(clientsPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
-  root.append(fleetPanel(data.clients));
+  root.append(fleetPanel(data.clients, fleetScope));
   const effBox = el("section", { class: "panel" });
   root.append(effBox);
   renderEfficiency(effBox, (await api("/api/ops/efficiency")).windows);
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
-function fleetPanel(clients) {
-  const live = clients.filter(c => (c.runtime || []).length);
-  const box = el("section", { class: "panel" }, el("h2", {}, "节点运行情况", el("span", { class: "muted small" }, "来自客户端心跳中的运行快照，约每分钟更新")));
-  if (!live.length) { box.append(el("div", { class: "empty" }, "暂无正在上报运行快照的节点")); return box; }
+// Only the viewer's own online nodes (the server withholds other users' snapshots); admins can widen it.
+const FLEET_SCOPE_KEY = "afx.fleet.scope";
+function fleetPanel(clients, scope) {
+  const live = clients.filter(c => c.online && (c.runtime || []).length);
+  const box = el("section", { class: "panel" }, el("h2", {}, "节点运行情况", el("span", { class: "spacer" }),
+    isAdmin() ? select([["mine", "仅我的"], ["all", "全部"]], scope, v => { store.set(FLEET_SCOPE_KEY, v); render(); }) : null));
+  if (!live.length) { box.append(el("div", { class: "empty" }, me ? "暂无运行中的节点" : "登录后可查看自己的节点")); return box; }
   for (const c of live) {
     const card = el("div", { class: "fleet-card" }, el("h3", {}, c.display_name || c.machine_id, el("span", { class: "muted small" }, ` · ${c.user_id} · ${archLabel(c.npu_arch)} · 快照于 ${time(c.runtime_at)}`)));
     const rows = c.runtime.map(r => el("tr", {},
@@ -1194,7 +1196,7 @@ function fleetPanel(clients) {
 
 // Tool efficiency (ported): finished stage windows grouped by backend / environment / Shape mode.
 function renderEfficiency(box, windows) {
-  box.replaceChildren(el("h2", {}, "工具效率", el("span", { class: "muted small" }, "已完成运行窗口的吞吐与延迟分位数")));
+  box.replaceChildren(el("h2", {}, "工具效率"));
   if (!windows.length) { box.append(el("div", { class: "empty" }, "暂无已完成运行窗口的效率数据（持续运行的任务在窗口结束后上报）。")); return; }
   let chosen = windows[0];
   const pick = select(windows.map((w, i) => [w.window_id + "|" + w.client_id, `${i === 0 ? "最新" : "历史 " + i} · ${w.client_name || w.client_id} · ${w.window_id.slice(0, 12)}`]), "", v => { chosen = windows.find(w => w.window_id + "|" + w.client_id === v); box.dataset.custom = "1"; draw(); });
@@ -1238,16 +1240,23 @@ function renderEfficiency(box, windows) {
   draw();
 }
 
+// One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).
 function hourly(series) {
-  if (!series.length) return el("div", { class: "empty" }, "暂无心跳数据");
-  const W = 900, H = 160, pad = 26, max = Math.max(1, ...series.map(s => s.executions));
+  if (!series.length) return el("div", { class: "empty" }, "暂无执行数据");
+  const W = 900, H = 170, pad = 26, bottom = 22, max = Math.max(1, ...series.map(s => s.executions));
   const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "hourly throughput" });
-  const bw = (W - 2 * pad) / 48;
-  const last = series[series.length - 1].hour;
+  const bw = (W - 2 * pad) / 48, plotH = H - pad - bottom;
+  const last = Math.floor(Date.now() / 3600000);
+  const hourText = h => { const d = new Date(h * 3600000); return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:00`; };
+  root.append(svg("line", { x1: pad, x2: W - pad, y1: H - bottom, y2: H - bottom, stroke: "var(--line, #8884)", "stroke-width": 1 }));
   for (const s of series) {
-    const i = 47 - (last - s.hour), h = (H - 2 * pad) * s.executions / max;
-    root.append(svg("rect", { x: pad + i * bw, y: H - pad - h, width: Math.max(1, bw - 2), height: h, fill: "var(--accent)" }, svg("title", {}, `${new Date(s.hour * 3600000).toLocaleString("zh-CN", { hour12: false })}：${s.executions} 次执行，${s.retests} 次复测`)));
+    const i = 47 - (last - s.hour);
+    if (i < 0 || i > 47) continue;
+    const h = s.executions ? Math.max(2, plotH * s.executions / max) : 0;
+    root.append(svg("rect", { x: pad + i * bw, y: H - bottom - h, width: Math.max(1, bw - 2), height: h, fill: "var(--accent)" },
+      svg("title", {}, `${hourText(s.hour)}：${s.executions} 次执行${s.retests ? `（含 ${s.retests} 次复测）` : ""}`)));
   }
+  for (const k of [0, 12, 24, 36, 47]) root.append(svg("text", { x: pad + k * bw + bw / 2, y: H - 6, "text-anchor": k === 0 ? "start" : k === 47 ? "end" : "middle", class: "muted small" }, hourText(last - (47 - k))));
   root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max}/小时`));
   return root;
 }

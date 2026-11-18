@@ -451,6 +451,10 @@ UPDATE knowledge_links SET knowledge_id='K' || CAST(substr(knowledge_id,4) AS IN
 UPDATE knowledge_links SET target_id=substr(target_id,5,1) || CAST(substr(target_id,7) AS INTEGER) WHERE target_kind='issue' AND target_id LIKE 'ISS-%';
 UPDATE knowledge_links SET target_id='K' || CAST(substr(target_id,4) AS INTEGER) WHERE target_kind='knowledge' AND target_id LIKE 'KB-%';
 """),
+    # Ops throughput counts executions by when they ran.
+    (6, """
+CREATE INDEX executions_created ON executions(created_at);
+"""),
 ]
 
 CONTENT = [

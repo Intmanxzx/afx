@@ -17,7 +17,7 @@ from autofusex.platform.client import af_error_line, function_status
 from autofusex.platform.ingest import Ingestor
 from autofusex.platform.issues import IssueError
 from autofusex.platform.server import PlatformServer
-from autofusex.platform.store import Store
+from autofusex.platform.store import Store, now_ms
 
 ENV = {"cann": "8.2", "backend_version": "0.3.0"}
 
@@ -103,10 +103,14 @@ def test_heartbeat_rollups_and_update(world):
     assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.0",
                                          "counters": {"executions": 3}})["update_to"] == "0.2.1"
     assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.1"})["update_to"] is None
+    # Throughput comes from stored executions by when they ran, not from heartbeat counters.
+    with store.write() as conn:
+        conn.execute("UPDATE executions SET created_at=? WHERE exec_id IN "
+                     "(SELECT exec_id FROM executions WHERE backend='af-mlir' ORDER BY exec_id LIMIT 10)", (now_ms(),))
     summary = ops.summary(store)
     me = next(c for c in summary["clients"] if c["client_id"] == first["client_id"])
     assert me["last_24h"]["executions"] == 10 and me["online"] and me["backend_versions"] == {"af-mlir": "9.2.0"}
-    assert summary["executions_24h"] == 10
+    assert summary["executions_24h"] == 10 and sum(h["executions"] for h in summary["hourly"]) == 10
     with pytest.raises(auth.AuthError):
         ops.request_update(store, client, {"request_key": "u2", "client_ids": [1], "version": "0.3"})
     with pytest.raises(IssueError):
@@ -290,6 +294,8 @@ def test_display_names_history_spec_and_windows(tmp_path):
     store = Store(tmp_path / "data")
     auth.add_user(store, "dev", "developer", "张三")
     client = auth.authenticate(store, "Bearer " + auth.issue_token(store, "dev", "client"))
+    auth.add_user(store, "root", "admin")
+    admin = auth.authenticate(store, "Bearer " + auth.issue_token(store, "root", "web", ["admin"]))
     spec = {"graph": {"nodes": [{"op": "aten.add.Tensor", "display_name": "add", "inputs": ["x"], "outputs": ["y"]}],
                       "outputs": ["y"]}, "input_shapes": {"x": [2, 3]}, "input_dtypes": {"x": "float16"}, "weights": []}
     ingestor = Ingestor(store)
@@ -316,9 +322,13 @@ def test_display_names_history_spec_and_windows(tmp_path):
     reply = ops.heartbeat(store, client, {"machine_id": "m-a", "runtime": [{"run_id": "r1", "state": "running", "elapsed": 60, "completed": 6}],
                                           "windows": [{"window_id": "w1", "rows": [{"backend": "af-mlir", "window_seconds": 60}]}]})
     assert reply["windows_accepted"] == ["w1"]
-    summary = ops.summary(store)
-    a = next(c for c in summary["clients"] if c["display_name"] == "张三-npu0")
-    assert a["runtime"][0]["run_id"] == "r1"
+    a = next(c for c in ops.summary(store, client)["clients"] if c["display_name"] == "张三-npu0")
+    assert a["runtime"][0]["run_id"] == "r1" and a["mine"]
+    # runtime snapshots are private to their owner unless an admin asks for everything
+    a = next(c for c in ops.summary(store)["clients"] if c["display_name"] == "张三-npu0")
+    assert a["runtime"] == [] and not a["mine"]
+    assert next(c for c in ops.summary(store, admin)["clients"] if c["display_name"] == "张三-npu0")["runtime"] == []
+    assert next(c for c in ops.summary(store, admin, "all")["clients"] if c["display_name"] == "张三-npu0")["runtime"]
     assert ops.efficiency(store)["windows"][0]["client_name"] == "张三-npu0"
 
 
