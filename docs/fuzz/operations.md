@@ -122,7 +122,13 @@ GitHub fine-grained personal access token 仅授权 `Intmanxzx/afx`，Repository
 
 [release.yml](../../.github/workflows/release.yml) 由镜像推送的 `vX.Y.Z` Tag 触发，也可手动指定已有 Tag 重跑。原生镜像使用个人访问令牌推送，会触发 GitHub 工作流，无需额外 dispatch。发布流程检出该 Tag、确认它匹配默认分支声明的版本且提交属于默认分支历史、干净构建 wheel、在只含 wheel 的独立虚拟环境里跑安装冒烟测试、校验 Tag/元数据/目录结构，最后写入 GitHub Release 与 PyPI。历史版本 Tag 会跳过发布。GitHub Release 用内置的 `GITHUB_TOKEN`，无需额外配置。
 
-启用镜像后，确认 GitHub 默认分支为 `master`，并推送一个普通提交到 GitCode，核对两端 `master` 的提交 SHA 一致、GitCode 镜像状态成功且 GitHub 的定时镜像工作流已移除。发布新版本时，先将版本修改提交到 GitCode 并等待 `master` 同步完成，再推送新版本 Tag；如 Tag 已同步而发布门禁跳过，可在 GitHub Actions 手动运行发布工作流。以新版本 `0.2.1` 为例（版本文件须先更新为 `0.2.1`）：
+首次配置后的验证：
+
+1. 确认 GitHub 默认分支为 `master`，向 GitCode 推送一个文档更新等普通提交，触发原生 Push 镜像。
+2. 在 GitCode 镜像页面检查同步状态，并用 `git ls-remote origin refs/heads/master` 和 `git ls-remote https://github.com/Intmanxzx/afx.git refs/heads/master` 核对两端提交 SHA 一致。验证期间仅向 GitCode 推送。
+3. 确认 GitHub 默认分支已移除 `.github/workflows/mirror.yml`，保留 `.github/workflows/release.yml`。若镜像失败，先查看 GitCode 页面中的错误信息，检查令牌有效期、目标地址及写入权限。
+
+发布新版本时，先将版本修改提交到 GitCode 并等待 `master` 同步完成，再推送新版本 Tag；如 Tag 已同步而发布门禁跳过，可在 GitHub Actions 手动运行发布工作流。以新版本 `0.2.1` 为例（版本文件须先更新为 `0.2.1`）：
 
 ~~~sh
 git push origin master
