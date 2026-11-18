@@ -389,7 +389,7 @@ class Handler(BaseHTTPRequestHandler):
                                           _param(params, "after", integer=True))
             return None
         if path == "/api/ops/summary":
-            return ops.summary(store)
+            return ops.summary(store, principal, _param(params, "scope") or "mine")
         if path == "/api/ops/efficiency":
             return ops.efficiency(store, _param(params, "client_id", integer=True))
         match = _CASE_PATH.match(path)

@@ -112,10 +112,21 @@ def request_update(store: Store, principal: Principal, body: dict):
     return idempotent(store, principal, "client-update", body.pop("request_key", None), body, action)
 
 
-def summary(store: Store) -> dict:
+def summary(store: Store, principal: Principal | None = None, scope: str = "mine") -> dict:
+    """Fleet summary. Throughput is counted from the stored executions (by when they ran, CPU
+    baselines excluded) so it matches the overview; heartbeat counters would also count re-uploads
+    and backfills in the hour they arrive. Live runtime snapshots are returned only for the
+    viewer's own clients (admins may ask for scope=all)."""
     conn = store.reader()
     now = now_ms()
     hour = now // 3_600_000
+    viewer = principal.user_id if principal is not None and not principal.anonymous else None
+    see_all = scope == "all" and principal is not None and not principal.anonymous and principal.role == "admin"
+    ran = {}
+    for row in conn.execute(
+            "SELECT client_id, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests FROM executions "
+            "WHERE created_at>? AND backend<>'cpu' GROUP BY client_id", (now - 86_400_000,)):
+        ran[row["client_id"]] = (row["executions"], row["retests"])
     clients = []
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, display_name, hostname, npu_arch, afx_version, backend_versions, "
@@ -124,17 +135,28 @@ def summary(store: Store) -> dict:
             "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
         item = dict(row)
         item["backend_versions"] = json.loads(item["backend_versions"]) if item["backend_versions"] else {}
-        item["runtime"] = json.loads(item["runtime"]) if item["runtime"] else []
+        mine = see_all or (viewer is not None and item["user_id"] == viewer)
+        item["runtime"] = json.loads(item["runtime"]) if item["runtime"] and mine else []
+        item["mine"] = viewer is not None and item["user_id"] == viewer
         seen = max(item["last_heartbeat_at"] or 0, item["last_seen_at"] or 0)
         item["online"] = now - seen <= ONLINE_MS
         totals = conn.execute(
             f"SELECT {', '.join(f'COALESCE(SUM({n}),0) AS {n}' for n in COUNTERS)} FROM metric_rollups "
             "WHERE client_id=? AND hour>?", (item["client_id"], hour - 24)).fetchone()
         item["last_24h"] = dict(totals)
+        item["last_24h"]["executions"], item["last_24h"]["retests"] = ran.get(item["client_id"], (0, 0))
         clients.append(item)
-    series = [dict(r) for r in conn.execute(
-        f"SELECT hour, {', '.join(f'SUM({n}) AS {n}' for n in COUNTERS)} FROM metric_rollups WHERE hour>? "
-        "GROUP BY hour ORDER BY hour", (hour - 48,))]
+    buckets = {}
+    for r in conn.execute(
+            "SELECT created_at/3600000 AS hour, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests "
+            "FROM executions WHERE created_at>=? AND backend<>'cpu' GROUP BY 1", ((hour - 47) * 3_600_000,)):
+        buckets[r["hour"]] = {"hour": r["hour"], "executions": r["executions"], "retests": r["retests"],
+                              "uploads": 0, "upload_errors": 0}
+    for r in conn.execute("SELECT hour, SUM(uploads) AS uploads, SUM(upload_errors) AS upload_errors FROM metric_rollups "
+                          "WHERE hour>? GROUP BY hour", (hour - 48,)):
+        entry = buckets.setdefault(r["hour"], {"hour": r["hour"], "executions": 0, "retests": 0, "uploads": 0, "upload_errors": 0})
+        entry["uploads"], entry["upload_errors"] = r["uploads"], r["upload_errors"]
+    series = [buckets[h] for h in sorted(buckets)]
     versions = [r[0] for r in conn.execute(
         "SELECT afx_version FROM clients WHERE afx_version IS NOT NULL GROUP BY afx_version")]
     latest = max(versions, key=_version_key) if versions else None

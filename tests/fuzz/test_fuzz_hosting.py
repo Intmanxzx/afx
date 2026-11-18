@@ -154,7 +154,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
     from autofusex.fuzz.client.contracts import Seed
     def launch(ledger, database, specs, **kwargs):
         assert list(specs) == []
-        configs, evaluation, count, devices, excluded, sampling, ops = kwargs['campaign']
+        configs, evaluation, count, devices, excluded, sampling, ops, budget = kwargs['campaign']
         return {'count': count, 'backends': [c.backend for c in configs]}
     monkeypatch.setattr(hosting, 'launch', launch)
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0

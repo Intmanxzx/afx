@@ -376,7 +376,7 @@ def test_npu_first_resource_budget_respects_limits(monkeypatch):
 def test_mlir_runtime_reuse_is_explicit_and_not_compile_split():
     from autofusex.fuzz.client.backends.torch import TorchAdapter
     for backend, reusable in [('cpu', True), ('eager-npu', True), ('af-mlir', True),
-                              ('af-legacy', False), ('triton-npu', False)]:
+                              ('af-legacy', True), ('triton-npu', True)]:
         adapter = TorchAdapter(ExecutionConfig(backend, 'cpu' if backend == 'cpu' else 'npu:0', 1))
         assert adapter.capabilities.persistent_runtime is reusable
         assert not adapter.capabilities.independent_compile
@@ -384,15 +384,15 @@ def test_mlir_runtime_reuse_is_explicit_and_not_compile_split():
 
 
 @pytest.mark.parametrize('reusable,status,count,rss,device_bytes,cache_bytes,retired', [
-    (True, 'ok', 0, 1024, 0, 0, False),
-    (False, 'ok', 0, 1024, 0, 0, True),
-    (None, 'ok', 0, 1024, 0, 0, True),
-    (True, 'error', 0, 1024, 0, 0, True),
-    (True, 'unsupported', 0, 1024, 0, 0, True),
-    (True, 'ok', 15, 1024, 0, 0, True),
-    (True, 'ok', 0, 300*1024**2, 0, 0, True),
-    (True, 'ok', 0, 1024, 17*1024**2, 0, True),
-    (True, 'ok', 0, 1024, 0, 3*1024**3, True),
+    (True, 'ok', 0, 1024, 0, 0, None),
+    (False, 'ok', 0, 1024, 0, 0, 'isolated'),
+    (None, 'ok', 0, 1024, 0, 0, 'isolated'),
+    (True, 'error', 0, 1024, 0, 0, 'case_error'),
+    (True, 'unsupported', 0, 1024, 0, 0, 'case_error'),
+    (True, 'ok', 15, 1024, 0, 0, 'max_tasks'),
+    (True, 'ok', 0, 300*1024**2, 0, 0, 'rss_growth'),
+    (True, 'ok', 0, 1024, 17*1024**2, 0, 'device_resident'),
+    (True, 'ok', 0, 1024, 0, 3*1024**3, 'scratch'),
 ])
 def test_compiled_runtime_reuse_preserves_recycling_guards(tmp_path, monkeypatch,
         reusable, status, count, rss, device_bytes, cache_bytes, retired):
@@ -417,9 +417,10 @@ def test_compiled_runtime_reuse_preserves_recycling_guards(tmp_path, monkeypatch
         result = pool._run('stage', ('af-mlir', 'npu:0', 1),
                            {'kind': 'first_call_combined', 'config': {'backend': 'af-mlir'}}, 30)
         assert result['ok']
-        assert bool(removed) is retired
-        assert (worker in pool.workers) is not retired
-        if not retired:
+        assert bool(removed) is (retired is not None)
+        assert pool.stats['recycled'] == ({retired: 1} if retired else {})
+        assert (worker in pool.workers) is (retired is None)
+        if retired is None:
             assert not worker['busy']
     finally:
         pool.close()

@@ -63,6 +63,8 @@ class Pool:
         self.memory_capacity = budget.memory_budget_bytes or max(512*1024**2, (inventory['effective_memory_bytes'] or 8*1024**3)//2)
         self.cache_capacity = budget.cache_budget_bytes or min(2*1024**3, inventory['disk_free_bytes']//4)
         self.max_tasks = max_tasks
+        # Worker lifecycle counters: why runtimes were thrown away (published with the run snapshot).
+        self.stats = {'spawned': 0, 'reused': 0, 'recycled': {}}
         self.workers = []
         self.leases = {}
         self.executor = ThreadPoolExecutor(max_workers=budget.cpu_workers, thread_name_prefix='stage-io')
@@ -107,10 +109,12 @@ class Pool:
     def _worker(self, key):
         for worker in self.workers:
             if not worker['busy'] and worker['key']==key and worker['count']<self.max_tasks and worker['child'].poll() is None:
+                self.stats['reused'] += 1
                 return worker
         # Evict idle incompatible workers rather than growing a pool per backend.
         for worker in list(self.workers) if len(self.workers)>=self.budget.cpu_workers else []:
             if not worker['busy']:
+                self._count_recycle('evicted')
                 self._retire(worker)
                 self.workers.remove(worker)
                 break
@@ -127,7 +131,11 @@ class Pool:
         worker = {'key':key,'child':child,'socket':a,'scratch':scratch,'tail':ProcessTail(child.stdout),
                   'busy':False,'count':0,'identity':str(uuid.uuid4()),'rss_floor':None}
         self.workers.append(worker)
+        self.stats['spawned'] += 1
         return worker
+
+    def _count_recycle(self, reason):
+        self.stats['recycled'][reason] = self.stats['recycled'].get(reason, 0) + 1
 
     def submit(self, stage, job, timeout):
         # Runs in an I/O thread: startup, socket IO, termination, log cleanup
@@ -168,12 +176,18 @@ class Pool:
             isolated_session = (job['kind']=='first_call_combined' and
                                 not response.get('value',{}).get('persistent_runtime', False))
             case_skipped = response.get('value', {}).get('case_skipped', False)
-            recycle = (isolated_session or (not response['ok'] and job['kind'] != 'generate') or
-                       (not case_skipped and response.get('value',{}).get('result',{}).get('status') in {'error','unsupported'}) or worker['count']>=self.max_tasks or
-                       rss > worker['rss_floor']+256*1024**2 or device_resident > 16*1024**2 or
-                       scratch_size(worker['scratch'].name) > self.cache_capacity//max(1,self.budget.cpu_workers))
+            # First matching reason wins, so the distribution adds up to the number of recycled workers.
+            reason = ('isolated' if isolated_session else
+                      'stage_failed' if not response['ok'] and job['kind'] != 'generate' else
+                      'case_error' if not case_skipped and response.get('value',{}).get('result',{}).get('status') in {'error','unsupported'} else
+                      'max_tasks' if worker['count']>=self.max_tasks else
+                      'rss_growth' if rss > worker['rss_floor']+256*1024**2 else
+                      'device_resident' if device_resident > 16*1024**2 else
+                      'scratch' if scratch_size(worker['scratch'].name) > self.cache_capacity//max(1,self.budget.cpu_workers) else None)
+            recycle = reason is not None
             with self.lock:
                 if recycle:
+                    self._count_recycle(reason)
                     self._retire(worker); self.workers.remove(worker)
                 else:
                     worker['busy'] = False
@@ -183,6 +197,7 @@ class Pool:
             if worker is not None:
                 with self.lock:
                     if worker in self.workers:
+                        self._count_recycle('crashed')
                         log = self._retire(worker); self.workers.remove(worker)
             if job['kind']=='record' and job.get('save'):
                 from .supervisor import _has_result

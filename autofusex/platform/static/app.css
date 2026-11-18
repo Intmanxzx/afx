@@ -323,6 +323,7 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
   header.top { gap: 8px 12px; padding: 10px 16px; }
   .brand { order: 1; }
   .who { order: 2; margin-left: auto; }
+  #refresh { order: 3; }
   #logout { order: 3; }
   nav.main { order: 4; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   nav.main::-webkit-scrollbar { display: none; }

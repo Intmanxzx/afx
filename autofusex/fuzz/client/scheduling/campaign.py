@@ -2,12 +2,16 @@
 import json
 import secrets
 import uuid
+from datetime import datetime, timezone
 from dataclasses import asdict
 from ..generation.sampling import SamplingConfig
 from ..contracts import canonical_json
 
 
-def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None, ops=None):
+def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None, ops=None, budget=None):
+    """Persist the fully resolved launch config, not just what the operator typed:
+    everything `--continue` (and `fuzz status`) need to reconstruct or show this
+    exact campaign later, including flags that silently fell back to a default."""
     if count is not None and (type(count) is not int or count < 0):
         raise ValueError('campaign count must be nonnegative or unlimited')
     with ledger._connection() as conn:
@@ -15,7 +19,23 @@ def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=Non
             raise ValueError('campaign backend matrix exceeds task capacity')
         conn.execute('CREATE TABLE IF NOT EXISTS campaign (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, remaining INTEGER, stopped INTEGER NOT NULL)')
         conn.execute('INSERT OR REPLACE INTO campaign VALUES (1,?,?,0)',
-                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'ops':ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig()),'generation_protocol':'aten/2'}),count))
+                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'ops':ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig()),'generation_protocol':'aten/2','budget':budget,'started_at':datetime.now(timezone.utc).isoformat()}),count))
+
+
+def read(ledger):
+    """The saved campaign (resolved configs/devices/sampling/budget), or None if this
+    ledger has never run a random continuous campaign. Used by both `fuzz status`
+    (so an operator can see what is actually running) and `fuzz run --continue`."""
+    with ledger._connection() as conn:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='campaign'").fetchone():
+            return None
+        row = conn.execute('SELECT payload,remaining,stopped FROM campaign WHERE id=1').fetchone()
+        if not row:
+            return None
+        payload = json.loads(row[0])
+        payload['remaining'] = row[1]
+        payload['stopped'] = bool(row[2])
+        return payload
 
 
 def stop(ledger):
