@@ -1,42 +1,17 @@
 from autofusex.fuzz.client.generation.sampling import SamplingConfig
-import io
 import json
-import uuid
 import pytest
 from autofusex.fuzz.client.cli import main
-from autofusex.fuzz.daemon.onboarding import initialize_user
 
 
 def test_top_level_is_small(capsys):
     with pytest.raises(SystemExit) as exc:main(['--help'])
     assert exc.value.code==0
     text=capsys.readouterr().out
-    assert all(title in text for title in ['客户端','云端','本地查看','维护'])
-    assert all(command in text for command in ['setup --token','run [SEED','replay SEED','admin user','view RESULTS'])
+    assert all(title in text for title in ['客户端','本地查看','维护'])
+    assert all(command in text for command in ['run [SEED','replay SEED','view RESULTS'])
+    assert 'setup --token' not in text and 'admin user' not in text
     assert 'admin-user' not in text and 'check-db' not in text
-
-
-def test_token_setup_keeps_secret_private(tmp_path):
-    token='test-token-not-a-real-secret-12345'
-    identity={'user_id':str(uuid.uuid4()),'display_name':'niuyuhu'}
-    def opener(request,**kw):return io.BytesIO(json.dumps(identity).encode())
-    result=initialize_user(tmp_path,token,opener=opener,start_sync=False)
-    assert token not in json.dumps(result)
-    config=json.loads((tmp_path/'config.json').read_text())
-    assert token not in json.dumps(config)
-    assert config['identity']['user_id']==identity['user_id']
-    assert (tmp_path/'upload.token').stat().st_mode & 0o077==0
-    assert result['resources']['compile_threads']>=1
-    assert result['user']=='niuyuhu'
-    assert (tmp_path/'upload.token').read_text().strip()==token
-
-
-def test_setup_help_has_only_person_token_and_interval(capsys):
-    with pytest.raises(SystemExit):main(['setup','--help'])
-    text=capsys.readouterr().out
-    assert '--user' not in text and '--token ' in text
-    for removed in ['--user-id','--key-file','--sync-endpoint','--cpu-workers','--compile-threads','--memory-budget-bytes','--cache-budget-bytes']:
-        assert removed not in text
 
 
 def test_stop_defaults_to_all_tasks(tmp_path,monkeypatch):
@@ -49,41 +24,9 @@ def test_stop_defaults_to_all_tasks(tmp_path,monkeypatch):
     assert all(ledger.get(i)['state']=='cancelled' for i in ids)
 
 
-def test_admin_rotation_is_by_name(capsys):
-    with pytest.raises(SystemExit):main(['admin','rotate-token','--help'])
-    text=capsys.readouterr().out
-    assert 'user_id' not in text
-
-
-def test_admin_issues_token_once_without_file(tmp_path,capsys):
-    from autofusex.fuzz.server.central.repository import authenticate
-    from autofusex.fuzz.client.storage.queries import reading
-    db=tmp_path/'server.sqlite'
-    assert main(['admin','user',str(db),'niuyuhu'])==0
-    result=json.loads(capsys.readouterr().out)
-    assert result['display_name']=='niuyuhu' and len(result['token'])>=40
-    with reading(db) as conn:
-        assert authenticate(conn,result['token'])==result['user_id']
-        assert conn.execute('SELECT key_hash FROM users').fetchone()[0]!=result['token']
-    assert not list(tmp_path.glob('*.token'))
-
-
-def test_admin_rotates_token_without_file(tmp_path,capsys):
-    from autofusex.fuzz.server.central.repository import create_user,authenticate
-    from autofusex.fuzz.client.storage.queries import reading
-    db=tmp_path/'server.sqlite';old=create_user(db,'niuyuhu')
-    assert main(['admin','rotate-token',str(db),'niuyuhu'])==0
-    new=json.loads(capsys.readouterr().out)
-    with reading(db) as conn:
-        assert authenticate(conn,new['token'])==old['user_id']
-        with pytest.raises(PermissionError):authenticate(conn,old['token'])
-
-
 @pytest.mark.parametrize('args', [
-    ['setup'], ['run'], ['replay'], ['status'], ['stop'], ['view'],
-    ['admin', 'user'], ['admin', 'rotate-token'], ['admin', 'serve'], ['admin', 'backup'],
+    ['run'], ['replay'], ['status'], ['stop'], ['view'],
     ['maintenance'], ['maintenance', 'snapshot'], ['maintenance', 'restore'],
-    ['maintenance', 'sync'],
 ])
 def test_documented_command_help_is_reachable(args, capsys):
     with pytest.raises(SystemExit) as exc:
@@ -102,21 +45,6 @@ def test_short_flags_and_explicit_save(capsys):
     assert '--fg' in text and '--perf' in text and '--save' in text
     assert '--foreground' not in text and '--performance' not in text
     assert 'continuous until fuzz stop' in ' '.join(text.split())
-
-
-def test_sync_uses_remembered_home(tmp_path, monkeypatch, capsys):
-    from autofusex.fuzz.client import config
-    monkeypatch.delenv('AUTOFUSEX_HOME', raising=False)
-    monkeypatch.setattr(config, 'default_home', lambda: tmp_path/'default')
-    custom = tmp_path/'custom'
-    config.remember_home(custom)
-    assert config.data_home() == custom
-    monkeypatch.setattr('autofusex.fuzz.client.sync.client.status', lambda home, database: {'directory': str(home)})
-    assert main(['maintenance', 'sync', 'status']) == 0
-    assert json.loads(capsys.readouterr().out)['directory'] == str(custom)
-    monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path/'env'))
-    assert config.data_home() == tmp_path/'env'
-    assert config.data_home(tmp_path/'explicit') == tmp_path/'explicit'
 
 
 def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeypatch, capsys):
@@ -217,23 +145,6 @@ def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypat
     assert load_config(tmp_path) == original  # Launch never rewrites explicit saved values.
 
 
-def test_setup_enables_auto_only_for_new_homes(tmp_path):
-    from autofusex.fuzz.client.config import setup, load_config
-    identity = {'user_id': str(uuid.uuid4()), 'display_name': 'test'}
-    def opener(*args, **kwargs):
-        return io.BytesIO(json.dumps(identity).encode())
-    token = 'test-token-not-a-real-secret-12345'
-    new = tmp_path/'new'
-    initialize_user(new, token, opener=opener, start_sync=False)
-    assert load_config(new)['resource_policy'] == 'auto'
-    old = tmp_path/'old'
-    setup(old, cpu_workers=2, compile_threads=3)
-    initialize_user(old, token, opener=opener, start_sync=False)
-    saved = load_config(old)
-    assert saved['resource_policy'] == 'manual'
-    assert (saved['cpu_workers'], saved['compile_threads']) == (2, 3)
-
-
 def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
     monkeypatch.setattr('autofusex.fuzz.client.generation.runtime.source_evidence', lambda: {})
@@ -266,17 +177,3 @@ def test_auto_fixed_flags_are_mutually_exclusive():
     with pytest.raises(SystemExit) as exc:
         main(['run', '--auto-resources', '--fixed-resources'])
     assert exc.value.code == 2
-
-
-def test_setup_does_not_import_torch_or_discover_devices(tmp_path, monkeypatch):
-    import builtins
-    original_import = builtins.__import__
-    def guarded_import(name, *args, **kwargs):
-        assert name.split('.')[0] not in {'torch', 'torch_npu'}
-        return original_import(name, *args, **kwargs)
-    monkeypatch.setattr(builtins, '__import__', guarded_import)
-    monkeypatch.setattr('autofusex.fuzz.client.scheduling.devices.select_devices',
-                        lambda *a: pytest.fail('setup must not discover devices'))
-    identity = {'user_id': str(uuid.uuid4()), 'display_name': 'test'}
-    initialize_user(tmp_path, 'test-token-not-a-real-secret-12345',
-                    opener=lambda *a, **kw: io.BytesIO(json.dumps(identity).encode()), start_sync=False)

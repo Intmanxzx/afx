@@ -169,15 +169,6 @@ def test_graph_trace_captures_axes_omitted_from_ir_text():
     assert difference["path"] == "$.payload[0].extra_attrs.dim1"
 
 
-def test_setup_short_user_flag(tmp_path, capsys):
-    from autofusex.fuzz.client.cli import main
-    capsys.readouterr()
-    with pytest.raises(SystemExit) as exc:
-        main(['setup', '--help'])
-    assert exc.value.code == 0
-    help_text = capsys.readouterr().out
-    assert '--token ' in help_text and '--user ' not in help_text
-    assert '--user-name' not in help_text and '--display-name' not in help_text
 
 
 def test_nnsmith_import_is_lazy():

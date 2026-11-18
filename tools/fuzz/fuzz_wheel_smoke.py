@@ -34,28 +34,26 @@ def main():
             raise RuntimeError('wheel smoke requires an environment without model dependencies')
     from autofusex.fuzz.client.storage import ResultRepository
     from autofusex.fuzz.server.view.server import create_server as view
-    from autofusex.fuzz.server.central.server import create_server as central
     with tempfile.TemporaryDirectory(prefix='fuzz-wheel-smoke-') as root:
         database = Path(root) / 'results.sqlite'
         ResultRepository(database).save({
             'seed': str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(42).value), 'workload_id': 'a' * 64, 'oracle_id': 'ref/1',
             'backend': 'cpu', 'status': 'ok', 'shape_results': [],
         })
-        for factory in (view, central):
-            with factory(database, port=0) as server:
-                thread = threading.Thread(target=server.serve_forever)
-                thread.start()
-                try:
-                    url = getattr(server, 'viewer_url', f'http://127.0.0.1:{server.server_port}/')
-                    with urlopen(url, timeout=10) as response:
-                        assert b'charts.js' in response.read()
-                    for asset in ('app.js', 'charts.js', 'style.css'):
-                        with urlopen(url + asset, timeout=10) as response:
-                            assert response.status == 200 and len(response.read()) > 100
-                finally:
-                    server.shutdown()
-                    thread.join()
-    print('Installed wheel: offline viewer and central HTTP/assets passed without model dependencies')
+        with view(database, port=0) as server:
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                url = getattr(server, 'viewer_url', f'http://127.0.0.1:{server.server_port}/')
+                with urlopen(url, timeout=10) as response:
+                    assert b'charts.js' in response.read()
+                for asset in ('app.js', 'charts.js', 'style.css'):
+                    with urlopen(url + asset, timeout=10) as response:
+                        assert response.status == 200 and len(response.read()) > 100
+            finally:
+                server.shutdown()
+                thread.join()
+    print('Installed wheel: offline viewer HTTP/assets passed without model dependencies')
 
 
 if __name__ == '__main__':

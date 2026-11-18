@@ -43,21 +43,19 @@ def test_public_and_offline_compare_routes(tmp_path):
     import json
     import threading
     from urllib.request import urlopen
-    from autofusex.fuzz.server.central.server import create_server as central
     from autofusex.fuzz.server.view.server import create_server as offline
     repo = ResultRepository(tmp_path/'results')
     left = repo.save(result())
     right = repo.save(result('cpu-compile', 50))
-    for factory in (central, offline):
-        with factory(repo.path, port=0) as server:
-            thread = threading.Thread(target=server.serve_forever)
-            thread.start()
-            try:
-                base = getattr(server, 'viewer_url', f'http://127.0.0.1:{server.server_port}/')
-                with urlopen(base+f'api/compare?left={left}&right={right}') as response:
-                    assert json.load(response)['shapes'][0]['speedup'] == 2
-            finally:
-                server.shutdown(); thread.join()
+    with offline(repo.path, port=0) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            base = getattr(server, 'viewer_url', f'http://127.0.0.1:{server.server_port}/')
+            with urlopen(base+f'api/compare?left={left}&right={right}') as response:
+                assert json.load(response)['shapes'][0]['speedup'] == 2
+        finally:
+            server.shutdown(); thread.join()
 
 
 def test_newest_pages_do_not_duplicate_or_skip(tmp_path):

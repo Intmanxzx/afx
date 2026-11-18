@@ -181,22 +181,3 @@ def test_cli_dispatch_and_missing_database(tmp_path, monkeypatch, capsys):
     monkeypatch.undo()
     assert main(['view', str(tmp_path/'missing.sqlite'), '--no-browser']) == 2
     assert 'ERROR:' in capsys.readouterr().err
-
-
-def test_central_chart_requests_share_bounded_cache(tmp_path, monkeypatch):
-    import threading
-    from urllib.request import urlopen
-    from autofusex.fuzz.server.central.server import create_server
-    calls=[]
-    monkeypatch.setattr('autofusex.fuzz.server.reporting.incremental.IncrementalStatistics.refresh',
-                        lambda *args,**kwargs: calls.append(kwargs) or {'attempts':1,'overall':[]})
-    server=create_server(tmp_path/'db',0)
-    assert server.public_cache.ready.wait(5)
-    thread=threading.Thread(target=server.serve_forever);thread.start()
-    try:
-        for _ in range(2):
-            with urlopen(f'http://127.0.0.1:{server.server_port}/api/statistics') as response:
-                assert response.status==200
-        assert len(calls)==1
-    finally:
-        server.shutdown();thread.join();server.server_close()

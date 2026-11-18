@@ -43,14 +43,12 @@ def test_legacy_cpu_only_hidden_but_terminal_target_unknown_visible(tmp_path):
     assert len(q.case_page()['items']) == 1
 
 
-def test_manifest_survives_sync(tmp_path):
-    from autofusex.fuzz.client.sync.outbox import pending
-    repo = ResultRepository(tmp_path/'results')
+def test_manifest_normalization_sorts_expected_backends(tmp_path):
+    from autofusex.fuzz.client.storage.records import normalize
     value = record('cpu', ['pass'])
     value['execution']['expected_backends'] = '["cpu","af-mlir"]'
-    repo.save(value)
-    batch = pending(repo.path)
-    assert json.loads(batch['items'][0]['record']['contexts']['execution']['expected_backends']) == ['af-mlir','cpu']
+    normalized = normalize(value, {})
+    assert json.loads(normalized['contexts']['execution']['expected_backends']) == ['af-mlir','cpu']
 
 
 def test_refresh_includes_later_pages():

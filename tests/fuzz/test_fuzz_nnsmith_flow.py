@@ -26,7 +26,6 @@ class Block(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0,Block())
 from autofusex.fuzz.client.storage import ResultRepository
 from autofusex.fuzz.server.view.server import create_server
-from autofusex.fuzz.server.central.server import create_server as central
 from autofusex.fuzz.client.cli import main
 assert main(['maintenance','doctor'])==0
 '''

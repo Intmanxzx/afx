@@ -57,32 +57,6 @@ def test_safe_host_artifact_digest(tmp_path):
     with pytest.raises(ValueError,match='reference'):read_arrays(tmp_path,dict(ref,file='../out.npz'))
 
 
-def test_fact_sync_idempotent_owned_and_immutable(tmp_path):
-    from autofusex.fuzz.client.storage import ResultRepository
-    from autofusex.fuzz.client.storage.lifecycle import append
-    from autofusex.fuzz.client.sync import outbox,facts
-    from autofusex.fuzz.server.central.repository import create_user,ingest
-    from test_fuzz_precise_metrics import Adapter
-    from fuzz_fixtures import bundle
-    from autofusex.fuzz.client.execution import execute
-    local=tmp_path/'local';central=tmp_path/'central'
-    result=execute(bundle('C16'),Adapter(),EvaluationConfig())
-    identity=ResultRepository(local).save(result)
-    user=create_user(central,'alice');batch=outbox.pending(local)
-    ack=ingest(central,user['token'],batch);outbox.acknowledge(local,batch['source_id'],ack['ack'])
-    batch=facts.pending(local)
-    ack=facts.ingest(central,user['token'],batch)
-    assert facts.ingest(central,user['token'],batch)==ack
-    facts.acknowledge(local,batch,ack)
-    assert not facts.pending(local)['items']
-    detail=ResultRepository(central).detail(identity)
-    assert {e['event'] for e in detail['lifecycle']}=={'persisted','uploaded_ack'}
-    evil=json.loads(json.dumps(batch));evil['items'][0]['payload']['monotonic_ns']+=1
-    with pytest.raises(ValueError,match='revision conflict'):facts.ingest(central,user['token'],evil)
-    other=create_user(central,'bob')
-    with pytest.raises(PermissionError):facts.ingest(central,other['token'],batch)
-
-
 def test_interval_union_and_percentiles():
     from autofusex.fuzz.server.reporting.efficiency import union,percentile
     assert union([(1,5),(3,7),(10,12)])==8
@@ -216,40 +190,6 @@ def test_shared_bundle_reuses_exact_input_bytes_without_regeneration(tmp_path,mo
     with pytest.raises(ValueError,match='digest'):bundle_from(ref,tmp_path)
 
 
-def test_fact_http_disconnect_retry_and_ack_loss(tmp_path):
-    import threading
-    from urllib.request import urlopen
-    from autofusex.fuzz.server.central.server import create_server
-    from autofusex.fuzz.server.central.repository import create_user
-    from autofusex.fuzz.client.storage import ResultRepository
-    from autofusex.fuzz.client.sync.client import once
-    from autofusex.fuzz.client.sync.facts import pending
-    from test_fuzz_precise_metrics import Adapter
-    from fuzz_fixtures import bundle
-    from autofusex.fuzz.client.execution import execute
-    server=create_server(tmp_path/'central',0)
-    user=create_user(tmp_path/'central','test')
-    key=tmp_path/'key';key.write_text(user['token'])
-    (tmp_path/'sync.json').write_text(json.dumps({'endpoint':f'http://127.0.0.1:{server.server_port}','key_file':str(key),'interval':1}))
-    identity=ResultRepository(tmp_path/'local').save(execute(bundle('C16'),Adapter(),EvaluationConfig()))
-    thread=threading.Thread(target=server.serve_forever);thread.start()
-    try:
-        def disconnected(*a,**k):raise OSError('offline')
-        with pytest.raises(OSError):once(tmp_path,tmp_path/'local',opener=disconnected)
-        assert once(tmp_path,tmp_path/'local',opener=urlopen)['uploaded']==1
-        def lost_ack(request,**kwargs):
-            assert request.get_header('User-agent') == 'AutofuseX/0.1.2 (+https://esay.app)'
-            response=urlopen(request,**kwargs);response.read();response.close()
-            raise OSError('ACK lost after central commit')
-        with pytest.raises(OSError):once(tmp_path,tmp_path/'local',opener=lost_ack)
-        assert pending(tmp_path/'local')['items']
-        assert once(tmp_path,tmp_path/'local',opener=urlopen)['fact_uploaded']==2
-        assert not pending(tmp_path/'local')['items']
-        assert len(ResultRepository(tmp_path/'central').detail(identity)['lifecycle'])==2
-    finally:
-        server.shutdown();thread.join();server.server_close()
-
-
 def test_scratch_sampling_tolerates_concurrent_retirement(tmp_path,monkeypatch):
     from autofusex.fuzz.client.scheduling.budgets import scratch_size
     import os
@@ -258,23 +198,6 @@ def test_scratch_sampling_tolerates_concurrent_retirement(tmp_path,monkeypatch):
         return iter([])
     monkeypatch.setattr(os,'walk',vanished)
     assert scratch_size(tmp_path)==0
-
-
-def test_fact_epoch_reset_preserves_existing_observations(tmp_path):
-    from autofusex.fuzz.client.storage import ResultRepository
-    from autofusex.fuzz.client.sync import outbox,facts
-    from autofusex.fuzz.server.central.repository import create_user,ingest
-    from test_fuzz_precise_metrics import Adapter
-    from fuzz_fixtures import bundle
-    from autofusex.fuzz.client.execution import execute
-    local=tmp_path/'local';central=tmp_path/'central'
-    ResultRepository(local).save(execute(bundle('C16'),Adapter(),EvaluationConfig()))
-    user=create_user(central,'alice')
-    for _ in range(2):
-        b=outbox.pending(local);a=ingest(central,user['token'],b);outbox.acknowledge(local,b['source_id'],a['ack'])
-        b=facts.pending(local);a=facts.ingest(central,user['token'],b);facts.acknowledge(local,b,a)
-        outbox.reset_epoch(local)
-    with sqlite3.connect(central) as c:assert c.execute('SELECT count(*) FROM lifecycle_v1').fetchone()[0]==2
 
 
 @pytest.mark.parametrize("samples", [1, 3])

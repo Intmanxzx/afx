@@ -46,7 +46,7 @@ def register(sub, maintenance):
             parser.add_argument('--compile-threads', type=int, help=__import__('argparse').SUPPRESS)
             parser.add_argument('--static-only', action='store_true')
             parser.add_argument('--perf', dest='performance', action='store_true')
-            parser.add_argument('--save', action='store_true', help='save results and enqueue upload; default: neither')
+            parser.add_argument('--save', action='store_true', help='save results to the local database; default: neither')
             parser.add_argument('--timeout', type=float, default=120)
         elif name == 'status':
             parser.add_argument('task', nargs='?')

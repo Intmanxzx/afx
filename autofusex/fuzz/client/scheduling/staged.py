@@ -172,10 +172,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             ev=json.loads(session.task['evaluation']) if session else json.loads(case.tasks[0]['evaluation'])
             job={'kind':s.kind.value,'directory':case.directory,'bundle':case.bundle,'config':config,'evaluation':ev}
             if s.kind==Kind.GENERATE:
-                from ..sync.retests import expected_workload
-                expected=expected_workload(ledger,case.tasks)
-                job.update(seed=case.seed,exclude_ops=[] if expected else exclude_ops,ops=[] if expected else ops)
-                if expected:job['expected_workload_id']=expected
+                job.update(seed=case.seed,exclude_ops=exclude_ops,ops=ops)
             elif s.kind==Kind.REFERENCE:
                 job['output_file']='reference.npz'
                 job['config']['static_only']=all(json.loads(t['execution'])['static_only'] for t in case.tasks)
@@ -189,8 +186,6 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     changed=conn.execute("UPDATE tasks SET execution=? WHERE id=? AND claim=? AND state='running'",(session.task['execution'],session.task['id'],session.task['claim'])).rowcount
                     if not changed:raise ValueError('task cancelled before dispatch')
                 job['output_file']=session.identity+'.npz'
-                from ..sync.retests import expected_workload
-                if expected_workload(ledger,case.tasks):job['device_lease_wait']=min(60,timeout/2)
                 job['device_budget_bytes']=next((d.capacity for d in pool.devices if d.uuid==session.uuid),None)
             elif s.kind==Kind.COMPARE:
                 combined=stages[s.dependencies[0]].output
