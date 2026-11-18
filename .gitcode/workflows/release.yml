@@ -19,7 +19,7 @@ concurrency:
 
 permissions:
   # Nothing beyond reading the checked-out tree is needed from the repository:
-  # the GitCode Release and PyPI are authenticated with GITCODE_RELEASE_TOKEN
+  # the GitCode Release and PyPI are authenticated with AFX_GITCODE_TOKEN
   # and PYPI_API_TOKEN, not with the implicit ATOMGIT_TOKEN.
   repository: read
 
@@ -111,8 +111,11 @@ jobs:
             --repository "${{ atomgit.repository }}"
 
       - name: Publish to the GitCode Release and PyPI
+        # GitCode rejects secret names beginning with ATOMGIT_, GITCODE_ or
+        # GITHUB_, so the repository secret is AFX_GITCODE_TOKEN and is mapped
+        # onto the variable release_wheel.py reads.
         env:
-          GITCODE_RELEASE_TOKEN: ${{ secrets.GITCODE_RELEASE_TOKEN }}
+          GITCODE_RELEASE_TOKEN: ${{ secrets.AFX_GITCODE_TOKEN }}
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           set -eu
