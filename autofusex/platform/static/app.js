@@ -75,6 +75,7 @@ function token() { try { return sessionStorage.getItem(TOKEN_KEY); } catch { ret
 function rkey() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).slice(0, 64); }
 
 // ---------- API ----------
+let quietRefresh = false;  // true while a background refresh runs: a 401 must not replace the page with the login form
 class ApiError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
 async function api(path, { method = "GET", body, raw = false } = {}) {
   const headers = {};
@@ -87,7 +88,7 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   if (res.status === 401) {
     const expired = !!token();
     if (expired) { try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } me = null; updateWho(); }
-    showLogin(expired ? "登录已失效，请重新输入 token；也可以返回以访客身份浏览" : "该操作需要登录：请输入管理员离线发放的 token");
+    if (!quietRefresh) showLogin(expired ? "登录已失效，请重新输入 token；也可以返回以访客身份浏览" : "该操作需要登录：请输入管理员离线发放的 token");
     throw new ApiError(401, "unauthorized", "需要登录");
   }
   if (!res.ok || !payload || !payload.ok) {
@@ -121,6 +122,7 @@ async function render() {
   $("#search").value = params.get("q") || "";
   closeDrawer();
   hideActionBar();
+  overviewRedraw = null;
   const main = $("#main");
   const q = params.get("q");
   const content = el("div");
@@ -135,7 +137,12 @@ async function render() {
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) content.append(errorBox(err));
   }
-  if (ticket === renderToken) loading.remove();
+  if (ticket === renderToken) {
+    loading.remove();
+    overviewRedraw = content.redraw || null;
+    view = { ticket, page: PAGES[page] ? page : "overview", params, content };
+    lastRefresh = Date.now();
+  }
 }
 let renderToken = 0;
 
@@ -225,6 +232,7 @@ async function archOptions() {
 // =====================================================================
 // 总览
 // =====================================================================
+let overviewRedraw = null;
 PAGES.overview = async (root, params) => {
   const q = params.get("q");
   const arches = await archOptions();
@@ -234,16 +242,20 @@ PAGES.overview = async (root, params) => {
     arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => go("overview", { arch: v })) : null);
   const hero = el("section", { class: "panel hero" }, head);
   root.append(hero);
-  hero.append(renderPipeline(pipeline, q, hero.clientWidth - 44));
+  let pipelineNode = renderPipeline(pipeline, q, hero.clientWidth - 44);
+  hero.append(pipelineNode);
+  // Width-only redraw from cached data: no refetch, no loading flash, scroll position untouched.
+  root.redraw = () => { const n = renderPipeline(pipeline, q, hero.clientWidth - 44); pipelineNode.replaceWith(n); pipelineNode = n; };
   const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
   const tabsBox = el("section", { class: "panel" });
   root.append(tabsBox);
-  renderBackendTabs(tabsBox, lanes, arch, q);
+  const tabsDone = renderBackendTabs(tabsBox, lanes, arch, q);
   const perfBox = el("section", { class: "panel" });
   root.append(perfBox);
   const npuBackends = pipeline.lanes.map(l => l.backend).filter(b => b !== "cpu");
-  renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]),
+  const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]),
     params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category");
+  root.settled = Promise.all([tabsDone, perfDone]);  // lets a background refresh wait for the lazily filled sections
 };
 
 const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-legacy)", "triton-npu": "var(--lane-triton)", "eager-npu": "var(--lane-eager)" };
@@ -467,16 +479,17 @@ function statusChart(result, backend, compact = false, order = null) {
       el("div", { class: "muted" }, g.total ? pct(g.pass, g.total) : "—"))) : el("div", { class: "empty" }, "无数据"));
 }
 
-async function renderPerf(box, backends, arch, x, y, dim) {
+async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
+  if (custom) box.dataset.custom = "1";  // user picked backends/dimension: background refresh must not reset it
   const opts = backends.map(b => [b, label(b)]);
   if (!x || !y || x === y) {
     box.replaceChildren(el("h2", {}, "Kernel 性能对比"), el("div", { class: "empty" }, "至少需要两个有 kernel 耗时的 NPU 后端。客户端需开启性能测量（--perf）。"));
     return;
   }
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  box.replaceChildren(el("h2", {}, select(opts, x, v => renderPerf(box, backends, arch, v, y, dim)), "vs", select(opts, y, v => renderPerf(box, backends, arch, x, v, dim)),
-    el("button", { onclick: () => renderPerf(box, backends, arch, y, x, dim) }, "⇄ 交换"), "Kernel 性能统计分布", el("span", { class: "spacer" }),
-    select(Object.entries(DIM_LABEL).filter(([k]) => k !== "all"), dim, v => renderPerf(box, backends, arch, x, y, v))), body);
+  box.replaceChildren(el("h2", {}, select(opts, x, v => renderPerf(box, backends, arch, v, y, dim, true)), "vs", select(opts, y, v => renderPerf(box, backends, arch, x, v, dim, true)),
+    el("button", { onclick: () => renderPerf(box, backends, arch, y, x, dim, true) }, "⇄ 交换"), "Kernel 性能统计分布", el("span", { class: "spacer" }),
+    select(Object.entries(DIM_LABEL).filter(([k]) => k !== "all"), dim, v => renderPerf(box, backends, arch, x, y, v, true))), body);
   try {
     const [all, byDim] = await Promise.all([api("/api/overview/perf" + qs({ x, y, dim: "all", arch })), api("/api/overview/perf" + qs({ x, y, dim, arch }))]);
     const g = all.groups[0];
@@ -543,17 +556,20 @@ PAGES.discovery = async (root, params) => {
     el("input", { type: "checkbox", checked: visible.has(k), onchange: e => { e.target.checked ? visible.add(k) : visible.delete(k); store.set(COLS_KEY, [...visible]); redraw(); } }), t)));
   panel.append(el("h2", {}, "执行记录", el("span", { class: "muted small" }, "按用例分组，组内按时间倒序，同色为同一批次"), el("span", { class: "spacer" }),
     select([["expanded", "展开视图"], ["pivot", "后端透视"]], view, v => { store.set(VIEW_KEY, v); render(); }),
-    el("button", { onclick: () => colpick.classList.toggle("hidden") }, "显示列")), colpick, table, more);
+    el("button", { onclick: () => { colpick.classList.toggle("hidden"); if (colpick.classList.contains("hidden")) delete panel.dataset.custom; else panel.dataset.custom = "1"; } }, "显示列")), colpick, table, more);
   let groups = [];
-  let cursor = null;
+  let cursor = null, loadedOnce = false;
   const load = async () => {
     const page = await api("/api/cases" + qs({ q, after: cursor, limit: 30 }));
     groups = groups.concat(page.groups);
     cursor = page.next_cursor;
+    if (loadedOnce) panel.dataset.custom = "1";  // extra pages loaded: a refresh would drop them
+    loadedOnce = true;
     redraw();
     more.replaceChildren(cursor ? el("button", { onclick: load }, "加载更多") : el("span", { class: "muted small" }, groups.length ? "已全部加载" : ""));
   };
   const updateBar = () => {
+    if (selected.size) panel.dataset.custom = "1"; else delete panel.dataset.custom;  // keep the selection through auto refresh
     if (!selected.size) return hideActionBar();
     showActionBar(el("span", {}, `已选 ${selected.size} 个用例`),
       el("button", { onclick: () => retestDrawer([...selected], groups) }, "复测"),
@@ -936,8 +952,10 @@ PAGES.repair = async (root, params) => {
   const table = el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["问题", "后端", "用例数", "状态", "领取人", "更新时间"].map(t => el("th", {}, t)))), body);
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
   panel.append(el("div", { class: "table-wrap" }, table), more);
-  let cursor = null;
+  let cursor = null, loadedOnce = false;
   const load = async () => {
+    if (loadedOnce) panel.dataset.custom = "1";  // extra pages loaded: a refresh would drop them
+    loadedOnce = true;
     const page = await api("/api/issues" + qs({ dimension, status, after: cursor, limit: 50 }));
     cursor = page.next_cursor;
     for (const issue of page.issues) body.append(el("tr", {},
@@ -1128,28 +1146,29 @@ PAGES.ops = async root => {
     ["复测队列", `${fmt(data.retest_queue.pending || 0)} 等待 / ${fmt(data.retest_queue.leased || 0)} 执行中`], ["数据库", mb.toFixed(1) + " MB"]].map(([k, v]) =>
     el("div", { class: "tile" }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))));
   const selected = new Set();
-  const version = el("input", { placeholder: "目标 afx 版本，如 " + (data.latest_afx_version || "0.2.0"), style: { width: "220px" } });
+  const version = el("input", { placeholder: "目标 afx 版本，如 " + (data.latest_afx_version || "0.2.0"), style: { width: "220px" }, oninput: () => { clientsPanel.dataset.custom = "1"; } });
   const updateBtn = el("button", { class: "primary", onclick: async () => {
     if (!selected.size || !version.value.trim()) return alert("先选择客户端并填写版本");
     try { const r = await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [...selected], version: version.value.trim() } }); alert(`已通知 ${r.requested} 个客户端，下一次心跳时更新`); render(); }
     catch (err) { alert(err.message); } } }, "一键更新");
-  root.append(el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
+  const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "主机", "芯片", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "最后心跳"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
-        el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id) }) : ""),
+        el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => { e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id); if (selected.size) clientsPanel.dataset.custom = "1"; else delete clientsPanel.dataset.custom; } }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
         el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.machine_id }, (c.hostname || c.machine_id).slice(0, 16)), el("td", {}, archLabel(c.npu_arch)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
         el("td", {}, fmt(c.last_24h.executions)), el("td", {}, fmt(c.last_24h.upload_errors)), el("td", {}, fmt(c.pending_uploads)),
-        el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at)))))))));
+        el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
+  root.append(clientsPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
   root.append(fleetPanel(data.clients));
   const effBox = el("section", { class: "panel" });
   root.append(effBox);
   renderEfficiency(effBox, (await api("/api/ops/efficiency")).windows);
-  if (isAdmin()) root.append(await settingsPanel());
+  if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
 function fleetPanel(clients) {
   const live = clients.filter(c => (c.runtime || []).length);
@@ -1178,8 +1197,8 @@ function renderEfficiency(box, windows) {
   box.replaceChildren(el("h2", {}, "工具效率", el("span", { class: "muted small" }, "已完成运行窗口的吞吐与延迟分位数")));
   if (!windows.length) { box.append(el("div", { class: "empty" }, "暂无已完成运行窗口的效率数据（持续运行的任务在窗口结束后上报）。")); return; }
   let chosen = windows[0];
-  const pick = select(windows.map((w, i) => [w.window_id + "|" + w.client_id, `${i === 0 ? "最新" : "历史 " + i} · ${w.client_name || w.client_id} · ${w.window_id.slice(0, 12)}`]), "", v => { chosen = windows.find(w => w.window_id + "|" + w.client_id === v); draw(); });
-  const filter = el("input", { type: "search", placeholder: "筛选后端 / 环境 / static / dynamic", oninput: () => draw() });
+  const pick = select(windows.map((w, i) => [w.window_id + "|" + w.client_id, `${i === 0 ? "最新" : "历史 " + i} · ${w.client_name || w.client_id} · ${w.window_id.slice(0, 12)}`]), "", v => { chosen = windows.find(w => w.window_id + "|" + w.client_id === v); box.dataset.custom = "1"; draw(); });
+  const filter = el("input", { type: "search", placeholder: "筛选后端 / 环境 / static / dynamic", oninput: () => { box.dataset.custom = "1"; draw(); } });
   const body = el("div");
   box.append(el("div", { class: "toolbar" }, "运行窗口", pick, filter), body);
   const seconds = v => v == null ? "未采集" : (v / 1e9).toFixed(2) + "s";
@@ -1293,10 +1312,16 @@ document.addEventListener("pointerout", e => { if (tooltipTarget && !tooltipTarg
 document.addEventListener("keydown", e => { if (e.key === "Escape") hideFieldTooltip(); });
 window.addEventListener("scroll", hideFieldTooltip, true);
 
-let resizeTimer = null;
+// Mobile browsers fire resize on every scroll as the URL bar collapses/expands (height only).
+// Only a real width change matters, and it redraws in place instead of re-rendering the page.
+let resizeTimer = null, lastWidth = innerWidth;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (route().page === "overview" || route().page === "") render(); }, 300);
+  resizeTimer = setTimeout(() => {
+    if (innerWidth === lastWidth) return;
+    lastWidth = innerWidth;
+    if (overviewRedraw) overviewRedraw();
+  }, 300);
 });
 
 // ---------- global search: field picker / autocomplete ----------
@@ -1381,6 +1406,63 @@ function updateSearchPanel(input) {
   // refocuses the input before this bubbles here, so check focus rather than DOM containment.
   document.addEventListener("click", e => { if (e.target !== input && document.activeElement !== input) searchPanel.classList.add("hidden"); });
 })();
+
+// ---------- silent auto refresh ----------
+// Re-renders the current page off-screen, then swaps in only the sections whose markup changed,
+// so there is no loading flash and the scroll position is untouched. It backs off whenever the
+// user is busy (tab hidden, drawer open, typing, picking) and keeps the old content on any error.
+const AUTO_REFRESH_MS = 60000;
+const AUTO_REFRESH_PAGES = new Set(["overview", "discovery", "repair", "ops"]);
+let view = null, lastRefresh = 0, refreshing = false;
+// manual = the user pressed 刷新: any page, and sections they customised are refreshed too.
+async function softRefresh(manual = false) {
+  if (refreshing || !view || view.ticket !== renderToken || !view.content.isConnected) return false;
+  if (!manual) {
+    if (document.hidden || !AUTO_REFRESH_PAGES.has(view.page)) return false;
+    if (!$("#drawer").classList.contains("hidden") || openMenu || !$("#actionbar").classList.contains("hidden")) return false;
+    const a = document.activeElement;
+    if (a && a.closest("#main") && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return false;
+  }
+  const { ticket, content, params } = view;
+  refreshing = true; quietRefresh = true;
+  const staging = el("div");
+  // Laid out at the live width (so canvases/SVGs measure correctly) but invisible and off-screen.
+  staging.style.cssText = `position:absolute;left:0;top:-100000px;visibility:hidden;pointer-events:none;width:${content.getBoundingClientRect().width}px`;
+  try {
+    $("#main").append(staging);
+    await PAGES[view.page](staging, params);
+    if (staging.settled) await staging.settled;
+    // Pages that fill sections lazily: give them a moment to leave their loading placeholder.
+    for (let i = 0; i < 40 && staging.textContent.includes("加载中…"); i++) await new Promise(r => setTimeout(r, 250));
+    const fresh = [...staging.children], old = [...content.children];
+    if (ticket !== renderToken || fresh.length !== old.length || staging.querySelector(".error-box")) return false;
+    let heroSwapped = false;
+    fresh.forEach((n, i) => {
+      const o = old[i];
+      if ((o.dataset.custom && !manual) || n.innerHTML === o.innerHTML) return;
+      const sx = o.querySelector(".cap-scroll")?.scrollLeft || 0;
+      o.replaceWith(n);
+      const box = n.querySelector(".cap-scroll");
+      if (box) box.scrollLeft = sx;
+      if (n.classList.contains("hero")) heroSwapped = true;
+    });
+    // The redraw closure is bound to its own hero node, so adopt it only if that hero moved over.
+    if (heroSwapped) { overviewRedraw = staging.redraw || null; content.redraw = overviewRedraw; }
+    lastRefresh = Date.now();
+    return true;
+  } catch { return false; /* keep what is on screen; try again next tick */ }
+  finally { staging.remove(); refreshing = false; quietRefresh = false; }
+}
+const refreshBtn = $("#refresh");
+refreshBtn.addEventListener("click", async () => {
+  refreshBtn.disabled = true; refreshBtn.textContent = "刷新中…";
+  const ok = await softRefresh(true);
+  refreshBtn.disabled = false; refreshBtn.textContent = ok ? "已刷新" : "刷新";
+  if (ok) setTimeout(() => { refreshBtn.textContent = "刷新"; }, 1200);
+  else if (view && view.ticket === renderToken) render();  // could not refresh in place: fall back to a full render
+});
+setInterval(() => { if (Date.now() - lastRefresh >= AUTO_REFRESH_MS) softRefresh(); }, 5000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastRefresh >= AUTO_REFRESH_MS) softRefresh(); });
 
 // ---------- boot ----------
 window.addEventListener("hashchange", render);
