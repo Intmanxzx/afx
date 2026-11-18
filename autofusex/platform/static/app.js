@@ -1171,6 +1171,13 @@ PAGES.ops = async root => {
 };
 // Only the viewer's own online nodes (the server withholds other users' snapshots); admins can widen it.
 const FLEET_SCOPE_KEY = "afx.fleet.scope";
+const RECYCLE_LABEL = { isolated: "后端不复用", stage_failed: "阶段失败", case_error: "用例报错/不支持", max_tasks: "达到任务上限", rss_growth: "内存增长",
+  device_resident: "设备显存残留", scratch: "缓存超限", evicted: "被其他后端挤出", crashed: "进程异常/超时" };
+function workerSummary(w) {
+  const recycled = Object.entries(w.recycled || {}).sort((a, b) => b[1] - a[1]);
+  const total = recycled.reduce((n, [, v]) => n + v, 0);
+  return `Worker：新建 ${fmt(w.spawned || 0)} · 复用 ${fmt(w.reused || 0)}` + (total ? " · 回收 " + recycled.map(([k, v]) => `${RECYCLE_LABEL[k] || k} ${fmt(v)}（${pct(v, total)}）`).join("，") : "");
+}
 function fleetPanel(clients, scope) {
   const live = clients.filter(c => c.online && (c.runtime || []).length);
   const box = el("section", { class: "panel" }, el("h2", {}, "节点运行情况", el("span", { class: "spacer" }),
@@ -1189,6 +1196,7 @@ function fleetPanel(clients, scope) {
       el("td", {}, fmt(r.queued)), el("td", {}, fmt(r.case_errors)), el("td", { class: "small" }, Math.round(r.elapsed / 60) + " 分钟")));
     card.append(el("div", { class: "table-wrap" }, el("table", { class: "grid" },
       el("thead", {}, el("tr", {}, ["运行", "状态", "后端", "设备（绿=忙）", "进行中阶段", "成功 / 完成 Shape", "Shape/min", "排队", "Case 错误", "已运行"].map(t => el("th", {}, t)))), el("tbody", {}, rows))));
+    for (const r of c.runtime) if (r.workers && r.state === "running") card.append(el("div", { class: "small muted", style: { marginTop: "6px" } }, workerSummary(r.workers)));
     box.append(card);
   }
   return box;
@@ -1249,12 +1257,14 @@ function hourly(series) {
   const last = Math.floor(Date.now() / 3600000);
   const hourText = h => { const d = new Date(h * 3600000); return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:00`; };
   root.append(svg("line", { x1: pad, x2: W - pad, y1: H - bottom, y2: H - bottom, stroke: "var(--line, #8884)", "stroke-width": 1 }));
-  for (const s of series) {
-    const i = 47 - (last - s.hour);
-    if (i < 0 || i > 47) continue;
+  const byHour = new Map(series.map(s => [s.hour, s]));
+  for (let i = 0; i < 48; i++) {
+    const hour = last - (47 - i), s = byHour.get(hour) || { executions: 0, retests: 0 };
     const h = s.executions ? Math.max(2, plotH * s.executions / max) : 0;
-    root.append(svg("rect", { x: pad + i * bw, y: H - bottom - h, width: Math.max(1, bw - 2), height: h, fill: "var(--accent)" },
-      svg("title", {}, `${hourText(s.hour)}：${s.executions} 次执行${s.retests ? `（含 ${s.retests} 次复测）` : ""}`)));
+    if (h) root.append(svg("rect", { x: pad + i * bw, y: H - bottom - h, width: Math.max(1, bw - 2), height: h, fill: "var(--accent)" }));
+    // Full-height transparent hit area per hour, so empty and tiny bars can be hovered too (the custom tooltip reads data-tooltip).
+    root.append(svg("rect", { x: pad + i * bw, y: pad, width: bw, height: H - bottom - pad, fill: "transparent", "pointer-events": "all",
+      "data-tooltip": `${hourText(hour)}\n${s.executions} 次执行${s.retests ? `（含 ${s.retests} 次复测）` : ""}` }));
   }
   for (const k of [0, 12, 24, 36, 47]) root.append(svg("text", { x: pad + k * bw + bw / 2, y: H - 6, "text-anchor": k === 0 ? "start" : k === 47 ? "end" : "middle", class: "muted small" }, hourText(last - (47 - k))));
   root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max}/小时`));

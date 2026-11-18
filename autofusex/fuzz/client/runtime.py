@@ -83,7 +83,8 @@ class Reporter:
                    devices=[dict(uuid=d.uuid,model=d.model,logical=d.logical,busy=d.uuid in busy and state=='running') for d in self.devices],
                    stages=counts if state=='running' else {},queued=queued if state=='running' else 0,active_cases=len(cases) if state=='running' else 0,
                    completed=self.completed,success=self.success,case_errors=self.case_errors,record_failed=summary.get('record_failed',0),
-                   backend=sorted(self.backends-{'cpu'}),versions=self.versions)
+                   backend=sorted(self.backends-{'cpu'}),versions=self.versions,
+                   workers=dict(spawned=pool.stats['spawned'],reused=pool.stats['reused'],recycled=dict(pool.stats['recycled'])))
         try:atomic(self.path,dict(monotonic=now,boot=boot_id(),sample=value))
         except OSError:pass  # Observability must never abort execution.
 

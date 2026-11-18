@@ -10,7 +10,9 @@ class TorchAdapter:
     def __init__(self, config):
         self.config = config
         self.name = config.backend
-        self.capabilities = self.Capabilities(persistent_runtime=self.name in {'cpu','eager-npu','af-mlir'})
+        # Workers are keyed by backend and device, so one backend's compiler state never reaches another;
+        # the stage worker resets dynamo/device caches after every session before offering reuse.
+        self.capabilities = self.Capabilities(persistent_runtime=True)
 
     def check(self, bundle, evaluation):
         from ..generation import plan
