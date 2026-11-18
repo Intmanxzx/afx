@@ -4,7 +4,7 @@
 
 ## 托管客户端首次准备
 
-1. 安装基础 wheel，启动 afx daemon start。
+1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`），启动 afx daemon start。
 2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。执行 afx management trust trust.json。trust 保存在 home 下私有文件，仅本地可修改。
 3. 需要远程管理或上传时，使用 afx device enroll --token-stdin 从私有凭据来源读取 token，或执行 afx device pair 后在网页批准。
 4. 准备 environment.yaml，提交计划并执行；成功后取环境 ID 填到任务规格。
@@ -59,7 +59,7 @@ afx fuzz maintenance check-db /private/backup/results.sqlite
 
 中心备份包含身份、来源、回执与结果，私有保存并异地备份。公开 maintenance snapshot 只导出允许分享的结果和观测事实，不替代中心灾备；不要直接复制正在 WAL 写入的数据库主文件。
 
-升级先做一致性备份，在新虚拟环境安装固定 wheel，用私有数据库副本验证启动/查询后切换服务，保留旧环境、有效服务配置和身份。旧 Python 进程不会自动加载新模块，客户端切换后须重启上传器和相关进程。
+升级先做一致性备份，在新虚拟环境 `pip install autofusex==VERSION` 固定版本，用私有数据库副本验证启动/查询后切换服务，保留旧环境、有效服务配置和身份。旧 Python 进程不会自动加载新模块，客户端切换后须重启上传器和相关进程。
 
 恢复时停止目标服务，将备份恢复到新目录，以匹配版本打开；核对身份、结果、上传和重复上传去重后再切流量。回滚不能让旧代码打开不兼容的新 schema，也不能用旧库直接覆盖上线后的新增记录。恢复较旧中心备份导致客户端 ACK 超前时，核对数据后执行 afx fuzz maintenance sync reset-epoch --data-dir DIR 重传。
 
@@ -79,6 +79,19 @@ AF_FUZZ_WRITE_ALLOWLIST 指向私有 JSON，服务启动时读取；不设置则
 ~~~
 
 替换为真实 UUID。普通上传/复测使用对应 source_id/client_id，托管管理请求使用设备身份。只读查询仍可用，受限写入返回 503、Retry-After: 60 与 maintenance_write_blocked，ACK 不推进。配置不会停止远端执行或冻结租约；调整后重启服务，客户端保留积压结果重试。
+
+## 破坏性升级（清空重装）
+
+当新版本改变结果 schema 或 seed 协议、旧库不能原地打开时，客户端与服务端必须一起清空重装，不做原地迁移：
+
+1. 停止所有客户端管理守护进程、fuzz/retest supervisor、worker 和 sync daemon；停止服务端及自动备份任务，核对没有遗留执行进程。
+2. 服务停止后保留一份私有、完整的一致性备份，用于回退到旧版本；新程序不导入其中的结果。
+3. 删除服务端整个持久化数据目录（主库、WAL/SHM、runtime/public-statistics 侧库、设备注册、会话、回执、复测、问题领取、修复记录、上传暂存和缓存）；Docker 应重新创建专用数据卷，不只删主库。
+4. 每个客户端清空实际 data home（results、tasks、manager.sqlite、同步/outbox/ACK、运行产物、日志、配对凭据、缓存、active-home 指针）。重装环境后重新设置本机 trust 和配置；不要恢复旧 manager.sqlite 或 config/source ID。
+5. 安装同一新版本，从空目录启动中心，建立用户，重新 enroll/pair 每个客户端；检查空首页、新 token 登录、新设备心跳、少量新结果上传及重复上传 ACK。
+6. 验证通过后再启动持续任务，任何旧客户端都不能保留运行或上传。
+
+可选保留用户 token：明文由用户自己保存，中心只存 SHA256，所以停服后只需把旧中心 `users` 表的 `id、display_name、key_hash、active` 四列私下复制到新空中心同名表即可保留原 token；不要复制 `sources`、设备 token、`sessions`、owners、回执或任何结果表。导出文件按凭据材料保管（权限 0600，不进日志）。新客户端用原用户 token 重新注册，获得新设备凭据和同步身份；若旧 `users` 表不符合这四列契约，直接建新用户重新发 token。这是部署时的一次性数据操作，不是运行时兼容层。
 
 ## 构建与发布
 
@@ -105,11 +118,11 @@ python tools/release_wheel.py --host github --tag vVERSION --repository Intmanxz
 首次启用时，先把包含这两个工作流的默认分支通过 SSH 同步到 GitHub，并确认 GitHub 默认分支为 `master`。后续在 GitCode 推送版本 Tag，镜像同步后会自动发布；手动同步时也应先推送默认分支，再推送 Tag。以当前版本为例：
 
 ~~~sh
-git tag -a v0.2.0 -m 'Release autofusex 0.2.0'
-git push origin master refs/tags/v0.2.0
+git tag -a v0.2.1 -m 'Release autofusex 0.2.1'
+git push origin master refs/tags/v0.2.1
 ~~~
 
-发布成功后使用 `python -m pip install autofusex==0.2.0` 安装，运行 `afx --help` 验证。PyPI 同版本文件不能覆盖；上传失败可从 GitHub Actions 重跑对应发布任务，代码或依赖需要改变时升版本。
+发布成功后使用 `python -m pip install autofusex==0.2.1` 安装，运行 `afx --help` 验证。PyPI 同版本文件不能覆盖；上传失败可从 GitHub Actions 重跑对应发布任务，代码或依赖需要改变时升版本。
 
 流水线只运行 `tests/test_release_wheel.py`。`tests/fuzz` 仍有若干用例引用 `c6feaac`（refactor fuzz into client daemon server modules）重构前的模块路径（如 `autofusex.fuzz.resources`、`autofusex.fuzz.runtime`、`autofusex.fuzz.failure_details`），修复前不能作为发布门禁。
 

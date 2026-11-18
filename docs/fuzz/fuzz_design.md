@@ -2,6 +2,8 @@
 
 平台由中心服务、客户端管理进程和执行引擎组成。中心管理身份、设备、操作和结果，NPU 客户端执行任务。Agent 与网页共用管理配置和操作类型。代码集中在 [autofusex/fuzz](../../autofusex/fuzz/)，NNSmith fork 是独立执行依赖。
 
+本文档只覆盖这一套 fuzz 测试引擎（daemon/client/server，`autofusex/fuzz`）。在它之上新建的问题闭环、知识库、能力画像等产品层代码在 [autofusex/platform](../../autofusex/platform/)，是独立的新 schema 和 API，不是本架构的延伸，见[平台业务与数据设计](platform_v3_design.md)。
+
 ## 三个运行模块
 
 当前部署边界明确为三个进程/模块：
@@ -95,7 +97,7 @@ flowchart TD
 | 派生索引与公共统计侧库 | 可重建的当前用例、历史、维度和统计贡献 |
 | runtime、stage/lifecycle 事实 | 心跳、运行状态、资源和时序；缺失指标保持未采集 |
 
-每次执行使用独立 attempt ID，不以 seed 覆盖结果。中心通过 round_id 与 expected_backends 汇合同次执行；当前结果按 **seed + shape_index** 全站聚合，选择最后首次入库的完整轮次，再应用用户、版本、状态等筛选。要求的后端到齐且包含 AF-MLIR 才成为完整轮次，不拼接不同轮次的后端。重复上传不改变顺序。新版本仅接受当前协议；部署前清空所有客户端与服务端数据，见 clean_environment.md。
+每次执行使用独立 attempt ID，不以 seed 覆盖结果。中心通过 round_id 与 expected_backends 汇合同次执行；当前结果按 **seed + shape_index** 全站聚合，选择最后首次入库的完整轮次，再应用用户、版本、状态等筛选。要求的后端到齐且包含 AF-MLIR 才成为完整轮次，不拼接不同轮次的后端。重复上传不改变顺序。新版本仅接受当前协议；部署前清空所有客户端与服务端数据，见[运维说明：破坏性升级](operations.md#破坏性升级清空重装)。
 
 当前质量和性能以当前完整轮次的 AF-MLIR 为准；CPU、多后端、重试不重复扩大用例分母。历史全部保留。算子类别和 dtype 是多标签统计，每个 Shape 在各标签内计一次；最大维度取输入/输出最大轴长，张量规模取最大单张量元素数。
 
@@ -109,10 +111,10 @@ shape_processing 是 Shape 处理墙钟时间；端到端、排队、工具吞�
 
 网页用户可选择公开用例在自己的客户端复测，按 seed、执行配置和目标客户端合并任务，不因多个 Shape 重复执行整图。复测包含 CPU 与 AF-MLIR，沿用资源池；领取、续租、取消和完成受租约代次约束。合法迟到结果保留，但不能完成其他代次的任务。
 
-问题归类与认领由 central/issue_groups.py 管理，与执行事实分离。外部 Agent 的接口边界见 [Agent 与 API](agent_api.md)。公开结果快照不含身份和 ACK，完整灾备使用私有中心备份，见[运维说明](operations.md)。
+问题归类与认领由 central/issue_groups.py 管理，与执行事实分离。外部 Agent 的接口边界见 [使用说明与 Agent API](fuzz_usage.md)。公开结果快照不含身份和 ACK，完整灾备使用私有中心备份，见[运维说明](operations.md)。
 
 ## Agent 修复工作流
 
 中心将问题组冻结为修复任务，保存领取人、Agent 实例、租约、事件和关联用例。Agent 通过 HTTP 领取与续租，通过 npussh 在隔离环境调试、构建、安装候选 RUN 包，再通知中心按原始用例规格复测。任务所有权由事务和唯一约束保证，过期接管换 lease_id；网页操作不能绕过租约。
 
-复测沿用 retest 客户端，批次与修复任务在同一事务内创建。中心检查本轮合法租约结果、完整目标 Shape、精度与请求的性能指标后，才允许提交背景/方案/备注。总结与修复任务一对一，关联到复测结果的 summary_id；失败继续迭代，原始结果不覆盖。API 与安装边界见 [Agent 与 API](agent_api.md)。
+复测沿用 retest 客户端，批次与修复任务在同一事务内创建。中心检查本轮合法租约结果、完整目标 Shape、精度与请求的性能指标后，才允许提交背景/方案/备注。总结与修复任务一对一，关联到复测结果的 summary_id；失败继续迭代，原始结果不覆盖。API 与安装边界见 [使用说明与 Agent API](fuzz_usage.md)。

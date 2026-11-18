@@ -1,6 +1,6 @@
-# AutofuseX 一站式开发平台：业务与数据设计（v3 草案）
+# AutofuseX 一站式开发平台：业务与数据设计（v3）
 
-状态：设计评审稿，尚未实现。目标是把 autofusex 从"fuzz 测试平台"升级为"基于 Agent 的 Autofuse 一站式开发平台"。本文件只定义业务、数据、接口和页面；实现按文末分期推进。
+状态：持续演进中。目标是把 autofusex 从"fuzz 测试平台"升级为"基于 Agent 的 Autofuse 一站式开发平台"；第 8 节起记录的 P0/P1 已实现并在用（[afx-repair skill](../../skills/afx-repair/SKILL.md) 把本文件第 5、8 节当作当前 API 参考），第 9 节"分期计划"中标为未完成的部分仍是设计稿，不代表已有接口。其余章节（业务闭环、状态机、数据库设计、页面设计）是当前实现与后续迭代共用的设计依据，不是一次性草案。
 
 本次按新产品开发：从空库部署，不迁移历史数据，不保留旧接口、旧页面或旧协议的兼容层。现有代码中可复用的部分（租约、幂等 request_key、复测客户端协议、client.update）按新设计重写接入。
 
@@ -325,7 +325,7 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 结论与建议：
 
 1. **本期不分库分表，继续使用 SQLite，但拆成三个文件**：`core.db`（用户、用例、执行、问题、知识）、`content.db`（冷内容，ATTACH 使用，可单独备份/清理）、`stats.db`（可重建的聚合）。单库 5 GB 以内 SQLite 足够，瓶颈不在容量而在全量统计查询。
-2. 现有 `storage_v2.md` 已实测百万级"全量图表统计 10 秒超时"，所以**所有总览图表必须读增量聚合**，不能在请求时扫描执行表：
+2. 旧 fuzz 中心库在百万级合成数据上实测过"全量图表统计 10 秒超时"，所以**所有总览图表必须读增量聚合**，不能在请求时扫描执行表：
    - `stat_buckets(backend, npu_arch, dim_kind, dim_value, function_status, accuracy_status, count)`：执行头变化时减旧加新；
    - `perf_pair_buckets(backend_x, backend_y, npu_arch, dim_kind, dim_value, ratio_bucket, count)`：同一用例两个 backend 的头都有 kernel_ns 时更新。5 个 backend 只有 10 个组合，规模很小。这样"任意两两对比"仍是实时结果，没有预存相对值。
 3. 保留策略：Pass 记录 180 天后只保留结构化字段并删除日志内容；被问题引用的执行永不清理。

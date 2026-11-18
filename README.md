@@ -20,7 +20,7 @@ afx fuzz replay SEED  # 使用结果中的当前 E/F seed
 afx fuzz view ./results.sqlite
 ```
 
-[文档入口](docs/fuzz/README.md) · [使用说明](docs/fuzz/fuzz_usage.md) · [Agent 与 API](docs/fuzz/agent_api.md) · [运维说明](docs/fuzz/operations.md)
+[文档入口](docs/fuzz/README.md) · [使用说明与 Agent API](docs/fuzz/fuzz_usage.md) · [运维说明](docs/fuzz/operations.md)
 
 [设计文档](docs/fuzz/fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
 
