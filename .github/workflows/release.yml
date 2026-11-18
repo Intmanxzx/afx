@@ -4,8 +4,8 @@ name: Release wheel
 # and this repository only ever receives mirrored refs, but GitHub is the
 # forge that owns the Release attachment and the PyPI upload.
 #
-# mirror.yml pushes tags with MIRROR_TOKEN, which triggers this workflow.
-# A tag pushed straight to GitHub also works; failed runs can be rerun manually.
+# GitCode's native Push mirror sends tags using a GitHub personal access token,
+# which triggers this workflow. Failed runs can be rerun manually.
 on:
   push:
     tags:

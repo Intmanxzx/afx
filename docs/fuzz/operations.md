@@ -106,20 +106,29 @@ python tools/release_wheel.py --host github --tag vVERSION --repository Intmanxz
 
 替换 vVERSION。脚本默认校验和展示计划，真实发布由可信 Tag 流水线使用 --publish。GitHub Release 和 PyPI 使用同一 wheel，包含网页资源；NNSmith fork 通过 execution 依赖安装。发布前完成相关回归、执行环境验证及包安装检查，配置 Release/PyPI 凭据并保护 Tag 权限。同版本不得重建不同内容覆盖发布，需要修改时升版本。
 
-镜像由 [mirror.yml](../../.github/workflows/mirror.yml) 按每 30 分钟执行一次，也可手动 workflow_dispatch。镜像对分支只做快进推送：GitHub 与 GitCode 分叉时任务失败并报错，不会覆盖只存在于 GitHub 一侧的提交。
+镜像使用 GitCode 原生 Push 镜像，在 GitCode 提交后由平台触发同步，不再依赖 GitHub Actions 的定时调度。配置入口为 GitCode 源仓库「项目设置 → 仓库镜像 → Push → 添加镜像」：
 
-在 GitHub 仓库 Settings → Secrets and variables → Actions 中配置 Repository secrets：
+| 配置项 | 值 |
+| --- | --- |
+| 目标项目地址 | `https://github.com/Intmanxzx/afx.git` |
+| 账号 | `Intmanxzx` |
+| 个人令牌 | 授权 GitHub 仓库写入的个人访问令牌 |
 
-- `MIRROR_TOKEN`：GitHub fine-grained personal access token，仅授权 `Intmanxzx/afx`，Repository permissions 为 Contents: Read and write、Workflows: Read and write。内置 `GITHUB_TOKEN` 无法推送工作流文件的变更，因此不能用于完整镜像。令牌到期后需更新此 Secret。
-- `PYPI_API_TOKEN`：正式 PyPI（pypi.org）的上传令牌。首次创建项目时需要可创建项目的账号范围令牌，发布后可改为仅授权 `autofusex` 的项目范围令牌。令牌只保存在 GitHub Secrets 中。
+GitHub fine-grained personal access token 仅授权 `Intmanxzx/afx`，Repository permissions 为 Contents: Read and write、Workflows: Read and write，以同步代码及 `.github/workflows/` 的变更。令牌原值保存在 GitCode 镜像设置中，不能只填写 `MIRROR_TOKEN` 这个名称；令牌到期后在该设置中更新。GitHub Actions 不再使用 `MIRROR_TOKEN` Secret，原生同步验证成功后可删除旧 Secret。
 
-[release.yml](../../.github/workflows/release.yml) 由镜像或直接推送的 `vX.Y.Z` Tag 触发，也可手动指定已有 Tag 重跑。`MIRROR_TOKEN` 的推送会触发工作流，无需额外 dispatch。发布流程检出该 Tag、确认它匹配默认分支声明的版本且提交属于默认分支历史、干净构建 wheel、在只含 wheel 的独立虚拟环境里跑安装冒烟测试、校验 Tag/元数据/目录结构，最后写入 GitHub Release 与 PyPI。历史版本 Tag 会跳过发布。GitHub Release 用内置的 `GITHUB_TOKEN`，无需额外配置。
+只配置 GitCode → GitHub 的 Push 方向。GitCode 官方说明原生 Push 镜像会覆盖目标仓库代码，因此日常开发和合并应在 GitCode 进行，GitHub 只接收镜像更新。镜像范围是 Git 分支、标签和提交，不包括 Issue、PR、评论或 Release 附件。平台说明见 [仓库镜像](https://docs.gitcode.com/docs/help/home/org_project/project_manage/project_settings/repository_mirroring/)。
 
-首次启用时，先把包含这两个工作流的默认分支通过 SSH 同步到 GitHub，并确认 GitHub 默认分支为 `master`。后续在 GitCode 推送版本 Tag，镜像同步后会自动发布；手动同步时也应先推送默认分支，再推送 Tag。以当前版本为例：
+在 GitHub 仓库 Settings → Secrets and variables → Actions 中保留 Repository secret `PYPI_API_TOKEN`：正式 PyPI（pypi.org）的上传令牌。首次创建项目时需要可创建项目的账号范围令牌，发布后可改为仅授权 `autofusex` 的项目范围令牌。
+
+[release.yml](../../.github/workflows/release.yml) 由镜像推送的 `vX.Y.Z` Tag 触发，也可手动指定已有 Tag 重跑。原生镜像使用个人访问令牌推送，会触发 GitHub 工作流，无需额外 dispatch。发布流程检出该 Tag、确认它匹配默认分支声明的版本且提交属于默认分支历史、干净构建 wheel、在只含 wheel 的独立虚拟环境里跑安装冒烟测试、校验 Tag/元数据/目录结构，最后写入 GitHub Release 与 PyPI。历史版本 Tag 会跳过发布。GitHub Release 用内置的 `GITHUB_TOKEN`，无需额外配置。
+
+启用镜像后，确认 GitHub 默认分支为 `master`，并推送一个普通提交到 GitCode，核对两端 `master` 的提交 SHA 一致、GitCode 镜像状态成功且 GitHub 的定时镜像工作流已移除。发布新版本时，先将版本修改提交到 GitCode 并等待 `master` 同步完成，再推送新版本 Tag；如 Tag 已同步而发布门禁跳过，可在 GitHub Actions 手动运行发布工作流。以新版本 `0.2.1` 为例（版本文件须先更新为 `0.2.1`）：
 
 ~~~sh
+git push origin master
+# 等待 GitHub master 同步完成后再创建和推送 Tag。
 git tag -a v0.2.1 -m 'Release autofusex 0.2.1'
-git push origin master refs/tags/v0.2.1
+git push origin refs/tags/v0.2.1
 ~~~
 
 发布成功后使用 `python -m pip install autofusex==0.2.1` 安装，运行 `afx --help` 验证。PyPI 同版本文件不能覆盖；上传失败可从 GitHub Actions 重跑对应发布任务，代码或依赖需要改变时升版本。
