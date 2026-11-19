@@ -167,8 +167,14 @@ def on_head(conn: sqlite3.Connection, case_id: int, exec_id: int, cfg: dict | No
     if execution["backend"] not in backends and execution["backend"] != anchor:
         return
     traits = case_traits(conn, case_id)
+    failure = failure_dimension(execution)
+    target_sig = None
+    if failure is not None and execution["backend"] in backends:
+        make = function_signature if failure == "function" else accuracy_signature
+        target_sig = make(execution, traits)[0]
+    _reclassify_case(conn, case_id, execution["npu_arch"], execution["backend"], failure, target_sig)
     if execution["backend"] in backends:
-        dimension = failure_dimension(execution)
+        dimension = failure
         if dimension is not None:
             make = function_signature if dimension == "function" else accuracy_signature
             sig, category, title = make(execution, traits)
@@ -176,6 +182,25 @@ def on_head(conn: sqlite3.Connection, case_id: int, exec_id: int, cfg: dict | No
             _attach(conn, dimension, execution["backend"], sig, category, title, execution["log_summary"],
                     execution, traits)
     _check_performance(conn, case_id, execution["npu_arch"], backends, anchor, cfg["slowdown"], traits)
+
+
+def _reclassify_case(conn, case_id, npu_arch, backend, dimension, signature):
+    rows = conn.execute(
+        "SELECT ic.issue_id, i.dimension, i.backend, i.signature FROM issue_cases ic "
+        "JOIN issues i ON i.issue_id=ic.issue_id WHERE ic.case_id=? AND ic.role='affected' "
+        "AND ic.npu_arch=? AND i.backend=? AND ic.stale=0", (case_id, npu_arch, backend)).fetchall()
+    for row in rows:
+        if dimension is not None and row["backend"] == backend and row["dimension"] == dimension and row["signature"] == signature:
+            continue
+        now = now_ms()
+        conn.execute(
+            "UPDATE issue_cases SET stale=1, result='skip', pick_reason=? WHERE issue_id=? "
+            "AND role='affected' AND case_id=? AND npu_arch=?",
+            (f"reclassified to {dimension or 'resolved'}", row["issue_id"], case_id, npu_arch))
+        conn.execute("UPDATE issues SET case_count=MAX(case_count-1,0), priority=MAX(priority-1,0), updated_at=? WHERE issue_id=?",
+                     (now, row["issue_id"]))
+        event(conn, row["issue_id"], "system", "case_reclassified", None, None,
+              f"case {case_id} skipped; moved to {dimension or 'no issue'}")
 
 
 def _check_performance(conn, case_id, arch, backends, anchor, slowdown, traits):
@@ -546,7 +571,7 @@ _ISSUE_COLUMNS = ("issue_id, dimension, backend, category, title, log_summary, s
 
 
 def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=None, after=None, limit=50) -> dict:
-    """List issues ordered by affected-case count (most impactful first), then recency."""
+    """List claimed work first, then unclaimed issues by affected-case count."""
     if not 1 <= limit <= 200:
         raise IssueError("invalid", "limit must be 1..200")
     where, args = [], []
@@ -563,17 +588,29 @@ def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=No
         args.extend([pattern, pattern, pattern])
     if after is not None:
         try:
-            after_count, after_no = (int(part) for part in str(after).split(":", 1))
+            parts = [int(part) for part in str(after).split(":")]
+            if len(parts) == 2:
+                after_rank, after_count, after_no = 1, parts[0], parts[1]
+            elif len(parts) == 3:
+                after_rank, after_count, after_no = parts
+            else:
+                raise ValueError
         except ValueError:
-            raise IssueError("invalid", "after must be '<case_count>:<issue_no>'")
-        where.append("(case_count<? OR (case_count=? AND issue_no<?))")
-        args += [after_count, after_count, after_no]
+            raise IssueError("invalid", "after must be '<claimed>:<case_count>:<issue_no>'")
+        rank_sql = "CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END"
+        where.append(f"(({rank_sql})>? OR (({rank_sql})=? AND "
+                     "(case_count<? OR (case_count=? AND issue_no<?))))")
+        args += [after_rank, after_rank, after_count, after_count, after_no]
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     rows = store.reader().execute(
         f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues {clause} "
-        "ORDER BY case_count DESC, issue_no DESC LIMIT ?", args + [limit]).fetchall()
+        "ORDER BY CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END ASC, case_count DESC, issue_no DESC LIMIT ?", args + [limit]).fetchall()
     items = [dict(row) for row in rows]
-    cursor = f"{items[-1]['case_count']}:{items[-1]['issue_no']}" if len(items) == limit else None
+    if len(items) == limit:
+        last = items[-1]
+        cursor = f"{0 if last['status'] in ACTIVE else 1 if last['status'] == 'open' else 2}:{last['case_count']}:{last['issue_no']}"
+    else:
+        cursor = None
     for item in items:
         item.pop("issue_no")
     return {"issues": items, "next_cursor": cursor}

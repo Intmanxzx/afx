@@ -118,6 +118,29 @@ def test_clustering_groups_same_normalized_error(world):
         "error at <hex> in <path>: shape <shape> <str>"
 
 
+def test_reclassifies_case_when_failure_dimension_changes(world):
+    world.upload([item("exec-reclass-f", 101, status="compile_fail", fail_stage="schedule",
+                        summary="schedule failure")])
+    function_issue = issues.list_issues(world.store)["issues"][0]
+    world.upload([item("exec-reclass-a", 101, status="pass", accuracy="fail",
+                        max_abs_err=2.0, max_rel_err=2.0, summary="accuracy failure")])
+    listed = {row["issue_id"]: row for row in issues.list_issues(world.store)["issues"]}
+    assert listed[function_issue["issue_id"]]["case_count"] == 0
+    old = issues.issue_cases(world.store, function_issue["issue_id"])["cases"][0]
+    assert old["stale"] == 1 and old["result"] == "skip"
+    assert any(row["dimension"] == "accuracy" and row["case_count"] == 1 for row in listed.values())
+
+
+def test_claimed_issues_are_listed_before_open_issues(world):
+    world.upload([item("exec-order-1", 201, status="compile_fail", fail_stage="schedule", summary="one"),
+                  item("exec-order-2", 202, status="compile_fail", fail_stage="tiling", summary="two")])
+    rows = issues.list_issues(world.store)["issues"]
+    claimed = issues.claim(world.store, world.agent, {"request_key": "order-claim", "agent_id": "order-agent",
+                                                       "issue_id": rows[-1]["issue_id"]})
+    ordered = issues.list_issues(world.store)["issues"]
+    assert ordered[0]["issue_id"] == claimed["issue_id"]
+
+
 def test_accuracy_and_performance_issues(world):
     world.upload([
         item("exec-0001", 1, accuracy="fail", accuracy_ref="eager-npu", max_rel_err=3.0, nodes=2,

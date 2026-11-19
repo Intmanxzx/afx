@@ -1056,7 +1056,7 @@ async function issueDrawer(issueId) {
 function caseList(cases) {
   return el("table", { class: "grid" }, el("tbody", {}, cases.map(c => el("tr", {},
     el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
-    el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.pick_reason || ""), el("td", {}, c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
+    el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.pick_reason || ""), el("td", {}, c.result === "skip" ? el("span", { class: "chip warn" }, "Skip") : c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
     el("td", {}, c.result ? el("span", { class: "chip " + (c.result === "pass" ? "ok" : c.result === "fail" ? "bad" : "warn") }, c.result) : "")))));
 }
 
