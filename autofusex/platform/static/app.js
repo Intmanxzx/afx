@@ -959,8 +959,8 @@ PAGES.repair = async (root, params) => {
   const status = params.get("status") || "";
   const q = params.get("q") || "";
   const tabs = el("div", { class: "tabs" }, [["function", "功能问题"], ["accuracy", "精度问题"], ["performance", "性能问题"]].map(([k, t]) =>
-    el("button", { class: k === dimension ? "active" : "", onclick: () => go("repair", { dimension: k, status }) }, t)));
-  const filter = select([["", "全部状态"], ...Object.entries(STATUS_LABEL)], status, v => go("repair", { dimension, status: v }));
+    el("button", { class: k === dimension ? "active" : "", onclick: () => go("repair", { dimension: k, status, q: q || null }) }, t)));
+  const filter = select([["", "全部状态"], ...Object.entries(STATUS_LABEL)], status, v => go("repair", { dimension, status: v, q: q || null }));
   const issueSearch = el("input", { class: "issue-search", placeholder: "搜索问题 ID、标题或日志", value: q, maxlength: 128 });
   issueSearch.addEventListener("keydown", e => { if (e.key === "Enter") go("repair", { dimension, status, q: issueSearch.value.trim() || null }); });
   const panel = el("section", { class: "panel" }, el("h2", {}, "问题列表", el("span", { class: "spacer" }), issueSearch, filter), tabs);
