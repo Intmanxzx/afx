@@ -472,6 +472,10 @@ DROP TABLE user_tokens;
 ALTER TABLE user_tokens_new RENAME TO user_tokens;
 CREATE INDEX user_tokens_user ON user_tokens(user_id);
 """),
+    (8, """
+ALTER TABLE clients ADD COLUMN deleted_at INTEGER;
+CREATE INDEX clients_active ON clients(deleted_at, last_seen_at);
+"""),
 ]
 
 CONTENT = [

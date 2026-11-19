@@ -272,7 +272,7 @@ def case_spec(store: Store, case_key: str) -> dict:
 def clients(store: Store) -> list:
     return [dict(row) for row in store.reader().execute(
         "SELECT client_id, user_id, machine_id, display_name, hostname, npu_arch, afx_version, first_seen_at, "
-        "last_seen_at FROM clients ORDER BY last_seen_at DESC")]
+        "last_seen_at FROM clients WHERE deleted_at IS NULL ORDER BY last_seen_at DESC")]
 
 
 def settings(store: Store) -> dict:

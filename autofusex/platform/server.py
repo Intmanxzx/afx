@@ -30,6 +30,7 @@ _PARAM = re.compile(r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")
 _TEXT_PARAM = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
 _ISSUE_PATH = re.compile(r"^/api/issues/([FAP]\d{1,9})(?:/(\w[\w-]*))?$")
 _ADMIN_ISSUE_PATH = re.compile(r"^/api/admin/issues/([FAP]\d{1,9})/(close|merge)$")
+_ADMIN_CLIENT_PATH = re.compile(r"^/api/admin/clients/(\d{1,12})$")
 _ROUND_PATH = re.compile(r"^/api/issues/([FAP]\d{1,9})/rounds/(\d{1,6})/tasks$")
 _TASK_PATH = re.compile(r"^/api/client/retests/(\d{1,12})/complete$")
 _KNOWLEDGE_PATH = re.compile(r"^/api/knowledge/(K\d{1,9})$")
@@ -354,6 +355,9 @@ class Handler(BaseHTTPRequestHandler):
             match = _PIN_PATH.match(path)
             if match:
                 return regression.revoke_pin(store, principal, int(match.group(1)), self._json_body()), 200
+            match = _ADMIN_CLIENT_PATH.match(path)
+            if match:
+                return ops.delete_client(store, principal, int(match.group(1))), 200
         if method == "PUT" and path == "/api/admin/settings":
             principal.require_admin()
             body = self._json(self._body(MAX_BODY))

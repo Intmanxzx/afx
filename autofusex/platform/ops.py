@@ -112,6 +112,20 @@ def request_update(store: Store, principal: Principal, body: dict):
     return idempotent(store, principal, "client-update", body.pop("request_key", None), body, action)
 
 
+def delete_client(store: Store, principal: Principal, client_id: int):
+    principal.require_admin()
+    with store.write() as conn:
+        row = conn.execute("SELECT client_id, display_name, last_heartbeat_at FROM clients WHERE client_id=? AND deleted_at IS NULL", (client_id,)).fetchone()
+        if row is None:
+            raise IssueError("not_found", "client not found", 404)
+        if row[2] is not None and now_ms() - row[2] <= ONLINE_MS:
+            raise IssueError("online", "online clients cannot be deleted", 409)
+        now = now_ms()
+        conn.execute("UPDATE clients SET deleted_at=?, runtime=NULL, runtime_at=NULL WHERE client_id=?", (now, client_id))
+        conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)", (now, principal.user_id, "client.deleted", f"client {client_id} ({row[1]})"))
+    return {"client_id": client_id, "deleted": True}
+
+
 def summary(store: Store, principal: Principal | None = None, scope: str = "mine") -> dict:
     """Fleet summary. Throughput is counted from the stored executions (by when they ran, CPU
     baselines excluded) so it matches the overview; heartbeat counters would also count re-uploads
@@ -131,7 +145,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, display_name, hostname, npu_arch, afx_version, backend_versions, "
             "target_afx_version, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at "
-            "FROM clients "
+            "FROM clients WHERE deleted_at IS NULL "
             "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
         item = dict(row)
         item["backend_versions"] = json.loads(item["backend_versions"]) if item["backend_versions"] else {}
