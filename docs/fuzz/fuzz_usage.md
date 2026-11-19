@@ -146,7 +146,7 @@ afx fuzz view ./results.snapshot.sqlite --no-browser
 
 ## 远程控制 API
 
-设备管理控制面（`ControlStore`/`ControlAPI`，[management/central.py](../../autofusex/fuzz/daemon/management/central.py)）目前没有服务进程挂载它：旧中心已删除，新的平台服务（`autofusex/platform/`）尚未接入这套设备管理协议。以下路由描述的是该模块自身实现的协议形状，不代表当前有可访问的 HTTPS 端点；需要远程设备管理时需先把它接入某个服务进程。
+设备管理的数据模型（`ControlStore`，[management/central.py](../../autofusex/fuzz/daemon/management/central.py)）独立于执行依赖保留了下来，但把它暴露成 HTTP 的 `ControlAPI`（连同它依赖的会话/CSRF/限流协作对象）随旧中心一起删除了——它只在旧中心的 `server/central/server.py` 里挂载过，新的平台服务（`autofusex/platform/`）没有接入这套协议，也没有等价实现。以下路由描述的是这套协议曾经的形状，仅供将来重新接入时参考；当前没有可访问的 HTTPS 端点，需要远程设备管理必须先重新实现 HTTP 层。
 
 白名单包含 `client.update`：payload `{"version":"0.1.4","package":"autofusex"}`，可选 `index_url`（仅用于受控 PyPI 镜像）；version 必须精确，daemon 不执行无版本的升级，也不自行探测最新版本。
 
@@ -160,7 +160,7 @@ afx fuzz view ./results.snapshot.sqlite --no-browser
 | /api/manage/operations | POST {"device_id": ID} | 设备操作与回执 |
 | /api/manage/config | POST device_id、config、base_revision | 按修订号更新设备策略 |
 
-服务端拒绝跨用户设备操作，本地 trust 仍限制最终权限。设备使用 Bearer 调用 `/api/manage/poll`、`ack`、`revoke`；注册配对由 enroll/pair/exchange 完成。详见 [management/central.py](../../autofusex/fuzz/daemon/management/central.py)。
+服务端拒绝跨用户设备操作，本地 trust 仍限制最终权限。设备使用 Bearer 调用 `/api/manage/poll`、`ack`、`revoke`；注册配对由 enroll/pair/exchange 完成。这套路由形状详见 [management/central.py](../../autofusex/fuzz/daemon/management/central.py) 顶部的说明；`ControlAPI` 本身已不在代码里。
 
 问题领取、知识库、Agent 修复闭环已迁移到新平台的 `/api/issues/*` 等接口，见[平台业务与数据设计](platform_v3_design.md)第 5、8 节；本地 skill [afx-repair](../../skills/afx-repair/SKILL.md) 把那份文档当作当前 API 参考。
 

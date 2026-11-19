@@ -862,6 +862,16 @@ class Client:
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
+def _implied_data_dir(results_path: Path):
+    """'afx fuzz run --save' always writes to <data-dir>/results/results.sqlite; it has
+    no flag to redirect that to an arbitrary file. Return the --data-dir that makes
+    results_path the one it actually writes to, or None if results_path doesn't follow
+    that layout (in which case 'fuzz run --save' can never populate it)."""
+    if results_path.name == "results.sqlite" and results_path.parent.name == "results":
+        return results_path.parent.parent
+    return None
+
+
 def setup(args) -> int:
     """Bootstrap a new client host: fix --token-file permissions, create the --results
     directory, and confirm the token/endpoint actually work before anything runs
@@ -911,9 +921,24 @@ def setup(args) -> int:
         client_cmd += ["--device", device]
     if args.retest:
         client_cmd.append("--retest")
-    print(json.dumps({"ok": True, "client_id": beat["client_id"], "results": str(results_path),
-                      "token_file": str(token_path),
-                      "next_steps": ["afx fuzz run --save", " ".join(client_cmd)]}, indent=2))
+    data_dir = _implied_data_dir(results_path)
+    warnings = []
+    if data_dir is not None:
+        run_cmd = ["afx", "fuzz", "run", "--save", "--data-dir", str(data_dir)]
+    else:
+        run_cmd = ["afx", "fuzz", "run", "--save"]
+        warnings.append(
+            f"{results_path} is not a .../results/results.sqlite path. 'afx fuzz run --save' "
+            "always writes to <data-dir>/results/results.sqlite and has no flag to put results "
+            "anywhere else, so the uploader above would keep watching an empty file. Point --results "
+            f"at {results_path.parent / 'results' / 'results.sqlite'} (and run `fuzz run --save --data-dir "
+            f"{results_path.parent}`), or pick whatever --data-dir you like and derive --results from it the "
+            "same way.")
+    result = {"ok": True, "client_id": beat["client_id"], "results": str(results_path),
+              "token_file": str(token_path), "next_steps": [" ".join(run_cmd), " ".join(client_cmd)]}
+    if warnings:
+        result["warnings"] = warnings
+    print(json.dumps(result, indent=2))
     return 0
 
 

@@ -11,7 +11,7 @@ Fuzz 由客户端管理进程和执行引擎组成，NPU 客户端执行任务�
 | `daemon` | 常驻控制面、watchdog、本地 IPC、client 生命周期、优雅停止、版本切换和回滚 | 由系统服务或 bootstrap 维护，保持稳定 |
 | `client` | 领取任务、生成 Case、CPU/NPU 执行、精度验证、本地保存 | 新版本 `pip install autofusex==VERSION` |
 
-`daemon/management/` 里的远程设备管理协议（`ControlStore`/`ControlAPI`、环境/任务下发、`client.update` 远程升级）仍是独立模块，但目前没有服务进程挂载它——旧中心删除后，新的 `autofusex/platform/` 还没有接入这套协议，细节和这一限制见[使用说明：远程控制 API](fuzz_usage.md#远程控制-api)。结果上传改为客户端主动跑 `afx platform client run` 轮询/推送平台服务，不再是中心下发。
+`daemon/management/` 里的设备管理数据模型（`ControlStore`、环境/任务下发、`client.update` 远程升级）仍是独立模块，但把它暴露成 HTTP 的 `ControlAPI` 随旧中心一起删除了——它只在旧中心挂载过，新的 `autofusex/platform/` 没有接入这套协议也没有等价实现，细节见[使用说明：远程控制 API](fuzz_usage.md#远程控制-api)。结果上传改为客户端主动跑 `afx platform client run` 轮询/推送平台服务，不再是中心下发。
 
 ## 组件与数据流
 

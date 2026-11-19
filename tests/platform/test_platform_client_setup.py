@@ -1,5 +1,6 @@
 """'afx platform client setup': bootstraps a new host (permissions, directory, one
 heartbeat) without ever writing or inventing a token."""
+import json
 import stat
 import threading
 from argparse import Namespace
@@ -77,5 +78,23 @@ def test_fixes_permissions_creates_results_dir_and_confirms_with_one_heartbeat(s
     out = capsys.readouterr().out
     assert '"ok": true' in out.lower()
     assert "afx fuzz run --save" in out
+    assert f"--data-dir {results.parent.parent}" in out  # 'fuzz run --save' only ever writes <data-dir>/results/results.sqlite
     assert "--token-file" in out and str(token_file) in out
     assert "--device npu:0" in out
+    assert "warnings" not in out
+
+
+def test_warns_when_results_path_does_not_match_the_data_dir_layout(server, tmp_path, capsys):
+    """'fuzz run --save' always writes <data-dir>/results/results.sqlite and has no flag to
+    redirect it, so a --results path that doesn't follow that layout can never be populated;
+    setup must flag this instead of silently printing a next step that can't work."""
+    endpoint, token = server
+    token_file = tmp_path / "client.token"
+    token_file.write_text(token)
+    results = tmp_path / "custom.sqlite"  # not .../results/results.sqlite
+    rc = setup(args(token_file=str(token_file), results=str(results), endpoint=endpoint))
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["next_steps"][0] == "afx fuzz run --save"  # no --data-dir: nothing sane to derive
+    assert "warnings" in payload and "results/results.sqlite" in payload["warnings"][0]

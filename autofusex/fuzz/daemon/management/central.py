@@ -6,8 +6,7 @@ import secrets
 import sqlite3
 import time
 import uuid
-from urllib.parse import urlsplit
-from .config import canonical, fingerprint, parse, validate, SCHEMAS
+from .config import canonical, fingerprint, validate
 
 
 class Conflict(ValueError):
@@ -196,99 +195,11 @@ class ControlStore:
             return [dict(id=r['id'],kind=r['kind'],state=r['state'],updated=r['updated'],result=json.loads(r['result']) if r['result'] else None)
                     for r in db.execute('SELECT * FROM managed_operations WHERE device_id=? ORDER BY updated DESC LIMIT 100',(device,))]
 
-
-class ControlAPI:
-    def __init__(self,path,allowlist,existing):
-        self.store=ControlStore(path);self.path=path;self.allowlist=allowlist;self.existing=existing
-
-    def handle(self,handler,method):
-        route=urlsplit(handler.path).path
-        if not route.startswith('/api/manage/'): return False
-        from ...server.central import sessions
-        from ...server.central.maintenance import MaintenanceBlocked,reject
-        try:
-            if urlsplit(handler.path).query: raise ValueError('query parameters not supported')
-            body={}
-            if method=='POST':
-                if handler.headers.get('Transfer-Encoding') or handler.headers.get('Content-Type','').split(';')[0]!='application/json':
-                    raise ValueError('JSON Content-Length required')
-                length=int(handler.headers.get('Content-Length','0'))
-                if not 1<=length<=65536: raise ValueError('request too large')
-                raw=handler.rfile.read(length)
-                if len(raw)!=length: raise ValueError('incomplete request')
-                body=json.loads(raw)
-                if not isinstance(body,dict): raise ValueError('object required')
-            name=route.removeprefix('/api/manage/')
-            if name in {'pair','exchange','enroll'} and method=='POST':
-                if not self.existing._login_limit(handler.client_address[0]):
-                    handler.send(429,{'error':'rate limited'});return True
-                if self.allowlist.enabled: raise MaintenanceBlocked()
-                if name=='enroll':
-                    from ...server.central.repository import authenticate
-                    with self.store.connect() as db: owner=authenticate(db,body['token'])
-                    pairing=self.store.pairing(body['name'])
-                    self.store.approve(owner,pairing['code'])
-                    result=self.store.exchange(pairing['id'],pairing['secret'])
-                else:
-                    result=self.store.pairing(body['name']) if name=='pair' else self.store.exchange(body['id'],body['secret'])
-            elif name in {'poll','ack'} and method=='POST' or (name=='revoke' and method=='POST' and handler.headers.get('Authorization','').startswith('Bearer ')):
-                auth=handler.headers.get('Authorization','')
-                if not auth.startswith('Bearer ') or len(auth)>256: raise PermissionError('credential required')
-                device=self.store.authenticate(auth[7:]);self.allowlist.client(device['user_id'],device['id'])
-                if name=='poll': result=self.store.poll(device,body['status'])
-                elif name=='ack': result=self.store.ack(device,body['id'],body['generation'],body['state'],body.get('result'))
-                else:
-                    with self.store.connect() as db:
-                        db.execute('UPDATE managed_devices SET active=0 WHERE id=?',(device['id'],))
-                        self.store.audit(db,device['user_id'],device['id'],'revoke',{})
-                    result=dict(revoked=True)
-            else:
-                if method=='POST': self.existing._origin(handler)
-                user=sessions.identify(self.path,self.existing._secret(handler),handler.headers.get('X-CSRF-Token','') if method=='POST' else None)['user_id']
-                if method=='POST': self.allowlist.browser(user)
-                if name=='devices' and method=='GET': result=dict(items=self.store.devices(user))
-                elif name=='schemas' and method=='GET': result=SCHEMAS
-                elif name=='approve' and method=='POST': result=self.store.approve(user,body['code'])
-                elif name=='export' and method=='POST':
-                    import yaml
-                    result=dict(yaml=yaml.safe_dump(validate(body['config']),sort_keys=False,allow_unicode=True))
-                elif name=='validate' and method=='POST': result=validate(parse(body['yaml']) if 'yaml' in body else body['config'])
-                elif name=='config' and method=='POST': result=self.store.configure(user,body['device_id'],body['config'],body['base_revision'])
-                elif name=='submit' and method=='POST': result=self.store.submit(user,body['device_id'],body['kind'],body['payload'],body['request_key'])
-                elif name=='operations' and method=='POST': result=dict(items=self.store.operations(user,body['device_id']))
-                elif name=='templates' and method=='GET':
-                    with self.store.connect() as db:
-                        result=dict(items=[dict(name=r['name'],revision=r['revision'],spec=json.loads(r['spec'])) for r in db.execute('SELECT * FROM managed_templates WHERE user_id=? ORDER BY name LIMIT 100',(user,))])
-                elif name=='template' and method=='POST':
-                    spec=validate(body['spec']);template_name=body['name']
-                    if not isinstance(template_name,str) or not 1<=len(template_name)<=80:raise ValueError('invalid template name')
-                    with self.store.connect() as db:
-                        db.execute('BEGIN IMMEDIATE')
-                        row=db.execute('SELECT revision FROM managed_templates WHERE user_id=? AND name=?',(user,template_name)).fetchone()
-                        revision=row[0] if row else 0
-                        if body['base_revision']!=revision:raise Conflict('template revision changed')
-                        if not row and db.execute('SELECT count(*) FROM managed_templates WHERE user_id=?',(user,)).fetchone()[0]>=100:raise ValueError('template limit reached')
-                        db.execute('INSERT OR REPLACE INTO managed_templates VALUES (?,?,?,?)',(user,template_name,revision+1,canonical(spec)))
-                        result=dict(name=template_name,revision=revision+1)
-                elif name=='history' and method=='POST':
-                    with self.store.connect() as db:
-                        self.store.owner(db,user,body['device_id'])
-                        result=dict(items=[dict(revision=r['revision'],config=json.loads(r['config'])) for r in db.execute('SELECT * FROM managed_config_history WHERE device_id=? ORDER BY revision DESC LIMIT 100',(body['device_id'],))])
-                elif name=='audit' and method=='GET':
-                    with self.store.connect() as db:
-                        result=dict(items=[dict(r) for r in db.execute('SELECT * FROM managed_audit WHERE user_id=? ORDER BY seq DESC LIMIT 100',(user,))])
-                elif name=='revoke' and method=='POST':
-                    with self.store.connect() as db:
-                        self.store.owner(db,user,body['device_id'])
-                        db.execute('UPDATE managed_devices SET active=0 WHERE id=?',(body['device_id'],))
-                        self.store.audit(db,user,body['device_id'],'revoke',{})
-                    result=dict(revoked=True)
-                else: raise LookupError('route not found')
-            handler.send(200,result)
-        except MaintenanceBlocked: reject(handler)
-        except PermissionError: handler.send(401,{'error':'authentication or authorization failed'})
-        except Conflict as exc: handler.send(409,{'error':str(exc)})
-        except LookupError: handler.send(404,{'error':'not found'})
-        except (ValueError,TypeError,KeyError,OverflowError,RecursionError): handler.send(400,{'error':'invalid management request'})
-        except sqlite3.Error: handler.send(503,{'error':'management database unavailable'})
-        return True
+# ControlAPI (the /api/manage/* HTTP dispatch for this control plane) was removed with the
+# old central server: it only ever ran mounted inside autofusex/fuzz/server/central/server.py,
+# which supplied its session/CSRF/rate-limit collaborator (the removed `existing` argument) and
+# imported sessions.identify, maintenance.MaintenanceBlocked/reject and repository.authenticate
+# from autofusex/fuzz/server/central/ -- all deleted, with no equivalent in autofusex/platform/.
+# ControlStore above (the device pairing/config/operations data model) is self-contained and kept
+# for whoever next decides to retire or integrate remote device management into platform v3; see
+# docs/fuzz/fuzz_design.md and fuzz_usage.md.
