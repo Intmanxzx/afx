@@ -322,7 +322,7 @@ _AGENT = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 
 def claim(store: Store, principal: Principal, body: dict):
-    principal.require("issue")
+    principal.require_write()
     agent_id = body.get("agent_id")
     if not isinstance(agent_id, str) or not _AGENT.match(agent_id):
         raise IssueError("invalid", "agent_id must be 1..64 chars of letters, digits, _ . : -")
@@ -365,7 +365,7 @@ def claim(store: Store, principal: Principal, body: dict):
 
 
 def renew(store: Store, principal: Principal, issue_id: str, body: dict):
-    principal.require("issue")
+    principal.require_write()
 
     def action(conn):
         issue = _holder(conn, principal, issue_id, body.get("lease_id"))
@@ -377,7 +377,7 @@ def renew(store: Store, principal: Principal, issue_id: str, body: dict):
 
 
 def release(store: Store, principal: Principal, issue_id: str, body: dict):
-    principal.require("issue")
+    principal.require_write()
 
     def action(conn):
         issue = _holder(conn, principal, issue_id, body.get("lease_id"))
@@ -394,7 +394,7 @@ _SHA = re.compile(r"^[0-9a-f]{64}$")
 
 def verify(store: Store, principal: Principal, issue_id: str, body: dict):
     """Freeze the affected cases and queue a verification round on their own arch (design 2)."""
-    principal.require("issue")
+    principal.require_write()
     version, sha = body.get("fix_version"), body.get("fix_sha256")
     if not isinstance(version, str) or not _VERSION.match(version):
         raise IssueError("invalid", "fix_version must be an exact package version")
@@ -428,7 +428,7 @@ def verify(store: Store, principal: Principal, issue_id: str, body: dict):
 
 def pin_cases(store: Store, principal: Principal, issue_id: str, body: dict):
     """Lease holder (or admin) names must-run regression cases before regression starts (design 2.1)."""
-    principal.require("issue")
+    principal.require_write()
     keys, reason = body.get("case_keys"), body.get("reason")
     if not isinstance(keys, list) or not 1 <= len(keys) <= 200 or not all(isinstance(k, str) for k in keys):
         raise IssueError("invalid", "case_keys must be a list of 1..200 strings")
@@ -463,7 +463,7 @@ def _case_ids(conn, keys):
 
 
 def submit_knowledge(store: Store, principal: Principal, issue_id: str, body: dict):
-    principal.require("knowledge")
+    principal.require_write()
     from . import knowledge
     fields = knowledge.validate(body.get("knowledge"))
 
@@ -481,7 +481,7 @@ def submit_knowledge(store: Store, principal: Principal, issue_id: str, body: di
 
 # -- admin --------------------------------------------------------------------------
 def close(store: Store, principal: Principal, issue_id: str, body: dict):
-    principal.require("admin")
+    principal.require_admin()
     reason = body.get("reason")
     if not isinstance(reason, str) or not 1 <= len(reason) <= 500:
         raise IssueError("invalid", "reason is required (1..500 chars)")
@@ -501,7 +501,7 @@ def close(store: Store, principal: Principal, issue_id: str, body: dict):
 
 def merge(store: Store, principal: Principal, issue_id: str, body: dict):
     """Fold a too-fine cluster into another; its signature keeps routing to the target."""
-    principal.require("admin")
+    principal.require_admin()
     target_id = body.get("into")
 
     def action(conn):

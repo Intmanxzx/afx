@@ -12,7 +12,7 @@ usage:
 `setup` fixes --token-file permissions, creates the --results directory, confirms the
 token/endpoint by sending one heartbeat, and prints the `fuzz run`/`client run` commands
 to copy next. It never writes or invents a token: paste the one `afx platform token issue
-USER --kind client` printed into --token-file first.
+USER` printed into --token-file first.
 """
 from __future__ import annotations
 
@@ -881,7 +881,7 @@ def setup(args) -> int:
     if not token_path.exists():
         print(json.dumps({"ok": False, "error":
             f"{token_path} does not exist; paste the token from "
-            "`afx platform token issue USER --kind client` into it (chmod 600), then rerun setup"}),
+            "`afx platform token issue USER` into it (chmod 600), then rerun setup"}),
             file=sys.stderr)
         return 2
     try:

@@ -112,7 +112,7 @@ def create(conn, principal: Principal, fields: dict, *, confidence: str, status:
 
 def propose(store: Store, principal: Principal, body: dict):
     """Knowledge outside the issue flow (e.g. measured profile findings) starts as a draft."""
-    principal.require("knowledge")
+    principal.require_write()
     fields = validate(body.get("knowledge"))
     confidence = "measured" if body.get("measured") is True else "proposed"
 
@@ -124,7 +124,7 @@ def propose(store: Store, principal: Principal, body: dict):
 
 
 def set_status(store: Store, principal: Principal, knowledge_id: str, body: dict):
-    principal.require("admin")
+    principal.require_admin()
     status = body.get("status")
     if status not in STATUSES:
         raise IssueError("invalid", f"status must be one of {', '.join(STATUSES)}")

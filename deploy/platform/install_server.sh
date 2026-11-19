@@ -8,7 +8,7 @@ Usage: install_server.sh --wheel FILE --root DIR [--port 8100] [--user USER] [--
   ROOT/data holds core.db, content.db, stats.db and secret.key (created on first start).
   Users and tokens are issued afterwards with:
     ROOT/bin/afx platform --data ROOT/data user add NAME --role admin
-    ROOT/bin/afx platform --data ROOT/data token issue NAME --kind web
+    ROOT/bin/afx platform --data ROOT/data token issue NAME   # one token per user; reissuing revokes the old one
 HELP
 }
 WHEEL=; ROOT=; PORT=8100; USER_NAME=$(id -un); SERVICE=afx-platform; PYTHON_BIN=python3

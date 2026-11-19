@@ -17,7 +17,7 @@ from autofusex.platform.store import Store
 def server(tmp_path):
     store = Store(tmp_path / "data")
     auth.add_user(store, "alice", "developer")
-    token = auth.issue_token(store, "alice", "client")
+    token = auth.issue_token(store, "alice")
     instance = PlatformServer(store, ("127.0.0.1", 0))
     thread = threading.Thread(target=instance.serve_forever, daemon=True)
     thread.start()

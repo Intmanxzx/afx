@@ -34,11 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
     for action in ("disable", "enable"):
         user.add_parser(action).add_argument("user_id")
 
-    token = sub.add_parser("token", help="issue, list and revoke tokens").add_subparsers(dest="action", required=True)
+    token = sub.add_parser("token", help="issue (one per user), list and revoke tokens").add_subparsers(dest="action", required=True)
     issue = token.add_parser("issue")
     issue.add_argument("user_id")
-    issue.add_argument("--kind", choices=("client", "agent", "web"), required=True)
-    issue.add_argument("--scopes", help="comma separated; default depends on kind")
     issue.add_argument("--expires-days", type=int)
     token.add_parser("list").add_argument("--user")
     token.add_parser("revoke").add_argument("prefix", help="token prefix shown by 'token list'")
@@ -106,10 +104,9 @@ def main(argv=None) -> int:
             return 0
         if args.command == "token":
             if args.action == "issue":
-                scopes = args.scopes.split(",") if args.scopes else None
-                token = auth.issue_token(store, args.user_id, args.kind, scopes, args.expires_days)
+                token = auth.issue_token(store, args.user_id, args.expires_days)
                 print(json.dumps({"ok": True, "token": token,
-                                  "note": "shown once; store it in the client or agent config"}))
+                                  "note": "shown once; any earlier token of this user is revoked"}))
             elif args.action == "list":
                 print(json.dumps({"ok": True, "tokens": auth.list_tokens(store, args.user)}, indent=2))
             else:

@@ -135,7 +135,7 @@ def patterns(store: Store, x: str, y: str, arch=None) -> dict:
 
 def create_drafts(store: Store, principal: Principal, body: dict):
     """Turn strong, well-sampled op patterns into 'measured' knowledge drafts for admin review."""
-    principal.require("admin")
+    principal.require_admin()
     x, y, arch = body.get("x"), body.get("y"), body.get("npu_arch")
     if not all(isinstance(v, str) for v in (x, y)) or (arch is not None and not isinstance(arch, str)):
         raise IssueError("invalid", "x and y are required backend names")

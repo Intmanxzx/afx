@@ -230,7 +230,7 @@ class Ingestor:
         self._env_ids: dict = {}
 
     def upload(self, principal: Principal, body: dict, raw: bytes) -> dict:
-        principal.require("upload")
+        principal.require_write()
         request = validate_request(body)
         body_hash = hashlib.sha256(raw).digest()
         # Validate every item before taking the writer lock; per-item errors are reported, not fatal.

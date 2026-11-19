@@ -31,7 +31,7 @@ def _item(i, log=None):
 
 
 def _upload(store, items, key):
-    principal = auth.authenticate(store, "Bearer " + auth.issue_token(store, "alice", "client"))
+    principal = auth.authenticate(store, "Bearer " + auth.issue_token(store, "alice"))
     payload = {"request_key": key, "client": {"machine_id": "m1"}, "run": {"run_uuid": key, "kind": "fuzz"},
                "items": items}
     return Ingestor(store).upload(principal, payload, json.dumps(payload).encode())
@@ -46,7 +46,7 @@ def store(tmp_path):
 
 
 def test_full_backup_restore_roundtrip(store, tmp_path):
-    token = auth.issue_token(store, "alice", "agent")
+    token = auth.issue_token(store, "alice")
     archive = backup.create(store.dir, tmp_path / "out")
     assert backup.verify(archive)["files"] == ["content.db.gz", "core.db.gz", "secret.key"]
     target = tmp_path / "restored"

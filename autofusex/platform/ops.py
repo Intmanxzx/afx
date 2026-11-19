@@ -20,7 +20,7 @@ _VERSION = re.compile(r"^[A-Za-z0-9_.+-]{1,64}$")
 
 
 def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
-    principal.require("upload")
+    principal.require_write()
     machine_id = body.get("machine_id")
     if not isinstance(machine_id, str) or not 1 <= len(machine_id) <= 128:
         raise IssueError("invalid", "machine_id is required")
@@ -93,7 +93,7 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
 
 
 def request_update(store: Store, principal: Principal, body: dict):
-    principal.require("admin")
+    principal.require_admin()
     ids, version = body.get("client_ids"), body.get("version")
     if not isinstance(ids, list) or not 1 <= len(ids) <= 200 or not all(
             isinstance(i, int) and not isinstance(i, bool) for i in ids):

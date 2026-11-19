@@ -64,7 +64,7 @@ bash deploy/platform/install_server.sh --wheel autofusex-0.2.0-py3-none-any.whl 
 
 ```bash
 ROOT/bin/afx platform --data ROOT/data user add alice --role developer
-ROOT/bin/afx platform --data ROOT/data token issue alice --kind client   # client | agent | web
+ROOT/bin/afx platform --data ROOT/data token issue alice   # one token per user; reissuing revokes the old one
 ROOT/bin/afx platform --data ROOT/data token list
 ROOT/bin/afx platform --data ROOT/data token revoke afx_XXXXXXXX
 ```

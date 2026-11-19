@@ -240,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(status, {"schema_version": 1, "ok": True, "data": data})
         except HTTPError as exc:
             self._send(exc.status, _error(exc.code, str(exc)), exc.headers)
-        except AuthError as exc:  # authenticated but missing a scope
+        except AuthError as exc:  # authenticated but not allowed
             self._send(403, _error("forbidden", str(exc)))
         except (UploadError, IssueError, SearchError) as exc:
             self._send(exc.status, _error(exc.code, str(exc)))
@@ -319,8 +319,7 @@ class Handler(BaseHTTPRequestHandler):
             raise HTTPError(429, "rate_limited", "too many requests", {"Retry-After": "5"})
         if method == "GET":
             if path == "/api/me":
-                return {"user_id": principal.user_id, "role": principal.role, "kind": principal.kind,
-                        "scopes": sorted(principal.scopes)}, 200
+                return {"user_id": principal.user_id, "role": principal.role}, 200
             if path.startswith("/api/overview/"):
                 return self._aggregate(path, params), 200
             if path == "/api/cases":
@@ -356,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 return regression.revoke_pin(store, principal, int(match.group(1)), self._json_body()), 200
         if method == "PUT" and path == "/api/admin/settings":
-            principal.require("admin")
+            principal.require_admin()
             body = self._json(self._body(MAX_BODY))
             if not isinstance(body, dict) or not isinstance(body.get("changes"), dict) \
                     or not isinstance(body.get("base_revisions"), dict):

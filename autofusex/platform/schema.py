@@ -455,6 +455,23 @@ UPDATE knowledge_links SET target_id='K' || CAST(substr(target_id,4) AS INTEGER)
     (6, """
 CREATE INDEX executions_created ON executions(created_at);
 """),
+    # One token per user, full access for the user's role: drop token kind and scopes.
+    (7, """
+CREATE TABLE user_tokens_new(
+  token_id INTEGER PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(user_id),
+  token_prefix TEXT NOT NULL,
+  token_hash BLOB NOT NULL UNIQUE,
+  expires_at INTEGER,
+  revoked_at INTEGER,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
+INSERT INTO user_tokens_new SELECT token_id, user_id, token_prefix, token_hash, expires_at, revoked_at, created_at, last_used_at FROM user_tokens;
+DROP TABLE user_tokens;
+ALTER TABLE user_tokens_new RENAME TO user_tokens;
+CREATE INDEX user_tokens_user ON user_tokens(user_id);
+"""),
 ]
 
 CONTENT = [

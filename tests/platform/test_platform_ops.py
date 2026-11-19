@@ -41,8 +41,8 @@ def world(tmp_path):
     store = Store(tmp_path / "data")
     auth.add_user(store, "dev", "developer")
     auth.add_user(store, "root", "admin")
-    client = auth.authenticate(store, "Bearer " + auth.issue_token(store, "dev", "client"))
-    admin = auth.authenticate(store, "Bearer " + auth.issue_token(store, "root", "web", ["admin"]))
+    client = auth.authenticate(store, "Bearer " + auth.issue_token(store, "dev"))
+    admin = auth.authenticate(store, "Bearer " + auth.issue_token(store, "root"))
     ingestor = Ingestor(store)
     items = []
     for n in range(1, 41):
@@ -172,7 +172,7 @@ def test_http_static_reserved_and_security_headers(world):
     store, _, _ = world
     server = PlatformServer(store, ("127.0.0.1", 0))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    token = auth.issue_token(store, "dev", "client")
+    token = auth.issue_token(store, "dev")
 
     def call(method, path, payload=None, auth_header=True):
         conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
@@ -211,7 +211,7 @@ def test_keep_alive_survives_rejected_bodies(world):
     store, _, _ = world
     server = PlatformServer(store, ("127.0.0.1", 0))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    token = auth.issue_token(store, "dev", "client")
+    token = auth.issue_token(store, "dev")
     try:
         conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
         junk = json.dumps({"backends": ["cpu", "af-mlir"], "pad": "x" * 5000}).encode()
@@ -293,9 +293,9 @@ def test_reads_are_public_writes_need_login(world):
 def test_display_names_history_spec_and_windows(tmp_path):
     store = Store(tmp_path / "data")
     auth.add_user(store, "dev", "developer", "张三")
-    client = auth.authenticate(store, "Bearer " + auth.issue_token(store, "dev", "client"))
+    client = auth.authenticate(store, "Bearer " + auth.issue_token(store, "dev"))
     auth.add_user(store, "root", "admin")
-    admin = auth.authenticate(store, "Bearer " + auth.issue_token(store, "root", "web", ["admin"]))
+    admin = auth.authenticate(store, "Bearer " + auth.issue_token(store, "root"))
     spec = {"graph": {"nodes": [{"op": "aten.add.Tensor", "display_name": "add", "inputs": ["x"], "outputs": ["y"]}],
                       "outputs": ["y"]}, "input_shapes": {"x": [2, 3]}, "input_dtypes": {"x": "float16"}, "weights": []}
     ingestor = Ingestor(store)
@@ -356,7 +356,7 @@ def test_heartbeat_accepts_large_window_payload(world):
     store, _, _ = world
     server = PlatformServer(store, ("127.0.0.1", 0))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    token = auth.issue_token(store, "dev", "client")
+    token = auth.issue_token(store, "dev")
     try:
         rows = [{"backend": "af-mlir", "window_seconds": 60, "pad": "x" * 5000} for _ in range(20)]
         body = {"machine_id": "m1", "windows": [{"window_id": "w-big", "rows": rows}]}
