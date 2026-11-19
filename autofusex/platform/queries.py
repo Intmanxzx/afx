@@ -40,7 +40,7 @@ def pipeline(store: Store, arch: str | None = None, q: str | None = None) -> dic
     for row in rows:
         lane = lanes.setdefault(row["backend"], {"backend": row["backend"], "family": FAMILIES.get(row["backend"]),
                                                  "baseline": row["backend"] in BASELINES, "executed": 0,
-                                                 "build_fail": 0, "stage_fail": {}, "function_fail": 0,
+                                                 "build_fail": 0, "compile_fail": 0, "runtime_fail": 0, "stage_fail": {}, "runtime_origin": {}, "function_fail": 0,
                                                  "accuracy_fail": 0, "unsupported": 0, "pass": 0})
         n = row["n"]
         lane["executed"] += n
@@ -51,6 +51,18 @@ def pipeline(store: Store, arch: str | None = None, q: str | None = None) -> dic
             lane["build_fail"] += n
         elif status == "unsupported":
             lane["unsupported"] += n
+        elif status == "compile_fail":
+            lane["compile_fail"] += n
+            lane["function_fail"] += n
+            stage = row["fail_stage"] or "unknown"
+            lane["stage_fail"][stage] = lane["stage_fail"].get(stage, 0) + n
+        elif status == "runtime_fail":
+            lane["runtime_fail"] += n
+            lane["function_fail"] += n
+            origin = "environment" if row["fail_stage"] == "environment" else "backend"
+            lane["runtime_origin"][origin] = lane["runtime_origin"].get(origin, 0) + n
+            stage = row["fail_stage"] or "unknown"
+            lane["stage_fail"][stage] = lane["stage_fail"].get(stage, 0) + n
         else:
             lane["function_fail"] += n
             stage = row["fail_stage"] or "unknown"
@@ -145,7 +157,7 @@ _CASE_COLUMNS = ("case_id, case_key, case_source, case_revision, is_dynamic, sha
                  "WHERE f.case_id=cases.case_id AND r.name='op_display') AS op_display")
 _EXEC_COLUMNS = ("e.exec_id, e.exec_uuid, e.case_revision, e.backend, e.npu_arch, e.user_id, e.client_id, "
                  "e.run_id, e.run_kind, e.function_status, e.fail_stage, e.accuracy_status, e.accuracy_ref, "
-                 "e.max_abs_err, e.max_rel_err, e.compile_ns, e.kernel_ns, e.e2e_ns, e.log_summary, e.created_at, "
+                 "e.max_abs_err, e.max_rel_err, e.compile_ns, e.kernel_ns, e.e2e_ns, e.created_at, "
                  "(SELECT COALESCE(u.display_name, u.user_id) FROM users u WHERE u.user_id=e.user_id) AS user_name, "
                  "(SELECT c.display_name FROM clients c WHERE c.client_id=e.client_id) AS client_name, "
                  "(e.detail_content_id IS NOT NULL) AS has_detail")
@@ -214,6 +226,8 @@ def execution_detail(store: Store, exec_uuid: str, *, log_limit: int = 64 * 1024
     if row is None:
         return None
     out = dict(row)
+    # The UI has one public summary only: issue log_summary from CANN plog.
+    out.pop("log_summary", None)
     env = conn.execute("SELECT * FROM environments WHERE env_id=?", (out.pop("env_id"),)).fetchone()
     out["env"] = {k: env[k] for k in env.keys() if k not in ("env_id", "env_hash")}
     out["case_key"] = conn.execute("SELECT case_key FROM cases WHERE case_id=?", (out["case_id"],)).fetchone()[0]

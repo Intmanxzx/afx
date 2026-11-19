@@ -121,6 +121,8 @@ def performance_signature(backend, anchor, ratio, traits):
 
 
 def failure_dimension(execution) -> str | None:
+    if execution["fail_stage"] == "environment":
+        return None
     if execution["function_status"] not in ("pass", "unsupported"):
         return "function"
     if execution["function_status"] == "pass" and execution["accuracy_status"] == "fail":
@@ -599,7 +601,7 @@ def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
 
 def _repro(conn, issue_id, backend):
     rows = conn.execute(
-        "SELECT c.case_key, c.case_source, ic.npu_arch, e.exec_uuid, e.log_summary FROM issue_cases ic "
+        "SELECT c.case_key, c.case_source, ic.npu_arch, e.exec_uuid FROM issue_cases ic "
         "JOIN cases c ON c.case_id=ic.case_id LEFT JOIN executions e ON e.exec_id=ic.last_exec_id "
         "WHERE ic.issue_id=? AND ic.role='affected' AND ic.stale=0 ORDER BY ic.added_at DESC LIMIT ?",
         (issue_id, REPRO_LIMIT)).fetchall()
@@ -608,7 +610,7 @@ def _repro(conn, issue_id, backend):
         command = (f"afx fuzz replay {row['case_key']} --backend {backend}" if row["case_source"] == "nnsmith"
                    else None)
         cases.append({"case_key": row["case_key"], "case_source": row["case_source"], "npu_arch": row["npu_arch"],
-                      "exec_uuid": row["exec_uuid"], "log_summary": row["log_summary"], "command": command})
+                      "exec_uuid": row["exec_uuid"], "command": command})
     return {"cases": cases, "truncated": len(rows) == REPRO_LIMIT}
 
 

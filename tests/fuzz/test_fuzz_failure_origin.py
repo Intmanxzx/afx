@@ -24,9 +24,9 @@ from test_fuzz_shape_cases import record
     ('InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir', '', '', 'unknown'),
     ('InductorError: wrapper', 'File "/env/torch/_inductor/ir.py", line 20\nraise NotImplementedError("new error")', '', 'gen_failed'),
     ('InductorError: wrapper', 'import autofuse.pyautofuse\nCheck dtype failed for Cast', '', 'function_failed'),
-    ('TimeoutError: timed out', '', 'AF_MLIR_STRICT gate=lowering shortfall=yes', 'unknown'),
-    ('ValueError: device busy: another managed test owns this physical NPU', '', '', 'unknown'),
-    ('RuntimeError: out of memory', '', '', 'unknown'),
+    ('TimeoutError: timed out', '', 'AF_MLIR_STRICT gate=lowering shortfall=yes', 'environment_failed'),
+    ('ValueError: device busy: another managed test owns this physical NPU', '', '', 'environment_failed'),
+    ('RuntimeError: out of memory', '', '', 'environment_failed'),
     ('unrecognized failure', '', '', 'unknown'),
 ])
 def test_attribution_requires_cause_not_wrapper_or_success_marker(summary, local, shared, expected):
@@ -54,15 +54,15 @@ def test_every_surface_reclassifies_historical_rows_without_mutating_attempts(tm
     identity = repo.save(row)
     queries = ResultQueries(repo.path)
     before = queries.detail(identity)
-    expected = {'gen_failed': 1, 'error': 1, 'unknown': 1}
+    expected = {'gen_failed': 1, 'error': 1, 'environment_failed': 1}
     assert queries.case_summary()['by_status'] == expected
     page = queries.case_page()['items']
     assert [i['backends']['af-mlir'][0]['function_status'] for i in page] == [
-        'gen_failed', 'function_failed', 'unknown']
-    for i, category in enumerate(['gen_failed', 'function_failed', 'unknown']):
+        'gen_failed', 'function_failed', 'environment_failed']
+    for i, category in enumerate(['gen_failed', 'function_failed', 'environment_failed']):
         assert queries.detail(identity, shape_index=i)['function_status'] == category
     for search in ['gen_failed', "WHERE status = 'gen_failed'", '构图Failed',
-                   '功能Failed', "WHERE function_status = 'Failed'", 'unknown']:
+                   '功能Failed', "WHERE function_status = 'Failed'"]:
         assert queries.case_summary(q=search)['total'] == 1
         assert len(queries.case_page(q=search)['items']) == 1
         assert sum(r['count'] for r in statistics(repo.path, q=search)['overall']) == 1
