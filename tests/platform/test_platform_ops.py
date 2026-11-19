@@ -117,6 +117,17 @@ def test_heartbeat_rollups_and_update(world):
         ops.heartbeat(store, client, {"machine_id": "m1", "counters": {"executions": -1}})
 
 
+def test_admin_can_delete_offline_client_and_heartbeat_restores_it(world):
+    store, client, admin = world
+    created = ops.heartbeat(store, client, {"machine_id": "delete-me"})
+    with store.write() as conn:
+        conn.execute("UPDATE clients SET last_heartbeat_at=? WHERE client_id=?", (now_ms() - ops.ONLINE_MS - 1, created["client_id"]))
+    assert ops.delete_client(store, admin, created["client_id"])["deleted"]
+    assert not any(c["client_id"] == created["client_id"] for c in ops.summary(store, admin, "all")["clients"])
+    ops.heartbeat(store, client, {"machine_id": "delete-me"})
+    assert any(c["client_id"] == created["client_id"] for c in ops.summary(store, admin, "all")["clients"])
+
+
 def test_manual_retest_runs_on_any_build_and_updates_head(world):
     store, client, _ = world
     created = retests.create_manual(store, client, {"request_key": "b1", "case_keys": [seed(5)],
