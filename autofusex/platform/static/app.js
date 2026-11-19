@@ -1291,7 +1291,7 @@ function hourly(series) {
 async function settingsPanel() {
   const [settings, pins] = await Promise.all([api("/api/settings"), api("/api/regression/pins")]);
   const fields = [["perf.tie_threshold", "Kernel 持平阈值 t", "number", "0.01"], ["regression.budget", "回归默认预算", "number", "1"], ["regression.max_budget", "单问题回归上限", "number", "1"],
-    ["issue.perf_anchor", "性能问题锚点后端", "text"], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1"], ["issue.lease_minutes", "问题租约（分钟）", "number", "1"], ["verify.max_cases", "单轮验证用例上限", "number", "1"]];
+    ["issue.perf_anchor", "性能问题锚点后端", "text"], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1"], ["issue.lease_days", "问题租约（天）", "number", "1"], ["verify.max_cases", "单轮验证用例上限", "number", "1"]];
   const inputs = {};
   const grid = el("div", { class: "form-grid" });
   for (const [key, text, type, step] of fields) { inputs[key] = el("input", { type, step, value: settings[key].value }); grid.append(el("div", {}, text), inputs[key]); }
