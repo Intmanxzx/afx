@@ -31,6 +31,7 @@ def wait_finished(ledger, timeout=30):
 
 def test_detached_run_finishes_after_launcher_exits(tmp_path):
     pytest.importorskip("torch")
+    pytest.importorskip("torch_npu")  # run discovers NPUs; mandatory AF-MLIR needs the Ascend runtime
     output = subprocess.run([sys.executable, '-m', 'autofusex.fuzz', 'run', CURRENT_SEED, '--save',
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
@@ -156,6 +157,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
         assert list(specs) == []
         configs, evaluation, count, devices, excluded, sampling, ops, budget = kwargs['campaign']
         return {'count': count, 'backends': [c.backend for c in configs]}
+    monkeypatch.setattr('autofusex.fuzz.client.scheduling.devices.select_devices', lambda _: ['npu:0'])
     monkeypatch.setattr(hosting, 'launch', launch)
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0
     value = json.loads(capsys.readouterr().out)

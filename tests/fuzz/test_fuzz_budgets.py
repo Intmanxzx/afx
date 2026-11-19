@@ -114,6 +114,7 @@ def test_launch_admission_failure_has_no_partial_batch(tmp_path,monkeypatch):
 def test_setup_budget_reaches_cli_and_background_policy(tmp_path,monkeypatch):
     from autofusex.fuzz.client.cli import main
     setup(tmp_path,compile_threads=2,memory_budget_bytes=10000000,cache_budget_bytes=20000000)
+    monkeypatch.setattr('autofusex.fuzz.client.scheduling.devices.select_devices', lambda _: ['npu:0'])
     calls=[]
     monkeypatch.setattr(hosting,'launch',lambda l,d,s,**kw: calls.append((list(s),kw)) or {})
     assert main(['run',CURRENT_SEED,'--data-dir',str(tmp_path)])==0

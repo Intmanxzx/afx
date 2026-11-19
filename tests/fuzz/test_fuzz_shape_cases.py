@@ -108,7 +108,7 @@ def test_short_seed_search_and_current_shape_metadata(tmp_path):
 
 
 def test_detail_deduplicates_and_scopes_diagnostics():
-    from autofusex.fuzz.failure_details import diagnostic_view,core_error
+    from autofusex.fuzz.client.failure_details import diagnostic_view,core_error
     data={'error':"error: '\nAF_MLIR_STRICT gate=lowering shortfall=yes\nAF_MLIR_STRICT gate=lowering shortfall=yes",'shapes':{'0':{'error':'generated source\nCodegen generate kernel failed or abort'}}}
     view=diagnostic_view(data,0)
     assert view['summary']=='Codegen generate kernel failed or abort'
@@ -136,7 +136,7 @@ def test_run_log_preview_matches_detail_without_shape_fallback(tmp_path):
 
 
 def test_missing_or_duplicate_run_log_remains_explicit():
-    from autofusex.fuzz.failure_details import diagnostic_view
+    from autofusex.fuzz.client.failure_details import diagnostic_view
     assert diagnostic_view({'shapes': {'0': {'error': 'shape only'}}}, 0)['run_log'] == ''
     view = diagnostic_view({'error': 'same', 'shapes': {'0': {'error': 'same'}}}, 0)
     assert view['run_log'] == 'same'

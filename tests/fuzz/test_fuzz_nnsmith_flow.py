@@ -9,7 +9,7 @@ import pytest
 
 
 def test_no_template_implementation_or_fallback():
-    from autofusex.fuzz import generation
+    from autofusex.fuzz.client import generation
     assert not Path(generation.__file__).with_name('v1.py').exists()
     assert not Path(generation.__file__).with_name('v2.py').exists()
     for seed in ('A16','B16','42'):
@@ -50,6 +50,7 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
             seed=Seed.parse(task['seed']);assert seed.short.startswith(('E','F')) and Seed.parse(seed.short)==seed
             assert json.loads(materialize(seed).spec.graph_json)['generator']=='nnsmith.graph_gen.model_gen'
         return {'verified':True}
+    monkeypatch.setattr('autofusex.fuzz.client.scheduling.devices.select_devices', lambda _: ['npu:0'])
     monkeypatch.setattr(hosting,'launch',launch)
     assert main(['run','--count','1','--save','--fg'])==0
     capsys.readouterr()

@@ -267,7 +267,7 @@ def test_compressed_artifact_bound_checked_before_loading(tmp_path, monkeypatch)
 
 def test_ops_whitelist_filters_generated_graph_without_changing_seed(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
-    from autofusex.fuzz import generation
+    from autofusex.fuzz.client import generation
     from autofusex.fuzz.client.scheduling.stage_worker import perform
     monkeypatch.setattr(generation, 'materialize', lambda _: bundle())
     # C16 contains relu/amin/add/mul/amax/transpose; an add-only whitelist
@@ -279,7 +279,7 @@ def test_ops_whitelist_filters_generated_graph_without_changing_seed(tmp_path, m
 
 def test_excluded_graph_never_runs_backend(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
-    from autofusex.fuzz import generation
+    from autofusex.fuzz.client import generation
     from autofusex.fuzz.client.scheduling.stage_worker import perform
     monkeypatch.setattr(generation, 'materialize', lambda _: bundle())
     assert perform({'kind':'generate','seed':'C16','directory':str(tmp_path),
@@ -288,7 +288,7 @@ def test_excluded_graph_never_runs_backend(tmp_path, monkeypatch):
 
 
 def test_npu_first_resource_budget_respects_limits(monkeypatch):
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling':40,'effective_memory_bytes':200*1024**3})
     monkeypatch.setattr(sys, 'platform', 'linux')

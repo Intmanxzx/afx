@@ -28,7 +28,7 @@ def test_probe_noaf_failure_and_unknown_restore(monkeypatch):
     from torch._inductor.scheduler import Scheduler
     from torch_npu._inductor.ascendc import codegen
     from autofusex.fuzz.client.backends.autofuse_coverage import observe_autofuse, NoAutofuseCoverage
-    from autofusex.fuzz.failure_details import validate
+    from autofusex.fuzz.client.failure_details import validate
     with patch.object(Scheduler, 'codegen', lambda self: None):
         original = Scheduler.codegen
         with observe_autofuse() as c:

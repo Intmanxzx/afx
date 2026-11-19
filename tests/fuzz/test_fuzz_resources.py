@@ -101,7 +101,7 @@ def test_doctor_redacts_invalid_json(tmp_path, capsys):
     ("linux", {"XDG_DATA_HOME": "/xdg/data"}, "/xdg/data/autofusex"),
 ])
 def test_platform_path_selection_without_host_execution(monkeypatch, platform, env, expected):
-    from autofusex.fuzz import config
+    from autofusex.fuzz.client import config
     monkeypatch.delenv("AUTOFUSEX_HOME", raising=False)
     monkeypatch.setattr(config.sys, "platform", platform)
     monkeypatch.setattr(Path, "home", lambda: Path("/mock/home"))
@@ -126,7 +126,7 @@ def test_platform_path_selection_without_host_execution(monkeypatch, platform, e
 ])
 def test_npu_auto_budget_distributes_effective_cores(monkeypatch, cores, devices, memory_gib, expected):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     memory = memory_gib * 1024**3 if memory_gib else None
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'host_cpu_count': 128, 'cpu_worker_ceiling': cores,
@@ -138,7 +138,7 @@ def test_npu_auto_budget_distributes_effective_cores(monkeypatch, cores, devices
 
 def test_npu_auto_budget_respects_smaller_configured_memory(monkeypatch):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling': 36, 'effective_memory_bytes': 200*1024**3})
     assert resources.npu_first_defaults('.', 2, SimpleNamespace(memory_budget_bytes=8*1024**3)) == {
@@ -179,7 +179,7 @@ def test_auto_policy_persisted_without_identity_changes(tmp_path):
 
 def test_auto_plan_explains_unused_cpu_capacity(monkeypatch):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'host_cpu_count': 40, 'cpu_worker_ceiling': 36, 'effective_memory_bytes': 200*1024**3})
     plan = resources.npu_resource_plan('.', 2, SimpleNamespace(memory_budget_bytes=105*1024**3))
@@ -189,7 +189,7 @@ def test_auto_plan_explains_unused_cpu_capacity(monkeypatch):
 
 def test_auto_plan_clamps_stale_machine_budgets(monkeypatch):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     monkeypatch.setattr(resources.os, 'name', 'posix')
     monkeypatch.setattr(resources.Path, 'exists', lambda _: True)
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
@@ -205,7 +205,7 @@ def test_auto_plan_clamps_stale_machine_budgets(monkeypatch):
 @pytest.mark.parametrize('configured', [None, 100*1024**3])
 def test_unknown_ram_never_uses_saved_capacity(monkeypatch, configured):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling': 64, 'effective_memory_bytes': None})
     plan = resources.npu_resource_plan('.', 8, SimpleNamespace(memory_budget_bytes=configured))
@@ -217,7 +217,7 @@ def test_unknown_ram_never_uses_saved_capacity(monkeypatch, configured):
 
 def test_subcore_quota_is_reported_not_hidden(monkeypatch):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'effective_cpu_cores': .5, 'cpu_worker_ceiling': 1,
         'effective_memory_bytes': 32*1024**3})
@@ -228,7 +228,7 @@ def test_subcore_quota_is_reported_not_hidden(monkeypatch):
 
 def test_plan_reports_budget_corrections(monkeypatch):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling': 8, 'effective_memory_bytes': 16*1024**3,
         'disk_free_bytes': 10*1024**3})
@@ -244,7 +244,7 @@ def test_plan_reports_budget_corrections(monkeypatch):
 ])
 def test_eight_thread_policy_keeps_cpu_and_memory_bounds(monkeypatch, cores, memory_gib, expected):
     from types import SimpleNamespace
-    from autofusex.fuzz import resources
+    from autofusex.fuzz.client import resources
     memory = memory_gib * 1024**3
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling': cores, 'effective_memory_bytes': memory*2})

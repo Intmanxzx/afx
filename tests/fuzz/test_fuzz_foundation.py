@@ -123,7 +123,7 @@ def test_tensor_diagnostics_include_values_layout_and_alias():
 def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
     from fuzz_fixtures import CURRENT_SEED
     import autofusex.cli as cli
-    from autofusex.fuzz import cli as fuzz_cli
+    from autofusex.fuzz.client import cli as fuzz_cli
     seen = []
     monkeypatch.setattr(fuzz_cli, "execute_args", lambda args: seen.append(args.seed) or 0)
     assert cli.main(["fuzz", "replay", CURRENT_SEED, "--scheduling", "combined"]) == 0

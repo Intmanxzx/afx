@@ -59,7 +59,7 @@ def test_indexed_reads_do_not_reclassify_logs(tmp_path, monkeypatch):
     def forbidden(*args,**kwargs):raise AssertionError('read must not classify text')
     monkeypatch.setattr('autofusex.fuzz.server.reporting.failure_origin.classify',forbidden)
     monkeypatch.setattr('autofusex.fuzz.server.reporting.failure_origin.mlir_failure_evidence',forbidden)
-    monkeypatch.setattr('autofusex.fuzz.failure_details.core_error',forbidden)
+    monkeypatch.setattr('autofusex.fuzz.client.failure_details.core_error',forbidden)
     assert q.case_page()==before
     assert q.case_summary()['total']==2
     assert statistics(repo.path)['unit']=='shape_case'
