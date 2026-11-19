@@ -110,11 +110,11 @@ def classify(backend, status, stage='', summary='', diagnostics=None, index=-1):
     # A concrete cause for this shape outranks logs shared by other shapes.
     evidence = summary + '\n' + local
     if infra_failure(evidence):
-        return 'unknown'
+        return 'environment_failed'
     if torch_failure(evidence):
         return 'gen_failed'
     if pre_autofuse_npu_failure(evidence):
-        return 'gen_failed'
+        return 'environment_failed'
     # Strip Inductor's source-code wrapper before looking for AF error text.
     cause = re.sub(r'Failed to execute graph code:[^\n]*', '', evidence, flags=re.I)
     if backend in AF_BACKENDS and af_failure(cause):

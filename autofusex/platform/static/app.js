@@ -8,6 +8,15 @@ const VIEW_KEY = "afx.discovery.view";
 const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "Legacy", "af-mlir": "MLIR", "triton-npu": "TritonNPU" };
 const STAGE_LABEL = { schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
   tiling: "Tiling", autofuse: "AF 其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知" };
+const COMPILE_STAGES = [
+  { key: "graph_check", label: "图校验", color: "#0ea5e9" },
+  { key: "lowering", label: "Lowering", color: "#8b5cf6" },
+  { key: "schedule", label: "Schedule", color: "#64748b" },
+  { key: "codegen", label: "Codegen", color: "#e11d48" },
+  { key: "tiling", label: "Tiling", color: "#d946ef" },
+  { key: "mlir", label: "MLIR", color: "#f59e0b" },
+  { key: "autofuse", label: "其他", color: "#be123c" },
+];
 const DIM_LABEL = { all: "全部", op_category: "算子类别", op_display: "算子覆盖", dtype: "数据类型", dim_bucket: "最大维度", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
 const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "op_category", "dynamic", "source"];
 const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };
@@ -238,24 +247,15 @@ PAGES.overview = async (root, params) => {
   const arches = await archOptions();
   const arch = params.get("arch") || arches[0] || "";
   const pipeline = await api("/api/overview/pipeline" + qs({ arch, q }));
-  const head = el("h2", {}, "用例总览", el("span", { class: "spacer" }),
+  const head = el("h2", {}, "基础能力统计分布", el("span", { class: "spacer" }),
     arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => go("overview", { arch: v })) : null);
-  const hero = el("section", { class: "panel hero" }, head);
-  root.append(hero);
-  let pipelineNode = renderPipeline(pipeline, q, hero.clientWidth - 44);
-  hero.append(pipelineNode);
-  // Width-only redraw from cached data: no refetch, no loading flash, scroll position untouched.
-  root.redraw = () => { const n = renderPipeline(pipeline, q, hero.clientWidth - 44); pipelineNode.replaceWith(n); pipelineNode = n; };
+  const box = el("section", { class: "panel hero" }, head); root.append(box);
   const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
-  const tabsBox = el("section", { class: "panel" });
-  root.append(tabsBox);
-  const tabsDone = renderBackendTabs(tabsBox, lanes, arch, q);
-  const perfBox = el("section", { class: "panel" });
-  root.append(perfBox);
+  const tabsDone = renderBackendTabs(box, lanes, arch, q);
+  const perfBox = el("section", { class: "panel" }); root.append(perfBox);
   const npuBackends = pipeline.lanes.map(l => l.backend).filter(b => b !== "cpu");
-  const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]),
-    params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category");
-  root.settled = Promise.all([tabsDone, perfDone]);  // lets a background refresh wait for the lazily filled sections
+  const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]), params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category");
+  root.settled = Promise.all([tabsDone, perfDone]);
 };
 
 const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-legacy)", "triton-npu": "var(--lane-triton)", "eager-npu": "var(--lane-eager)" };
@@ -266,28 +266,33 @@ const LOSS_COLOR = { build: "var(--loss-build)", stage: "var(--loss-stage)", oth
 function renderPipeline(data, q, width) {
   const lanes = data.lanes.filter(l => !l.baseline);
   if (!lanes.length) return el("div", { class: "empty" }, "暂无执行记录");
-  const link = extra => () => go("discovery", { q: [q, extra].filter(Boolean).join(" ") });
-  // Fixed stages (as specified): build -> AF Schedule (AF family only, shared Autofuse front end
-  // before codegen) -> function -> accuracy -> pass. Detailed stages stay in tooltips and the stats below.
-  const SCHEDULE_STAGES = ["schedule"];  // errors from the autofuse/optimize module (Optimize / schedule)
-  const scheduleOf = l => l.family === "af" ? SCHEDULE_STAGES.reduce((n, st) => n + (l.stage_fail[st] || 0), 0) : 0;
-  const detail = (l, skip) => Object.entries(l.stage_fail).filter(([k]) => !skip.includes(k)).sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join("、");
-  const columns = [
-    { key: "build", label: "构图失败", kind: "build", value: l => l.build_fail, filter: b => `backend:${b} status:function_fail`,
-      note: () => "NNSmith 生成、CPU 参考或 Torch/Dynamo/Inductor 链路失败" },
-    { key: "schedule", label: "AF Schedule失败", kind: "stage", shared: true, value: scheduleOf,
-      filter: b => `backend:${b} stage:${SCHEDULE_STAGES.join(",")}`, note: () => "Autofuse optimize 模块（Optimize / schedule）报错，发生在 codegen 之前" },
-    { key: "function", label: "功能失败", kind: "stage", value: l => Math.max(0, l.function_fail - scheduleOf(l)) + l.unsupported,
-      filter: b => `backend:${b} status:function_fail -stage:${SCHEDULE_STAGES.join(",")}`,
-      note: l => (detail(l, l.family === "af" ? SCHEDULE_STAGES : []) || "—") + (l.unsupported ? `；含不支持 ${fmt(l.unsupported)}` : "") },
-    { key: "accuracy", label: "精度失败", kind: "accuracy", value: l => l.accuracy_fail, filter: b => `backend:${b} status:accuracy_fail`, note: () => "执行成功但与标杆比对未通过" },
-  ].filter(c => c.key !== "schedule" || lanes.some(l => l.family === "af"));
-  return width < 860 ? pipelineVertical(data, lanes, columns, link) : pipelineSvg(data, lanes, columns, link, width);
+  const link = extra => () => go("discovery", { q: [q, extra].filter(Boolean).join(" " ) });
+  const stages = [["build","构图"],["compile","编译"],["runtime","运行"],["accuracy","精度"],["pass","通过"]];
+  const W = Math.max(900, Math.floor(width || 1000)), laneH = 156, H = 74 + lanes.length * laneH;
+  const root = svg("svg", { class: "funnel-flow", viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", "aria-label": "用例执行阶段流失漏斗" });
+  root.append(svg("text", { x: 12, y: 24, class: "flow-title" }, "总用例"), svg("text", { x: W - 12, y: 24, class: "flow-note", "text-anchor": "end" }, "主流向右；失败从阶段旁路流出"));
+  lanes.forEach((lane, i) => {
+    const y = 54 + i * laneH, color = LANE_COLOR[lane.backend] || "var(--accent)", total = Math.max(1, lane.executed), usable = Math.max(0, total - (lane.unsupported || 0));
+    const values = { build: lane.build_fail || 0, compile: lane.compile_fail || 0, runtime: lane.runtime_fail || 0, accuracy: lane.accuracy_fail || 0, pass: lane.pass || 0 };
+    root.append(svg("text", { x: 12, y: y + 28, class: "flow-lane" }, label(lane.backend)), svg("text", { x: 12, y: y + 50, class: "flow-lane-n" }, `${fmt(total)} 执行`));
+    const x0 = 116, x1 = W - 24, step = (x1 - x0) / stages.length, pipeY = y + 18, maxT = 34;
+    let remaining = usable;
+    stages.forEach(([key, text], j) => {
+      const x = x0 + j * step, loss = values[key], next = Math.max(0, remaining - loss), t = Math.max(7, maxT * remaining / Math.max(1, usable)), nt = Math.max(7, maxT * next / Math.max(1, usable));
+      const poly = svg("polygon", { points: `${x},${pipeY-t/2} ${x+step-18},${pipeY-nt/2} ${x+step-18},${pipeY+nt/2} ${x},${pipeY+t/2}`, class: "flow-pipe", fill: color });
+      poly.addEventListener("click", link(key === "pass" ? `backend:${lane.backend} status:pass` : key === "accuracy" ? `backend:${lane.backend} status:accuracy_fail` : `backend:${lane.backend} status:function_fail`));
+      root.append(poly, svg("text", { x: x + (step - 18) / 2, y: pipeY + 5, class: "flow-pipe-label", "text-anchor": "middle" }, `${text} ${fmt(next)}`));
+      if (loss) { const kind = key === "accuracy" ? "accuracy" : key === "runtime" ? "runtime" : "loss"; const pill = svg("g", { class: `flow-loss ${kind}`, transform: `translate(${x + step/2 - 25},${y + 86})` }, svg("rect", { width: 50, height: 24, rx: 12 }), svg("text", { x: 25, y: 16, "text-anchor": "middle" }, `−${fmt(loss)}`)); pill.addEventListener("click", link(`backend:${lane.backend} status:${key === "accuracy" ? "accuracy_fail" : "function_fail"}`)); root.append(pill); }
+      remaining = next;
+    });
+    if (lane.unsupported) { const pill = svg("g", { class: "flow-loss unsupported", transform: `translate(${x0 + step/2 - 25},${y + 112})` }, svg("rect", { width: 50, height: 24, rx: 12 }), svg("text", { x: 25, y: 16, "text-anchor": "middle" }, `不支持 ${fmt(lane.unsupported)}`)); pill.addEventListener("click", link(`backend:${lane.backend} status:unsupported`)); root.append(pill); }
+    root.append(svg("text", { x: W - 12, y: y + 104, class: "flow-pass-rate", "text-anchor": "end" }, `通过 ${fmt(lane.pass)} · ${pct(lane.pass, usable)}`));
+  });
+  return el("div", { class: "funnel" }, el("div", { class: "funnel-intro" }, el("strong", {}, "执行结果漏斗"), el("span", {}, "按执行阶段展示主流向和流失；基础能力统计负责维度分布")), root);
 }
-
 function pipelineSvg(data, lanes, columns, link, width) {
-  const total = Math.max(1, data.total_cases, ...lanes.map(l => l.executed));
+  const applicable = lane => Math.max(0, lane.executed - (lane.unsupported || 0));
+  const total = Math.max(1, data.total_cases, ...lanes.map(applicable));
   // Drawn at the real container width so text keeps its size; wide screens just get more room.
   const W = Math.max(860, Math.floor(width)), compact = W < 1100;
   const maxT = 46, laneH = 150, top = 64, left = 8, srcW = compact ? 80 : 92, laneStart = compact ? 250 : 300, endPad = compact ? 196 : 210;
@@ -321,7 +326,7 @@ function pipelineSvg(data, lanes, columns, link, width) {
   lanes.forEach((lane, i) => {
     const color = LANE_COLOR[lane.backend] || "var(--accent)";
     const yTop = top + i * laneH + 14;
-    const t0 = pipeT(lane.executed);
+    const t0 = pipeT(applicable(lane));
     const gid = "lane-grad-" + i;
     defs.append(svg("linearGradient", { id: gid, x1: 0, x2: 1, y1: 0, y2: 0 },
       svg("stop", { offset: "0%", "stop-color": color, "stop-opacity": 0.55 }), svg("stop", { offset: "100%", "stop-color": color, "stop-opacity": 0.95 })));
@@ -332,7 +337,7 @@ function pipelineSvg(data, lanes, columns, link, width) {
     root.append(svg("text", { x: laneStart - 12, y: yTop + 6, class: "pipe-lane", "text-anchor": "end" }, label(lane.backend)),
       svg("text", { x: laneStart - 12, y: yTop + 26, class: "pipe-lane-n", "text-anchor": "end" }, `${fmt(lane.executed)} 执行`));
     // main pipe: top edge flat, bottom edge steps up at each loss
-    let remaining = lane.executed, d = `M ${laneStart} ${yTop} L ${W - endPad + 20} ${yTop}`;
+    let remaining = applicable(lane), d = `M ${laneStart} ${yTop} L ${W - endPad + 20} ${yTop}`;
     const bottoms = [];
     let x = laneStart, t = pipeT(remaining);
     const drops = [];
@@ -362,21 +367,21 @@ function pipelineSvg(data, lanes, columns, link, width) {
       if (shared && !firstOfFamily) continue;  // the family draws one merged drop
       const dx = drop.cx, dy = drop.yFrom + drop.t / 2, endY = yTop + maxT + 46;
       const band = svg("path", { d: `M ${dx} ${dy} C ${dx + 18} ${dy}, ${dx + 22} ${dy + 12}, ${dx + 22} ${Math.max(dy + 20, endY)}`,
-        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）` });
+        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, applicable(lane))}）` });
       band.addEventListener("click", link(drop.c.filter(lane.backend)));
       const pillText = `${fmt(drop.loss)}`;
       const pw = 20 + pillText.length * 9.5;
-      const pill = svg("g", { class: "pipe-pill " + drop.c.kind, "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）`, transform: `translate(${dx + 22 - pw / 2}, ${Math.max(dy + 20, endY) + 4})` },
+      const pill = svg("g", { class: "pipe-pill " + drop.c.kind, "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, applicable(lane))}）`, transform: `translate(${dx + 22 - pw / 2}, ${Math.max(dy + 20, endY) + 4})` },
         svg("rect", { width: pw, height: 26, rx: 13 }), svg("text", { x: pw / 2, y: 18, "text-anchor": "middle" }, pillText));
       pill.addEventListener("click", link(drop.c.filter(lane.backend)));
       root.append(band, pill);
     }
     // pass terminal
     const pw = 170, px = W - endPad + 30, py = yTop + t / 2 - 21;
-    const term = svg("g", { class: "pipe-pass", transform: `translate(${px}, ${py})`, "data-tooltip": `通过 ${fmt(lane.pass)}（${pct(lane.pass, lane.executed)}）` },
+    const term = svg("g", { class: "pipe-pass", transform: `translate(${px}, ${py})`, "data-tooltip": `通过 ${fmt(lane.pass)}（${pct(lane.pass, applicable(lane))}）` },
       svg("rect", { width: pw, height: 42, rx: 21 }),
       svg("text", { x: 18, y: 27, class: "pipe-pass-n" }, fmt(lane.pass)),
-      svg("text", { x: pw - 16, y: 27, "text-anchor": "end", class: "pipe-pass-p" }, pct(lane.pass, lane.executed)));
+      svg("text", { x: pw - 16, y: 27, "text-anchor": "end", class: "pipe-pass-p" }, pct(lane.pass, applicable(lane))));
     term.addEventListener("click", link(`backend:${lane.backend} status:pass`));
     root.append(term);
   });
@@ -388,18 +393,19 @@ function pipelineVertical(data, lanes, columns, link) {
   for (const lane of lanes) {
     const color = LANE_COLOR[lane.backend] || "var(--accent)";
     const steps = el("div", { class: "pipe-v-steps" });
-    let remaining = lane.executed;
+    const denominator = Math.max(0, lane.executed - (lane.unsupported || 0));
+    let remaining = denominator;
     for (const c of columns) {
       const loss = c.value(lane);
       if (!loss) continue;
       remaining -= loss;
-      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)), "data-tooltip": `${c.label} ${fmt(loss)}（${pct(loss, lane.executed)}）` },
+      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)), "data-tooltip": `${c.label} ${fmt(loss)}（${pct(loss, denominator)}）` },
         el("span", {}, c.label), el("b", {}, "−" + fmt(loss)),
-        el("i", { style: { width: Math.max(4, 100 * remaining / Math.max(1, lane.executed)) + "%", background: color } })));
+        el("i", { style: { width: Math.max(4, 100 * remaining / Math.max(1, denominator)) + "%", background: color } })));
     }
     box.append(el("div", { class: "pipe-v-lane" }, el("div", { class: "pipe-v-head" }, el("span", { class: "pipe-v-dot", style: { background: color } }), label(lane.backend),
       el("span", { class: "muted small" }, ` ${fmt(lane.executed)} 执行`)), steps,
-      el("button", { class: "pipe-v-pass", onclick: link(`backend:${lane.backend} status:pass`) }, el("span", {}, "通过"), el("b", {}, `${fmt(lane.pass)} · ${pct(lane.pass, lane.executed)}`))));
+      el("button", { class: "pipe-v-pass", onclick: link(`backend:${lane.backend} status:pass`) }, el("span", {}, "通过"), el("b", {}, `${fmt(lane.pass)} · ${pct(lane.pass, denominator)}`))));
   }
   return box;
 }
@@ -408,8 +414,9 @@ function pipelineVertical(data, lanes, columns, link) {
 // metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
 async function renderBackendTabs(box, lanes, arch, q) {
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  const statusItems = [["pass", "c-pass", "通过"], ["function_fail", "c-func", "功能失败"], ["accuracy_fail", "c-acc", "精度失败"], ["unsupported", "c-uns", "不支持"]];
-  const active = new Set(["pass", "function_fail", "accuracy_fail"]);
+  const statusItems = [["build_fail", "c-build", "构图失败"], ["environment", "c-env", "环境问题"], ["compile_fail", "c-compile", "编译失败"], ["runtime_fail", "c-runtime", "运行失败"], ["accuracy_fail", "c-acc", "精度失败"], ["pass", "c-pass", "精度通过"], ["other", "c-uns", "其他"]];
+  const saved = window.__afxCapabilityLegend;
+  const active = new Set(saved ? [...saved] : ["compile_fail", "runtime_fail", "accuracy_fail", "pass"]);
   const legendNode = el("div", { class: "legend capability-legend" });
   const redraw = () => {
     if (!matrix) return;
@@ -419,7 +426,7 @@ async function renderBackendTabs(box, lanes, arch, q) {
     grid.style.gridTemplateColumns = `repeat(${lanes.length}, minmax(320px, 1fr))`;
     for (const backend of lanes) grid.append(el("div", { class: "cap-head" }, el("span", { class: "pipe-v-dot", style: { background: LANE_COLOR[backend] || "var(--accent)" } }), label(backend)));
     dims.forEach((dim, row) => {
-      grid.append(el("div", { class: "cap-row-label" }, dim === "all" ? "正确性分布" : (DIM_LABEL[dim] || dim)));
+      grid.append(el("div", { class: "cap-row-label" }, dim === "all" ? "通过率" : (DIM_LABEL[dim] || dim)));
       const totals = new Map();
       for (let col = 0; col < lanes.length; col++) for (const g of (results[col][row].groups || [])) totals.set(g.value, (totals.get(g.value) || 0) + selectedTotal(g, active));
       const order = [...totals.keys()].sort(BUCKET_DIMS.includes(dim) ? bucketCompare : (a, b) => totals.get(b) - totals.get(a));
@@ -434,6 +441,7 @@ async function renderBackendTabs(box, lanes, arch, q) {
     const item = el("button", { type: "button", class: "legend-toggle", "aria-pressed": active.has(key) ? "true" : "false", title: `切换${text}` }, el("i", { class: cls }), text);
     item.addEventListener("click", () => {
       if (active.has(key)) active.delete(key); else active.add(key);
+      window.__afxCapabilityLegend = new Set(active);
       item.setAttribute("aria-pressed", active.has(key));
       redraw();
     });
@@ -446,27 +454,68 @@ async function renderBackendTabs(box, lanes, arch, q) {
   catch (err) { body.replaceChildren(errorBox(err)); return; }
   redraw();
 }
-function selectedTotal(group, active) { return [...active].reduce((n, key) => n + (group[key] || 0), 0); }
-
-function donutChart(result, backend, compact = false, active = new Set(["pass", "function_fail", "accuracy_fail", "unsupported"])) {
-  if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
-  const g = result.groups[0] || { total: 0, pass: 0, function_fail: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
-  const total = selectedTotal(g, active);
-  const parts = [["pass", "通过", g.pass, "var(--ok)"], ["function_fail", "功能失败", g.function_fail, "var(--bad)"], ["accuracy_fail", "精度失败", g.accuracy_fail, "var(--warn)"], ["unsupported", "不支持", g.unsupported, "var(--tie)"]].filter(p => active.has(p[0]) && p[2] > 0);
-  const R = 60, r = 38, C = 80, root = svg("svg", { viewBox: "0 0 160 160", width: 160, height: 160, role: "img", "aria-label": "正确性分布" });
-  let angle = -Math.PI / 2;
-  for (const [, name, n, color] of parts) {
-    const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
-    const p = (rad, a) => `${C + rad * Math.cos(a)} ${C + rad * Math.sin(a)}`;
-    root.append(svg("path", { d: `M ${p(R, angle)} A ${R} ${R} 0 ${large} 1 ${p(R, end)} L ${p(r, end)} A ${r} ${r} 0 ${large} 0 ${p(r, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}（${pct(n, total)}）` }));
-    angle += sweep;
-  }
-  root.append(svg("text", { x: C, y: C + 4, "text-anchor": "middle", class: "donut-center" }, pct(active.has("pass") ? g.pass : 0, total)));
-  const stages = Object.entries(g.stage_fail || {}).sort((a, b) => b[1] - a[1]);
-  return el("div", { class: "chart" }, compact ? el("div", { class: "muted small" }, `${fmt(total)} 个用例`) : el("h3", {}, `${label(backend)} · 正确性分布（${fmt(total)} 个用例）`),
-    el("div", { class: "donut-wrap" }, root, el("div", { class: "small" }, parts.map(([, name, n, color]) => el("div", {}, el("i", { class: "swatch", style: { background: color } }), `${name} ${fmt(n)}（${pct(n, total)}）`)),
-      stages.length ? el("div", { class: "muted", style: { marginTop: "6px" } }, "功能失败阶段：" + stages.map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join(" · ")) : null)));
+function stageMetric(group, key) {
+  if (key === "pass" || key === "accuracy_fail") return group[key] || 0;
+  const stages = group.stage_fail || {};
+  if (key === "build_fail") return stages.generation || stages.reference || 0;
+  if (key === "compile_fail") return Object.entries(stages).filter(([s]) => !["generation","reference","backend","environment","first_call_combined"].includes(s)).reduce((n,[,v]) => n + v, 0);
+  if (key === "environment") return stages.environment || 0;
+  if (key === "runtime_fail") return (stages.backend || 0) + (stages.unknown || 0) + (stages.timeout || 0);
+  if (key === "other") return group.unsupported || 0;
+  return group[key] || 0;
 }
+function selectedTotal(group, active) { return [...active].reduce((n, key) => n + stageMetric(group, key), 0); }
+function compilePie(parts, centerText) {
+  const root = svg("svg", { viewBox: "0 0 160 160", width: 160, height: 160, role: "img", "aria-label": "编译失败阶段分布" });
+  const total = parts.reduce((n, p) => n + p[1], 0); let angle = -Math.PI / 2;
+  for (const [name, n, color] of parts) {
+    const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
+    const p = (rad, a) => `${80 + rad * Math.cos(a)} ${80 + rad * Math.sin(a)}`;
+    root.append(svg("path", { d: `M ${p(62, angle)} A 62 62 0 ${large} 1 ${p(62, end)} L ${p(38, end)} A 38 38 0 ${large} 0 ${p(38, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}` })); angle = end;
+  }
+  root.append(svg("text", { x: 80, y: 84, "text-anchor": "middle", class: "donut-center compile-donut-center" }, centerText || fmt(total))); return root;
+}
+
+function renderCompileMini(group, backend) {
+  const available = COMPILE_STAGES.filter(stage => (group.stage_fail || {})[stage.key] > 0);
+  const states = window.__afxCompileLegend || (window.__afxCompileLegend = new Map());
+  let active = states.get(backend);
+  if (!active) { active = new Set(available.map(stage => stage.key)); states.set(backend, active); }
+  const parts = available.filter(stage => active.has(stage.key)).map(stage => [stage.label, (group.stage_fail || {})[stage.key], stage.color]);
+  const box = el("div", { class: "compile-mini" },
+    el("div", { class: "compile-mini-title" }, fmt(stageMetric(group, "compile_fail")) + " 个编译失败用例"),
+    available.length ? compilePie(parts, "编译失败") : el("div", { class: "compile-mini-empty" }, "无"));
+  if (available.length) {
+    const legend = el("div", { class: "legend capability-legend compile-mini-legend" });
+    for (const stage of available) {
+      const selected = active.has(stage.key);
+      const item = el("button", { type: "button", class: "legend-toggle", "aria-pressed": selected ? "true" : "false", title: "切换" + stage.label },
+        el("i", { class: "compile-legend-mark", style: { background: stage.color } }), stage.label);
+      item.addEventListener("click", () => {
+        if (active.has(stage.key)) active.delete(stage.key); else active.add(stage.key);
+        states.set(backend, active);
+        box.replaceWith(renderCompileMini(group, backend));
+      });
+      legend.append(item);
+    }
+    box.append(legend);
+  }
+  return box;
+}
+
+function donutChart(result, backend, compact = false, active = new Set(["compile_fail","runtime_fail","accuracy_fail","pass"])) {
+  if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
+  const g = result.groups[0] || { total: 0, pass: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
+  const total = selectedTotal(g, active);
+  const parts = [["build_fail", "构图失败", stageMetric(g,"build_fail"), "var(--loss-build)"], ["environment", "环境问题", stageMetric(g,"environment"), "#f97316"], ["compile_fail", "编译失败", stageMetric(g,"compile_fail"), "var(--loss-stage)"], ["runtime_fail", "运行失败", stageMetric(g,"runtime_fail"), "#ef4444"], ["accuracy_fail", "精度失败", stageMetric(g,"accuracy_fail"), "var(--warn)"], ["pass", "精度通过", stageMetric(g,"pass"), "var(--ok)"], ["other", "其他", stageMetric(g,"other"), "var(--tie)"]].filter(p => active.has(p[0]) && p[2] > 0);
+  const R = 78, r = 48, C = 100, root = svg("svg", { viewBox: "0 0 200 200", width: 200, height: 200, role: "img", "aria-label": "正确性分布" });
+  let angle = -Math.PI / 2;
+  for (const [, name, n, color] of parts) { const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0; const p = (rad,a) => `${C + rad*Math.cos(a)} ${C + rad*Math.sin(a)}`; root.append(svg("path", { d:`M ${p(R,angle)} A ${R} ${R} 0 ${large} 1 ${p(R,end)} L ${p(r,end)} A ${r} ${r} 0 ${large} 0 ${p(r,angle)} Z`, fill:color, "data-tooltip":`${name} ${fmt(n)}（${pct(n,total)}）` })); angle += sweep; }
+  root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, pct(stageMetric(g,"pass"), total)));
+  const compileMini = renderCompileMini(g, backend);
+  return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "muted small" }, `${fmt(total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), root, compileMini);
+}
+
 const BUCKET_DIMS = ["dim_bucket", "size_bucket"];
 function bucketValue(label) {
   const m = /^(<=|>)\s*([\d.]+)\s*([KM]?)$/.exec(label || "");
@@ -475,13 +524,13 @@ function bucketValue(label) {
   return m[1] === ">" ? n + 0.5 : n;
 }
 function bucketCompare(a, b) { return bucketValue(a) - bucketValue(b); }
-function statusChart(result, backend, compact = false, order = null, active = new Set(["pass", "function_fail", "accuracy_fail", "unsupported"])) {
+function statusChart(result, backend, compact = false, order = null, active = new Set(["compile_fail", "runtime_fail", "accuracy_fail", "pass"])) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const limit = result.dim === "op_display" ? 24 : 14;
   let groups;
   if (order) {
     const byValue = new Map(result.groups.map(g => [g.value, g]));
-    const empty = v => ({ value: v, total: 0, pass: 0, function_fail: 0, accuracy_fail: 0, unsupported: 0 });
+    const empty = v => ({ value: v, total: 0, pass: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} });
     groups = order.slice(0, limit).map(v => byValue.get(v) || empty(v));
   } else {
     groups = result.groups.slice(0, limit);
@@ -490,7 +539,7 @@ function statusChart(result, backend, compact = false, order = null, active = ne
   const title = compact ? (note ? el("div", { class: "muted small" }, note.replace(/[（）]/g, "")) : null)
     : el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`);
   return el("div", { class: "chart" + (result.dim === "op_display" && !compact ? " wide" : "") }, title,
-    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? g[key] : 0; return el("div", { class: "hbar", "data-tooltip": `通过 ${fmt(shown("pass"))}（${pct(shown("pass"), total)}）· 功能失败 ${fmt(shown("function_fail"))}（${pct(shown("function_fail"), total)}）· 精度失败 ${fmt(shown("accuracy_fail"))}（${pct(shown("accuracy_fail"), total)}）· 不支持 ${fmt(shown("unsupported"))}（${pct(shown("unsupported"), total)}）` }, el("div", { class: "label" }, g.value), stackBar([["c-pass", shown("pass"), "通过"], ["c-func", shown("function_fail"), "功能失败"], ["c-acc", shown("accuracy_fail"), "精度失败"], ["c-uns", shown("unsupported"), "不支持"]], total), el("div", { class: "muted" }, total ? pct(shown("pass"), total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
+    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": `构图 ${fmt(shown("build_fail"))} · 环境 ${fmt(shown("environment"))} · 编译 ${fmt(shown("compile_fail"))} · 运行 ${fmt(shown("runtime_fail"))} · 精度失败 ${fmt(shown("accuracy_fail"))} · 精度通过 ${fmt(shown("pass"))} · 其他 ${fmt(shown("other"))}` }, el("div", { class: "label" }, g.value), stackBar([["c-build", shown("build_fail"), "构图失败"], ["c-env", shown("environment"), "环境问题"], ["c-compile", shown("compile_fail"), "编译失败"], ["c-runtime", shown("runtime_fail"), "运行失败"], ["c-acc", shown("accuracy_fail"), "精度失败"], ["c-pass", shown("pass"), "精度通过"], ["c-uns", shown("other"), "其他"]], total), el("div", { class: "muted" }, total ? pct(shown("pass"), total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
 }
 
 async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
@@ -817,19 +866,9 @@ function renderExecution(d, shape) {
   if (d.shapes && d.shapes.length) out.push(el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Shape", "功能", "精度", "最大绝对误差", "最大相对误差", "Kernel", "E2E"].map(t => el("th", {}, t)))),
     el("tbody", {}, d.shapes.map(x => el("tr", { class: x.shape_index === shape ? "bt0" : "" }, el("td", {}, "S" + x.shape_index), el("td", {}, x.function_status), el("td", {}, x.accuracy_status || "—"),
       el("td", {}, x.max_abs_err ?? "—"), el("td", {}, x.max_rel_err ?? "—"), el("td", {}, ns(x.kernel_ns)), el("td", {}, ns(x.e2e_ns)))))));
-  // failure explanation, ASCIR, log
-  const mlir = detail.mlir_failure || {};
-  const explanation = mlir.path === "mlir_failed" ? `MLIR 路径失败（${mlir.scope === "shape" ? "当前 Shape" : "单 Shape 运行日志"}）：${mlir.evidence}`
-    : mlir.path === "unconfirmed" ? "已确认 AF 功能失败，但现有日志不能确认是 MLIR 路径失败。" : view.explanation;
-  if (d.function_status !== "pass" || d.accuracy_status === "fail") {
-    out.push(el("h3", {}, "失败详情"));
-    if (explanation) out.push(el("div", { class: "filter-note" }, explanation));
-    if (d.log_summary) out.push(el("div", { class: "mono small" }, "摘要：" + d.log_summary));
-  }
+  // Keep one failure summary only: the CANN plog ERROR list below.
   if ((detail.plog_errors || []).length) out.push(el("h3", {}, "CANN plog 错误"), el("pre", { class: "log" }, detail.plog_errors.join("\n")));
   out.push(el("h3", {}, "ASCIR 表达的图结构"), el("pre", { class: "log" }, view.shape_log || "未保存当前 Shape 的 ASCIR / 图结构文本"));
-  const runLog = view.run_log || view.shared_log || (view.shared_lines || []).join("\n") || d.log || view.summary;
-  out.push(el("h3", {}, "报错日志摘要"), el("pre", { class: "log" }, runLog || "未保存报错日志"));
   // provenance
   const env = (detail.contexts || {}).environment || {};
   const envRows = [["用户", d.user_name || d.user_id], ["节点", d.client_name], ["芯片", archLabel(d.npu_arch || env.device_model)], ["CANN", d.env.cann || env.cann], ["Torch", d.env.torch || env.torch],

@@ -123,6 +123,14 @@ def summary_line(text: str | None) -> str | None:
             return line[:500]
     return first
 
+def plog_summary(plog: list[str]) -> str | None:
+    """The single public failure summary: first CANN ERROR line."""
+    for line in plog:
+        line = str(line).strip()
+        if line:
+            return line[:500]
+    return None
+
 
 def os_label() -> str | None:
     try:
@@ -338,6 +346,8 @@ def function_status(backend, status, stage, summary, diagnostics, index, extra: 
         if schedule_line and not re.search(r"check (?:dtype|shape) failed", line, re.I):
             return "compile_fail", "schedule", schedule_line  # optimize module failed: AF owns it
     kind = classify(backend, status, stage or "", summary or "", diagnostics, index)
+    if kind == "environment_failed":
+        return "runtime_fail", "environment", None
     if kind == "gen_failed":
         return "build_fail", _STAGE.sub("_", (stage or "build").lower())[:32] or "build", None
     if kind == "function_failed":
@@ -483,7 +493,7 @@ class Mapper:
             "compile_ns": attempt["prepare_ns"],
             "kernel_ns": int(sum(kernels) / len(kernels)) if kernels and evaluation.get("performance") else None,
             "e2e_ns": max(1, e2e),
-            "log_summary": af_line or summary_line(log_text or summary_text),
+            "log_summary": plog_summary(plog) or af_line or summary_line(log_text or summary_text),
             "log": log_text[:MAX_LOG] if log_text and status != "pass" else None,
             "shapes": shape_items[:8],
             "created_at": _ms(attempt["created_at"]),
