@@ -85,6 +85,13 @@ def torch_failure(evidence):
         'guardondatadependentsymnode', 'internaltorchdynamoerror')) and TORCH_CAUSES.search(evidence)
 
 
+def pre_autofuse_npu_failure(evidence):
+    """NPU/op-plugin execution errors before Autofuse or MLIR gets control."""
+    lowered = evidence.lower()
+    return (('npu function error' in lowered or 'aclnn' in lowered or 'op_plugin' in lowered)
+            and not re.search(r'autofuse|ascir|runmlircodegen|af_mlir_strict', lowered))
+
+
 def classify(backend, status, stage='', summary='', diagnostics=None, index=-1):
     """Return pass/gen_failed/function_failed/unknown for one selected Shape."""
     if status in {'ok', 'fail'}:
@@ -105,6 +112,8 @@ def classify(backend, status, stage='', summary='', diagnostics=None, index=-1):
     if infra_failure(evidence):
         return 'unknown'
     if torch_failure(evidence):
+        return 'gen_failed'
+    if pre_autofuse_npu_failure(evidence):
         return 'gen_failed'
     # Strip Inductor's source-code wrapper before looking for AF error text.
     cause = re.sub(r'Failed to execute graph code:[^\n]*', '', evidence, flags=re.I)

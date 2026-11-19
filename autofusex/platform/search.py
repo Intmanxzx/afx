@@ -194,7 +194,7 @@ def field_values(store) -> dict:
         "dim": feature("dim_bucket"),
         "arch": [r[0] for r in conn.execute(
             "SELECT DISTINCT npu_arch FROM stats.stat_buckets WHERE npu_arch<>'' ORDER BY npu_arch")],
-        "user": [r[0] for r in conn.execute("SELECT user_id FROM users ORDER BY user_id")],
+        "user": [{"id": r[0], "name": r[1] or r[0]} for r in conn.execute("SELECT user_id, display_name FROM users ORDER BY COALESCE(display_name, user_id), user_id")],
     }
 
 

@@ -373,7 +373,7 @@ class Handler(BaseHTTPRequestHandler):
         store = self.server.store
         if path == "/api/issues":
             return issues.list_issues(store, dimension=_param(params, "dimension"), backend=_param(params, "backend"),
-                                      status=_param(params, "status"), after=_param(params, "after"),
+                                      status=_param(params, "status"), q=_text(params, "q"), after=_param(params, "after"),
                                       limit=_param(params, "limit", integer=True) or 50)
         match = _ROUND_PATH.match(path)
         if match:
