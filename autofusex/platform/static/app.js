@@ -278,7 +278,7 @@ function renderPipeline(data, q, width) {
       note: () => "NNSmith 生成、CPU 参考或 Torch/Dynamo/Inductor 链路失败" },
     { key: "schedule", label: "AF Schedule失败", kind: "stage", shared: true, value: scheduleOf,
       filter: b => `backend:${b} stage:${SCHEDULE_STAGES.join(",")}`, note: () => "Autofuse optimize 模块（Optimize / schedule）报错，发生在 codegen 之前" },
-    { key: "function", label: "功能失败", kind: "stage", value: l => Math.max(0, l.function_fail - scheduleOf(l)) + l.unsupported,
+    { key: "function", label: "功能失败", kind: "stage", value: l => Math.max(0, l.function_fail - scheduleOf(l)),
       filter: b => `backend:${b} status:function_fail -stage:${SCHEDULE_STAGES.join(",")}`,
       note: l => (detail(l, l.family === "af" ? SCHEDULE_STAGES : []) || "—") + (l.unsupported ? `；含不支持 ${fmt(l.unsupported)}` : "") },
     { key: "accuracy", label: "精度失败", kind: "accuracy", value: l => l.accuracy_fail, filter: b => `backend:${b} status:accuracy_fail`, note: () => "执行成功但与标杆比对未通过" },
@@ -287,7 +287,8 @@ function renderPipeline(data, q, width) {
 }
 
 function pipelineSvg(data, lanes, columns, link, width) {
-  const total = Math.max(1, data.total_cases, ...lanes.map(l => l.executed));
+  const applicable = lane => Math.max(0, lane.executed - (lane.unsupported || 0));
+  const total = Math.max(1, data.total_cases, ...lanes.map(applicable));
   // Drawn at the real container width so text keeps its size; wide screens just get more room.
   const W = Math.max(860, Math.floor(width)), compact = W < 1100;
   const maxT = 46, laneH = 150, top = 64, left = 8, srcW = compact ? 80 : 92, laneStart = compact ? 250 : 300, endPad = compact ? 196 : 210;
@@ -321,7 +322,7 @@ function pipelineSvg(data, lanes, columns, link, width) {
   lanes.forEach((lane, i) => {
     const color = LANE_COLOR[lane.backend] || "var(--accent)";
     const yTop = top + i * laneH + 14;
-    const t0 = pipeT(lane.executed);
+    const t0 = pipeT(applicable(lane));
     const gid = "lane-grad-" + i;
     defs.append(svg("linearGradient", { id: gid, x1: 0, x2: 1, y1: 0, y2: 0 },
       svg("stop", { offset: "0%", "stop-color": color, "stop-opacity": 0.55 }), svg("stop", { offset: "100%", "stop-color": color, "stop-opacity": 0.95 })));
@@ -332,7 +333,7 @@ function pipelineSvg(data, lanes, columns, link, width) {
     root.append(svg("text", { x: laneStart - 12, y: yTop + 6, class: "pipe-lane", "text-anchor": "end" }, label(lane.backend)),
       svg("text", { x: laneStart - 12, y: yTop + 26, class: "pipe-lane-n", "text-anchor": "end" }, `${fmt(lane.executed)} 执行`));
     // main pipe: top edge flat, bottom edge steps up at each loss
-    let remaining = lane.executed, d = `M ${laneStart} ${yTop} L ${W - endPad + 20} ${yTop}`;
+    let remaining = applicable(lane), d = `M ${laneStart} ${yTop} L ${W - endPad + 20} ${yTop}`;
     const bottoms = [];
     let x = laneStart, t = pipeT(remaining);
     const drops = [];
@@ -362,21 +363,21 @@ function pipelineSvg(data, lanes, columns, link, width) {
       if (shared && !firstOfFamily) continue;  // the family draws one merged drop
       const dx = drop.cx, dy = drop.yFrom + drop.t / 2, endY = yTop + maxT + 46;
       const band = svg("path", { d: `M ${dx} ${dy} C ${dx + 18} ${dy}, ${dx + 22} ${dy + 12}, ${dx + 22} ${Math.max(dy + 20, endY)}`,
-        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）` });
+        stroke: LOSS_COLOR[drop.c.kind], "stroke-width": drop.t, class: "pipe-drop", "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, applicable(lane))}）` });
       band.addEventListener("click", link(drop.c.filter(lane.backend)));
       const pillText = `${fmt(drop.loss)}`;
       const pw = 20 + pillText.length * 9.5;
-      const pill = svg("g", { class: "pipe-pill " + drop.c.kind, "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, lane.executed)}）`, transform: `translate(${dx + 22 - pw / 2}, ${Math.max(dy + 20, endY) + 4})` },
+      const pill = svg("g", { class: "pipe-pill " + drop.c.kind, "data-tooltip": `${drop.c.label} ${fmt(drop.loss)}（${pct(drop.loss, applicable(lane))}）`, transform: `translate(${dx + 22 - pw / 2}, ${Math.max(dy + 20, endY) + 4})` },
         svg("rect", { width: pw, height: 26, rx: 13 }), svg("text", { x: pw / 2, y: 18, "text-anchor": "middle" }, pillText));
       pill.addEventListener("click", link(drop.c.filter(lane.backend)));
       root.append(band, pill);
     }
     // pass terminal
     const pw = 170, px = W - endPad + 30, py = yTop + t / 2 - 21;
-    const term = svg("g", { class: "pipe-pass", transform: `translate(${px}, ${py})`, "data-tooltip": `通过 ${fmt(lane.pass)}（${pct(lane.pass, lane.executed)}）` },
+    const term = svg("g", { class: "pipe-pass", transform: `translate(${px}, ${py})`, "data-tooltip": `通过 ${fmt(lane.pass)}（${pct(lane.pass, applicable(lane))}）` },
       svg("rect", { width: pw, height: 42, rx: 21 }),
       svg("text", { x: 18, y: 27, class: "pipe-pass-n" }, fmt(lane.pass)),
-      svg("text", { x: pw - 16, y: 27, "text-anchor": "end", class: "pipe-pass-p" }, pct(lane.pass, lane.executed)));
+      svg("text", { x: pw - 16, y: 27, "text-anchor": "end", class: "pipe-pass-p" }, pct(lane.pass, applicable(lane))));
     term.addEventListener("click", link(`backend:${lane.backend} status:pass`));
     root.append(term);
   });
@@ -388,18 +389,19 @@ function pipelineVertical(data, lanes, columns, link) {
   for (const lane of lanes) {
     const color = LANE_COLOR[lane.backend] || "var(--accent)";
     const steps = el("div", { class: "pipe-v-steps" });
-    let remaining = lane.executed;
+    const denominator = Math.max(0, lane.executed - (lane.unsupported || 0));
+    let remaining = denominator;
     for (const c of columns) {
       const loss = c.value(lane);
       if (!loss) continue;
       remaining -= loss;
-      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)), "data-tooltip": `${c.label} ${fmt(loss)}（${pct(loss, lane.executed)}）` },
+      steps.append(el("button", { class: "pipe-v-step " + c.kind, onclick: link(c.filter(lane.backend)), "data-tooltip": `${c.label} ${fmt(loss)}（${pct(loss, denominator)}）` },
         el("span", {}, c.label), el("b", {}, "−" + fmt(loss)),
-        el("i", { style: { width: Math.max(4, 100 * remaining / Math.max(1, lane.executed)) + "%", background: color } })));
+        el("i", { style: { width: Math.max(4, 100 * remaining / Math.max(1, denominator)) + "%", background: color } })));
     }
     box.append(el("div", { class: "pipe-v-lane" }, el("div", { class: "pipe-v-head" }, el("span", { class: "pipe-v-dot", style: { background: color } }), label(lane.backend),
       el("span", { class: "muted small" }, ` ${fmt(lane.executed)} 执行`)), steps,
-      el("button", { class: "pipe-v-pass", onclick: link(`backend:${lane.backend} status:pass`) }, el("span", {}, "通过"), el("b", {}, `${fmt(lane.pass)} · ${pct(lane.pass, lane.executed)}`))));
+      el("button", { class: "pipe-v-pass", onclick: link(`backend:${lane.backend} status:pass`) }, el("span", {}, "通过"), el("b", {}, `${fmt(lane.pass)} · ${pct(lane.pass, applicable(lane))}`))));
   }
   return box;
 }
