@@ -408,46 +408,63 @@ function pipelineVertical(data, lanes, columns, link) {
 // metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
 async function renderBackendTabs(box, lanes, arch, q) {
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  box.replaceChildren(el("h2", {}, "基础能力统计分布"), legend([["c-pass", "通过"], ["c-func", "功能失败"], ["c-acc", "精度失败"], ["c-uns", "不支持"]]), body);
+  const statusItems = [["pass", "c-pass", "通过"], ["function_fail", "c-func", "功能失败"], ["accuracy_fail", "c-acc", "精度失败"], ["unsupported", "c-uns", "不支持"]];
+  const active = new Set(["pass", "function_fail", "accuracy_fail"]);
+  const legendNode = el("div", { class: "legend capability-legend" });
+  const redraw = () => {
+    if (!matrix) return;
+    const dims = ["all", ...DIM_ORDER.filter(d => matrix.dims.includes(d))];
+    const results = lanes.map(backend => dims.map(dim => matrix.cells[backend][dim] || { dim, groups: [] }));
+    const grid = el("div", { class: "cap-grid" });
+    grid.style.gridTemplateColumns = `repeat(${lanes.length}, minmax(320px, 1fr))`;
+    for (const backend of lanes) grid.append(el("div", { class: "cap-head" }, el("span", { class: "pipe-v-dot", style: { background: LANE_COLOR[backend] || "var(--accent)" } }), label(backend)));
+    dims.forEach((dim, row) => {
+      grid.append(el("div", { class: "cap-row-label" }, dim === "all" ? "正确性分布" : (DIM_LABEL[dim] || dim)));
+      const totals = new Map();
+      for (let col = 0; col < lanes.length; col++) for (const g of (results[col][row].groups || [])) totals.set(g.value, (totals.get(g.value) || 0) + selectedTotal(g, active));
+      const order = [...totals.keys()].sort(BUCKET_DIMS.includes(dim) ? bucketCompare : (a, b) => totals.get(b) - totals.get(a));
+      lanes.forEach((backend, col) => {
+        const result = results[col][row];
+        grid.append(dim === "all" ? donutChart(result, backend, true, active) : statusChart(result, backend, true, order, active));
+      });
+    });
+    body.replaceChildren(el("div", { class: "cap-scroll" }, grid));
+  };
+  statusItems.forEach(([key, cls, text]) => {
+    const item = el("button", { type: "button", class: "legend-toggle", "aria-pressed": active.has(key) ? "true" : "false", title: `切换${text}` }, el("i", { class: cls }), text);
+    item.addEventListener("click", () => {
+      if (active.has(key)) active.delete(key); else active.add(key);
+      item.setAttribute("aria-pressed", active.has(key));
+      redraw();
+    });
+    legendNode.append(item);
+  });
+  box.replaceChildren(el("h2", {}, "基础能力统计分布"), legendNode, body);
   if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, "暂无数据")); return; }
   let matrix;
   try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, q })); }
   catch (err) { body.replaceChildren(errorBox(err)); return; }
-  const dims = ["all", ...DIM_ORDER.filter(d => matrix.dims.includes(d))];
-  const results = lanes.map(backend => dims.map(dim => matrix.cells[backend][dim] || { dim, groups: [] }));
-  const grid = el("div", { class: "cap-grid" });
-  grid.style.gridTemplateColumns = `repeat(${lanes.length}, minmax(320px, 1fr))`;
-  for (const backend of lanes) grid.append(el("div", { class: "cap-head" }, el("span", { class: "pipe-v-dot", style: { background: LANE_COLOR[backend] || "var(--accent)" } }), label(backend)));
-  dims.forEach((dim, row) => {
-    grid.append(el("div", { class: "cap-row-label" }, dim === "all" ? "正确性分布" : (DIM_LABEL[dim] || dim)));
-    // One shared row order per dimension so the same line compares the same value across backends.
-    const totals = new Map();
-    for (let col = 0; col < lanes.length; col++) for (const g of (results[col][row].groups || [])) totals.set(g.value, (totals.get(g.value) || 0) + g.total);
-    const order = [...totals.keys()].sort(BUCKET_DIMS.includes(dim) ? bucketCompare : (a, b) => totals.get(b) - totals.get(a));
-    lanes.forEach((backend, col) => {
-      const result = results[col][row];
-      grid.append(dim === "all" ? donutChart(result, backend, true) : statusChart(result, backend, true, order));
-    });
-  });
-  body.replaceChildren(el("div", { class: "cap-scroll" }, grid));
+  redraw();
 }
+function selectedTotal(group, active) { return [...active].reduce((n, key) => n + (group[key] || 0), 0); }
 
-function donutChart(result, backend, compact = false) {
+function donutChart(result, backend, compact = false, active = new Set(["pass", "function_fail", "accuracy_fail", "unsupported"])) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, function_fail: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
-  const parts = [["通过", g.pass, "var(--ok)"], ["功能失败", g.function_fail, "var(--bad)"], ["精度失败", g.accuracy_fail, "var(--warn)"], ["不支持", g.unsupported, "var(--tie)"]].filter(p => p[1] > 0);
+  const total = selectedTotal(g, active);
+  const parts = [["pass", "通过", g.pass, "var(--ok)"], ["function_fail", "功能失败", g.function_fail, "var(--bad)"], ["accuracy_fail", "精度失败", g.accuracy_fail, "var(--warn)"], ["unsupported", "不支持", g.unsupported, "var(--tie)"]].filter(p => active.has(p[0]) && p[2] > 0);
   const R = 60, r = 38, C = 80, root = svg("svg", { viewBox: "0 0 160 160", width: 160, height: 160, role: "img", "aria-label": "正确性分布" });
   let angle = -Math.PI / 2;
-  for (const [name, n, color] of parts) {
-    const sweep = 2 * Math.PI * n / (g.total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
+  for (const [, name, n, color] of parts) {
+    const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
     const p = (rad, a) => `${C + rad * Math.cos(a)} ${C + rad * Math.sin(a)}`;
-    root.append(svg("path", { d: `M ${p(R, angle)} A ${R} ${R} 0 ${large} 1 ${p(R, end)} L ${p(r, end)} A ${r} ${r} 0 ${large} 0 ${p(r, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}（${pct(n, g.total)}）` }));
+    root.append(svg("path", { d: `M ${p(R, angle)} A ${R} ${R} 0 ${large} 1 ${p(R, end)} L ${p(r, end)} A ${r} ${r} 0 ${large} 0 ${p(r, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}（${pct(n, total)}）` }));
     angle += sweep;
   }
-  root.append(svg("text", { x: C, y: C + 4, "text-anchor": "middle", class: "donut-center" }, pct(g.pass, g.total)));
+  root.append(svg("text", { x: C, y: C + 4, "text-anchor": "middle", class: "donut-center" }, pct(active.has("pass") ? g.pass : 0, total)));
   const stages = Object.entries(g.stage_fail || {}).sort((a, b) => b[1] - a[1]);
-  return el("div", { class: "chart" }, compact ? el("div", { class: "muted small" }, `${fmt(g.total)} 个用例`) : el("h3", {}, `${label(backend)} · 正确性分布（${fmt(g.total)} 个用例）`),
-    el("div", { class: "donut-wrap" }, root, el("div", { class: "small" }, parts.map(([name, n, color]) => el("div", {}, el("i", { class: "swatch", style: { background: color } }), `${name} ${fmt(n)}（${pct(n, g.total)}）`)),
+  return el("div", { class: "chart" }, compact ? el("div", { class: "muted small" }, `${fmt(total)} 个用例`) : el("h3", {}, `${label(backend)} · 正确性分布（${fmt(total)} 个用例）`),
+    el("div", { class: "donut-wrap" }, root, el("div", { class: "small" }, parts.map(([, name, n, color]) => el("div", {}, el("i", { class: "swatch", style: { background: color } }), `${name} ${fmt(n)}（${pct(n, total)}）`)),
       stages.length ? el("div", { class: "muted", style: { marginTop: "6px" } }, "功能失败阶段：" + stages.map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join(" · ")) : null)));
 }
 const BUCKET_DIMS = ["dim_bucket", "size_bucket"];
@@ -458,7 +475,7 @@ function bucketValue(label) {
   return m[1] === ">" ? n + 0.5 : n;
 }
 function bucketCompare(a, b) { return bucketValue(a) - bucketValue(b); }
-function statusChart(result, backend, compact = false, order = null) {
+function statusChart(result, backend, compact = false, order = null, active = new Set(["pass", "function_fail", "accuracy_fail", "unsupported"])) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const limit = result.dim === "op_display" ? 24 : 14;
   let groups;
@@ -473,9 +490,7 @@ function statusChart(result, backend, compact = false, order = null) {
   const title = compact ? (note ? el("div", { class: "muted small" }, note.replace(/[（）]/g, "")) : null)
     : el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`);
   return el("div", { class: "chart" + (result.dim === "op_display" && !compact ? " wide" : "") }, title,
-    groups.length ? groups.map(g => el("div", { class: "hbar", "data-tooltip": `通过 ${fmt(g.pass)}（${pct(g.pass, g.total)}）· 功能失败 ${fmt(g.function_fail)}（${pct(g.function_fail, g.total)}）· 精度失败 ${fmt(g.accuracy_fail)}（${pct(g.accuracy_fail, g.total)}）` }, el("div", { class: "label" }, g.value),
-      stackBar([["c-pass", g.pass, "通过"], ["c-func", g.function_fail, "功能失败"], ["c-acc", g.accuracy_fail, "精度失败"], ["c-uns", g.unsupported, "不支持"]], g.total),
-      el("div", { class: "muted" }, g.total ? pct(g.pass, g.total) : "—"))) : el("div", { class: "empty" }, "无数据"));
+    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? g[key] : 0; return el("div", { class: "hbar", "data-tooltip": `通过 ${fmt(shown("pass"))}（${pct(shown("pass"), total)}）· 功能失败 ${fmt(shown("function_fail"))}（${pct(shown("function_fail"), total)}）· 精度失败 ${fmt(shown("accuracy_fail"))}（${pct(shown("accuracy_fail"), total)}）· 不支持 ${fmt(shown("unsupported"))}（${pct(shown("unsupported"), total)}）` }, el("div", { class: "label" }, g.value), stackBar([["c-pass", shown("pass"), "通过"], ["c-func", shown("function_fail"), "功能失败"], ["c-acc", shown("accuracy_fail"), "精度失败"], ["c-uns", shown("unsupported"), "不支持"]], total), el("div", { class: "muted" }, total ? pct(shown("pass"), total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
 }
 
 async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
