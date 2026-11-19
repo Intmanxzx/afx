@@ -76,7 +76,10 @@ def test_shape_search_and_sql_consistent_across_summary_charts_and_rows(tmp_path
         ("WHERE status = 'Pass' AND backend = 'af-mlir'",[0,2]),
         ("WHERE backend = 'af-mlir' AND function_status = 'Failed'",[1]),
         ("WHERE shape_index = 1 OR (shape_index = 2 AND status = 'Pass')",[1,2]),
-        ("WHERE op LIKE '%transpose%'",[0,1,2])]:
+        # op_types (and the 'op' search column projected from it) holds display
+        # names, not raw op ids by design (docs/fuzz/platform_v3_design.md); this
+        # fixture's transpose node displays as 'permute', so search for that.
+        ("WHERE op LIKE '%permute%'",[0,1,2])]:
         rows=q.case_page(q=term)['items']
         assert [r['shape_index'] for r in rows]==indices
         assert q.case_summary(q=term)['total']==len(indices)

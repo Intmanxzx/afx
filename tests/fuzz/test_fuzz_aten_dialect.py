@@ -230,7 +230,11 @@ def test_tuple_results_feed_downstream_nodes_and_repository(runtime,tmp_path):
     import sqlite3
     with sqlite3.connect(repo.path) as db:
         stored={r[0] for r in db.execute("SELECT value FROM case_dimensions WHERE dimension='category'")}
-    assert {'Reduce','View'}<=stored
+    # Rule.category (aten_catalog.py) splits what used to be one 'View' bucket into
+    # Reshape/Transpose/Broadcast/Split; only the remaining ops (squeeze, slice,
+    # select, clone/detach, ...) still report as 'View' -- see the other categories()
+    # assertion below, which already expects 'Reshape' for the same taxonomy.
+    assert {'Reduce','Reshape'}<=stored
 
 
 def test_j_dynamic_variants_execute_and_replay(runtime):

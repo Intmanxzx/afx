@@ -472,15 +472,15 @@ function caseDag(result){
  const meta=result.metadata||{},graph=meta.graph||{},sample=result.sample||meta.shape_variants?.[0]||{};
  if(!graph.nodes?.length)return {nodes:[],edges:[]};
  const nodes=[],byName=new Map(),edges=[];
- function add(name,label,tensor={},kind='op',inputs=[],attrs={}){
-  const node={name,label,...tensor,kind,inputs,attrs,level:0};nodes.push(node);byName.set(name,node);return node;
+ function add(name,label,tensor={},kind='op',inputs=[],attrs={},op=null){
+  const node={name,label,...tensor,kind,inputs,attrs,level:0,op};nodes.push(node);byName.set(name,node);return node;
  }
  const shapes=sample.input_shapes||meta.input_shapes||{},types=sample.input_dtypes||meta.input_dtypes||{};
  for(const [name,shape] of Object.entries(shapes))add(name,'Input',{shape,dtype:types[name]},'input');
  for(const weight of meta.weights||[])add(weight.name,'Weight',weight,'weight');
  for(const node of graph.nodes){
   const outputs=node.outputs||[node.output];
-  const label=node.display_name||node.op; for(const [i,name] of outputs.entries())add(name,outputs.length>1?`${label} [${i}]`:label,{},'op',node.inputs||[],node.attrs||{});
+  const label=node.display_name||node.op; for(const [i,name] of outputs.entries())add(name,outputs.length>1?`${label} [${i}]`:label,{},'op',node.inputs||[],node.attrs||{},node.op);
  }
  for(const node of [...nodes])for(const name of node.inputs)if(!byName.has(name))add(name,'未记录输入',{},'input');
  const pending=new Set(nodes),resolved=new Set();
@@ -494,14 +494,16 @@ function caseDag(result){
     const first=inputs[0],shape=first?.shape;
     node.dtype=inputs.length&&inputs.every(n=>n.dtype===first.dtype)?first.dtype:undefined;
     if(shape){
-     if(['relu','neg'].includes(node.label))node.shape=[...shape];
-     else if(node.label==='transpose'){
+     // Dispatch on the real op identifier, not node.label: label prefers display_name
+     // for the UI (e.g. 'permute' for transpose, 'reducemin' for amin) and can differ from it.
+     if(['relu','neg'].includes(node.op))node.shape=[...shape];
+     else if(node.op==='transpose'){
       const {dim0,dim1}=node.attrs,rank=shape.length;
       if(Number.isInteger(dim0)&&Number.isInteger(dim1)&&dim0>=-rank&&dim0<rank&&dim1>=-rank&&dim1<rank){const a=(dim0+rank)%rank,b=(dim1+rank)%rank;node.shape=[...shape];[node.shape[a],node.shape[b]]=[node.shape[b],node.shape[a]];}
-     }else if(['sum','mean','amin','amax'].includes(node.label)&&Array.isArray(node.attrs.reduce_dim)){
+     }else if(['sum','mean','amin','amax'].includes(node.op)&&Array.isArray(node.attrs.reduce_dim)){
       const dims=node.attrs.reduce_dim.map(d=>d<0?d+shape.length:d);
       if(dims.every(d=>Number.isInteger(d)&&d>=0&&d<shape.length))node.shape=shape.filter((_,i)=>!dims.includes(i));
-     }else if(['add','mul'].includes(node.label)&&inputs.every(n=>Array.isArray(n.shape))){
+     }else if(['add','mul'].includes(node.op)&&inputs.every(n=>Array.isArray(n.shape))){
       const rank=Math.max(...inputs.map(n=>n.shape.length)),output=[];let valid=true;
       for(let i=0;i<rank;i++){const dims=inputs.map(n=>n.shape[n.shape.length-rank+i]??1),nonUnit=[...new Set(dims.filter(d=>d!==1))];if(nonUnit.length>1)valid=false;output.push(nonUnit[0]??1);}if(valid)node.shape=output;
      }
