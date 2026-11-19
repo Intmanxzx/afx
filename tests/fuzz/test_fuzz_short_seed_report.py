@@ -46,7 +46,7 @@ def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
 def test_report_endpoint_csp_and_html_escapes_errors(tmp_path):
     import threading
     from urllib.request import urlopen
-    from autofusex.fuzz.server.central.server import create_server
+    from autofusex.fuzz.server.view.server import create_server
     repo=ResultRepository(tmp_path/'results')
     repo.save({'seed':'14615016373650978276328604632813839116929039597610','workload_id':workload_id(materialize('C16')),
         'oracle_id':'ref/1','backend':'<img src=x onerror=alert(1)>','status':'error',
@@ -54,7 +54,7 @@ def test_report_endpoint_csp_and_html_escapes_errors(tmp_path):
     with create_server(repo.path,port=0) as server:
         thread=threading.Thread(target=server.serve_forever);thread.start()
         try:
-            with urlopen(f'http://127.0.0.1:{server.server_port}/report?seed=B16') as response:
+            with urlopen(server.viewer_url+'report?seed=B16') as response:
                 page=response.read()
                 assert response.status==200 and b'charts.js' in page
                 assert "script-src 'self'" in response.headers['Content-Security-Policy']

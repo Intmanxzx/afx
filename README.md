@@ -9,22 +9,23 @@ AFX 按用途划分为精度性能对比定位工具和 fuzz 自动泛化工具�
 
 Fuzz 实现统一位于 `autofusex/fuzz/`：`nnsmith/` 是内部的 NNSmith 适配层，`management/` 管理 fuzz 客户端、执行环境和任务。NNSmith fork 仍作为独立的可选执行依赖安装，不作为与 fuzz 并列的业务模块。
 
-相关测试、辅助脚本、部署文件和文档分别位于 `tests/fuzz/`、`tools/fuzz/`、`deploy/fuzz/` 和 `docs/fuzz/`。命令继续使用 `afx fuzz`，客户端管理命令保持现有入口。
+相关测试、辅助脚本和文档分别位于 `tests/fuzz/`、`tools/fuzz/` 和 `docs/fuzz/`；部署文件位于 `deploy/platform/`。命令继续使用 `afx fuzz`，客户端管理命令保持现有入口。
 
 ## Fuzz 测试平台
 
 ```sh
-afx fuzz setup --token "$FUZZ_TOKEN"
 afx fuzz run --count 100 --save
 afx fuzz replay SEED  # 使用结果中的当前 E/F seed
 afx fuzz view ./results.sqlite
 ```
 
+需要上报到云端时，`--save` 只写入本地结果库；上传、心跳和复测由 `afx platform client run` 独立完成，用法见 [deploy/platform/README.md](deploy/platform/README.md#客户端npu机器)。
+
 [文档入口](docs/fuzz/README.md) · [使用说明与 Agent API](docs/fuzz/fuzz_usage.md) · [运维说明](docs/fuzz/operations.md)
 
-[设计文档](docs/fuzz/fuzz_design.md)：seed协议、执行、存储、同步、查询和扩展边界。
+[设计文档](docs/fuzz/fuzz_design.md)：seed协议、执行、存储、查询和扩展边界。
 
-公网结果入口：https://autofuse.online 。启用--save后客户端默认每30秒自动上报，CPU作为精度对照，按shape统计用例。
+公网结果入口：https://autofuse.online 。CPU作为精度对照，按shape统计用例。
 
 ## 安装
 

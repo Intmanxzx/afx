@@ -1,9 +1,24 @@
 import json
 import time
+import uuid
 import pytest
 from autofusex.fuzz.daemon.management.central import ControlStore, Conflict
 from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.server.central.repository import create_user
+
+
+def create_user(path, display_name):
+    """Minimal local stand-in for the owner identity ControlStore expects.
+
+    ControlStore.authenticate() checks a `users` table for owner activation;
+    production wires it to whichever identity system the central/platform
+    service uses. These tests only need a user_id and the active flag.
+    """
+    import sqlite3
+    identity = str(uuid.uuid4())
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT, active INTEGER NOT NULL DEFAULT 1)')
+        db.execute('INSERT INTO users(id,display_name) VALUES (?,?)', (identity, display_name))
+    return {'user_id': identity, 'display_name': display_name}
 
 
 @pytest.fixture
@@ -65,19 +80,6 @@ def test_local_journal_recovery(tmp_path):
     assert store.operation(op['id'])['state']=='needs_attention'
     for n in range(105):store.event(op['id'],str(n))
     assert len(store.events(op['id']))==100
-
-
-def test_device_token_cannot_login_or_adopt_other_source(control):
-    import uuid
-    from autofusex.fuzz.server.central.repository import authenticate,authenticate_upload
-    store,alice,_,credential=control
-    with store.connect() as db:
-        with pytest.raises(PermissionError):authenticate(db,credential['token'])
-        source=str(uuid.uuid4())
-        assert authenticate_upload(db,credential['token'],source)==alice['user_id']
-    pair=store.pairing('second');store.approve(alice['user_id'],pair['code']);second=store.exchange(pair['id'],pair['secret'])
-    with store.connect() as db:
-        with pytest.raises(PermissionError):authenticate_upload(db,second['token'],source)
 
 
 def test_pairing_exchange_retries_without_plaintext_secret(control):

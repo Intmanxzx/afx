@@ -174,10 +174,6 @@ def test_mlir_failure_path_consistent_across_surfaces(tmp_path):
         assert any(r['status']=='mlir_failed' for r in chart[dimension]),dimension
     assert statistics(repo.path)['failure_path'] == expected
     assert IncrementalStatistics(repo.path).refresh()['failure_path'] == expected
-    from autofusex.fuzz.server.central.cache import PublicCache
-    from autofusex.fuzz.server.central.repository import initialize
-    initialize(repo.path)
-    assert json.loads(PublicCache(repo.path).build()['summary'].body)==queries.case_summary()
     for path in paths:
         query = f"WHERE failure_path = '{path}'"
         assert queries.case_summary(q=query)['total'] == 1

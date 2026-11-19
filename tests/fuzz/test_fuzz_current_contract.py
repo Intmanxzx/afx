@@ -69,7 +69,7 @@ def test_dynamic_counts_weight_dimensions_and_outside_initial_range(count):
     finally:adapter.close()
 
 
-def test_64_nodes_survive_artifacts_database_snapshot_and_upload(tmp_path):
+def test_64_nodes_survive_artifacts_database_snapshot(tmp_path):
     from autofusex.fuzz.client.generation.nnsmith_dynamic import variants
     from autofusex.fuzz.client.generation.nnsmith_sampled import materialize_spec
     from autofusex.fuzz.client.generation import workload_id
@@ -78,9 +78,6 @@ def test_64_nodes_survive_artifacts_database_snapshot_and_upload(tmp_path):
     from autofusex.fuzz.client.storage import ResultRepository
     from autofusex.fuzz.client.storage.transfer import restore
     from autofusex.fuzz.client.storage.queries import ResultQueries
-    from autofusex.fuzz.client.sync.outbox import pending
-    from autofusex.fuzz.server.central.repository import create_user,ingest
-    from autofusex.fuzz.client.limits import MAX_SYNC_BYTES
     spec=variants(build_spec(count=8,nodes=64,weight=False),65536,8,random.Random(123))
     raw=encode(spec);assert len(raw)>12000 and decode(raw)==spec
     bundle=materialize_spec(spec)
@@ -91,12 +88,7 @@ def test_64_nodes_survive_artifacts_database_snapshot_and_upload(tmp_path):
     for i in range(50):identity=repo.save(result)
     assert ResultQueries(repo.path).detail(identity)['contexts']['execution']['case_spec']==raw
     snap=tmp_path/'snapshot';repo.snapshot(snap);restore(snap,tmp_path/'restored')
-    payload=pending(repo.path)
-    assert 0 < len(payload['items']) < 50
-    assert len(json.dumps(payload).encode())<=MAX_SYNC_BYTES
-    central=tmp_path/'central';key=tmp_path/'key';create_user(central,'audit',key)
-    ingest(central,key.read_text().strip(),payload)
-    assert ResultQueries(central).page()['items']
+    assert ResultQueries(tmp_path/'restored').detail(identity)['contexts']['execution']['case_spec']==raw
 
 
 

@@ -1,6 +1,6 @@
 # Fuzz 运维说明
 
-日常任务见[使用说明](fuzz_usage.md)，安装客户端/服务端见[部署脚本说明](../../deploy/fuzz/README.md)。以下记录当前约定，不记录某次线上部署状态。
+日常任务见[使用说明](fuzz_usage.md)，服务端部署见 [deploy/platform/README.md](../../deploy/platform/README.md)。以下记录当前约定，不记录某次线上部署状态。
 
 ## 托管客户端首次准备
 
@@ -38,60 +38,24 @@ trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件�
 
 多卡或更高并发需同时配置 trust 和 afx config apply policy.yaml --wait 的资源上限。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
 
-## 中心身份与服务
-
-~~~sh
-afx fuzz admin user /srv/fuzz/results.sqlite USERNAME
-afx fuzz admin serve /srv/fuzz/results.sqlite --port 8090
-afx fuzz admin rotate-token /srv/fuzz/results.sqlite USERNAME
-~~~
-
-创建/轮换只显示一次原始 token，私下交付，中心保存 hash。服务绑定本机，由 HTTPS 代理对外访问。轮换后旧用户 token 失效，使用它的客户端须更新配置；托管设备凭据另有撤销入口。
-
-数据目录解析优先级：显式 --data-dir、AUTOFUSEX_HOME、记住的 setup 目录、系统默认值。Linux 默认 XDG_DATA_HOME 下的 autofusex（未设置时使用 ~/.local/share/autofusex），macOS 默认 ~/Library/Application Support/autofusex，Windows 默认 LOCALAPPDATA 下的 autofusex。Windows 不承诺 NPU 后台任务支持。
-
-## 备份、恢复与升级
-
-~~~sh
-afx fuzz admin backup /srv/fuzz/results.sqlite /private/backup/results.sqlite
-afx fuzz maintenance check-db /private/backup/results.sqlite
-~~~
-
-中心备份包含身份、来源、回执与结果，私有保存并异地备份。公开 maintenance snapshot 只导出允许分享的结果和观测事实，不替代中心灾备；不要直接复制正在 WAL 写入的数据库主文件。
-
-升级先做一致性备份，在新虚拟环境 `pip install autofusex==VERSION` 固定版本，用私有数据库副本验证启动/查询后切换服务，保留旧环境、有效服务配置和身份。旧 Python 进程不会自动加载新模块，客户端切换后须重启上传器和相关进程。
-
-恢复时停止目标服务，将备份恢复到新目录，以匹配版本打开；核对身份、结果、上传和重复上传去重后再切流量。回滚不能让旧代码打开不兼容的新 schema，也不能用旧库直接覆盖上线后的新增记录。恢复较旧中心备份导致客户端 ACK 超前时，核对数据后执行 afx fuzz maintenance sync reset-epoch --data-dir DIR 重传。
+## 结果数据库维护
 
 数据库恢复或替换后，不能沿用另一份库的旧统计侧文件。派生索引可重建，维护前备份，再按需要执行：
 
 ~~~sh
-afx fuzz maintenance index-results /srv/fuzz/results.sqlite
-afx fuzz maintenance index-cases /srv/fuzz/results.sqlite
+afx fuzz maintenance index-results /path/to/results.sqlite
+afx fuzz maintenance index-cases /path/to/results.sqlite
 ~~~
 
-## 维护期写入限制
-
-AF_FUZZ_WRITE_ALLOWLIST 指向私有 JSON，服务启动时读取；不设置则不加限制，配置错误拒绝启动。示意：
-
-~~~json
-{"enabled":true,"users":["用户UUID"],"clients":[{"user_id":"用户UUID","client_id":"客户端UUID"}]}
+~~~sh
+afx fuzz maintenance check-db /path/to/results.sqlite
 ~~~
 
-替换为真实 UUID。普通上传/复测使用对应 source_id/client_id，托管管理请求使用设备身份。只读查询仍可用，受限写入返回 503、Retry-After: 60 与 maintenance_write_blocked，ACK 不推进。配置不会停止远端执行或冻结租约；调整后重启服务，客户端保留积压结果重试。
+公开 maintenance snapshot 只导出允许分享的结果和观测事实，不是完整灾备；不要直接复制正在 WAL 写入的数据库主文件。
 
-## 破坏性升级（清空重装）
+升级先做一致性备份，在新虚拟环境 `pip install autofusex==VERSION` 固定版本，用数据库副本验证启动/查询后切换服务，保留旧环境和有效配置。旧 Python 进程不会自动加载新模块，客户端切换后须重启相关进程。
 
-当新版本改变结果 schema 或 seed 协议、旧库不能原地打开时，客户端与服务端必须一起清空重装，不做原地迁移：
-
-1. 停止所有客户端管理守护进程、fuzz/retest supervisor、worker 和 sync daemon；停止服务端及自动备份任务，核对没有遗留执行进程。
-2. 服务停止后保留一份私有、完整的一致性备份，用于回退到旧版本；新程序不导入其中的结果。
-3. 删除服务端整个持久化数据目录（主库、WAL/SHM、runtime/public-statistics 侧库、设备注册、会话、回执、复测、问题领取、修复记录、上传暂存和缓存）；Docker 应重新创建专用数据卷，不只删主库。
-4. 每个客户端清空实际 data home（results、tasks、manager.sqlite、同步/outbox/ACK、运行产物、日志、配对凭据、缓存、active-home 指针）。重装环境后重新设置本机 trust 和配置；不要恢复旧 manager.sqlite 或 config/source ID。
-5. 安装同一新版本，从空目录启动中心，建立用户，重新 enroll/pair 每个客户端；检查空首页、新 token 登录、新设备心跳、少量新结果上传及重复上传 ACK。
-6. 验证通过后再启动持续任务，任何旧客户端都不能保留运行或上传。
-
-可选保留用户 token：明文由用户自己保存，中心只存 SHA256，所以停服后只需把旧中心 `users` 表的 `id、display_name、key_hash、active` 四列私下复制到新空中心同名表即可保留原 token；不要复制 `sources`、设备 token、`sessions`、owners、回执或任何结果表。导出文件按凭据材料保管（权限 0600，不进日志）。新客户端用原用户 token 重新注册，获得新设备凭据和同步身份；若旧 `users` 表不符合这四列契约，直接建新用户重新发 token。这是部署时的一次性数据操作，不是运行时兼容层。
+平台服务端（`autofusex/platform/`）的身份、token、备份与恢复，见 [deploy/platform/README.md](../../deploy/platform/README.md)。
 
 ## 构建与发布
 

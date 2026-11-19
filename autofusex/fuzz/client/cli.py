@@ -27,7 +27,7 @@ def doctor(home):
             "python": platform.python_version(), "platform": platform.platform(),
             "sqlite": sqlite3.sqlite_version, "home": str(data_home(home)),
             "packages": versions, "device_probe": "not_run", "split_execution": "unverified",
-            "generation": "Single NNSmith ATen E/F protocol; pinned source/Z3/catalog; generation and CPU skips are excluded", "sync": "independent_outbox_daemon"}
+            "generation": "Single NNSmith ATen E/F protocol; pinned source/Z3/catalog; generation and CPU skips are excluded"}
 
 
 def main(argv=None):
@@ -38,15 +38,10 @@ def main(argv=None):
     parser = ScenarioParser(prog="afx fuzz")
     sub = parser.add_subparsers(dest="command", required=True, parser_class=argparse.ArgumentParser)
     sub.add_parser("replay", help="replay a self-contained short seed")
-    maintenance = sub.add_parser('maintenance', help='diagnostics, sync and data maintenance').add_subparsers(dest='maintenance_command', required=True)
-    administration = sub.add_parser('admin', help='offline identities and server operations').add_subparsers(dest='admin_command', required=True)
-    for command in ("setup", "doctor"):
-        p = (sub if command == "setup" else maintenance).add_parser(command)
-        p.set_defaults(command=command)
-        p.add_argument("--data-dir", help=argparse.SUPPRESS if command=="setup" else None)
-        if command == "setup":
-            p.add_argument('--token', required=True, help='administrator-issued secret; never printed')
-            p.add_argument('--sync-interval', type=float, default=30)
+    maintenance = sub.add_parser('maintenance', help='diagnostics and data maintenance').add_subparsers(dest='maintenance_command', required=True)
+    doctor_parser = maintenance.add_parser("doctor")
+    doctor_parser.set_defaults(command="doctor")
+    doctor_parser.add_argument("--data-dir")
     seed = maintenance.add_parser("seed", help="inspect a frozen short-seed case without execution")
     seed.add_argument("token")
     seed.add_argument("--show-spec", action="store_true")
@@ -77,30 +72,11 @@ def main(argv=None):
     view.add_argument("database")
     view.add_argument("--port", type=int, default=0, help="loopback port; default chooses a free port")
     view.add_argument("--no-browser", action="store_true")
-    central = administration.add_parser("serve", help="central service behind a TLS proxy")
-    central.add_argument("database")
-    central.add_argument("--port", type=int, default=8090)
     indexing = maintenance.add_parser('index-results', help='build additive SQLite reporting index after backup')
     indexing.add_argument('database')
     model = maintenance.add_parser('index-cases', help='rebuild structured case indexes after private backup')
     model.add_argument('database')
-    backup = administration.add_parser("backup", help="private complete central backup including identities and ACKs")
-    backup.add_argument("database")
-    backup.add_argument("destination")
-    admin = administration.add_parser("user", help="offline administrator creates an upload identity")
-    admin.add_argument("database")
-    admin.add_argument("display_name")
-    rotate = administration.add_parser("rotate-token", help="offline administrator rotates an existing upload key")
-    rotate.add_argument("database")
-    rotate.add_argument("user")
-    sync = maintenance.add_parser("sync", help="configure/run independent automatic upload")
-    sync.add_argument("action", choices=("configure", "once", "run", "start", "status", "reset-epoch", "verify"))
-    sync.add_argument("--data-dir", help="override the remembered/default data directory")
-    sync.add_argument("--database")
-    sync.add_argument("--endpoint")
-    sync.add_argument("--key-file")
-    sync.add_argument("--interval", type=float, default=30)
-    for child, command in [(seed,'seed'),(compare,'diagnose'),(pair,'compare'),(snapshot,'snapshot'),(check,'check-db'),(results,'results'),(indexing,'index-results'),(model,'index-cases'),(sync,'sync'),(central,'serve'),(backup,'server-backup'),(admin,'admin-user'),(rotate,'admin-rotate-key')]:
+    for child, command in [(seed,'seed'),(compare,'diagnose'),(pair,'compare'),(snapshot,'snapshot'),(check,'check-db'),(results,'results'),(indexing,'index-results'),(model,'index-cases')]:
         child.set_defaults(command=command)
     from .scheduling.cli import register
     register(sub, maintenance)
@@ -112,44 +88,9 @@ def main(argv=None):
         elif args.command == 'index-cases':
             from ..server.reporting.materialized import rebuild
             result = rebuild(args.database)
-        elif args.command == "serve":
-            from ..server.central.server import serve
-            return serve(args.database, args.port)
-        elif args.command == "server-backup":
-            from ..server.central.backup import backup
-            result = backup(args.database, args.destination)
-        elif args.command == "admin-user":
-            from ..server.central.repository import create_user
-            result = create_user(args.database, args.display_name)
-        elif args.command == "sync":
-            from .sync.client import configure, once, run, start, status, reset, verify_identity
-            home = data_home(args.data_dir)
-            if args.action == "configure":
-                if not args.endpoint or not args.key_file:
-                    raise ValueError("configure requires endpoint and administrator key file")
-                result = configure(home, args.endpoint, args.key_file, args.interval)
-            elif args.action == "verify":
-                result = verify_identity(home)
-            elif args.action == "status":
-                result = status(home, args.database or home / "results/results.sqlite")
-            else:
-                database = args.database or home / "results/results.sqlite"
-                result = {"once": once, "run": run, "start": start, "reset-epoch": reset}[args.action](home, database)
         elif args.command in {"run", "status", "stop", "resume"}:
             from .scheduling.cli import dispatch
             result = dispatch(args)
-        elif args.command == "admin-rotate-key":
-            from ..server.central.repository import rotate_key
-            from .storage.queries import reading
-            with reading(args.database) as conn:
-                row=conn.execute('SELECT id FROM users WHERE display_name=?',(args.user,)).fetchone()
-            if row is None:raise ValueError('unknown user')
-            result = rotate_key(args.database, row[0])
-        elif args.command == "setup":
-            from ..daemon.onboarding import initialize_user
-            result = initialize_user(args.data_dir, args.token, args.sync_interval)
-            from .config import remember_home
-            remember_home(data_home(args.data_dir))
         elif args.command == "seed":
             from .generation import materialize, content_manifest, workload_id
             import time
@@ -234,7 +175,7 @@ def replay_parser():
     parser.add_argument("--backend", choices=BACKEND_NAMES, help="focused backend diagnostic; default replays CPU and AF-MLIR")
     parser.add_argument("--device")
     parser.add_argument("--database", help=argparse.SUPPRESS)
-    parser.add_argument("--save", action="store_true", help="save results and enqueue automatic upload; default: neither")
+    parser.add_argument("--save", action="store_true", help="save results to the local database; default: neither")
     parser.add_argument("--compile-threads", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--perf", dest="performance", action="store_true", help="request precise metrics where supported; unavailable metrics remain empty")
     parser.add_argument("--warmup-steps", type=int, default=3)

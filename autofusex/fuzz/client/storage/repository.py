@@ -117,8 +117,6 @@ class ResultRepository:
             index_attempt(conn, attempt_id)
             from ...server.reporting.materialized import refresh_if_installed
             refresh_if_installed(conn)
-            from ..sync.outbox import enqueue
-            enqueue(conn, attempt_id)
         from .lifecycle import append, stamp
         observed = stamp()  # Result transaction has successfully returned.
         append(self.path, attempt_id, 'persisted', observed)

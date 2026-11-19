@@ -1,7 +1,18 @@
+import sqlite3
+import uuid
+
 from autofusex.fuzz import daemon
 from autofusex.fuzz.daemon import runtime
 from autofusex.fuzz.daemon.management.central import ControlStore
-from autofusex.fuzz.server.central.repository import create_user
+
+
+def create_user(path, display_name):
+    """Minimal local stand-in for the owner identity ControlStore expects (see test_control.py)."""
+    identity = str(uuid.uuid4())
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT, active INTEGER NOT NULL DEFAULT 1)')
+        db.execute('INSERT INTO users(id,display_name) VALUES (?,?)', (identity, display_name))
+    return {'user_id': identity, 'display_name': display_name}
 
 
 def test_manager_center_flow_retries_lost_ack_without_duplicate_effect(tmp_path,monkeypatch):

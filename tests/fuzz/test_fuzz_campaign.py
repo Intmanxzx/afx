@@ -77,7 +77,7 @@ def test_cpu_disagreement_never_triggers_secondary_or_changes_to_pass():
 
 
 def test_bounded_redacted_failure_excerpt():
-    from autofusex.fuzz.failure_details import excerpt,validate
+    from autofusex.fuzz.client.failure_details import excerpt,validate
     try:raise RuntimeError('token=secretvalue '+'x'*2000)
     except RuntimeError as exc:text=excerpt(exc)
     assert len(text)<=1600 and 'secretvalue' not in text
@@ -125,7 +125,7 @@ def test_torch_cpu_reference_and_error_metrics():
 
 
 def test_default_replay_uses_both_mandatory_backends(monkeypatch):
-    from autofusex.fuzz import cli
+    from autofusex.fuzz.client import cli
     seen=[]
     monkeypatch.setattr(cli,'execute_args',lambda args: seen.append((args.backend,args.device)) or 0)
     assert cli.replay([CURRENT_SEED,'--scheduling','combined'])==0

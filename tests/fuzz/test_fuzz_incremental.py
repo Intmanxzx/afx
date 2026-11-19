@@ -6,13 +6,23 @@ from contextlib import closing
 
 import pytest
 
-from autofusex.fuzz.server.central.repository import initialize
+from contextlib import closing as _closing
+from autofusex.fuzz.client.storage.repository import _connect as _connect_db
 from autofusex.fuzz.server.reporting.incremental import IncrementalStatistics
 from autofusex.fuzz.server.reporting.statistics import statistics
 from autofusex.fuzz.client.storage import ResultRepository
 from autofusex.fuzz.client.storage.repository import _connect
 from test_fuzz_case_summary import save
 from test_fuzz_shape_cases import record
+
+
+def initialize(path):
+    """Local stand-in for the old central repository's bootstrap: pre-creates
+    the shared reporting schema that ResultRepository.save() would otherwise
+    only create lazily on first write."""
+    from autofusex.fuzz.server.reporting.index import initialize as initialize_reporting
+    with _closing(_connect_db(path, writable=True)) as conn, conn:
+        initialize_reporting(conn)
 
 
 def same(db, inc):

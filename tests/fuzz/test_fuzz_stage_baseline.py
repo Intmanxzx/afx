@@ -64,13 +64,12 @@ def test_lifecycle_idempotent_separate_from_result_hash(tmp_path):
     from fuzz_fixtures import bundle
     from test_fuzz_precise_metrics import Adapter
     from autofusex.fuzz.client.execution import execute
-    from autofusex.fuzz.client.sync.outbox import pending, acknowledge
     result=execute(bundle('C16'),Adapter(),EvaluationConfig())
     db=tmp_path/'db';repo=ResultRepository(db);identity=repo.save(result)
     original=repo.detail(identity)['result_hash']
     append(db,identity,'admitted',{'domain':'test','monotonic_ns':10,'wall_time':'test'})
     append(db,identity,'admitted',{'domain':'test','monotonic_ns':20,'wall_time':'test'})
-    batch=pending(db);acknowledge(db,batch['source_id'],batch['items'][-1]['revision'])
+    append(db,identity,'uploaded_ack',{'domain':'test','monotonic_ns':30,'wall_time':'test'})
     detail=repo.detail(identity)
     assert detail['result_hash']==original
     assert {e['event'] for e in detail['lifecycle']}=={'admitted','persisted','uploaded_ack'}

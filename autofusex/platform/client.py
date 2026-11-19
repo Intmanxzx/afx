@@ -6,7 +6,13 @@ Its own progress lives in a separate SQLite file next to it, so the old sync
 path and this uploader never share state.
 
 usage:
+  afx platform client --endpoint https://host --token-file F --results DB setup
   afx platform client --endpoint https://host --token-file F --results DB run [--retest --device npu:0]
+
+`setup` fixes --token-file permissions, creates the --results directory, confirms the
+token/endpoint by sending one heartbeat, and prints the `fuzz run`/`client run` commands
+to copy next. It never writes or invents a token: paste the one `afx platform token issue
+USER --kind client` printed into --token-file first.
 """
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ import platform as host_platform
 import re
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -855,8 +862,90 @@ class Client:
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
+def _implied_data_dir(results_path: Path):
+    """'afx fuzz run --save' always writes to <data-dir>/results/results.sqlite; it has
+    no flag to redirect that to an arbitrary file. Return the --data-dir that makes
+    results_path the one it actually writes to, or None if results_path doesn't follow
+    that layout (in which case 'fuzz run --save' can never populate it)."""
+    if results_path.name == "results.sqlite" and results_path.parent.name == "results":
+        return results_path.parent.parent
+    return None
+
+
+def setup(args) -> int:
+    """Bootstrap a new client host: fix --token-file permissions, create the --results
+    directory, and confirm the token/endpoint actually work before anything runs
+    unattended. Never generates or stores a token itself; it only fixes permissions
+    on a file the operator already pasted an admin-issued token into."""
+    token_path = Path(args.token_file)
+    if not token_path.exists():
+        print(json.dumps({"ok": False, "error":
+            f"{token_path} does not exist; paste the token from "
+            "`afx platform token issue USER --kind client` into it (chmod 600), then rerun setup"}),
+            file=sys.stderr)
+        return 2
+    try:
+        if stat.S_IMODE(token_path.stat().st_mode) != 0o600:
+            token_path.chmod(0o600)
+    except OSError as exc:
+        print(json.dumps({"ok": False, "error": f"could not chmod 600 {token_path}: {exc}"}), file=sys.stderr)
+        return 2
+    token = token_path.read_text().strip()
+    if not token:
+        print(json.dumps({"ok": False, "error": f"{token_path} is empty"}), file=sys.stderr)
+        return 2
+    results_path = Path(args.results)
+    try:
+        results_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(json.dumps({"ok": False, "error": f"could not create {results_path.parent}: {exc}"}), file=sys.stderr)
+        return 2
+    try:
+        api = API(args.endpoint, token)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 2
+    state = Path(args.state or results_path.with_name("platform-sync.sqlite"))
+    client = Client(api, str(results_path), state, devices=args.device or [], interval=args.interval)
+    try:
+        beat = client.heartbeat()
+    except APIError as exc:
+        print(json.dumps({"ok": False, "error": f"{args.endpoint} rejected the token: {exc}"}), file=sys.stderr)
+        return 2
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+        print(json.dumps({"ok": False, "error": f"could not reach {args.endpoint}: {exc}"}), file=sys.stderr)
+        return 2
+    client_cmd = ["afx", "platform", "client", "run", "--endpoint", args.endpoint,
+                  "--token-file", str(token_path), "--results", str(results_path)]
+    for device in args.device or []:
+        client_cmd += ["--device", device]
+    if args.retest:
+        client_cmd.append("--retest")
+    data_dir = _implied_data_dir(results_path)
+    warnings = []
+    if data_dir is not None:
+        run_cmd = ["afx", "fuzz", "run", "--save", "--data-dir", str(data_dir)]
+    else:
+        run_cmd = ["afx", "fuzz", "run", "--save"]
+        warnings.append(
+            f"{results_path} is not a .../results/results.sqlite path. 'afx fuzz run --save' "
+            "always writes to <data-dir>/results/results.sqlite and has no flag to put results "
+            "anywhere else, so the uploader above would keep watching an empty file. Point --results "
+            f"at {results_path.parent / 'results' / 'results.sqlite'} (and run `fuzz run --save --data-dir "
+            f"{results_path.parent}`), or pick whatever --data-dir you like and derive --results from it the "
+            "same way.")
+    result = {"ok": True, "client_id": beat["client_id"], "results": str(results_path),
+              "token_file": str(token_path), "next_steps": [" ".join(run_cmd), " ".join(client_cmd)]}
+    if warnings:
+        result["warnings"] = warnings
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def main(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.action == "setup":
+        return setup(args)
     token = Path(args.token_file).read_text().strip()
     api = API(args.endpoint, token)
     state = Path(args.state or (Path(args.results).with_name("platform-sync.sqlite")))

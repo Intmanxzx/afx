@@ -87,20 +87,6 @@ def test_new_http_endpoints_and_snapshot(tmp_path):
         finally:server.shutdown();thread.join()
 
 
-def test_central_keeps_authenticated_device_and_telemetry(tmp_path):
-    from autofusex.fuzz.server.central.repository import create_user, ingest
-    from autofusex.fuzz.client.sync.outbox import pending
-    central=tmp_path/'central';key=tmp_path/'key';create_user(central,'管理员命名的设备',key)
-    repo=ResultRepository(tmp_path/'local');repo.save(record(),environment={'device_name':'untrusted','torch_npu':'2.10'})
-    repo.save(record('af-mlir'),environment={'device_name':'untrusted','torch_npu':'2.10'})
-    payload=pending(repo.path);ingest(central,key.read_text().strip(),payload)
-    first=ResultQueries(central).case_page()['items'][0]
-    assert first['device_name']=='管理员命名的设备'
-    assert first['backends']['cpu'][0]['total_ns']==15
-    rebuild(central)
-    assert ResultQueries(central).case_page()['items'][0]==first
-
-
 def test_categories_follow_targets_when_display_names_differ(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
     from autofusex.fuzz.client.case_spec import encode

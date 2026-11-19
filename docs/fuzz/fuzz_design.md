@@ -1,31 +1,24 @@
 # Fuzz 整体架构
 
-平台由中心服务、客户端管理进程和执行引擎组成。中心管理身份、设备、操作和结果，NPU 客户端执行任务。Agent 与网页共用管理配置和操作类型。代码集中在 [autofusex/fuzz](../../autofusex/fuzz/)，NNSmith fork 是独立执行依赖。
+Fuzz 由客户端管理进程和执行引擎组成，NPU 客户端执行任务、本地保存结果。代码集中在 [autofusex/fuzz](../../autofusex/fuzz/)，NNSmith fork 是独立执行依赖。
 
-本文档只覆盖这一套 fuzz 测试引擎（daemon/client/server，`autofusex/fuzz`）。在它之上新建的问题闭环、知识库、能力画像等产品层代码在 [autofusex/platform](../../autofusex/platform/)，是独立的新 schema 和 API，不是本架构的延伸，见[平台业务与数据设计](platform_v3_design.md)。
+本文档只覆盖这一套 fuzz 测试引擎（daemon/client，`autofusex/fuzz`）。旧版本自带的中心服务（身份、任务下发、问题归类、复测）已经整体下线；结果上报、问题闭环、知识库等产品层功能现在由独立的平台服务 [autofusex/platform](../../autofusex/platform/) 提供，是独立的新 schema 和 API，不是本架构的延伸，见[平台业务与数据设计](platform_v3_design.md)。`autofusex/fuzz/server/` 现在只剩下结果的只读/离线能力（`view/` 离线查看器、`reporting/` 统计与索引），不再承载任何写入或远程管理的服务进程。
 
-## 三个运行模块
-
-当前部署边界明确为三个进程/模块：
+## 运行模块
 
 | 模块 | 运行职责 | 更新方式 |
 |---|---|---|
 | `daemon` | 常驻控制面、watchdog、本地 IPC、client 生命周期、优雅停止、版本切换和回滚 | 由系统服务或 bootstrap 维护，保持稳定 |
-| `client` | 领取任务、生成 Case、CPU/NPU 执行、精度验证、本地保存和上报 | 服务端下发精确版本，daemon 在独立 venv 中执行 pip install autofusex==VERSION |
-| `server` | 用户/设备、任务下发、结果接收、统计、问题和复测 | 服务端独立发布 |
+| `client` | 领取任务、生成 Case、CPU/NPU 执行、精度验证、本地保存 | 新版本 `pip install autofusex==VERSION` |
 
-daemon 不主动检查 PyPI 最新版本。管理员在中心端提交 `client.update` 操作，通知中必须包含精确版本号；daemon 收到后请求 client graceful stop，等待有限时间，安装新版本并健康检查，失败时保留旧 client 并回执失败。无限制任务不会阻塞更新：client 进入 draining，在当前 case/stage 安全边界停止，结果先写入本地 outbox。
+`daemon/management/` 里的设备管理数据模型（`ControlStore`、环境/任务下发、`client.update` 远程升级）仍是独立模块，但把它暴露成 HTTP 的 `ControlAPI` 随旧中心一起删除了——它只在旧中心挂载过，新的 `autofusex/platform/` 没有接入这套协议也没有等价实现，细节见[使用说明：远程控制 API](fuzz_usage.md#远程控制-api)。结果上传改为客户端主动跑 `afx platform client run` 轮询/推送平台服务，不再是中心下发。
 
 ## 组件与数据流
 
 ~~~mermaid
 flowchart TD
-    Agent[Agent / 本地 CLI] --> Manager[客户端管理 daemon]
-    Web[网页 / HTTP 调用方] --> Central[中心服务]
-    Manager <-->|轮询操作 / 回执 / 状态| Central
-    Manager --> Env[环境与工具版本管理]
-    Manager --> Run[托管任务 worker]
     CLI[afx fuzz run / replay] --> Engine[阶段调度器]
+    Manager[客户端管理 daemon] --> Run[托管任务 worker]
     Run --> Engine
     Engine --> Gen[NNSmith + ATen 构图]
     Gen --> CPU[共享 CPU 参考]
@@ -33,10 +26,9 @@ flowchart TD
     CPU --> Compare[精度比较 / 可选性能测量]
     NPU --> Compare
     Compare --> DB[本地结果与执行事实]
-    DB --> Sync[异步同步 / outbox / ACK]
-    Sync --> Central
-    Central --> Read[结果查询 / 统计 / 问题与复测]
-    Read --> Web
+    DB --> PlatformClient[afx platform client run]
+    PlatformClient --> Platform[平台服务 autofusex/platform]
+    View[afx fuzz view / 离线查看器] --> DB
 ~~~
 
 | 模块 | 职责 |
@@ -45,15 +37,13 @@ flowchart TD
 | generation/、nnsmith/ | seed、NNSmith/Z3 构图、ATen 规则、CaseSpec 与确定性输入 |
 | scheduling/、backends/ | 阶段依赖、进程池、设备租约、后端能力和执行 |
 | storage/、reporting/ | 执行结果、观测事实、可重建查询模型与统计 |
-| sync/ | 上传、重试和确认进度 |
-| central/、management/central.py | 身份、HTTP 接口、远程操作、复测、问题归类及公共缓存 |
-| view/ | 中心与本地查看器共用的网页资源 |
+| server/view/ | 离线/本地只读查看器共用的网页资源与查询层 |
 
-中心是 Python HTTP 应用加 SQLite，监听 loopback，由 TLS 代理对外提供 HTTPS；无需 Torch、NNSmith、NPU 或 Node 服务。离线 view 使用同一网页和查询层，只读打开结果快照。
+离线 view 用同一网页和查询层，只读打开结果快照，不需要 Torch、NNSmith、NPU 或 Node 服务。
 
 ## 控制与任务生命周期
 
-本地 Agent 通过 /api/agent 的六个接口使用用户 Bearer token 控制自己的设备，全程使用中心任务 ID；本地 CLI 经私有 manager.sock 请求 daemon。远程操作由客户端主动轮询中心领取。两种入口共用操作白名单、配置校验和执行器。远程领取与回执受租约代次和归属约束，本地持久操作日志通过 request key 去重。
+本地 CLI 经私有 manager.sock 请求 daemon；远程操作（当接入某个服务进程后）由客户端主动轮询领取。两种入口共用操作白名单、配置校验和执行器。远程领取与回执受租约代次和归属约束，本地持久操作日志通过 request key 去重。
 
 **Operation 和 Run 是两种对象**：提交、暂停、安装各有操作状态；任务提交操作成功后得到 run_id，再查询 Run 的执行状态。配置和环境解析为实际快照及指纹，结果保留执行时配置。连续任务可在安全边界切换配置，更换环境须停止后重新提交。
 
@@ -92,12 +82,11 @@ flowchart TD
 |---|---|
 | manager.sqlite、environments/、runs/ | 私有操作、配置、环境 manifest、托管任务与控制状态 |
 | tasks/tasks.sqlite | 直接 fuzz 队列、claim、恢复；托管队列在 runs/RUN_ID/tasks.sqlite |
-| results/results.sqlite | 直接 fuzz 的 attempts、shapes、contexts 与同步进度；托管结果在 runs/RUN_ID/results.sqlite，不默认保存 tensor 和编译产物 |
-| 中心结果库 | 执行结果、身份、来源、接收回执、管理与复测数据 |
+| results/results.sqlite | 直接 fuzz 的 attempts、shapes、contexts；托管结果在 runs/RUN_ID/results.sqlite，不默认保存 tensor 和编译产物 |
 | 派生索引与公共统计侧库 | 可重建的当前用例、历史、维度和统计贡献 |
 | runtime、stage/lifecycle 事实 | 心跳、运行状态、资源和时序；缺失指标保持未采集 |
 
-每次执行使用独立 attempt ID，不以 seed 覆盖结果。中心通过 round_id 与 expected_backends 汇合同次执行；当前结果按 **seed + shape_index** 全站聚合，选择最后首次入库的完整轮次，再应用用户、版本、状态等筛选。要求的后端到齐且包含 AF-MLIR 才成为完整轮次，不拼接不同轮次的后端。重复上传不改变顺序。新版本仅接受当前协议；部署前清空所有客户端与服务端数据，见[运维说明：破坏性升级](operations.md#破坏性升级清空重装)。
+每次执行使用独立 attempt ID，不以 seed 覆盖结果。聚合层通过 round_id 与 expected_backends 汇合同次执行；当前结果按 **seed + shape_index** 聚合，选择最后首次入库的完整轮次，再应用用户、版本、状态等筛选。要求的后端到齐且包含 AF-MLIR 才成为完整轮次，不拼接不同轮次的后端。重复写入不改变顺序。新版本仅接受当前协议；schema 变化需要重新生成结果库，不做原地迁移。
 
 当前质量和性能以当前完整轮次的 AF-MLIR 为准；CPU、多后端、重试不重复扩大用例分母。历史全部保留。算子类别和 dtype 是多标签统计，每个 Shape 在各标签内计一次；最大维度取输入/输出最大轴长，张量规模取最大单张量元素数。
 
@@ -105,16 +94,6 @@ flowchart TD
 
 shape_processing 是 Shape 处理墙钟时间；端到端、排队、工具吞吐与 kernel 性能分别统计。无法独立测量的编译/kernel 指标留空，不用首次调用或阶段和代替，也不为历史记录补造事件。
 
-## 同步、复测与权限
+## 上传、复测与问题闭环
 
-管理员发放用户 token，中心存 hash；托管设备绑定后使用可撤销设备凭据。上传器独立于模型执行，outbox、revision 与 ACK 持久化。断网重试不阻塞测试，重复内容幂等，不同内容冲突拒绝。
-
-网页用户可选择公开用例在自己的客户端复测，按 seed、执行配置和目标客户端合并任务，不因多个 Shape 重复执行整图。复测包含 CPU 与 AF-MLIR，沿用资源池；领取、续租、取消和完成受租约代次约束。合法迟到结果保留，但不能完成其他代次的任务。
-
-问题归类与认领由 central/issue_groups.py 管理，与执行事实分离。外部 Agent 的接口边界见 [使用说明与 Agent API](fuzz_usage.md)。公开结果快照不含身份和 ACK，完整灾备使用私有中心备份，见[运维说明](operations.md)。
-
-## Agent 修复工作流
-
-中心将问题组冻结为修复任务，保存领取人、Agent 实例、租约、事件和关联用例。Agent 通过 HTTP 领取与续租，通过 npussh 在隔离环境调试、构建、安装候选 RUN 包，再通知中心按原始用例规格复测。任务所有权由事务和唯一约束保证，过期接管换 lease_id；网页操作不能绕过租约。
-
-复测沿用 retest 客户端，批次与修复任务在同一事务内创建。中心检查本轮合法租约结果、完整目标 Shape、精度与请求的性能指标后，才允许提交背景/方案/备注。总结与修复任务一对一，关联到复测结果的 summary_id；失败继续迭代，原始结果不覆盖。API 与安装边界见 [使用说明与 Agent API](fuzz_usage.md)。
+托管设备绑定后使用可撤销设备凭据，供 daemon 侧的远程控制协议使用（见上文"运行模块"关于 `management/central.py` 的说明）。结果上传、复测任务领取、问题归类与认领、Agent 修复闭环都已经迁移到 `autofusex/platform/`，不再是这套 fuzz 引擎自己的职责；完整协议和数据模型见[平台业务与数据设计](platform_v3_design.md)，客户端用法见[使用说明](fuzz_usage.md)。
