@@ -558,7 +558,9 @@ def _check_setting(key, value):
         ok = isinstance(value, str) and bool(_NAME.match(value))
     elif key == "issue.perf_slowdown":
         ok = isinstance(value, (int, float)) and not isinstance(value, bool) and 1.01 <= value <= 100
-    elif key in ("issue.lease_minutes", "retest.lease_minutes"):
+    elif key == "issue.lease_days":
+        ok = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 365
+    elif key == "retest.lease_minutes":
         ok = isinstance(value, int) and not isinstance(value, bool) and 5 <= value <= 1440
     elif key == "verify.max_cases":
         ok = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5000

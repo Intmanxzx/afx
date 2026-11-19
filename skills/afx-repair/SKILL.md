@@ -11,7 +11,7 @@ description: 通过 AutofuseX 平台 API 领取一类 Autofuse 问题，使用 n
 
 - `GET /api/issues?dimension=function|accuracy|performance&status=open` 浏览；`POST /api/issues/claim`，body `{request_key, agent_id, issue_id?, dimension?, backend?}`。无可领取时 data 为 null。
 - 返回内容包括 `lease_id`、`repro.cases`（用例 ID、芯片、复现命令、日志摘要）和 `related_knowledge`。先读相关知识：`GET /api/knowledge/{id}`、`GET /api/knowledge/search?q=…&op=…&backend=…`。
-- 租约 30 分钟：至少每 10 分钟调用一次 `POST /api/issues/{id}/renew {request_key, lease_id}`。验证和回归期间也要续租。返回 409 `lease_lost` 表示已过期或被他人接管，此时停止对该问题的一切写操作。
+- 问题租约默认 5 天：长时间修复过程中应定期调用 `POST /api/issues/{id}/renew {request_key, lease_id}`。验证和回归期间也要续租。返回 409 `lease_lost` 表示已过期或被他人接管，此时停止对该问题的一切写操作。
 - 一个 agent_id 同时只能持有一个问题；无法继续时调用 `POST /api/issues/{id}/release`。
 
 ## 2. 调试与构建

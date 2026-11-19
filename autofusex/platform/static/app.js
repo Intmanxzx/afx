@@ -54,7 +54,7 @@ const SEARCH_FIELDS = [
   { name: "status", label: "结果", example: "status:fail", enum: () => Object.keys(SEARCH_RESULT_LABEL), text: v => SEARCH_RESULT_LABEL[v] || v },
   { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => Object.keys(STAGE_LABEL), text: v => STAGE_LABEL[v] || v },
   { name: "arch", label: "芯片", example: "arch:910b", enum: () => searchFieldValues.arch || [], text: archLabel },
-  { name: "user", label: "用户", example: "user:alice", enum: () => searchFieldValues.user || [] },
+  { name: "user", label: "用户", example: "user:alice", enum: () => (searchFieldValues.user || []).map(v => v.id), text: v => ((searchFieldValues.user || []).find(u => u.id === v) || {}).name || v },
   { name: "op", label: "算子", example: "op:aten.add.Tensor", enum: () => searchFieldValues.op || [] },
   { name: "dtype", label: "数据类型", example: "dtype:bfloat16", enum: () => searchFieldValues.dtype || [] },
   { name: "category", label: "算子类别", example: "category:reduce", enum: () => searchFieldValues.category || [] },
@@ -408,46 +408,63 @@ function pipelineVertical(data, lanes, columns, link) {
 // metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
 async function renderBackendTabs(box, lanes, arch, q) {
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  box.replaceChildren(el("h2", {}, "基础能力统计分布"), legend([["c-pass", "通过"], ["c-func", "功能失败"], ["c-acc", "精度失败"], ["c-uns", "不支持"]]), body);
+  const statusItems = [["pass", "c-pass", "通过"], ["function_fail", "c-func", "功能失败"], ["accuracy_fail", "c-acc", "精度失败"], ["unsupported", "c-uns", "不支持"]];
+  const active = new Set(["pass", "function_fail", "accuracy_fail"]);
+  const legendNode = el("div", { class: "legend capability-legend" });
+  const redraw = () => {
+    if (!matrix) return;
+    const dims = ["all", ...DIM_ORDER.filter(d => matrix.dims.includes(d))];
+    const results = lanes.map(backend => dims.map(dim => matrix.cells[backend][dim] || { dim, groups: [] }));
+    const grid = el("div", { class: "cap-grid" });
+    grid.style.gridTemplateColumns = `repeat(${lanes.length}, minmax(320px, 1fr))`;
+    for (const backend of lanes) grid.append(el("div", { class: "cap-head" }, el("span", { class: "pipe-v-dot", style: { background: LANE_COLOR[backend] || "var(--accent)" } }), label(backend)));
+    dims.forEach((dim, row) => {
+      grid.append(el("div", { class: "cap-row-label" }, dim === "all" ? "正确性分布" : (DIM_LABEL[dim] || dim)));
+      const totals = new Map();
+      for (let col = 0; col < lanes.length; col++) for (const g of (results[col][row].groups || [])) totals.set(g.value, (totals.get(g.value) || 0) + selectedTotal(g, active));
+      const order = [...totals.keys()].sort(BUCKET_DIMS.includes(dim) ? bucketCompare : (a, b) => totals.get(b) - totals.get(a));
+      lanes.forEach((backend, col) => {
+        const result = results[col][row];
+        grid.append(dim === "all" ? donutChart(result, backend, true, active) : statusChart(result, backend, true, order, active));
+      });
+    });
+    body.replaceChildren(el("div", { class: "cap-scroll" }, grid));
+  };
+  statusItems.forEach(([key, cls, text]) => {
+    const item = el("button", { type: "button", class: "legend-toggle", "aria-pressed": active.has(key) ? "true" : "false", title: `切换${text}` }, el("i", { class: cls }), text);
+    item.addEventListener("click", () => {
+      if (active.has(key)) active.delete(key); else active.add(key);
+      item.setAttribute("aria-pressed", active.has(key));
+      redraw();
+    });
+    legendNode.append(item);
+  });
+  box.replaceChildren(el("h2", {}, "基础能力统计分布"), legendNode, body);
   if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, "暂无数据")); return; }
   let matrix;
   try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, q })); }
   catch (err) { body.replaceChildren(errorBox(err)); return; }
-  const dims = ["all", ...DIM_ORDER.filter(d => matrix.dims.includes(d))];
-  const results = lanes.map(backend => dims.map(dim => matrix.cells[backend][dim] || { dim, groups: [] }));
-  const grid = el("div", { class: "cap-grid" });
-  grid.style.gridTemplateColumns = `repeat(${lanes.length}, minmax(320px, 1fr))`;
-  for (const backend of lanes) grid.append(el("div", { class: "cap-head" }, el("span", { class: "pipe-v-dot", style: { background: LANE_COLOR[backend] || "var(--accent)" } }), label(backend)));
-  dims.forEach((dim, row) => {
-    grid.append(el("div", { class: "cap-row-label" }, dim === "all" ? "正确性分布" : (DIM_LABEL[dim] || dim)));
-    // One shared row order per dimension so the same line compares the same value across backends.
-    const totals = new Map();
-    for (let col = 0; col < lanes.length; col++) for (const g of (results[col][row].groups || [])) totals.set(g.value, (totals.get(g.value) || 0) + g.total);
-    const order = [...totals.keys()].sort(BUCKET_DIMS.includes(dim) ? bucketCompare : (a, b) => totals.get(b) - totals.get(a));
-    lanes.forEach((backend, col) => {
-      const result = results[col][row];
-      grid.append(dim === "all" ? donutChart(result, backend, true) : statusChart(result, backend, true, order));
-    });
-  });
-  body.replaceChildren(el("div", { class: "cap-scroll" }, grid));
+  redraw();
 }
+function selectedTotal(group, active) { return [...active].reduce((n, key) => n + (group[key] || 0), 0); }
 
-function donutChart(result, backend, compact = false) {
+function donutChart(result, backend, compact = false, active = new Set(["pass", "function_fail", "accuracy_fail", "unsupported"])) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, function_fail: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
-  const parts = [["通过", g.pass, "var(--ok)"], ["功能失败", g.function_fail, "var(--bad)"], ["精度失败", g.accuracy_fail, "var(--warn)"], ["不支持", g.unsupported, "var(--tie)"]].filter(p => p[1] > 0);
+  const total = selectedTotal(g, active);
+  const parts = [["pass", "通过", g.pass, "var(--ok)"], ["function_fail", "功能失败", g.function_fail, "var(--bad)"], ["accuracy_fail", "精度失败", g.accuracy_fail, "var(--warn)"], ["unsupported", "不支持", g.unsupported, "var(--tie)"]].filter(p => active.has(p[0]) && p[2] > 0);
   const R = 60, r = 38, C = 80, root = svg("svg", { viewBox: "0 0 160 160", width: 160, height: 160, role: "img", "aria-label": "正确性分布" });
   let angle = -Math.PI / 2;
-  for (const [name, n, color] of parts) {
-    const sweep = 2 * Math.PI * n / (g.total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
+  for (const [, name, n, color] of parts) {
+    const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
     const p = (rad, a) => `${C + rad * Math.cos(a)} ${C + rad * Math.sin(a)}`;
-    root.append(svg("path", { d: `M ${p(R, angle)} A ${R} ${R} 0 ${large} 1 ${p(R, end)} L ${p(r, end)} A ${r} ${r} 0 ${large} 0 ${p(r, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}（${pct(n, g.total)}）` }));
+    root.append(svg("path", { d: `M ${p(R, angle)} A ${R} ${R} 0 ${large} 1 ${p(R, end)} L ${p(r, end)} A ${r} ${r} 0 ${large} 0 ${p(r, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}（${pct(n, total)}）` }));
     angle += sweep;
   }
-  root.append(svg("text", { x: C, y: C + 4, "text-anchor": "middle", class: "donut-center" }, pct(g.pass, g.total)));
+  root.append(svg("text", { x: C, y: C + 4, "text-anchor": "middle", class: "donut-center" }, pct(active.has("pass") ? g.pass : 0, total)));
   const stages = Object.entries(g.stage_fail || {}).sort((a, b) => b[1] - a[1]);
-  return el("div", { class: "chart" }, compact ? el("div", { class: "muted small" }, `${fmt(g.total)} 个用例`) : el("h3", {}, `${label(backend)} · 正确性分布（${fmt(g.total)} 个用例）`),
-    el("div", { class: "donut-wrap" }, root, el("div", { class: "small" }, parts.map(([name, n, color]) => el("div", {}, el("i", { class: "swatch", style: { background: color } }), `${name} ${fmt(n)}（${pct(n, g.total)}）`)),
+  return el("div", { class: "chart" }, compact ? el("div", { class: "muted small" }, `${fmt(total)} 个用例`) : el("h3", {}, `${label(backend)} · 正确性分布（${fmt(total)} 个用例）`),
+    el("div", { class: "donut-wrap" }, root, el("div", { class: "small" }, parts.map(([, name, n, color]) => el("div", {}, el("i", { class: "swatch", style: { background: color } }), `${name} ${fmt(n)}（${pct(n, total)}）`)),
       stages.length ? el("div", { class: "muted", style: { marginTop: "6px" } }, "功能失败阶段：" + stages.map(([k, v]) => `${STAGE_LABEL[k] || k} ${fmt(v)}`).join(" · ")) : null)));
 }
 const BUCKET_DIMS = ["dim_bucket", "size_bucket"];
@@ -458,7 +475,7 @@ function bucketValue(label) {
   return m[1] === ">" ? n + 0.5 : n;
 }
 function bucketCompare(a, b) { return bucketValue(a) - bucketValue(b); }
-function statusChart(result, backend, compact = false, order = null) {
+function statusChart(result, backend, compact = false, order = null, active = new Set(["pass", "function_fail", "accuracy_fail", "unsupported"])) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const limit = result.dim === "op_display" ? 24 : 14;
   let groups;
@@ -473,9 +490,7 @@ function statusChart(result, backend, compact = false, order = null) {
   const title = compact ? (note ? el("div", { class: "muted small" }, note.replace(/[（）]/g, "")) : null)
     : el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`);
   return el("div", { class: "chart" + (result.dim === "op_display" && !compact ? " wide" : "") }, title,
-    groups.length ? groups.map(g => el("div", { class: "hbar", "data-tooltip": `通过 ${fmt(g.pass)}（${pct(g.pass, g.total)}）· 功能失败 ${fmt(g.function_fail)}（${pct(g.function_fail, g.total)}）· 精度失败 ${fmt(g.accuracy_fail)}（${pct(g.accuracy_fail, g.total)}）` }, el("div", { class: "label" }, g.value),
-      stackBar([["c-pass", g.pass, "通过"], ["c-func", g.function_fail, "功能失败"], ["c-acc", g.accuracy_fail, "精度失败"], ["c-uns", g.unsupported, "不支持"]], g.total),
-      el("div", { class: "muted" }, g.total ? pct(g.pass, g.total) : "—"))) : el("div", { class: "empty" }, "无数据"));
+    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? g[key] : 0; return el("div", { class: "hbar", "data-tooltip": `通过 ${fmt(shown("pass"))}（${pct(shown("pass"), total)}）· 功能失败 ${fmt(shown("function_fail"))}（${pct(shown("function_fail"), total)}）· 精度失败 ${fmt(shown("accuracy_fail"))}（${pct(shown("accuracy_fail"), total)}）· 不支持 ${fmt(shown("unsupported"))}（${pct(shown("unsupported"), total)}）` }, el("div", { class: "label" }, g.value), stackBar([["c-pass", shown("pass"), "通过"], ["c-func", shown("function_fail"), "功能失败"], ["c-acc", shown("accuracy_fail"), "精度失败"], ["c-uns", shown("unsupported"), "不支持"]], total), el("div", { class: "muted" }, total ? pct(shown("pass"), total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
 }
 
 async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
@@ -942,10 +957,13 @@ function subway(issue) {
 PAGES.repair = async (root, params) => {
   const dimension = params.get("dimension") || "function";
   const status = params.get("status") || "";
+  const q = params.get("q") || "";
   const tabs = el("div", { class: "tabs" }, [["function", "功能问题"], ["accuracy", "精度问题"], ["performance", "性能问题"]].map(([k, t]) =>
-    el("button", { class: k === dimension ? "active" : "", onclick: () => go("repair", { dimension: k, status }) }, t)));
-  const filter = select([["", "全部状态"], ...Object.entries(STATUS_LABEL)], status, v => go("repair", { dimension, status: v }));
-  const panel = el("section", { class: "panel" }, el("h2", {}, "问题列表", el("span", { class: "spacer" }), filter), tabs);
+    el("button", { class: k === dimension ? "active" : "", onclick: () => go("repair", { dimension: k, status, q: q || null }) }, t)));
+  const filter = select([["", "全部状态"], ...Object.entries(STATUS_LABEL)], status, v => go("repair", { dimension, status: v, q: q || null }));
+  const issueSearch = el("input", { class: "issue-search", placeholder: "搜索问题 ID、标题或日志", value: q, maxlength: 128 });
+  issueSearch.addEventListener("keydown", e => { if (e.key === "Enter") go("repair", { dimension, status, q: issueSearch.value.trim() || null }); });
+  const panel = el("section", { class: "panel" }, el("h2", {}, "问题列表", el("span", { class: "spacer" }), issueSearch, filter), tabs);
   root.append(panel);
   const body = el("tbody");
   const table = el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["问题", "后端", "用例数", "状态", "领取人", "更新时间"].map(t => el("th", {}, t)))), body);
@@ -955,7 +973,7 @@ PAGES.repair = async (root, params) => {
   const load = async () => {
     if (loadedOnce) panel.dataset.custom = "1";  // extra pages loaded: a refresh would drop them
     loadedOnce = true;
-    const page = await api("/api/issues" + qs({ dimension, status, after: cursor, limit: 50 }));
+    const page = await api("/api/issues" + qs({ dimension, status, q, after: cursor, limit: 50 }));
     cursor = page.next_cursor;
     for (const issue of page.issues) body.append(el("tr", {},
       el("td", {}, el("a", { href: "#", onclick: e => { e.preventDefault(); issueDrawer(issue.issue_id); } }, issue.issue_id), el("div", { class: "small", title: issue.title }, issue.title.slice(0, 110))),
@@ -1273,7 +1291,7 @@ function hourly(series) {
 async function settingsPanel() {
   const [settings, pins] = await Promise.all([api("/api/settings"), api("/api/regression/pins")]);
   const fields = [["perf.tie_threshold", "Kernel 持平阈值 t", "number", "0.01"], ["regression.budget", "回归默认预算", "number", "1"], ["regression.max_budget", "单问题回归上限", "number", "1"],
-    ["issue.perf_anchor", "性能问题锚点后端", "text"], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1"], ["issue.lease_minutes", "问题租约（分钟）", "number", "1"], ["verify.max_cases", "单轮验证用例上限", "number", "1"]];
+    ["issue.perf_anchor", "性能问题锚点后端", "text"], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1"], ["issue.lease_days", "问题租约（天）", "number", "1"], ["verify.max_cases", "单轮验证用例上限", "number", "1"]];
   const inputs = {};
   const grid = el("div", { class: "form-grid" });
   for (const [key, text, type, step] of fields) { inputs[key] = el("input", { type, step, value: settings[key].value }); grid.append(el("div", {}, text), inputs[key]); }

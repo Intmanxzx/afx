@@ -25,7 +25,7 @@ DEFAULT_SETTINGS = {
     "issue.backends": ["af-legacy", "af-mlir"],
     "issue.perf_anchor": "triton-npu",
     "issue.perf_slowdown": 1.2,
-    "issue.lease_minutes": 30,
+    "issue.lease_days": 5,
     "retest.lease_minutes": 60,
     "verify.max_cases": 200,
 }
@@ -121,9 +121,16 @@ class Store:
 
     # -- settings ----------------------------------------------------------
     def _seed_settings(self, conn: sqlite3.Connection) -> None:
+        old = conn.execute("SELECT value FROM platform_settings WHERE key='issue.lease_minutes'").fetchone()
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO platform_settings(key, value, updated_at) VALUES(?,?,?)",
                          (key, json.dumps(value), now_ms()))
+        if old is not None:
+            current = conn.execute("SELECT revision FROM platform_settings WHERE key='issue.lease_days'").fetchone()
+            if current and current[0] == 1:
+                conn.execute("UPDATE platform_settings SET value=?, revision=revision+1, updated_at=? WHERE key='issue.lease_days'",
+                             (json.dumps(max(1, round(json.loads(old[0]) / 1440))), now_ms()))
+            conn.execute("DELETE FROM platform_settings WHERE key='issue.lease_minutes'")
 
     def settings(self, conn: sqlite3.Connection | None = None) -> dict:
         conn = conn or self.reader()

@@ -359,7 +359,7 @@ def claim(store: Store, principal: Principal, body: dict):
         to_status = "claimed" if issue["status"] == "open" else issue["status"]
         _set_status(conn, issue, to_status, principal.user_id, "claimed", agent_id, owner_user=principal.user_id,
                     agent_id=agent_id, lease_id=lease_id, claimed_at=now,
-                    lease_expires_at=now + _setting(conn, "issue.lease_minutes") * 60_000)
+                    lease_expires_at=now + _setting(conn, "issue.lease_days") * 86_400_000)
         return dict(detail(conn, issue["issue_id"], repro=True), lease_id=lease_id)
     return idempotent(store, principal, "claim", body.pop("request_key", None), body, action)
 
@@ -369,7 +369,7 @@ def renew(store: Store, principal: Principal, issue_id: str, body: dict):
 
     def action(conn):
         issue = _holder(conn, principal, issue_id, body.get("lease_id"))
-        expires = now_ms() + _setting(conn, "issue.lease_minutes") * 60_000
+        expires = now_ms() + _setting(conn, "issue.lease_days") * 86_400_000
         conn.execute("UPDATE issues SET lease_expires_at=?, updated_at=? WHERE issue_id=?",
                      (expires, now_ms(), issue["issue_id"]))
         return {"issue_id": issue_id, "lease_expires_at": expires}
@@ -543,7 +543,7 @@ _ISSUE_COLUMNS = ("issue_id, dimension, backend, category, title, log_summary, s
                   "updated_at")
 
 
-def list_issues(store: Store, *, dimension=None, backend=None, status=None, after=None, limit=50) -> dict:
+def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=None, after=None, limit=50) -> dict:
     """List issues ordered by affected-case count (most impactful first), then recency."""
     if not 1 <= limit <= 200:
         raise IssueError("invalid", "limit must be 1..200")
@@ -552,6 +552,13 @@ def list_issues(store: Store, *, dimension=None, backend=None, status=None, afte
         if value is not None:
             where.append(f"{column}=?")
             args.append(value)
+    if q:
+        q = str(q).strip()
+        if len(q) > 128:
+            raise IssueError("invalid", "q must be at most 128 characters")
+        where.append("(issue_id LIKE ? OR title LIKE ? OR COALESCE(log_summary,'') LIKE ?)")
+        pattern = "%" + q + "%"
+        args.extend([pattern, pattern, pattern])
     if after is not None:
         try:
             after_count, after_no = (int(part) for part in str(after).split(":", 1))

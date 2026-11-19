@@ -44,7 +44,7 @@ def decode(raw):
         raise ValueError('shape count differs from seed')
     from autofusex.fuzz.client.nnsmith.aten_catalog import BY_TARGET
     known = {t.name for t in (*spec.inputs, *spec.weights)}
-    if graph.get('aten_rules') != 'elementwise-comparison-reduce-view/v1' or graph.get('torch') != '2.10.0+cpu':
+    if graph.get('aten_rules') != 'elementwise-comparison-reduce-view/v1' or not graph.get('torch'):
         raise ValueError('ATen protocol metadata mismatch')
     if len(graph['nodes']) > config.max_nodes:
         raise ValueError('node count exceeds seed budget')
