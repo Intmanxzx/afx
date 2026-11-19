@@ -6,7 +6,13 @@ Its own progress lives in a separate SQLite file next to it, so the old sync
 path and this uploader never share state.
 
 usage:
+  afx platform client --endpoint https://host --token-file F --results DB setup
   afx platform client --endpoint https://host --token-file F --results DB run [--retest --device npu:0]
+
+`setup` fixes --token-file permissions, creates the --results directory, confirms the
+token/endpoint by sending one heartbeat, and prints the `fuzz run`/`client run` commands
+to copy next. It never writes or invents a token: paste the one `afx platform token issue
+USER --kind client` printed into --token-file first.
 """
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ import platform as host_platform
 import re
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -855,8 +862,65 @@ class Client:
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
+def setup(args) -> int:
+    """Bootstrap a new client host: fix --token-file permissions, create the --results
+    directory, and confirm the token/endpoint actually work before anything runs
+    unattended. Never generates or stores a token itself; it only fixes permissions
+    on a file the operator already pasted an admin-issued token into."""
+    token_path = Path(args.token_file)
+    if not token_path.exists():
+        print(json.dumps({"ok": False, "error":
+            f"{token_path} does not exist; paste the token from "
+            "`afx platform token issue USER --kind client` into it (chmod 600), then rerun setup"}),
+            file=sys.stderr)
+        return 2
+    try:
+        if stat.S_IMODE(token_path.stat().st_mode) != 0o600:
+            token_path.chmod(0o600)
+    except OSError as exc:
+        print(json.dumps({"ok": False, "error": f"could not chmod 600 {token_path}: {exc}"}), file=sys.stderr)
+        return 2
+    token = token_path.read_text().strip()
+    if not token:
+        print(json.dumps({"ok": False, "error": f"{token_path} is empty"}), file=sys.stderr)
+        return 2
+    results_path = Path(args.results)
+    try:
+        results_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(json.dumps({"ok": False, "error": f"could not create {results_path.parent}: {exc}"}), file=sys.stderr)
+        return 2
+    try:
+        api = API(args.endpoint, token)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 2
+    state = Path(args.state or results_path.with_name("platform-sync.sqlite"))
+    client = Client(api, str(results_path), state, devices=args.device or [], interval=args.interval)
+    try:
+        beat = client.heartbeat()
+    except APIError as exc:
+        print(json.dumps({"ok": False, "error": f"{args.endpoint} rejected the token: {exc}"}), file=sys.stderr)
+        return 2
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+        print(json.dumps({"ok": False, "error": f"could not reach {args.endpoint}: {exc}"}), file=sys.stderr)
+        return 2
+    client_cmd = ["afx", "platform", "client", "run", "--endpoint", args.endpoint,
+                  "--token-file", str(token_path), "--results", str(results_path)]
+    for device in args.device or []:
+        client_cmd += ["--device", device]
+    if args.retest:
+        client_cmd.append("--retest")
+    print(json.dumps({"ok": True, "client_id": beat["client_id"], "results": str(results_path),
+                      "token_file": str(token_path),
+                      "next_steps": ["afx fuzz run --save", " ".join(client_cmd)]}, indent=2))
+    return 0
+
+
 def main(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.action == "setup":
+        return setup(args)
     token = Path(args.token_file).read_text().strip()
     api = API(args.endpoint, token)
     state = Path(args.state or (Path(args.results).with_name("platform-sync.sqlite")))
