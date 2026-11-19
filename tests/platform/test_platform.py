@@ -49,7 +49,7 @@ def env(tmp_path):
     store = Store(tmp_path / "data")
     auth.add_user(store, "alice", "developer")
     auth.add_user(store, "root", "admin")
-    token = auth.issue_token(store, "alice", "client")
+    token = auth.issue_token(store, "alice")
     principal = auth.authenticate(store, "Bearer " + token)
     return store, Ingestor(store), principal
 
@@ -69,23 +69,33 @@ def stats_snapshot(store):
 # -- auth ----------------------------------------------------------------------
 def test_token_lifecycle(env):
     store, _, principal = env
-    assert principal.user_id == "alice" and "upload" in principal.scopes
+    assert principal.user_id == "alice"
+    principal.require_write()
     with pytest.raises(auth.AuthError):
-        principal.require("admin")
-    token = auth.issue_token(store, "alice", "agent")
-    assert auth.authenticate(store, "Bearer " + token).kind == "agent"
+        principal.require_admin()
+    token = auth.issue_token(store, "alice")
+    assert auth.authenticate(store, "Bearer " + token).user_id == "alice"
     auth.revoke_token(store, token[:12])
     with pytest.raises(auth.AuthError):
         auth.authenticate(store, "Bearer " + token)
     with pytest.raises(auth.AuthError):
         auth.authenticate(store, "Bearer afx_not-a-token")
     with pytest.raises(ValueError):
-        auth.issue_token(store, "alice", "agent", ["admin"])
+        auth.issue_token(store, "nobody")
+
+
+def test_reissue_revokes_previous_token(env):
+    store, _, _ = env
+    first = auth.issue_token(store, "alice")
+    second = auth.issue_token(store, "alice")
+    with pytest.raises(auth.AuthError):
+        auth.authenticate(store, "Bearer " + first)
+    assert auth.authenticate(store, "Bearer " + second).user_id == "alice"
 
 
 def test_disabled_user_rejected(env):
     store, _, _ = env
-    token = auth.issue_token(store, "alice", "web")
+    token = auth.issue_token(store, "alice")
     auth.set_user_status(store, "alice", "disabled")
     with pytest.raises(auth.AuthError):
         auth.authenticate(store, "Bearer " + token)
@@ -93,7 +103,7 @@ def test_disabled_user_rejected(env):
 
 def test_tokens_stored_as_hmac_only(env):
     store, _, _ = env
-    token = auth.issue_token(store, "alice", "agent")
+    token = auth.issue_token(store, "alice")
     raw = (store.dir / "core.db").read_bytes()
     assert token.encode() not in raw
 
@@ -115,11 +125,12 @@ def test_upload_idempotent_and_conflicts(env):
     assert third["results"][0]["status"] == "duplicate"
 
 
-def test_upload_scope_required(env):
+def test_viewer_cannot_upload(env):
     store, ingestor, _ = env
-    agent = auth.authenticate(store, "Bearer " + auth.issue_token(store, "alice", "agent"))
+    auth.add_user(store, "eve", "viewer")
+    viewer = auth.authenticate(store, "Bearer " + auth.issue_token(store, "eve"))
     with pytest.raises(auth.AuthError):
-        upload(ingestor, agent, body([item("exec-0001")]))
+        upload(ingestor, viewer, body([item("exec-0001")]))
 
 
 def test_validation_rejects_bad_case_keys(env):
@@ -276,7 +287,7 @@ def http(env):
     server = PlatformServer(store, ("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    token = auth.issue_token(store, "alice", "client")
+    token = auth.issue_token(store, "alice")
 
     def call(method, path, payload=None, token=token, raw=None, content_type="application/json"):
         conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)

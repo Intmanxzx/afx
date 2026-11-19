@@ -101,7 +101,7 @@ def main() -> int:
     if not args.skip_ingest:
         if not store.reader().execute("SELECT 1 FROM users WHERE user_id='bench'").fetchone():
             auth.add_user(store, "bench", "developer")
-        principal = auth.authenticate(store, "Bearer " + auth.issue_token(store, "bench", "client"))
+        principal = auth.authenticate(store, "Bearer " + auth.issue_token(store, "bench"))
         ingestor, rng = Ingestor(store), random.Random(7)
         t0, done = time.perf_counter(), 0
         while done < args.cases:

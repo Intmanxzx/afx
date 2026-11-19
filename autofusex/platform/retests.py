@@ -74,7 +74,7 @@ def _installed(body) -> dict:
 
 
 def claim(store: Store, principal: Principal, body: dict):
-    principal.require("retest")
+    principal.require_write()
     machine_id, arch = body.get("machine_id"), body.get("npu_arch")
     if not isinstance(machine_id, str) or not 1 <= len(machine_id) <= 128:
         raise IssueError("invalid", "machine_id is required")
@@ -129,7 +129,7 @@ def _task_payload(conn, row, lease_id):
 
 
 def complete(store: Store, principal: Principal, task_id: int, body: dict):
-    principal.require("retest")
+    principal.require_write()
     exec_uuids = body.get("exec_uuids")
     if not isinstance(exec_uuids, list) or not 1 <= len(exec_uuids) <= 8 \
             or not all(isinstance(u, str) and len(u) <= 64 for u in exec_uuids):
@@ -258,7 +258,7 @@ def round_tasks(store: Store, issue_id: str, round_no: int) -> list:
 # -- manual retests from the discovery page (design 6.3) -------------------------
 def create_manual(store: Store, principal: Principal, body: dict):
     """Re-run selected cases on any client of the case's arch; results become current heads."""
-    principal.require("retest")
+    principal.require_write()
     keys, backends = body.get("case_keys"), body.get("backends")
     if not isinstance(keys, list) or not 1 <= len(keys) <= 200 or not all(isinstance(k, str) for k in keys):
         raise IssueError("invalid", "case_keys must be a list of 1..200 strings")

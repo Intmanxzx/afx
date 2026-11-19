@@ -190,7 +190,7 @@ def list_pins(store, scope=None) -> list:
 def add_pins(store, principal, body: dict):
     from .issues import IssueError, _case_ids, idempotent
     from .store import now_ms
-    principal.require("admin")
+    principal.require_admin()
     scope, value, keys = body.get("scope"), body.get("scope_value", ""), body.get("case_keys")
     if scope not in ("global", "feature"):
         raise IssueError("invalid", "scope must be global or feature (issue pins go through the issue API)")
@@ -213,7 +213,7 @@ def add_pins(store, principal, body: dict):
 def revoke_pin(store, principal, pin_id: int, body: dict):
     from .issues import IssueError, idempotent
     from .store import now_ms
-    principal.require("admin")
+    principal.require_admin()
 
     def action(conn):
         if conn.execute("UPDATE regression_pins SET revoked_at=? WHERE pin_id=? AND revoked_at IS NULL",

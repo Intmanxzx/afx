@@ -48,14 +48,13 @@ class World:
         self.store = Store(tmp_path / "data")
         auth.add_user(self.store, "dev", "developer")
         auth.add_user(self.store, "root", "admin")
-        self.client = self._principal("dev", "client")
-        self.agent = self._principal("dev", "agent")
-        self.admin = self._principal("root", "web", ["admin"])
+        self.client = self.agent = self._principal("dev")  # one token per user, used for everything
+        self.admin = self._principal("root")
         self.ingestor = Ingestor(self.store)
         self.keys = 0
 
-    def _principal(self, user, kind, scopes=None):
-        return auth.authenticate(self.store, "Bearer " + auth.issue_token(self.store, user, kind, scopes))
+    def _principal(self, user):
+        return auth.authenticate(self.store, "Bearer " + auth.issue_token(self.store, user))
 
     def key(self):
         self.keys += 1
@@ -309,8 +308,7 @@ def test_regression_budget_respected(world):
 def test_http_issue_flow(world):
     server = PlatformServer(world.store, ("127.0.0.1", 0))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    agent_token = auth.issue_token(world.store, "dev", "agent")
-    client_token = auth.issue_token(world.store, "dev", "client")
+    agent_token = client_token = auth.issue_token(world.store, "dev")
 
     def call(method, path, payload=None, token=agent_token):
         conn = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
@@ -332,9 +330,9 @@ def test_http_issue_flow(world):
         status, verify = call("POST", f"/api/issues/{issue_id}/verify",
                               dict(FIX, request_key="h2", lease_id=lease))
         assert status == 200 and verify["data"]["status"] == "verifying"
-        # agent tokens have no upload scope
+        # a developer token may upload (an empty body is rejected as invalid, not forbidden)
         status, _ = call("POST", "/api/client/executions", {"request_key": "x"}, token=agent_token)
-        assert status == 403
+        assert status != 403
         status, tasks = call("POST", "/api/client/retests/claim", {"request_key": "h3", "machine_id": "m1",
                                                                    "npu_arch": "910b", "installed": INSTALLED},
                              token=client_token)

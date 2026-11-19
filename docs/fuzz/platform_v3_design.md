@@ -139,16 +139,14 @@ users(
 user_tokens(
   token_id INTEGER PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users,
-  kind TEXT NOT NULL,                -- client | agent | web
   token_prefix TEXT NOT NULL,        -- 前 8 位明文，便于识别/吊销
   token_hash BLOB NOT NULL UNIQUE,   -- HMAC-SHA256(server_secret, token)
-  scopes TEXT NOT NULL,              -- 逗号分隔：upload,retest,issue,knowledge,admin
   expires_at, revoked_at, created_at, last_used_at
 )
 ```
 
 - token 为 32 字节随机数，只在发放时显示一次；高熵随机 token 用带服务端密钥的 HMAC 即可，不必用慢哈希。
-- 一人可有多个 token（客户端、Agent 各一），分别吊销；Agent token 默认无 `admin`、无 `upload`。
+- 每个用户只有一个 token：客户端脚本、Agent、浏览器都用同一个，鉴权只看该 token 所属用户的 `role`（`admin` 可做一切；`developer` 可读写；`viewer` 只能读）。不再区分 token 种类或单独的权限范围（scope）——早期设计按 client/agent/web 签发不同 token 并各自限定 scope，实践中这些 scope 集合几乎重叠，只增加了需要记住的概念，所以去掉了。重新 `token issue` 会吊销该用户之前的 token。
 - 离线发放：`afx server user add / token issue / token revoke` 管理命令。
 
 ### 4.3 用例 `cases`
@@ -351,32 +349,34 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 
 统一 `Authorization: Bearer <token>`，统一响应 `{"schema_version":1,"ok":…,"data"|"error":…}`，写请求均带 `request_key`，语义与现有 Agent API 一致（同 key 同 body 幂等，不同 body 409）。
 
-| 分组 | 路由 | scope | 说明 |
+鉴权只看登录与否和 `role`（无 token/scope 区分）：「任意」= 登录即可（`viewer` 也行）；「写」= 需 `developer` 或 `admin`；「admin」= 需 `admin`。
+
+| 分组 | 路由 | 权限 | 说明 |
 |---|---|---|---|
-| 认证 | `POST /api/session` / `GET /api/me` | web / 任意 | 网页登录换会话；查询身份 |
-| 客户端 | `POST /api/client/executions` | upload | 批量上报执行记录（含 case 与环境，服务端 upsert） |
-| | `POST /api/client/heartbeat` | upload | 版本快照 + 计数器 |
-| | `POST /api/client/retests/claim` / `…/complete` | retest | 拉取复测/回归任务（沿用现有租约协议，新增 `required_version`） |
-| Agent·问题 | `GET /api/issues?dimension=&backend=&status=` | issue | 问题列表 |
-| | `POST /api/issues/claim` | issue | 领取一类问题，可指定 issue_id；返回复现命令、用例列表、日志摘要、相关知识 Top-5 |
-| | `GET /api/issues/{id}` | issue | 全生命周期详情 |
-| | `POST /api/issues/{id}/renew` / `release` | issue | 续租 / 释放 |
-| | `POST /api/issues/{id}/verify` | issue | 提交验证：`fix_version`、`sha256`、`client_id`；状态 → verifying |
-| | `GET /api/issues/{id}/rounds` | issue | 验证/回归各轮结果 |
-| | `POST /api/issues/{id}/regression-cases` | issue | 为该问题指定必选回归用例（`case_keys`、`reason`）；仅租约持有者或管理员，进入 regressing 前有效 |
-| 回归集 | `GET /api/regression/pins?scope=` | 任意 | 查询指定用例 |
+| 认证 | `POST /api/session` / `GET /api/me` | 任意 | 网页登录换会话；查询身份 |
+| 客户端 | `POST /api/client/executions` | 写 | 批量上报执行记录（含 case 与环境，服务端 upsert） |
+| | `POST /api/client/heartbeat` | 写 | 版本快照 + 计数器 |
+| | `POST /api/client/retests/claim` / `…/complete` | 写 | 拉取复测/回归任务（沿用现有租约协议，新增 `required_version`） |
+| Agent·问题 | `GET /api/issues?dimension=&backend=&status=` | 写 | 问题列表 |
+| | `POST /api/issues/claim` | 写 | 领取一类问题，可指定 issue_id；返回复现命令、用例列表、日志摘要、相关知识 Top-5 |
+| | `GET /api/issues/{id}` | 写 | 全生命周期详情 |
+| | `POST /api/issues/{id}/renew` / `release` | 写 | 续租 / 释放 |
+| | `POST /api/issues/{id}/verify` | 写 | 提交验证：`fix_version`、`sha256`、`client_id`；状态 → verifying |
+| | `GET /api/issues/{id}/rounds` | 写 | 验证/回归各轮结果 |
+| | `POST /api/issues/{id}/regression-cases` | 写 | 为该问题指定必选回归用例（`case_keys`、`reason`）；仅租约持有者或管理员，进入 regressing 前有效 |
+| 回归集 | `GET /api/regression/pins?scope=` | 任意 | 查询指定用例（这里的 `scope` 是取值 global/feature/issue 的查询参数，与鉴权无关） |
 | | `POST /api/regression/pins` / `DELETE /api/regression/pins/{id}` | admin | 管理全局 / 特征范围的指定用例 |
-| | `GET /api/regression/preview?issue_id=` | issue | 预览本问题将要冻结的回归集及每个用例的来源 |
-| Agent·知识 | `POST /api/issues/{id}/knowledge` | knowledge | 提交总结（仅 summarizing 状态），→ resolved |
+| | `GET /api/regression/preview?issue_id=` | 写 | 预览本问题将要冻结的回归集及每个用例的来源 |
+| Agent·知识 | `POST /api/issues/{id}/knowledge` | 写 | 提交总结（仅 summarizing 状态），→ resolved |
 | | `GET /api/knowledge/search?q=&ops=&kind=` | 任意 | 检索 |
 | | `GET /api/knowledge/export?format=jsonl` | 任意 | RAG 导出 |
 | 只读 | `GET /api/cases` / `executions` / `overview/*` / `profile/*` | 任意 | 页面数据，均支持统一过滤参数 `q` |
 | 管理 | `POST /api/admin/clients/{id}/update` | admin | 一键更新 afx（现有 client.update） |
 | | `POST /api/admin/issues/{id}/merge` / `close` | admin | 合并/关闭问题 |
 | | `GET/PUT /api/admin/settings` | admin | 回归预算与各层占比、性能持平阈值等；PUT 带 `base_revision` 防并发覆盖 |
-| 复测 | `POST /api/retests` / `GET /api/retests?mine=1` | retest | 页面手动复测选中用例（不属于问题流程）；按 用例 × backend × arch 合并任务 |
-| 预留 | `POST /api/import/baize` | upload | 导入 Baize 用例（构图+输入），返回 case_key 列表；本期返回 501 |
-| 预留 | `POST /api/models/jobs`、`GET /api/models/jobs/{id}` | upload | 整网分析任务与报告；本期返回 501 |
+| 复测 | `POST /api/retests` / `GET /api/retests?mine=1` | 写 | 页面手动复测选中用例（不属于问题流程）；按 用例 × backend × arch 合并任务 |
+| 预留 | `POST /api/import/baize` | 写 | 导入 Baize 用例（构图+输入），返回 case_key 列表；本期返回 501 |
+| 预留 | `POST /api/models/jobs`、`GET /api/models/jobs/{id}` | 写 | 整网分析任务与报告；本期返回 501 |
 
 领取返回示例（关键字段）：
 
@@ -509,7 +509,7 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 |---|---|
 | `schema.py` | 三个库的有序迁移（`schema_migrations`） |
 | `store.py` | 连接、单写锁、设置、内容去重压缩（SHA-256 命中后逐字节核对） |
-| `auth.py` | 用户、token（HMAC-SHA256 存储，明文只显示一次）、scope |
+| `auth.py` | 用户、token（HMAC-SHA256 存储，明文只显示一次，每用户一个） |
 | `ingest.py` | 上报校验、用例/环境/特征 upsert、导入用例改图、执行头推进、设置修改 |
 | `aggregates.py` | `stat_buckets` / `perf_pair_buckets` 增量维护与全量重建 |
 | `queries.py` | 总览管道、单 backend 分布、两两 Kernel 对比、用例分组列表、执行详情 |
@@ -519,7 +519,7 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 
 ```sh
 afx platform --data DIR user add alice --role developer
-afx platform --data DIR token issue alice --kind client
+afx platform --data DIR token issue alice
 afx platform --data DIR token list
 afx platform --data DIR token revoke afx_XXXXXXXX
 afx platform --data DIR serve --port 8100
@@ -568,15 +568,15 @@ P0 已实现的路由：`POST /api/client/executions`；`GET /api/me`、`/api/ov
 
 新增路由（全部要求 Bearer token，写请求都带 `request_key`，同 key 同 body 返回首次结果，不同 body 返回 409）：
 
-| 方法 | 路由 | scope |
+| 方法 | 路由 | 权限 |
 |---|---|---|
 | GET | `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/cases?role=`、`/api/issues/{id}/rounds/{n}/tasks` | 任意 |
-| POST | `/api/issues/claim`；`/api/issues/{id}/{renew,release,verify,regression-cases,knowledge}` | issue / knowledge |
+| POST | `/api/issues/claim`；`/api/issues/{id}/{renew,release,verify,regression-cases,knowledge}` | 写 |
 | POST | `/api/admin/issues/{id}/{close,merge}` | admin |
 | GET / POST / DELETE | `/api/regression/preview?issue_id=`、`/api/regression/pins`、`/api/regression/pins/{id}` | 任意 / admin |
-| POST | `/api/client/retests/claim`、`/api/client/retests/{task_id}/complete` | retest |
+| POST | `/api/client/retests/claim`、`/api/client/retests/{task_id}/complete` | 写 |
 | GET | `/api/knowledge/search`、`/api/knowledge/{id}`、`/api/knowledge/export`（NDJSON） | 任意 |
-| POST | `/api/knowledge`（草稿）、`/api/admin/knowledge/{id}/status` | knowledge / admin |
+| POST | `/api/knowledge`（草稿）、`/api/admin/knowledge/{id}/status` | 写 / admin |
 
 客户端复测协议：
 
