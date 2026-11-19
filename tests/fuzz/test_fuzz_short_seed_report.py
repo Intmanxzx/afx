@@ -37,6 +37,10 @@ def test_mlir_fails_closed_without_runtime_evidence(monkeypatch):
     from autofusex.fuzz.client.execution import execute
     from autofusex.fuzz.client.backends.base import UnsupportedBackend
     def unavailable(): raise UnsupportedBackend('af-mlir runtime verification failed: test missing runtime')
+    # verify_compile_adapter() is a separate, earlier gate (d516c22); stub it out so this
+    # test exercises verify_runtime()'s own fail-closed behavior on a machine without the
+    # full autofuse package installed, instead of failing one gate sooner for a different reason.
+    monkeypatch.setattr('autofusex.fuzz.client.backends.mlir_capability.verify_compile_adapter',lambda: 'stub')
     monkeypatch.setattr('autofusex.fuzz.client.backends.mlir_capability.verify_runtime',unavailable)
     result=execute(generate(CURRENT_SEED),create_backend(ExecutionConfig('af-mlir','npu:0')),EvaluationConfig())
     assert result['status']=='unsupported'

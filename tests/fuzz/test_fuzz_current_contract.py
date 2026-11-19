@@ -156,10 +156,17 @@ def test_actual_parameters_against_independent_torch_oracle(target,attrs,shape,o
 def test_current_golden_fingerprints():
     from autofusex.fuzz.client.generation import materialize,workload_id
     # Materializer class names belong to the autofusex.fuzz.client.nnsmith namespace.
-    expected=[(False,3,0,3,'5f66a8a93edb1e01521b5bc9134a54159b88d0c998f12bf586fe4464dda8ba1c'),
-              (False,3,1,3,'e79b4d83a7fb9b87cf9432290084234a7687eb41de09638ab3679d61c0405660'),
-              (True,2,3,1,'f15335913c12ebe46c5e7642626a97c0f8a49fe6628391a5fd11217d05a1d82e'),
-              (True,8,3,1,'b449d6264fc50b42653bc0695c0ed2eab473ac2a5fdac26b844b57439a11f832')]
+    # Re-pinned after commit 0154365 ("normalize operator names and expose tool
+    # categories"), which changed embedded display_name strings in graph_json for
+    # several ops and so, intentionally, the workload_id of any graph containing
+    # them; that commit landed without updating this golden set. Re-pinning here
+    # does not undo the drift it already caused for workload_ids computed before
+    # it on any production database -- those are unaffected and unrecoverable by
+    # this test; it only stops the *next* unrelated change from going unnoticed.
+    expected=[(False,3,0,3,'81105c13c3dc953c34d8f81cc1cd695e9a3ea92e8748634e251f286a675f9cac'),
+              (False,3,1,3,'ec11059a04f6dca93375b3ed2f0e29fa998f03606f95d960f4e1376838b68ca2'),
+              (True,2,3,1,'8cae18ec587d71dbec5caaf138f3a932d2aea3445cf9d1104128ec6e6dfcab51'),
+              (True,8,3,1,'b2b00bbc2a98eb14a92f98e32141de7790da51b50503205a94f6d8f03d2ae04a')]
     for dynamic,count,entropy,nodes,digest in expected:
         config=SamplingConfig.profile('small',max_nodes=nodes,dtype_mode='float32',dynamic_variants=count)
         assert workload_id(materialize(config.seed(entropy,dynamic)))==digest
