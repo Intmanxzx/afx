@@ -58,10 +58,10 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
                 result['_timings']['compile'] = value
     except Exception as exc:
         result['_timings'][stage] = time.perf_counter_ns()-started
-        from .failure_details import excerpt
+        from .failure_details import excerpt, error_summary
         result['_diagnostics']['error'] = excerpt(exc)
         result.update(status="unsupported" if isinstance(exc, UnsupportedBackend) else "error",
-                      error_stage=stage, error_summary=f"{type(exc).__name__}: {exc}"[:500])
+                      error_stage=stage, error_summary=error_summary(exc))
         return result
     static_only = getattr(getattr(adapter, "config", None), "static_only", False)
     indices = range(1 if static_only else len(bundle.spec.shape_samples))
@@ -117,11 +117,11 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
                 else:
                     row['performance'] = 'skipped'
         except Exception as exc:
-            from .failure_details import excerpt
+            from .failure_details import excerpt, error_summary
             if index<3:result['_diagnostics']['shapes'].setdefault(str(index),{})['error']=excerpt(exc)
             if stage not in row['_timings']:
                 row['_timings'][stage]=time.perf_counter_ns()-started
-            row.update(error_stage=stage, error_summary=f"{type(exc).__name__}: {exc}"[:500])
+            row.update(error_stage=stage, error_summary=error_summary(exc))
             if stage in {"measurement", "warmup"}:
                 row["performance"] = "error"  # Do not erase correctness.
             else:

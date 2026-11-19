@@ -15,6 +15,12 @@ def excerpt(exc):
     return redact(''.join(traceback.format_exception(type(exc),exc,exc.__traceback__)))[-1600:]
 
 
+def error_summary(exc):
+    """Extract the cause before bounding a compiler exception's generated source."""
+    text = f'{type(exc).__name__}: {exc}'
+    return diagnostic_view({'shapes': {'0': {'error': text}}}, 0)['summary'][:500]
+
+
 def validate(raw):
     if not isinstance(raw,str) or len(raw)>8000:raise ValueError('diagnostics size exceeded')
     data=json.loads(raw)
@@ -64,6 +70,7 @@ def diagnostic_view(diagnostics, index, fallback=''):
             if any(word in line.lower() for word in (
                 'unsupportedoperation:', 'fatal:', 'error:', 'runtimeerror:',
                 'codegen generate kernel failed', 'af_mlir_strict',
+                'check dtype failed', 'infer dtype failed', 'check shape failed',
             )) and line not in lines:
                 # Wrapper exceptions often append generated source on the same line.
                 lines.append(line.split('Failed to execute graph code:')[0] +
@@ -74,7 +81,9 @@ def diagnostic_view(diagnostics, index, fallback=''):
     if not current:
         current = useful(fallback)
     # Prefer concrete codegen/native diagnostics over wrapper exceptions.
-    current.sort(key=lambda line: 'failed to execute graph code' in line.lower())
+    current.sort(key=lambda line: (
+        'failed to execute graph code' in line.lower(),
+        'codegen generate kernel failed' in line.lower() or 'af_mlir_strict' in line.lower()))
     shared_lines = [line for line in useful(shared) if line not in current]
     summary = current[0] if current else (redact(local).strip().splitlines() or [''])[0]
     if not summary and shared_lines:
