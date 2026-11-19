@@ -167,58 +167,58 @@ def on_head(conn: sqlite3.Connection, case_id: int, exec_id: int, cfg: dict | No
     if execution["backend"] not in backends and execution["backend"] != anchor:
         return
     traits = case_traits(conn, case_id)
-    failure = failure_dimension(execution)
-    target_sig = None
-    if failure is not None and execution["backend"] in backends:
-        make = function_signature if failure == "function" else accuracy_signature
-        target_sig = make(execution, traits)[0]
-    _reclassify_case(conn, case_id, execution["npu_arch"], execution["backend"], failure, target_sig)
-    if execution["backend"] in backends:
-        dimension = failure
-        if dimension is not None:
-            make = function_signature if dimension == "function" else accuracy_signature
-            sig, category, title = make(execution, traits)
-            conn.execute("UPDATE executions SET issue_signature=? WHERE exec_id=?", (sig, exec_id))
-            _attach(conn, dimension, execution["backend"], sig, category, title, execution["log_summary"],
-                    execution, traits)
-    _check_performance(conn, case_id, execution["npu_arch"], backends, anchor, cfg["slowdown"], traits)
-
-
-def _reclassify_case(conn, case_id, npu_arch, backend, dimension, signature):
-    rows = conn.execute(
-        "SELECT ic.issue_id, i.dimension, i.backend, i.signature FROM issue_cases ic "
-        "JOIN issues i ON i.issue_id=ic.issue_id WHERE ic.case_id=? AND ic.role='affected' "
-        "AND ic.npu_arch=? AND i.backend=? AND ic.stale=0", (case_id, npu_arch, backend)).fetchall()
-    for row in rows:
-        if dimension is not None and row["backend"] == backend and row["dimension"] == dimension and row["signature"] == signature:
-            continue
-        now = now_ms()
-        conn.execute(
-            "UPDATE issue_cases SET stale=1, result='skip', pick_reason=? WHERE issue_id=? "
-            "AND role='affected' AND case_id=? AND npu_arch=?",
-            (f"reclassified to {dimension or 'resolved'}", row["issue_id"], case_id, npu_arch))
-        conn.execute("UPDATE issues SET case_count=MAX(case_count-1,0), priority=MAX(priority-1,0), updated_at=? WHERE issue_id=?",
-                     (now, row["issue_id"]))
-        event(conn, row["issue_id"], "system", "case_reclassified", None, None,
-              f"case {case_id} skipped; moved to {dimension or 'no issue'}")
-
-
-def _check_performance(conn, case_id, arch, backends, anchor, slowdown, traits):
     heads = {row["backend"]: row for row in conn.execute(
         "SELECT e.* FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
-        "WHERE h.case_id=? AND h.npu_arch=?", (case_id, arch))}
-    base = heads.get(anchor)
-    if base is None or not _timed(base):
-        return
+        "WHERE h.case_id=? AND h.npu_arch=?", (case_id, execution["npu_arch"]))}
     for backend in backends:
-        row = heads.get(backend)
-        if row is None or not _timed(row):
+        target = heads.get(backend)
+        if target is not None:
+            reconcile(conn, target, heads.get(anchor), cfg=cfg)
+
+
+def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
+    """Classify once; record pass, fail or skip against the original issue."""
+    cfg = cfg or config(conn)
+    traits = case_traits(conn, execution["case_id"])
+    if execution["case_revision"] != traits["revision"]:
+        return None
+    dimension = failure_dimension(execution)
+    signature = None
+    summary = execution["log_summary"]
+    if dimension:
+        signature = {"function": function_signature, "accuracy": accuracy_signature}[dimension](execution, traits)
+    measured = anchor is not None and _timed(anchor) and _timed(execution)
+    if dimension is None and measured:
+        ratio = execution["kernel_ns"] / anchor["kernel_ns"]
+        if ratio >= cfg["slowdown"]:
+            dimension = "performance"
+            signature = performance_signature(execution["backend"], cfg["anchor"], ratio, traits)
+            summary = f"kernel {ratio:.2f}x slower than {cfg['anchor']}"
+    target_id = None
+    if signature:
+        target_id = _attach(conn, dimension, execution["backend"], *signature, summary, execution, traits)
+    rows = conn.execute(
+        "SELECT ic.issue_id, i.dimension, i.status FROM issue_cases ic JOIN issues i USING(issue_id) "
+        "WHERE ic.case_id=? AND ic.npu_arch=? AND i.backend=? AND ic.role='affected' "
+        "AND ic.stale=0 AND COALESCE(ic.result,'')<>'skip'",
+        (execution["case_id"], execution["npu_arch"], execution["backend"])).fetchall()
+    for row in rows:
+        if source_id is not None and row["issue_id"] != source_id:
             continue
-        ratio = row["kernel_ns"] / base["kernel_ns"]
-        if ratio >= slowdown:
-            sig, category, title = performance_signature(backend, anchor, ratio, traits)
-            _attach(conn, "performance", backend, sig, category, title,
-                    f"kernel {row['kernel_ns']}ns vs {anchor} {base['kernel_ns']}ns ({ratio:.2f}x)", row, traits)
+        if source_id is None and row["status"] in ACTIVE:
+            continue
+        if target_id is None and (execution["function_status"] != "pass" or
+                                  row["dimension"] == "performance" and not measured):
+            continue
+        result = "pass" if target_id is None else "fail" if row["issue_id"] == target_id else "skip"
+        reason = f"→ {target_id}" if result == "skip" else None
+        conn.execute("UPDATE issue_cases SET result=?, pick_reason=?, last_exec_id=? WHERE issue_id=? "
+                     "AND role='affected' AND case_id=? AND npu_arch=?",
+                     (result, reason, execution["exec_id"], row["issue_id"], execution["case_id"], execution["npu_arch"]))
+        if result == "skip":
+            event(conn, row["issue_id"], "system", "case_reclassified", None, None,
+                  f"{traits['case_key']} ({execution['npu_arch']}) → {target_id}")
+    return target_id
 
 
 def _timed(row) -> bool:
@@ -247,11 +247,11 @@ def _attach(conn, dimension, backend, sig, category, title, summary, execution, 
     issue_id = issue["issue_id"]
     inserted = conn.execute(
         "INSERT OR IGNORE INTO issue_cases(issue_id, case_id, role, npu_arch, case_revision, first_exec_id, "
-        "last_exec_id, added_at) VALUES(?,?, 'affected', ?,?,?,?,?)",
+        "last_exec_id, added_at, result) VALUES(?,?, 'affected', ?,?,?,?,?, 'fail')",
         (issue_id, execution["case_id"], execution["npu_arch"], traits["revision"], execution["exec_id"],
          execution["exec_id"], now)).rowcount
-    if not inserted:
-        conn.execute("UPDATE issue_cases SET last_exec_id=?, case_revision=?, stale=0 WHERE issue_id=? "
+    if not inserted and issue["status"] not in ACTIVE:
+        conn.execute("UPDATE issue_cases SET last_exec_id=?, case_revision=?, stale=0, result='fail', pick_reason=NULL WHERE issue_id=? "
                      "AND role='affected' AND case_id=? AND npu_arch=?",
                      (execution["exec_id"], traits["revision"], issue_id, execution["case_id"], execution["npu_arch"]))
     conn.execute("UPDATE issues SET case_count=case_count+?, priority=case_count+?, last_seen_at=?, updated_at=? "
@@ -261,6 +261,8 @@ def _attach(conn, dimension, backend, sig, category, title, summary, execution, 
                      "lease_expires_at=NULL, updated_at=? WHERE issue_id=?", (now, issue_id))
         event(conn, issue_id, "system", "reopened", "resolved", "open",
               f"new failure exec {execution['exec_id']} after resolution")
+
+    return issue_id
 
 
 def _reopens(conn, issue, execution) -> bool:
@@ -437,7 +439,7 @@ def verify(store: Store, principal: Principal, issue_id: str, body: dict):
         if issue["status"] != "claimed":
             raise IssueError("wrong_state", f"verify needs status claimed, issue is {issue['status']}", 409)
         cases = conn.execute(
-            "SELECT case_id, npu_arch FROM issue_cases WHERE issue_id=? AND role='affected' AND stale=0 "
+            "SELECT case_id, npu_arch FROM issue_cases WHERE issue_id=? AND role='affected' AND stale=0 AND COALESCE(result,'')<>'skip' "
             "ORDER BY added_at DESC LIMIT ?", (issue_id, _setting(conn, "verify.max_cases"))).fetchall()
         if not cases:
             raise IssueError("no_cases", "issue has no current affected cases to verify", 409)
@@ -640,7 +642,7 @@ def _repro(conn, issue_id, backend):
     rows = conn.execute(
         "SELECT c.case_key, c.case_source, ic.npu_arch, e.exec_uuid FROM issue_cases ic "
         "JOIN cases c ON c.case_id=ic.case_id LEFT JOIN executions e ON e.exec_id=ic.last_exec_id "
-        "WHERE ic.issue_id=? AND ic.role='affected' AND ic.stale=0 ORDER BY ic.added_at DESC LIMIT ?",
+        "WHERE ic.issue_id=? AND ic.role='affected' AND ic.stale=0 AND COALESCE(ic.result,'')<>'skip' ORDER BY ic.added_at DESC LIMIT ?",
         (issue_id, REPRO_LIMIT)).fetchall()
     cases = []
     for row in rows:

@@ -80,7 +80,7 @@ class World:
             status = outcome(task["case_key"])
             uuid = f"t{task['task_id']:06d}x{self.keys}"
             self.upload([item(uuid, n, status=status, summary="error at 0x1f tile 32" if status != "pass" else None,
-                              created=5000)], kind=task["run_kind"], run=task["run_uuid"])
+                              created=5000, fail_stage="schedule" if status != "pass" else None)], kind=task["run_kind"], run=task["run_uuid"])
             results.append(retests.complete(self.store, self.client, task["task_id"], {
                 "request_key": self.key(), "lease_id": task["lease_id"], "exec_uuids": [uuid],
                 "installed": installed}))
@@ -125,9 +125,9 @@ def test_reclassifies_case_when_failure_dimension_changes(world):
     world.upload([item("exec-reclass-a", 101, status="pass", accuracy="fail",
                         max_abs_err=2.0, max_rel_err=2.0, summary="accuracy failure")])
     listed = {row["issue_id"]: row for row in issues.list_issues(world.store)["issues"]}
-    assert listed[function_issue["issue_id"]]["case_count"] == 0
+    assert listed[function_issue["issue_id"]]["case_count"] == 1
     old = issues.issue_cases(world.store, function_issue["issue_id"])["cases"][0]
-    assert old["stale"] == 1 and old["result"] == "skip"
+    assert old["stale"] == 0 and old["result"] == "skip"
     assert any(row["dimension"] == "accuracy" and row["case_count"] == 1 for row in listed.values())
 
 
@@ -409,3 +409,38 @@ def test_short_id_migration_renames_everywhere(tmp_path):
     assert r.execute("SELECT issue_id, knowledge_id FROM issues").fetchone()[:] == ("F254", "K12")
     assert r.execute("SELECT issue_id FROM issue_cases").fetchone()[0] == "F254"
     assert r.execute("SELECT knowledge_id, target_id FROM knowledge_links").fetchone()[:] == ("K12", "F254")
+
+
+@pytest.mark.parametrize('destination', ['function', 'accuracy', 'performance', 'pass'])
+def test_verified_result_reclassifies_original_issue(world, destination):
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), agent_id='a', issue_id=issue_id))['lease_id']
+    issues.verify(world.store, world.agent, issue_id, dict(FIX, request_key=world.key(), lease_id=lease))
+    tasks = world.claim_tasks()
+    for task in tasks:
+        n = int(task['case_key'][1:], 36)
+        extra = {
+            'function': dict(status='runtime_fail', summary='another failure'),
+            'accuracy': dict(accuracy='fail'),
+            'performance': dict(kernel_ns=1000),
+            'pass': {},
+        }[destination]
+        uuid = f'verified-{task["task_id"]}'
+        world.upload([item(uuid, n, **extra)], kind=task['run_kind'], run=task['run_uuid'])
+        # Include the benchmark in this same verified run, never a historical head.
+        if destination == 'performance':
+            world.upload([item(uuid+'-anchor', n, backend='triton-npu', kernel_ns=100)],
+                         kind=task['run_kind'], run=task['run_uuid'])
+            with world.store.write() as conn:
+                conn.execute("UPDATE retest_tasks SET backends=backends || ',triton-npu' WHERE task_id=?", (task['task_id'],))
+        ids = [uuid] + ([uuid+'-anchor'] if destination == 'performance' else [])
+        result = retests.complete(world.store, world.client, task['task_id'], dict(
+            request_key=world.key(), lease_id=task['lease_id'], exec_uuids=ids, installed=INSTALLED))
+        assert result['result'] == ('pass' if destination == 'pass' else 'skip')
+    members = issues.issue_cases(world.store, issue_id)['cases']
+    assert {r['result'] for r in members} == ({'pass'} if destination == 'pass' else {'skip'})
+    assert not any(r['stale'] for r in members)
+    assert world.issue(issue_id)['rounds'][0]['outcome'] == 'passed'
+    if destination != 'pass':
+        targets = [r for r in issues.list_issues(world.store)['issues'] if r['issue_id'] != issue_id and r['dimension'] == destination]
+        assert any({c['result'] for c in issues.issue_cases(world.store, r['issue_id'])['cases']} == {'fail'} for r in targets)
