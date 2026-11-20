@@ -30,6 +30,18 @@ def test_task_immutable_resolution_and_resource_limits(tmp_path):
     with pytest.raises(PermissionError):tasks.prepare(store,spec)
 
 
+def test_all_devices_expand_for_local_and_policy_wildcards(tmp_path, monkeypatch):
+    store,spec=prepared(tmp_path)
+    spec['results']={'save':True,'upload':False}
+    atomic(store.home/'trust.json',dict(resource_limits=dict(allowed_devices=['all'],max_workers=1,max_compile_threads=1)))
+    store.put('effective_policy',validate(dict(schema_version=1,kind='client_policy',
+        resources=dict(allowed_devices=['all'],max_workers=1,max_compile_threads=1))))
+    monkeypatch.setattr(tasks, '_expand_devices', lambda values: ['npu:0','npu:1'] if 'all' in values else values)
+    spec['execution']=dict(devices=['all'],backends=['cpu','af-mlir'],resources=dict(policy='manual',workers=1,compile_threads=1))
+    result=tasks.prepare(store,spec)
+    assert result['spec']['execution']['devices']==['npu:0','npu:1']
+
+
 def test_owned_task_actions_and_no_pid_kill(tmp_path):
     store,spec=prepared(tmp_path)
     directory=store.home/'runs'/'run';directory.mkdir(parents=True)
