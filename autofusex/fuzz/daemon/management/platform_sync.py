@@ -2,7 +2,6 @@
 import importlib.metadata
 import json
 import socket
-import uuid
 from .artifacts import atomic
 from autofusex.platform.client import API, Client
 
@@ -10,12 +9,27 @@ from autofusex.platform.client import API, Client
 def synchronize(manager, client):
     store=manager.store
     api=API(client['endpoint'],client['token'],timeout=15)
-    identity=store.get('machine_id')
-    if identity is None:
-        identity=str(uuid.uuid4());store.put('machine_id',identity)
+    # Use the same deterministic identity as the standalone platform client.
+    # The old daemon path generated a random UUID, so `afx start` and
+    # `afx platform client run` on the same host appeared as two clients.
+    from autofusex.fuzz.client.environment import collect
+    env = collect(store.home)
+    home = str(store.home.resolve())
+    identity = (env.get('installation_id') or socket.gethostname())[:128]
+    store.put('machine_id', identity[:128])
     active_path=store.home/'active-client.json'
     version=json.loads(active_path.read_text())['version'] if active_path.exists() else importlib.metadata.version('autofusex')
-    beat=api.call('POST','/api/client/heartbeat',dict(machine_id=identity,hostname=socket.gethostname(),afx_version=version,busy=bool(manager.processes)),attempts=1)
+    beat=api.call('POST','/api/client/heartbeat',dict(
+        machine_id=identity[:128], client_home=home[:512],
+        hostname=socket.gethostname(), npu_arch=env.get('device_model'),
+        afx_version=env.get('package_version') or version,
+        backend_versions={'af-mlir': env.get('cann'), 'triton-npu': env.get('triton'),
+                          'cpu': env.get('torch')},
+        counters={},
+        # `busy` is reserved for a client that is actively executing a
+        # server-assigned retest. Ordinary fuzz work must remain Online in the
+        # fleet view; otherwise the UI incorrectly labels it "复测中".
+        busy=False, pending_uploads=0, runtime=[]), attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
     config = effective['config']
     # A device selected during `afx init --device` is a local operator
