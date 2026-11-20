@@ -1239,8 +1239,8 @@ PAGES.ops = async root => {
       el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "卡数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
       el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 13, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
-  const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
+  const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel);
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
 // One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).
