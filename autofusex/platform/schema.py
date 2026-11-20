@@ -484,6 +484,7 @@ ALTER TABLE clients ADD COLUMN client_home TEXT;
     (10, """
 ALTER TABLE clients ADD COLUMN devices TEXT;
 """),
+    (11, None),  # Repair attribution columns omitted by already-applied migration 4.
 ]
 
 CONTENT = [
@@ -540,8 +541,14 @@ def apply(conn: sqlite3.Connection, schema: str, migrations) -> None:
             continue
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for statement in _statements(sql):
-                conn.execute(_qualify(statement, schema))
+            if sql is None and schema == "main" and version == 11:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(executions)")}
+                for name, kind in (("classifier_version", "INTEGER"), ("failure_owner", "TEXT")):
+                    if name not in columns:
+                        conn.execute(f"ALTER TABLE executions ADD COLUMN {name} {kind}")
+            else:
+                for statement in _statements(sql):
+                    conn.execute(_qualify(statement, schema))
             conn.execute(f"INSERT INTO {schema}.schema_migrations VALUES(?, ?)",
                          (version, int(time.time())))
             conn.execute("COMMIT")

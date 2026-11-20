@@ -517,3 +517,19 @@ def test_device_inventory_independent_of_runs(world):
     for devices in [["npu:0", "npu:0"], ["cpu"], [True], "npu:0"]:
         with pytest.raises(IssueError):
             ops.heartbeat(store, client, {"machine_id": "m1", "devices": devices})
+
+
+def test_upgrade_pre_attribution_database(tmp_path):
+    import sqlite3
+    from autofusex.platform import schema
+    conn = sqlite3.connect(tmp_path / 'legacy.db', isolation_level=None)
+    old = [(v, sql.replace('ALTER TABLE executions ADD COLUMN classifier_version INTEGER;', '')
+            .replace('ALTER TABLE executions ADD COLUMN failure_owner TEXT;', ''))
+           for v, sql in schema.CORE if v <= 10]
+    schema.apply(conn, 'main', old)
+    schema.apply(conn, 'main', schema.CORE)
+    schema.apply(conn, 'main', schema.CORE)
+    columns = {r[1] for r in conn.execute('PRAGMA table_info(executions)')}
+    assert {'classifier_version', 'failure_owner'} <= columns
+    assert conn.execute('SELECT count(*) FROM schema_migrations WHERE version=11').fetchone()[0] == 1
+    conn.close()
