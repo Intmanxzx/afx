@@ -12,7 +12,7 @@ from ...client.storage.queries import ResultQueries
 
 ASSETS = {'favicon.svg': ('favicon.svg', 'image/svg+xml'), 'runtime.js': ('runtime.js', 'text/javascript; charset=utf-8'), 'report': ('index.html', 'text/html; charset=utf-8'), 'charts.js': ('charts.js', 'text/javascript; charset=utf-8'), '': ('index.html', 'text/html; charset=utf-8'),
           'app.js': ('app.js', 'text/javascript; charset=utf-8'),
-          'style.css': ('style.css', 'text/css; charset=utf-8'), 'issues.js': ('issues.js', 'text/javascript; charset=utf-8'), 'issues.css': ('issues.css', 'text/css; charset=utf-8')}
+          'style.css': ('style.css', 'text/css; charset=utf-8')}
 
 
 class ViewerServer(ThreadingHTTPServer):
@@ -69,10 +69,6 @@ def create_server(database, *, port=0):
                 if any(len(v) != 1 for v in raw.values()):
                     raise ValueError('duplicate query field')
                 params = {k: v[0] for k,v in raw.items()}
-                if route == 'api/issues' and not set(params)-{'dimension'}:
-                    from ..central.issue_groups import list_groups
-                    self.respond(200, list_groups(database, params.get('dimension')))
-                    return
                 if route == 'api/statistics' and not set(params)-{'seed','status','user_id','q'}:
                     from ..reporting.statistics import statistics
                     self.respond(200, statistics(database, **params))

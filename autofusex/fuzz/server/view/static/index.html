@@ -6,11 +6,9 @@
 <title>Autofuse Fuzz</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="issues.css">
 <script src="charts.js" defer></script>
 <script src="app.js" defer></script>
 <script src="runtime.js" defer></script>
-<script src="issues.js" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -23,7 +21,6 @@
     <a href="#records" data-page="records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.5 1.5L7.5 5"/><path d="m3.5 12 1.5 1.5L7.5 11"/><path d="m3.5 18 1.5 1.5L7.5 17"/></svg><span>功能&amp;精度</span></a>
     <a href="#efficiency" data-page="efficiency"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>工具效率</span></a>
     <a href="#kernel" data-page="kernel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></svg><span>Kernel性能</span></a>
-    <a href="#issues" data-page="issues"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3 21 20H3L12 3Z"/><path d="M12 9v5M12 17h.01"/></svg><span>问题分类</span></a>
   </nav>
   <div class="topbar-actions">
     <span class="status-group"><span id="refresh-time" class="muted">正在加载</span></span>
@@ -97,11 +94,6 @@
     <summary>历史运行诊断（按上方结果搜索条件，独立于实时设备筛选）</summary>
     <section id="tool-efficiency"><h3>历史窗口分位数与资源占用</h3><div id="efficiency-table"></div></section>
   </details>
-</section>
-<section id="issues-page" class="page" hidden>
-  <div class="section-heading"><div><h2>问题分类</h2><p class="muted">功能问题按首行错误聚类，精度和性能问题按算子类别聚类；同一类问题的用例数量越多越优先处理。</p></div></div>
-  <div id="issue-tabs" class="issue-tabs" role="tablist"><button type="button" data-dimension="function" class="active">功能问题</button><button type="button" data-dimension="accuracy">精度问题</button><button type="button" data-dimension="performance">性能问题</button></div>
-  <p id="issues-message" class="muted" role="status"></p><div id="issue-list" class="issue-list"></div>
 </section>
 <section id="kernel-page" class="page" hidden>
   <div class="section-heading"><h2>Kernel性能</h2></div>
