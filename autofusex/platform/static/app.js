@@ -4,6 +4,7 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const TOKEN_KEY = "afx.token";
 const COLS_KEY = "afx.discovery.columns";
+const FLEET_SCOPE_KEY = "afx.fleet.scope";
 const VIEW_KEY = "afx.discovery.view";
 const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "Legacy", "af-mlir": "MLIR", "triton-npu": "TritonNPU" };
 const STAGE_LABEL = { schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
@@ -1056,7 +1057,7 @@ async function issueDrawer(issueId) {
 function caseList(cases) {
   return el("table", { class: "grid" }, el("tbody", {}, cases.map(c => el("tr", {},
     el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
-    el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.pick_reason || ""), el("td", {}, c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
+    el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.pick_reason || ""), el("td", {}, c.result === "skip" ? el("span", { class: "chip warn" }, "Skip") : c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
     el("td", {}, c.result ? el("span", { class: "chip " + (c.result === "pass" ? "ok" : c.result === "fail" ? "bad" : "warn") }, c.result) : "")))));
 }
 
@@ -1195,7 +1196,7 @@ function drawScatter(canvas, data, info) {
 // 平台运维
 // =====================================================================
 PAGES.ops = async root => {
-  const fleetScope = isAdmin() ? store.get(FLEET_SCOPE_KEY, "all") : "mine";
+  const fleetScope = isAdmin() || !me ? "all" : store.get(FLEET_SCOPE_KEY, "all");
   const data = await api("/api/ops/summary" + qs({ scope: fleetScope === "all" ? "all" : null }));
   const mb = Object.values(data.db_bytes).reduce((a, b) => a + b, 0) / 1048576;
   root.append(el("div", { class: "tiles" }, [["在线客户端", fmt(data.online_clients)], ["近 24 小时执行", fmt(data.executions_24h), "按执行发生时间统计，不含 CPU 基线；含复测"], ["待上传", fmt(data.pending_uploads)],
@@ -1208,11 +1209,11 @@ PAGES.ops = async root => {
     try { const r = await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [...selected], version: version.value.trim() } }); alert(`已通知 ${r.requested} 个客户端，下一次心跳时更新`); render(); }
     catch (err) { alert(err.message); } } }, "一键更新");
   const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "主机", "芯片", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "操作", "最后心跳"].map(t => el("th", {}, t)))),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "操作", "最后心跳"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => { e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id); if (selected.size) clientsPanel.dataset.custom = "1"; else delete clientsPanel.dataset.custom; } }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
-        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.machine_id }, (c.hostname || c.machine_id).slice(0, 16)), el("td", {}, archLabel(c.npu_arch)),
+        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.client_home || c.machine_id }, (c.client_home || c.hostname || c.machine_id).split("/").pop()), el("td", {}, archLabel(c.npu_arch)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
@@ -1220,92 +1221,28 @@ PAGES.ops = async root => {
         el("td", {}, isAdmin() && !c.online ? el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${c.display_name || c.client_id}？`)) return; try { await api(`/api/admin/clients/${c.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除") : "—"),
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
   root.append(clientsPanel);
+  const efficiencyData = await api("/api/ops/efficiency");
+  const efficiencyUsers = new Map((efficiencyData.users || []).map(u => [u.user_id, u]));
+  const overviewRows = (data.users || []).map(u => {
+    const e = efficiencyUsers.get(u.user_id) || {};
+    return el("tr", {},
+      el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)),
+      el("td", {}, fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)),
+      el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)),
+      el("td", {}, fmt(u.uploads_24h)), el("td", {}, fmt(e.success)),
+      el("td", {}, fmt(e.completed)), el("td", {}, fmt(e.failed)), el("td", {}, fmt(e.case_errors)),
+      el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
+  });
+  const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
+    el("div", { class: "muted small" }, "每个用户一行：提交量、资源占用和执行结果使用同一套聚合口径。"),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" },
+      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "卡数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
+      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 13, class: "empty" }, "暂无用户运行数据"))]))));
+  root.append(overviewPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
-  root.append(fleetPanel(data.clients, fleetScope));
-  const effBox = el("section", { class: "panel" });
-  root.append(effBox);
-  renderEfficiency(effBox, (await api("/api/ops/efficiency")).windows);
+  if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
-// Only the viewer's own online nodes (the server withholds other users' snapshots); admins can widen it.
-const FLEET_SCOPE_KEY = "afx.fleet.scope";
-const RECYCLE_LABEL = { isolated: "后端不复用", stage_failed: "阶段失败", case_error: "用例报错/不支持", max_tasks: "达到任务上限", rss_growth: "内存增长",
-  device_resident: "设备显存残留", scratch: "缓存超限", evicted: "被其他后端挤出", crashed: "进程异常/超时" };
-function workerSummary(w) {
-  const recycled = Object.entries(w.recycled || {}).sort((a, b) => b[1] - a[1]);
-  const total = recycled.reduce((n, [, v]) => n + v, 0);
-  return `Worker：新建 ${fmt(w.spawned || 0)} · 复用 ${fmt(w.reused || 0)}` + (total ? " · 回收 " + recycled.map(([k, v]) => `${RECYCLE_LABEL[k] || k} ${fmt(v)}（${pct(v, total)}）`).join("，") : "");
-}
-function fleetPanel(clients, scope) {
-  const live = clients.filter(c => c.online && (c.runtime || []).length);
-  const box = el("section", { class: "panel" }, el("h2", {}, "节点运行情况", el("span", { class: "spacer" }),
-    isAdmin() ? select([["mine", "仅我的"], ["all", "全部"]], scope, v => { store.set(FLEET_SCOPE_KEY, v); render(); }) : null));
-  if (!live.length) { box.append(el("div", { class: "empty" }, me ? "暂无运行中的节点" : "登录后可查看自己的节点")); return box; }
-  for (const c of live) {
-    const card = el("div", { class: "fleet-card" }, el("h3", {}, c.display_name || c.machine_id, el("span", { class: "muted small" }, ` · ${c.user_id} · ${archLabel(c.npu_arch)} · 快照于 ${time(c.runtime_at)}`)));
-    const rows = c.runtime.map(r => el("tr", {},
-      el("td", { class: "mono small", "data-tooltip": r.run_id }, String(r.run_id || "").slice(0, 8)),
-      el("td", {}, el("span", { class: "chip " + (r.state === "running" ? "ok" : "gray") }, r.state)),
-      el("td", {}, (r.backend || []).map(label).join(" · ")),
-      el("td", {}, el("div", { class: "device-dots" }, (r.devices || []).map(d => el("span", { class: "device-dot" + (d.busy ? " busy" : ""), "data-tooltip": d.uuid }, `${d.logical} ${d.model || ""}`)))),
-      el("td", {}, Object.entries(r.stages || {}).map(([k, v]) => `${stageName(k)} ×${v}`).join("，") || "—"),
-      el("td", {}, `${fmt(r.success)} / ${fmt(r.completed)}`),
-      el("td", {}, r.elapsed > 0 ? (r.completed * 60 / r.elapsed).toFixed(2) : "—"),
-      el("td", {}, fmt(r.queued)), el("td", {}, fmt(r.case_errors)), el("td", { class: "small" }, Math.round(r.elapsed / 60) + " 分钟")));
-    card.append(el("div", { class: "table-wrap" }, el("table", { class: "grid" },
-      el("thead", {}, el("tr", {}, ["运行", "状态", "后端", "设备（绿=忙）", "进行中阶段", "成功 / 完成 Shape", "Shape/min", "排队", "Case 错误", "已运行"].map(t => el("th", {}, t)))), el("tbody", {}, rows))));
-    for (const r of c.runtime) if (r.workers && r.state === "running") card.append(el("div", { class: "small muted", style: { marginTop: "6px" } }, workerSummary(r.workers)));
-    box.append(card);
-  }
-  return box;
-}
-
-// Tool efficiency (ported): finished stage windows grouped by backend / environment / Shape mode.
-function renderEfficiency(box, windows) {
-  box.replaceChildren(el("h2", {}, "工具效率"));
-  if (!windows.length) { box.append(el("div", { class: "empty" }, "暂无已完成运行窗口的效率数据（持续运行的任务在窗口结束后上报）。")); return; }
-  let chosen = windows[0];
-  const pick = select(windows.map((w, i) => [w.window_id + "|" + w.client_id, `${i === 0 ? "最新" : "历史 " + i} · ${w.client_name || w.client_id} · ${w.window_id.slice(0, 12)}`]), "", v => { chosen = windows.find(w => w.window_id + "|" + w.client_id === v); box.dataset.custom = "1"; draw(); });
-  const filter = el("input", { type: "search", placeholder: "筛选后端 / 环境 / static / dynamic", oninput: () => { box.dataset.custom = "1"; draw(); } });
-  const body = el("div");
-  box.append(el("div", { class: "toolbar" }, "运行窗口", pick, filter), body);
-  const seconds = v => v == null ? "未采集" : (v / 1e9).toFixed(2) + "s";
-  const draw = () => {
-    const rows = chosen.rows || [];
-    if (!rows.length) { body.replaceChildren(el("div", { class: "muted" }, "该窗口没有可统计的记录")); return; }
-    const w = rows[0], duration = Number(w.window_seconds);
-    const devices = Object.entries(w.npu_slot_utilization || {});
-    const tokens = filter.value.toLowerCase().split(/\s+/).filter(Boolean);
-    const groups = new Map();
-    for (const r of rows) {
-      const k = JSON.stringify([r.backend, r.environment_id, r.mode]);
-      if (!groups.has(k)) groups.set(k, { backend: r.backend, environment_id: r.environment_id || "", mode: r.mode, rows: [], success: 0, failed: 0, case_errors: 0, completed: 0 });
-      const g = groups.get(k); g.rows.push(r);
-      for (const n of ["success", "failed", "case_errors", "completed"]) g[n] += Number(r[n] || 0);
-    }
-    const list = [...groups.values()].filter(g => tokens.every(t => [g.backend, g.environment_id, g.mode, ...g.rows.map(r => r.hardware || "")].join(" ").toLowerCase().includes(t)));
-    const rate = n => duration > 0 ? (n * 60 / duration).toFixed(2) : "未采集";
-    const latency = (g, k) => g.rows.length === 1 ? `${seconds(g.rows[0][k + "_p50_ns"])} / ${seconds(g.rows[0][k + "_p95_ns"])}` : "见明细";
-    body.replaceChildren(
-      el("div", { class: "muted small" }, `窗口 ${chosen.window_id} · 节点 ${chosen.client_name || chosen.client_id} · 时长 ${Number.isFinite(duration) ? duration.toFixed(1) + " s" : "未采集"}。吞吐按完整窗口时长计算；资源占用属于整个窗口，不随筛选变化。`),
-      el("div", { class: "tiles" }, [["CPU 资源池使用率", w.cpu_pool_utilization == null ? "未采集" : (100 * w.cpu_pool_utilization).toFixed(1) + "%"],
-        ...devices.map(([uuid, v], i) => [`NPU ${i + 1} 执行槽使用率`, (100 * v).toFixed(1) + "%", uuid]),
-        ["窗口取消 / 写库失败", `${w.cancelled_attempts ?? "未采集"} / ${w.record_failed_attempts ?? "未采集"}`]].map(([k, v, tip]) => el("div", { class: "tile", "data-tooltip": tip || null }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))),
-      el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端 / Shape 模式", "环境", "成功 / 失败 Shape / Case 错误", "成功 Shape/min", "已完成 Shape/min", "处理 P50 / P95", "端到端 P50 / P95"].map(t => el("th", {}, t)))),
-        el("tbody", {}, list.map(g => el("tr", {}, el("td", {}, `${label(g.backend)} / ${g.mode}`), el("td", { class: "mono small", "data-tooltip": g.environment_id }, g.environment_id.slice(0, 12)),
-          el("td", {}, `${g.success} / ${g.failed} / ${g.case_errors}`), el("td", {}, rate(g.success)), el("td", {}, rate(g.completed)), el("td", {}, latency(g, "processing")), el("td", {}, latency(g, "e2e"))))))),
-      el("details", {}, el("summary", {}, "诊断明细：冷 / 热、状态、延迟与环境"),
-        ...list.map(g => el("div", {}, el("h3", {}, `${label(g.backend)} / ${g.mode} · ${g.environment_id.slice(0, 12)}`),
-          el("pre", { class: "log" }, JSON.stringify({ environment_id: g.environment_id, hardware: g.rows[0].hardware, software: g.rows[0].software }, null, 2)),
-          el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["冷 / 热 · 状态", "成功 / 失败 / Case 错误", "处理 P50 / P95", "端到端 P50 / P95", "唯一 Shape / 重试", "摊销秒/Shape", "冷 / 热调用数"].map(t => el("th", {}, t)))),
-            el("tbody", {}, g.rows.map(r => el("tr", {}, el("td", {}, `${r.temperature} / ${r.status}`), el("td", {}, `${r.success} / ${r.failed} / ${r.case_errors}`),
-              el("td", {}, `${seconds(r.processing_p50_ns)} / ${seconds(r.processing_p95_ns)}`), el("td", {}, `${seconds(r.e2e_p50_ns)} / ${seconds(r.e2e_p95_ns)}`),
-              el("td", {}, `${r.unique_shapes ?? "—"} / ${r.retry_attempts ?? "—"}`), el("td", {}, r.amortized_seconds_per_shape == null ? "—" : Number(r.amortized_seconds_per_shape).toFixed(2)),
-              el("td", {}, `${r.cold ?? "—"} / ${r.warm ?? "—"}`)))))))));
-  };
-  draw();
-}
-
 // One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).
 function hourly(series) {
   if (!series.length) return el("div", { class: "empty" }, "暂无执行数据");
@@ -1330,15 +1267,19 @@ function hourly(series) {
 }
 async function settingsPanel() {
   const [settings, pins] = await Promise.all([api("/api/settings"), api("/api/regression/pins")]);
-  const fields = [["perf.tie_threshold", "Kernel 持平阈值 t", "number", "0.01"], ["regression.budget", "回归默认预算", "number", "1"], ["regression.max_budget", "单问题回归上限", "number", "1"],
-    ["issue.perf_anchor", "性能问题锚点后端", "text"], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1"], ["issue.lease_days", "问题租约（天）", "number", "1"], ["verify.max_cases", "单轮验证用例上限", "number", "1"]];
+  const fields = [["perf.tie_threshold", "Kernel 持平阈值", "number", "0.01", "判定性能差异接近持平的比例阈值。"], ["regression.budget", "回归默认预算", "number", "1", "每个问题默认抽取的回归用例总数。"], ["regression.max_budget", "单问题回归上限", "number", "1", "单个问题允许的最大回归用例数。"],
+    ["issue.perf_anchor", "性能对比基准后端", "select", null, "自定义性能对比的基准后端，不是测试任务的执行后端。", ["cpu", "af-legacy", "af-mlir", "triton-npu", "eager-npu"]], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1", "被测后端慢于基准达到该倍数时生成性能问题。"], ["issue.lease_days", "问题租约（天）", "number", "1", "Agent 领取问题后的最长占用时间。"], ["verify.max_cases", "单轮验证用例上限", "number", "1", "一次验证最多执行多少个用例。"]];
   const inputs = {};
-  const grid = el("div", { class: "form-grid" });
-  for (const [key, text, type, step] of fields) { inputs[key] = el("input", { type, step, value: settings[key].value }); grid.append(el("div", {}, text), inputs[key]); }
+  const grid = el("div", { class: "config-grid" });
+  for (const [key, text, type, step, desc, options] of fields) {
+    inputs[key] = type === "select" ? el("select", {}, options.map(v => el("option", {value:v}, BACKEND_LABEL[v] || v))) : el("input", { type, step, value: settings[key].value });
+    inputs[key].value = settings[key].value;
+    grid.append(el("label", {class:"config-field"}, el("span", {class:"config-label"}, text), el("span", {class:"config-help"}, desc), inputs[key]));
+  }
   const shares = settings["regression.shares"].value;
   const shareInputs = {};
-  grid.append(el("div", {}, "回归四层占比 %"), el("div", { class: "toolbar" }, Object.entries({ neighbor: "邻域", sentinel: "哨兵", history: "历史", random: "随机" }).map(([k, t]) => {
-    shareInputs[k] = el("input", { type: "number", min: 0, max: 100, value: shares[k], style: { width: "70px" } }); return el("label", {}, t, " ", shareInputs[k]); })));
+  grid.append(el("label", {class:"config-field config-share-field"}, el("span", {class:"config-label"}, "回归四层占比"), el("span", {class:"config-help"}, "控制邻域、哨兵、历史和随机用例在回归任务中的比例。"), el("span", {class:"toolbar"}, Object.entries({ neighbor: "邻域", sentinel: "哨兵", history: "历史", random: "随机" }).map(([k, t]) => {
+    shareInputs[k] = el("input", { type: "number", min: 0, max: 100, value: shares[k], style: { width: "70px" } }); return el("label", {}, t, " ", shareInputs[k]); }))));
   const out = el("div");
   const save = async () => {
     const changes = {}, base = {};
@@ -1349,7 +1290,7 @@ async function settingsPanel() {
     try { await api("/api/admin/settings", { method: "PUT", body: { changes, base_revisions: base } }); out.replaceChildren(el("span", { class: "chip ok" }, "已保存")); }
     catch (err) { out.replaceChildren(errorBox(err)); }
   };
-  return el("section", { class: "panel" }, el("h2", {}, "设置（管理员）"), grid, el("div", { class: "toolbar", style: { marginTop: "12px" } }, el("button", { class: "primary", onclick: save }, "保存"), out),
+  return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("p", {class:"config-intro"}, "平台级规则影响问题识别、回归和验证流程。"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
@@ -1555,3 +1496,94 @@ if (matchMedia("(hover: none)").matches) document.body.classList.add("touch");
   if (token()) { try { await loadMe(); } catch { me = null; updateWho(); } }
   render();
 })();
+
+
+async function taskConfigurationPanel() {
+  const panel = el("section", {class:"panel config-panel"}, el("h2", {}, "测试任务配置"),
+    el("p", {class:"config-intro"}, "配置客户端下一次启动后执行什么任务。常用选项直接展示，生成细节收在“高级参数”中。"));
+  const target = el("select", {}, el("option", {value:"me"}, "我的配置"), isAdmin() ? el("option", {value:"default"}, "管理员默认配置") : null);
+  const body = el("div", {}), notice = el("div", {role:"status"});
+  let config, collect;
+  async function load() {
+    try {
+      const [result, catalog] = await Promise.all([api("/api/config/"+target.value),api("/api/config/operators")]);
+      config = result.config;
+      const gen = config.workload.generation ||= {};
+      const controls = [];
+      const common = el("div", {class:"config-grid"});
+      const details = el("details", {class:"config-advanced"}, el("summary", {}, "高级参数：生成范围、超时和性能"));
+      const advanced = el("div", {class:"config-grid"}); details.append(advanced);
+      const help = {
+        "静态 / 动态": "生成固定 Shape、动态 Shape，或两者混合。", "Tensor 规模": "一组预设范围，会联动生成范围参数。",
+        "数据类型（仅保留全部）": "当前统一使用全部数据类型，客户端会根据算子能力生成。", "最大节点数（上限 64）": "单个计算图最多包含多少个算子节点，最大不能超过 64。",
+        "后端（多选）": "选择要执行的后端，可同时选择多个。", "设备": "客户端使用的设备，例如 npu:0,npu:1。",
+        "任务规模": "continuous 持续执行；finite 执行指定数量后停止。", "有限任务用例数": "finite 模式下要执行的用例数。",
+        "算子（多选；不选表示全部）": "只生成选中的算子；不选择表示使用全部算子。", "性能测试": "是否额外采集性能数据，会增加执行时间。",
+        "上传结果": "是否把执行结果上传到平台。", "执行环境": "任务在哪类环境中执行。",
+        "保存本地结果": "是否在客户端本地保留结果数据库。",
+      };
+      function field(parent, title, object, key, values, fallback, multiple=false) {
+        const node = values ? el("select", {multiple}, ...values.map(v=>el("option",{value:v},v))) : el("input", {type:typeof fallback === "number" ? "number":"text"});
+        if (title.startsWith("最大节点数")) node.max = "64";
+        const value=object[key] ?? fallback;
+        if (multiple) for (const option of node.options) option.selected=value.includes(option.value);
+        else node.value=value;
+        controls.push(()=>object[key]=multiple ? [...node.selectedOptions].map(o=>o.value) : typeof fallback === "number" ? Number(node.value) : node.value);
+        parent.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title] || "高级生成参数，可按需要调整。"),node)); return node;
+      }
+      function checkboxGroup(parent, title, object, key, values, fallback) {
+        const current = object[key] || fallback;
+        const checks = values.map(([value, text]) => { const input=el("input",{type:"checkbox",value,checked:current.includes(value)}); return el("label",{class:"config-check"},input,el("span",{},text)); });
+        parent.append(el("div",{class:"config-field config-check-group"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title]),el("div",{class:"config-checks"},checks)));
+        controls.push(()=>object[key]=checks.map(x=>x.querySelector('input')).filter(x=>x.checked).map(x=>x.value));
+      }
+      field(common,"静态 / 动态",gen,"shape_mode",["static","dynamic","mixed"],"mixed");
+      const scale = field(common,"Tensor 规模",gen,"tensor_scale",["default","small","medium","large","16k","32k","64k","128k"],"128k");
+      field(common,"数据类型（仅保留全部）",gen,"dtype_mode",["all"],"all");
+      field(common,"最大节点数（上限 64）",gen,"max_nodes",null,10);
+      checkboxGroup(common,"后端（多选）",config.execution,"backends",Object.keys(BACKEND_LABEL).map(v=>[v,BACKEND_LABEL[v]]),["cpu","af-legacy","af-mlir"]);
+      const deviceValue=config.execution.devices.includes("all")?"all":(config.execution.devices[0]||"all");
+      const devices=el("select",{},[["all","全部本地设备（自适应）"],["npu:0","npu:0"],["npu:1","npu:1"]].map(([v,t])=>el("option",{value:v},t))); devices.value=deviceValue;
+      common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},"设备"),el("span",{class:"config-help"},help["设备"]),devices));
+      controls.push(()=>config.execution.devices=[devices.value]);
+      const term=config.termination;
+      const taskMode=field(common,"任务规模",term,"mode",["continuous","finite"],"continuous");
+      const maxCases=field(common,"有限任务用例数",term,"max_cases",null,100);
+      const updateMaxCases=()=>{maxCases.disabled=taskMode.value==="continuous";}; taskMode.addEventListener("change",updateMaxCases); updateMaxCases();
+      // 算子目录数量较大，暂不在任务配置页展开；已有 ops 配置继续原样保留。
+      for (const [title,obj,key,values,fallback] of [["性能测试",config.evaluation.performance,"enabled",[["false","不启用"],["true","启用"]],"false"],["上传结果",config.results,"upload",[["true","上传"],["false","不上传"]],"true"]]) {
+        const select=el("select",{},values.map(([v,t])=>el("option",{value:v},t))); select.value=String(obj[key]??fallback); common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title]),select)); controls.push(()=>obj[key]=select.value==="true");
+      }
+      for (const [title,key,value] of [["每个维度 Shape（最小）","dim_min",1],["每个维度 Shape（最大）","dim_max",131072],["单 Tensor 元素上限","max_elements_per_tensor",524288],["动态 Shape 数量","dynamic_variants",3]]) field(advanced,title,gen,key,null,value);
+      field(advanced,"维度分布",gen,"dim_dist_mode",["uniform","half_normal","log_normal"],"half_normal");
+      field(advanced,"数值分布",gen,"value_dist_mode",["log_scale","llm","recommendation"],"log_scale");
+      help["构图方法"] = "symbolic-cinit：符号构图并初始化；symbolic：纯符号构图；concolic：符号与具体值结合。";
+      field(advanced,"构图方法",gen,"method",["symbolic-cinit","symbolic","concolic"],"symbolic-cinit");
+      help["生成超时（秒）"] = "单个用例的 NNSmith 构图与生成阶段最长时间，不是整批任务时间。";
+      const generationTimeout=field(advanced,"生成超时（秒）",gen,"timeout",null,60); generationTimeout.value=parseInt(gen.timeout||60,10)||60; controls.push(()=>gen.timeout=Math.max(1,Number(generationTimeout.value))+"s");
+      help["执行环境"] = "客户端已安装的执行环境；local 表示客户端本地默认环境。"; field(advanced,"执行环境",config,"environment",["local"],"local");
+      help["执行超时（秒）"] = "单个用例从执行开始到结束的最长时间。"; const executionTimeout=field(advanced,"执行超时（秒）",config.execution,"timeout",null,120); executionTimeout.value=parseInt(config.execution.timeout||120,10)||120; controls.push(()=>config.execution.timeout=Math.max(1,Number(executionTimeout.value))+"s");
+      help["Worker 回收阶段数"] = "每个 Worker 最多连续处理多少个任务，达到后回收重启，用于控制内存增长。"; field(advanced,"Worker 回收阶段数",config.execution.resources,"worker_max_tasks",null,100);
+      const save=el("select",{},[["true","保存"],["false","不保存"]].map(([v,t])=>el("option",{value:v},t))); save.value=String(config.results.save);
+      advanced.append(el("label",{class:"config-field"},el("span",{class:"config-label"},"保存本地结果"),el("span",{class:"config-help"},help["保存本地结果"]),save)); controls.push(()=>config.results.save=save.value==="true");
+      help["预热次数"] = "每个 Shape 先执行的预热次数，结果不计入性能统计。"; field(advanced,"预热次数",config.evaluation.performance,"warmup_steps",null,3);
+      help["测量次数"] = "预热后正式测量的次数；默认是预热 3 次、测量 50 次。"; field(advanced,"测量次数",config.evaluation.performance,"measured_steps",null,50);
+      const presets={small:[1,64,65536,10,"uniform"],medium:[8,4096,1048576,30,"uniform"],large:[8,8192,16777216,60,"uniform"],"16k":[8,16384,65536,90,"log_normal"],"32k":[8,32768,131072,120,"log_normal"],"64k":[8,65536,262144,180,"log_normal"],"128k":[8,131072,524288,300,"log_normal"],default:[1,131072,524288,300,"half_normal"]};
+      scale.addEventListener("change",()=>{
+        const values=presets[scale.value];
+        const labels=[...advanced.querySelectorAll('label')];
+      for(const [label,value] of [["每个维度 Shape（最小）",values[0]],["每个维度 Shape（最大）",values[1]],["单 Tensor 元素上限",values[2]],["生成超时（秒）",values[3]],["维度分布",values[4]]]) {
+          const row=labels.find(x=>x.querySelector('.config-label')?.textContent===label);if(row)row.querySelector('input,select').value=value;
+        }
+      });
+      collect=()=>{controls.forEach(fn=>fn());if(term.mode==='continuous')delete term.max_cases;return config;};
+      body.replaceChildren(common,details); notice.textContent=result.source==='personal' ? "使用个人配置":"继承管理员默认配置";
+    } catch(err) {notice.textContent=err.message;}
+  }
+  target.addEventListener("change",load);
+  const actions = el("div", {class:"config-actions"}, el("label", {class:"config-target"}, el("span", {}, "配置来源"), target),
+    el("button",{class:"primary",onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:collect()}});notice.textContent="已保存，下次启动使用新配置";}catch(err){notice.textContent=err.message;}}},"保存配置"),
+    el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:null}});await load();}catch(err){notice.textContent=err.message;}}},"恢复默认"));
+  panel.append(actions,body,notice);
+  await load();return panel;
+}

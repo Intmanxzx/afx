@@ -702,7 +702,9 @@ class Client:
             pending = mapper.conn.execute("SELECT COUNT(*) FROM attempts WHERE rowid>?",
                                           (self.state.get("fuzz:cursor"),)).fetchone()[0]
         windows = self.unsent_windows()
-        body = {"machine_id": (env.get("installation_id") or socket.gethostname())[:128],
+        home = str(self.home().resolve())
+        machine_id = (env.get("installation_id") or socket.gethostname())[:96] + ":" + home[:31]
+        body = {"machine_id": machine_id[:128], "client_home": home[:512],
                 "hostname": socket.gethostname()[:128], "npu_arch": env.get("device_model"),
                 "afx_version": env.get("package_version"),
                 "backend_versions": {"af-mlir": env.get("cann"), "triton-npu": env.get("triton"),

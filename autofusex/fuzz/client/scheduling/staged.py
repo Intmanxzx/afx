@@ -172,7 +172,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             ev=json.loads(session.task['evaluation']) if session else json.loads(case.tasks[0]['evaluation'])
             job={'kind':s.kind.value,'directory':case.directory,'bundle':case.bundle,'config':config,'evaluation':ev}
             if s.kind==Kind.GENERATE:
-                job.update(seed=case.seed,exclude_ops=exclude_ops,ops=ops)
+                is_replay = any(ledger.priorities().get(t["id"], 0) == 100 for t in case.tasks)
+                job.update(seed=case.seed,exclude_ops=[] if is_replay else exclude_ops,ops=[] if is_replay else ops)
             elif s.kind==Kind.REFERENCE:
                 job['output_file']='reference.npz'
                 job['config']['static_only']=all(json.loads(t['execution'])['static_only'] for t in case.tasks)
@@ -335,8 +336,9 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                             if not task.get('done'):
                                 for device in candidates(ledger, task):
                                     pressure[device] = pressure.get(device, 0) + 1
-                    first = min(pending, key=lambda t: min(
-                        (pressure.get(d, 0) for d in candidates(ledger, t)), default=0))
+                    priorities = ledger.priorities()
+                    first = min(pending, key=lambda t: (-priorities.get(t["id"], 0), min(
+                        (pressure.get(d, 0) for d in candidates(ledger, t)), default=0)))
                     ex=json.loads(first['execution'])
                     peers=[t for t in pending if t['seed']==first['seed'] and json.loads(t['execution']).get('batch_id')==ex.get('batch_id') and t['evaluation']==first['evaluation']]
                     # Repeated same-backend seed executions are distinct Cases.
@@ -390,7 +392,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                         del cases[case.identity]
                 now=time.monotonic_ns()
                 ready=[s for s in stages.values() if s.ready(stages,now)]
-                ready.sort(key=lambda s:(0 if s.kind==Kind.COMBINED else 1 if s.kind in {Kind.COMPARE,Kind.RECORD} else 2,s.ready_ns))
+                priorities = ledger.priorities()
+                ready.sort(key=lambda s:(-max((priorities.get(t["id"],0) for t in cases[s.case_id].tasks),default=0), 0 if s.kind==Kind.COMBINED else 1 if s.kind in {Kind.COMPARE,Kind.RECORD} else 2,s.ready_ns))
                 for s in ready:
                     try:lease=pool.reserve(s)
                     except ValueError as exc:
@@ -420,7 +423,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                         from ..storage.stage_facts import finish_window
                         finish_window(database,window_id,window_start,pool,{k:v-window_summary.get(k,0) for k,v in summary.items()})
                         completed_attempts.clear();window_id=str(uuid.uuid4());window_start=stamp();window_summary=dict(summary)
-                    if not refill(ledger,target_pending=budget.cpu_workers):break
+                    if not refill(ledger,target_pending=budget.cpu_workers) and not any(t["state"] == "pending" for t in _tasks(ledger)):break
                 time.sleep(.02)
             from ..storage.stage_facts import finish_window
             finish_window(database,window_id,window_start,pool,{k:v-window_summary.get(k,0) for k,v in summary.items()})

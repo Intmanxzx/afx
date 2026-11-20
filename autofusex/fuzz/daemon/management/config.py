@@ -80,7 +80,7 @@ DURATION = dict(type='string', pattern=r'^[1-9][0-9]{0,7}(ms|s|m|h)$')
 MEMORY = dict(type='string', pattern=r'^[1-9][0-9]{0,9}(B|KiB|MiB|GiB)$')
 SHA = dict(type='string', pattern=r'^[0-9a-f]{64}$')
 DEVICES = dict(type='array', uniqueItems=True, minItems=1, maxItems=64,
-               items=dict(type='string', pattern=r'^npu:[0-9]+$'))
+               items=dict(oneOf=[dict(type='string', enum=['all']), dict(type='string', pattern=r'^npu:[0-9]+$')]))
 RESOURCE = obj(dict(policy=enum('auto', 'manual'), workers=POSITIVE,
                     compile_threads=POSITIVE, worker_max_tasks=POSITIVE, memory_budget=MEMORY))
 PACKAGE = obj(dict(kind=enum('toolkit', 'kernels'), url=TEXT, sha256=SHA, adapter=NAME),
@@ -104,6 +104,10 @@ SCHEMAS = {
         workload=dict(oneOf=[obj(dict(mode=enum('replay'), seeds=dict(type='array', minItems=1, maxItems=1000, items=TEXT)), ('mode', 'seeds')),
             obj(dict(mode=enum('generate'), generation=obj(dict(tensor_scale=enum('small', 'medium', 'large', '16k', '32k', '64k', '128k', 'default'),
                 max_nodes=dict(type='integer',minimum=1,maximum=64), max_elements_per_tensor=POSITIVE, timeout=DURATION,
+                shape_mode=enum('static','dynamic','mixed'), dim_min=POSITIVE, dim_max=POSITIVE,
+                dim_dist_mode=enum('uniform','half_normal','log_normal'), value_dist_mode=enum('log_scale','llm','recommendation'),
+                dtype_mode=enum('float32','float16','mixed','all'), dynamic_variants=dict(type='integer',minimum=2,maximum=8),
+                method=enum('symbolic-cinit','symbolic','concolic'), ops=dict(type='array',items=TEXT),
                 exclude_ops=dict(type='array', items=enum('transpose'), uniqueItems=True)))), ('mode',))]),
         execution=obj(dict(backends=dict(type='array', items=enum('cpu', 'af-mlir', 'af-legacy', 'eager-npu', 'triton-npu'), minItems=1, uniqueItems=True),
             devices=DEVICES, scheduling=enum('staged'), static_only=BOOL, timeout=DURATION, resources=RESOURCE)),
@@ -124,10 +128,11 @@ DEFAULTS = {
     'client_policy': dict(resources=dict(allowed_devices=['npu:0'], max_workers=1, max_compile_threads=1),
                           sync=dict(interval='30s'), updates=dict(tool_policy='manual')),
     'environment': {},
-    'fuzz_task': dict(execution=dict(backends=['cpu', 'af-mlir'], devices=['npu:0'], scheduling='staged', static_only=False,
-                        timeout='120s', resources=dict(policy='auto', worker_max_tasks=16)),
-                      evaluation=dict(performance=dict(enabled=False, warmup_steps=3, measured_steps=10)),
-                      results=dict(save=True, upload=False))}
+    'fuzz_task': dict(workload=dict(mode='generate', generation=dict(tensor_scale='128k', dtype_mode='all', max_nodes=10)),
+                      execution=dict(backends=['cpu', 'af-legacy', 'af-mlir'], devices=['all'], scheduling='staged', static_only=False,
+                      timeout='120s', resources=dict(policy='auto', worker_max_tasks=100)),
+                      evaluation=dict(performance=dict(enabled=False, warmup_steps=3, measured_steps=50)),
+                      results=dict(save=True, upload=True), termination=dict(mode='continuous'))}
 
 
 def quantity(value):
@@ -162,10 +167,13 @@ def validate(value):
             seconds = quantity(generation['timeout']) if generation.get('timeout') else None
             if seconds is not None and (seconds != int(seconds) or seconds > 511):
                 raise ValueError('generation timeout must be whole seconds <= 511')
+            from ...client.generation.operator_catalog import normalize_ops
+            if generation.get('ops'): normalize_ops(generation['ops'])
             SamplingConfig.profile(generation.get('tensor_scale', 'default'),
+                **{k:generation[k] for k in ('dim_min','dim_max','dim_dist_mode','value_dist_mode','dtype_mode','dynamic_variants','method') if k in generation},
                 max_nodes=generation.get('max_nodes'),max_elem_per_tensor=generation.get('max_elements_per_tensor'),
                 timeout_seconds=int(seconds) if seconds is not None else None)
-        if result['workload']['mode'] == 'replay' and 'termination' in result:
+        if result['workload']['mode'] == 'replay' and 'termination' in value:
             raise ValueError('replay terminates after the seed list; omit termination')
         if result['workload']['mode'] == 'generate' and 'termination' not in result:
             result['termination'] = dict(mode='finite', max_cases=100)

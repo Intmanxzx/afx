@@ -155,8 +155,24 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
                     row["backend"] not in task["backends"].split(",") or \
                     (row["backend"] != "cpu" and row["npu_arch"] != task["npu_arch"]):
                 raise IssueError("mismatch", f"execution {exec_uuid[:64]} does not belong to this task", 409)
+            expected_run = (f"{task['issue_id']}-r{task['round_no']}-t{task_id}" if task["issue_id"]
+                            else f"retest-t{task_id}")
+            run = conn.execute("SELECT run_uuid FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()[0]
+            if run != expected_run:
+                raise IssueError("mismatch", "execution belongs to another retest run", 409)
             rows.append(row)
+        current_revision = conn.execute("SELECT case_revision FROM cases WHERE case_id=?", (task["case_id"],)).fetchone()[0]
+        if any(r["case_revision"] != current_revision for r in rows):
+            raise IssueError("mismatch", "execution uses an obsolete case revision", 409)
         result, detail = _judge(conn, task, rows, installed)
+        target = next((r for r in rows if r["backend"] == task["required_backend"]), None)
+        if result != "invalid" and target is not None:
+            from .issues import reconcile
+            anchor = next((r for r in rows if r["backend"] == _setting(conn, "issue.perf_anchor")), None)
+            destination = reconcile(conn, target, anchor, source_id=task["issue_id"])
+            if task["issue_id"] and destination and destination != task["issue_id"]:
+                result, detail = "skip", f"→ {destination}"
+
         conn.execute("UPDATE retest_tasks SET status=?, result=?, detail=?, finished_at=?, lease_id=NULL, "
                      "lease_expires_at=NULL WHERE task_id=?",
                      ("invalid" if result == "invalid" else "done", result, detail, now_ms(), task_id))
@@ -210,11 +226,12 @@ def _maybe_finish(conn, issue_id, round_no) -> None:
     if rnd is None or rnd["finished_at"] is not None:
         return
     passed, failed, invalid = counts.get("pass", 0), counts.get("fail", 0), counts.get("invalid", 0)
+    skipped = counts.get("skip", 0)
     outcome = "failed" if failed else ("invalid" if invalid else "passed")
     conn.execute("UPDATE issue_rounds SET finished_at=?, outcome=?, pass_count=?, fail_count=?, invalid_count=? "
                  "WHERE issue_id=? AND round_no=?", (now_ms(), outcome, passed, failed, invalid, issue_id, round_no))
     issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
-    detail = f"round {round_no} {rnd['kind']}: {passed} pass, {failed} fail, {invalid} invalid"
+    detail = f"round {round_no} {rnd['kind']}: {passed} pass, {failed} fail, {invalid} invalid, {skipped} skip"
     if outcome != "passed":
         # Back to the developer; without a live lease the issue returns to the pool.
         to_status = "claimed" if issue["lease_id"] else "open"

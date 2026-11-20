@@ -81,7 +81,7 @@ class Store:
 
     def pending(self):
         with self.connect() as db:
-            rows = db.execute("SELECT id FROM operations WHERE state='queued' ORDER BY created LIMIT 1").fetchall()
+            rows = db.execute("SELECT id FROM operations WHERE state='queued' ORDER BY CASE WHEN kind='task.submit' AND json_extract(payload,'$.workload.mode')='replay' THEN 0 ELSE 1 END,created LIMIT 1").fetchall()
         return [self.operation(row[0]) for row in rows]
 
     def state(self, identity, state, result=None):

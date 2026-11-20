@@ -5,7 +5,10 @@ from ..contracts import Seed
 DIM_MODES = ('uniform', 'half_normal', 'log_normal')
 # Stable current-protocol values; mixed means fp16/fp32, all uses NNSmith dtypes.
 DTYPE_MODES = ('float32', 'float16', 'mixed', 'all')
+# Keep the wire order for historical seeds; uniform is legacy-only and cannot
+# be selected by new task configurations.
 VALUE_MODES = ('uniform', 'log_scale', 'llm', 'recommendation')
+PUBLIC_VALUE_MODES = ('log_scale', 'llm', 'recommendation')
 # Seed protocol profiles; keep this metadata independent of torch/nnsmith.
 PROFILES = {
     'small': (1, 64, 2**16, 10, 'uniform'),
@@ -29,10 +32,10 @@ class SamplingConfig:
     dim_max: int = 131072
     max_elem_per_tensor: int = 524288
     dim_dist_mode: str = 'half_normal'
-    value_dist_mode: str = 'uniform'
+    value_dist_mode: str = 'log_scale'
     dtype_mode: str = 'all'
     max_nodes: int = 10
-    timeout_seconds: int = 300
+    timeout_seconds: int = 60
     dynamic_variants: int = 3
     method: str = "symbolic-cinit"
 

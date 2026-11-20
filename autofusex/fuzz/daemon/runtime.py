@@ -63,7 +63,19 @@ class Manager:
 
     def dispatch(self,body):
         action=body.get('action')
+        if action=='start_session':
+            from .management.local_session import start
+            return start(self)
+        if action=='replay':
+            from .management.replay import submit
+            return submit(self.store, body['seeds'], self.processes)
         if action=='status': return self.snapshot()
+        if action=='stop_session':
+            from .management.tasks import action as task_action
+            for identity in list(self.processes):
+                task_action(self.store,identity,'stop',self.processes)
+            self.store.put('shutdown_when_idle',True)
+            return dict(stopping=True)
         if action=='shutdown':
             if self.active or self.processes: raise ValueError('finish active operations and tasks before stopping daemon')
             self.store.put('normal_shutdown',True)
@@ -151,6 +163,11 @@ class Manager:
     def tick(self):
         from .management.tasks import refresh
         refresh(self.store,self.processes)
+        if self.store.get('shutdown_when_idle') and not self.processes and not self.active:
+            self.store.put('shutdown_when_idle',False)
+            self.store.put('normal_shutdown',True)
+            self.stop.set()
+            return
         if self.active and self.active[1].done():
             identity,future=self.active
             try: self.store.state(identity,'succeeded',future.result())
@@ -171,6 +188,8 @@ class Manager:
             except Exception as exc:self.store.state(operation['id'],'failed',dict(code=type(exc).__name__))
         if not self.active:
             for operation in self.store.pending():
+                if operation['kind']=='task.submit' and self.processes:
+                    continue
                 self.store.state(operation['id'],'running')
                 self.active=(operation['id'],self.pool.submit(self.perform,operation))
 
@@ -181,6 +200,13 @@ class Manager:
         finally:bind(lambda:False)
 
     def synchronize(self):
+        client_path=self.store.home/'client.json'
+        if client_path.exists():
+            client=json.loads(client_path.read_text())
+            if client.get('mode')=='local': return
+            if client.get('mode')=='managed':
+                from .management.platform_sync import synchronize
+                return synchronize(self,client)
         pairing=self.store.get('pairing');credential=self.store.get('credential')
         if pairing and not credential:
             result=remote(pairing['endpoint'],'exchange',dict(id=pairing['id'],secret=pairing['secret']))

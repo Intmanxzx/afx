@@ -81,6 +81,7 @@ class TaskLedger:
             conn.row_factory = sqlite3.Row
             with conn:
                 conn.execute('BEGIN IMMEDIATE')
+                conn.execute("CREATE TABLE IF NOT EXISTS task_priority(task_id TEXT PRIMARY KEY, priority INTEGER NOT NULL)")
                 yield conn
         finally:
             conn.close()
@@ -88,8 +89,10 @@ class TaskLedger:
     def enqueue(self, seed, execution, evaluation, *, task_id=None):
         return self.enqueue_many([(seed, execution, evaluation, task_id)])[0]
 
-    def enqueue_many(self, specifications):
+    def enqueue_many(self, specifications, *, priority=0):
         """All-or-nothing bounded batch; canonicalize every spec before SQL writes."""
+        if type(priority) is not int or priority not in (0, 100):
+            raise ValueError("priority must be normal (0) or replay (100)")
         prepared = {}
         identities = []
         for seed, execution, evaluation, task_id in specifications:
@@ -117,15 +120,20 @@ class TaskLedger:
             if count + len(additions) > capacity:
                 raise ValueError('active task budget exhausted; entire batch rejected')
             conn.executemany("INSERT INTO tasks(id,seed,execution,evaluation,state) VALUES (?,?,?,?,'pending')", additions)
+            conn.executemany("INSERT OR IGNORE INTO task_priority VALUES (?,?)", [(row[0], priority) for row in additions])
             from .placement import admit
             admit(conn, [row[0] for row in additions])
         return identities
+
+    def priorities(self):
+        with self._connection() as conn:
+            return dict(conn.execute("SELECT task_id,priority FROM task_priority"))
 
     def claim(self, identity=None):
         """Atomically claim one case/backend task; None means no pending work."""
         with self._connection() as conn:
             row = conn.execute("SELECT id FROM tasks WHERE state='pending'" +
-                               (" AND id=?" if identity is not None else "") + " ORDER BY rowid LIMIT 1",
+                               (" AND id=?" if identity is not None else "") + " ORDER BY coalesce((SELECT priority FROM task_priority WHERE task_id=tasks.id),0) DESC,rowid LIMIT 1",
                                (identity,) if identity is not None else ()).fetchone()
             if row is None:
                 return None

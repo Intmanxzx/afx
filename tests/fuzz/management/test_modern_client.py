@@ -1,0 +1,70 @@
+import json
+import pytest
+from autofusex.fuzz.daemon.management.modern_cli import run
+from autofusex.fuzz.client.contracts import ExecutionConfig, EvaluationConfig
+from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+
+
+def test_init_is_isolated_and_local_even_with_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME',str(tmp_path/'unrelated'))
+    result=run(['--data-dir',str(tmp_path/'client'),'init','--endpoint','https://example.com'])
+    assert result['mode']=='local'
+    assert not (tmp_path/'unrelated').exists()
+    assert json.loads((tmp_path/'client/task.json').read_text())['results']['upload'] is False
+
+
+def test_replay_priority_survives_restart_and_is_fifo(tmp_path):
+    ledger=TaskLedger(tmp_path/'queue.sqlite')
+    seed=str(SamplingConfig().seed(42))
+    ex=ExecutionConfig('cpu','cpu',1);ev=EvaluationConfig()
+    normal=ledger.enqueue(seed,ex,ev)
+    first=ledger.enqueue_many([(seed,ex,ev,None)],priority=100)[0]
+    second=ledger.enqueue_many([(seed,ex,ev,None)],priority=100)[0]
+    restored=TaskLedger(ledger.path)
+    assert restored.claim()['id']==first
+    assert restored.claim()['id']==second
+    assert restored.claim()['id']==normal
+
+
+def test_invalid_priority_does_not_enqueue(tmp_path):
+    ledger=TaskLedger(tmp_path/'queue.sqlite')
+    with pytest.raises(ValueError):
+        ledger.enqueue_many([],priority=True)
+
+
+def test_shape_mode_is_encoded_in_generated_seeds(tmp_path):
+    from dataclasses import asdict
+    from autofusex.fuzz.client.scheduling.campaign import initialize, refill
+    for mode, dynamic in [('static',False),('dynamic',True)]:
+        ledger=TaskLedger(tmp_path/(mode+'.sqlite'))
+        initialize(ledger,[ExecutionConfig('cpu','cpu',1)],EvaluationConfig(),1,
+                   sampling=asdict(SamplingConfig()),shape_mode=mode)
+        assert refill(ledger)
+        from autofusex.fuzz.client.contracts import Seed
+        assert Seed.parse(ledger.claim()['seed']).dynamic is dynamic
+
+
+def test_replay_uses_history_and_enqueues_before_generation(tmp_path):
+    import sqlite3
+    from autofusex.fuzz.daemon.management.store import Store
+    from autofusex.fuzz.daemon.management.replay import submit
+    from autofusex.fuzz.daemon.management.modern_cli import _default_task
+    from autofusex.fuzz.client.scheduling.budgets import Budget, write_policy
+    store=Store(tmp_path)
+    spec=_default_task();spec['execution']['backends']=['cpu']
+    prepared={'spec':spec,'environment':{'id':'local'}}
+    with store.connect() as db:
+        db.execute('INSERT INTO runs VALUES (?,?,?,?,?)',('run',json.dumps(prepared),'running',0,None))
+    directory=tmp_path/'runs/run';directory.mkdir(parents=True)
+    seed=str(SamplingConfig().seed(7))
+    with sqlite3.connect(directory/'results.sqlite') as db:
+        db.execute('CREATE TABLE attempts(seed TEXT)');db.execute('INSERT INTO attempts VALUES (?)',(seed,))
+    ledger=TaskLedger(directory/'tasks.sqlite');write_policy(ledger,Budget())
+    normal=ledger.enqueue(str(SamplingConfig().seed(8)),ExecutionConfig('cpu','cpu',1),EvaluationConfig())
+    first=submit(store,[seed],{'run':object()})
+    second=submit(store,[seed],{'run':object()})
+    assert set(first['task_ids']).isdisjoint(second['task_ids'])
+    assert ledger.claim()['id']==first['task_ids'][0]
+    assert ledger.claim()['id']==second['task_ids'][0]
+    assert ledger.claim()['id']==normal

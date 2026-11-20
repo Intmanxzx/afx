@@ -489,11 +489,11 @@ def upsert_client(conn, user_id: str, client: dict) -> int:
                      "VALUES(?,?,?,?,?,?)", (user_id, client["machine_id"], now, now, ordinal,
                                              f"{user[0] if user else user_id}-npu{ordinal}"))
     conn.execute(
-        "INSERT INTO clients(user_id, machine_id, hostname, npu_arch, afx_version, first_seen_at, last_seen_at) "
-        "VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id, machine_id) DO UPDATE SET "
-        "hostname=COALESCE(excluded.hostname, hostname), npu_arch=COALESCE(excluded.npu_arch, npu_arch), "
+        "INSERT INTO clients(user_id, machine_id, client_home, hostname, npu_arch, afx_version, first_seen_at, last_seen_at) "
+        "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id, machine_id) DO UPDATE SET "
+        "client_home=COALESCE(excluded.client_home, client_home), hostname=COALESCE(excluded.hostname, hostname), npu_arch=COALESCE(excluded.npu_arch, npu_arch), "
         "afx_version=COALESCE(excluded.afx_version, afx_version), last_seen_at=excluded.last_seen_at, deleted_at=NULL",
-        (user_id, client["machine_id"], client.get("hostname"), client.get("npu_arch"), client.get("afx_version"),
+        (user_id, client["machine_id"], client.get("client_home"), client.get("hostname"), client.get("npu_arch"), client.get("afx_version"),
          now, now))
     return conn.execute("SELECT client_id FROM clients WHERE user_id=? AND machine_id=?",
                         (user_id, client["machine_id"])).fetchone()[0]

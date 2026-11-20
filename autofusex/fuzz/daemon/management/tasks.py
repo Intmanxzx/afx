@@ -18,6 +18,11 @@ def prepare(store, spec):
     local=trusted(store.home).get('resource_limits',{})
     policy=store.get('effective_policy',validate(dict(schema_version=1,kind='client_policy')))
     limits=policy['resources']; requested=spec['execution']['resources']
+    if spec['execution']['devices'] == ['all']:
+        available = local.get('allowed_devices') or limits.get('allowed_devices') or []
+        if not available:
+            raise PermissionError('no authorized NPU devices available')
+        spec['execution']['devices'] = list(available)
     if any(backend!='cpu' for backend in spec['execution']['backends']) and not set(spec['execution']['devices']).issubset(local.get('allowed_devices',[])):
         raise PermissionError('NPU execution requires explicit local device authorization')
     if not set(spec['execution']['devices']).issubset(limits['allowed_devices']):
@@ -26,11 +31,19 @@ def prepare(store, spec):
         if requested.get(name,1)>limits[cap]: raise ValueError(name+' exceeds device limit')
     if requested.get('memory_budget') and limits.get('memory_budget') and quantity(requested['memory_budget'])>quantity(limits['memory_budget']):
         raise ValueError('task memory exceeds device limit')
-    if spec['results']['upload'] and not store.get('credential'):
+    client_path=store.home/'client.json'
+    platform_client=json.loads(client_path.read_text()) if client_path.exists() else {}
+    if spec['results']['upload'] and not store.get('credential') and platform_client.get('mode')!='managed':
         raise ValueError('result upload requires a paired device')
     if requested['policy']=='auto':
-        from ...client.resources import adaptive_defaults
-        defaults=adaptive_defaults(store.home)
+        from ...client.resources import npu_resource_plan
+        from ...client.scheduling.budgets import Budget
+        device_count=len(spec['execution']['devices']) if any(b!='cpu' for b in spec['execution']['backends']) else 0
+        configured_memory=requested.get('memory_budget') or limits.get('memory_budget')
+        plan=npu_resource_plan(store.home,device_count,Budget(memory_budget_bytes=int(quantity(configured_memory)) if configured_memory else None))
+        if plan['budget_limits'].get('memory_budget_bytes'):
+            requested['memory_budget']=str(plan['budget_limits']['memory_budget_bytes'])+'B'
+        defaults=plan['selected']
         requested.update(workers=min(defaults['cpu_workers'],limits['max_workers'],local.get('max_workers',1)),
                          compile_threads=min(defaults['compile_threads'],limits['max_compile_threads'],local.get('max_compile_threads',1)))
     for name, cap in [('workers','max_workers'),('compile_threads','max_compile_threads')]:
@@ -59,7 +72,8 @@ def start(store,spec,operation_id,processes):
     atomic(directory/'spec.json',prepared)
     atomic(directory/'control.json',dict(action='run'))
     manifest=prepared['environment'];env=os.environ.copy();env.update(manifest['env'])
-    env.pop('PYTHONPATH',None)
+    if manifest['id'] != 'local':
+        env.pop('PYTHONPATH',None)
     try:
         # The daemon may activate a separate PyPI-installed client release.
         # Environment Python remains the fallback for installations that do

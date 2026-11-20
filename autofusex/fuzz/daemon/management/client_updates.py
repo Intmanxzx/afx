@@ -14,6 +14,18 @@ def install(store, payload, processes, operation_id=None):
     # Ask active client workers to drain at their safe boundary.  This is
     # finite even for continuous campaigns; an unresponsive worker is first
     # terminated and then left for normal recovery/reconciliation.
+    resume_specs=[]
+    for identity in list(processes):
+        path=store.home/'runs'/identity/'spec.json'
+        if path.exists():
+            spec=json.loads(path.read_text())['spec']
+            if spec.get('termination',{}).get('mode')=='continuous':
+                import copy
+                spec=copy.deepcopy(spec)
+                resources=spec['execution']['resources']
+                if resources['policy']=='auto':
+                    resources.pop('workers',None);resources.pop('compile_threads',None)
+                resume_specs.append(spec)
     for identity, child in list(processes.items()):
         control = store.home / 'runs' / identity / 'control.json'
         if control.exists():
@@ -45,7 +57,13 @@ def install(store, payload, processes, operation_id=None):
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     python = _venv_python(venv)
     if not python.exists():
-        command([sys.executable, '-m', 'venv', str(venv)], timeout=300)
+        command([sys.executable, '-m', 'venv', '--system-site-packages', str(venv)], timeout=300)
+        import site
+        # Nested venvs do not inherit their parent's site-packages. Preserve
+        # the site's Torch/NPU runtime without reinstalling it globally.
+        locations=subprocess.check_output([str(python),'-c','import site; print(site.getsitepackages()[0])'],text=True,timeout=60).strip()
+        from pathlib import Path
+        (Path(locations)/'afx-runtime.pth').write_text('\n'.join(site.getsitepackages())+'\n')
     pip = [str(python), '-m', 'pip', 'install', '--upgrade', '--no-input',
            '--disable-pip-version-check', 'autofusex==' + version]
     if payload.get('index_url'):
@@ -55,10 +73,14 @@ def install(store, payload, processes, operation_id=None):
     check = [str(python), '-c',
              'import importlib.metadata; print(importlib.metadata.version("autofusex"))']
     verified = subprocess.check_output(check, text=True, stderr=subprocess.STDOUT, timeout=60).strip().splitlines()[-1:]
-    if verified and verified[0] and verified[0] != version:
+    if verified != [version]:
         raise ValueError('installed client version does not match requested version')
     atomic(root / 'ready.json', dict(version=version, python=str(python), package='autofusex'))
+    if (store.home/'active-client.json').exists():
+        atomic(store.home/'previous-client.json',json.loads((store.home/'active-client.json').read_text()))
     atomic(store.home / 'active-client.json', dict(version=version, python=str(python)))
+    for index,spec in enumerate(resume_specs):
+        store.submit('task.submit',spec,'after-update:'+str(operation_id or version)+':'+str(index))
     if operation_id:
         store.event(operation_id, 'Client release installed from PyPI: autofusex==' + version)
     return dict(version=version, state='active', python=str(python), source='pypi')
