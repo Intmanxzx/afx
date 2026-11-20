@@ -32,6 +32,10 @@ if [[ ! -x $VENV/bin/python ]]; then
   "$PYTHON_BIN" -m venv "$VENV"
   "$VENV/bin/python" -m pip install -q "$WHEEL"
 fi
+# The venv may be created by root while the service runs as USER_NAME.
+# Keep the deployment private, but make the interpreter and installed files
+# traversable/readable by that service account.
+chmod -R u+rwX,go+rX "$VENV"
 (cd / && "$VENV/bin/python" -I -c 'import autofusex, importlib.metadata as m; print(autofusex.__file__, m.version("autofusex"))')
 # Prove the new code opens (and migrates) the data directory before switching the service.
 "$VENV/bin/python" -I -c 'import sys; from autofusex.platform.server import create_server; s=create_server(sys.argv[1], port=0); s.server_close()' "$ROOT/data"
