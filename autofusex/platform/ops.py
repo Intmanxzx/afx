@@ -53,7 +53,7 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
     now = now_ms()
     with store.write() as conn:
         client_id = upsert_client(conn, principal.user_id, {
-            "machine_id": machine_id, "hostname": body.get("hostname"), "npu_arch": body.get("npu_arch"),
+            "machine_id": machine_id, "client_home": body.get("client_home"), "hostname": body.get("hostname"), "npu_arch": body.get("npu_arch"),
             "afx_version": body.get("afx_version")})
         conn.execute("UPDATE clients SET backend_versions=COALESCE(?, backend_versions), last_heartbeat_at=?, "
                      "busy=?, pending_uploads=? WHERE client_id=?",
@@ -145,7 +145,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
         ran[row["client_id"]] = (row["executions"], row["retests"])
     clients = []
     for row in conn.execute(
-            "SELECT client_id, user_id, machine_id, display_name, hostname, npu_arch, afx_version, backend_versions, "
+            "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
             "target_afx_version, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at "
             "FROM clients WHERE deleted_at IS NULL "
             "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
