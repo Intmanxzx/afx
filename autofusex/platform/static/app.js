@@ -1267,15 +1267,19 @@ function hourly(series) {
 }
 async function settingsPanel() {
   const [settings, pins] = await Promise.all([api("/api/settings"), api("/api/regression/pins")]);
-  const fields = [["perf.tie_threshold", "Kernel 持平阈值 t", "number", "0.01"], ["regression.budget", "回归默认预算", "number", "1"], ["regression.max_budget", "单问题回归上限", "number", "1"],
-    ["issue.perf_anchor", "性能问题锚点后端", "text"], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1"], ["issue.lease_days", "问题租约（天）", "number", "1"], ["verify.max_cases", "单轮验证用例上限", "number", "1"]];
+  const fields = [["perf.tie_threshold", "Kernel 持平阈值", "number", "0.01", "判定性能差异接近持平的比例阈值。"], ["regression.budget", "回归默认预算", "number", "1", "每个问题默认抽取的回归用例总数。"], ["regression.max_budget", "单问题回归上限", "number", "1", "单个问题允许的最大回归用例数。"],
+    ["issue.perf_anchor", "性能对比基准后端", "select", null, "自定义性能对比的基准后端，不是测试任务的执行后端。", ["cpu", "af-legacy", "af-mlir", "triton-npu", "eager-npu"]], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1", "被测后端慢于基准达到该倍数时生成性能问题。"], ["issue.lease_days", "问题租约（天）", "number", "1", "Agent 领取问题后的最长占用时间。"], ["verify.max_cases", "单轮验证用例上限", "number", "1", "一次验证最多执行多少个用例。"]];
   const inputs = {};
-  const grid = el("div", { class: "form-grid" });
-  for (const [key, text, type, step] of fields) { inputs[key] = el("input", { type, step, value: settings[key].value }); grid.append(el("div", {}, text), inputs[key]); }
+  const grid = el("div", { class: "config-grid" });
+  for (const [key, text, type, step, desc, options] of fields) {
+    inputs[key] = type === "select" ? el("select", {}, options.map(v => el("option", {value:v}, BACKEND_LABEL[v] || v))) : el("input", { type, step, value: settings[key].value });
+    inputs[key].value = settings[key].value;
+    grid.append(el("label", {class:"config-field"}, el("span", {class:"config-label"}, text), el("span", {class:"config-help"}, desc), inputs[key]));
+  }
   const shares = settings["regression.shares"].value;
   const shareInputs = {};
-  grid.append(el("div", {}, "回归四层占比 %"), el("div", { class: "toolbar" }, Object.entries({ neighbor: "邻域", sentinel: "哨兵", history: "历史", random: "随机" }).map(([k, t]) => {
-    shareInputs[k] = el("input", { type: "number", min: 0, max: 100, value: shares[k], style: { width: "70px" } }); return el("label", {}, t, " ", shareInputs[k]); })));
+  grid.append(el("label", {class:"config-field config-share-field"}, el("span", {class:"config-label"}, "回归四层占比"), el("span", {class:"config-help"}, "控制邻域、哨兵、历史和随机用例在回归任务中的比例。"), el("span", {class:"toolbar"}, Object.entries({ neighbor: "邻域", sentinel: "哨兵", history: "历史", random: "随机" }).map(([k, t]) => {
+    shareInputs[k] = el("input", { type: "number", min: 0, max: 100, value: shares[k], style: { width: "70px" } }); return el("label", {}, t, " ", shareInputs[k]); }))));
   const out = el("div");
   const save = async () => {
     const changes = {}, base = {};
@@ -1286,7 +1290,7 @@ async function settingsPanel() {
     try { await api("/api/admin/settings", { method: "PUT", body: { changes, base_revisions: base } }); out.replaceChildren(el("span", { class: "chip ok" }, "已保存")); }
     catch (err) { out.replaceChildren(errorBox(err)); }
   };
-  return el("section", { class: "panel" }, el("h2", {}, "设置（管理员）"), grid, el("div", { class: "toolbar", style: { marginTop: "12px" } }, el("button", { class: "primary", onclick: save }, "保存"), out),
+  return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("p", {class:"config-intro"}, "平台级规则影响问题识别、回归和验证流程。"), grid, el("div", { class: "config-actions" }, el("button", { class: "primary", onclick: save }, "保存配置"), out),
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
@@ -1511,7 +1515,7 @@ async function taskConfigurationPanel() {
       const advanced = el("div", {class:"config-grid"}); details.append(advanced);
       const help = {
         "静态 / 动态": "生成固定 Shape、动态 Shape，或两者混合。", "Tensor 规模": "一组预设范围，会联动生成范围参数。",
-        "数据类型": "限制生成用例的数据类型。all 表示不限制。", "最大节点数": "单个计算图最多包含多少个算子节点。",
+        "数据类型（仅保留全部）": "当前统一使用全部数据类型，客户端会根据算子能力生成。", "最大节点数（上限 64）": "单个计算图最多包含多少个算子节点，最大不能超过 64。",
         "后端（多选）": "选择要执行的后端，可同时选择多个。", "设备": "客户端使用的设备，例如 npu:0,npu:1。",
         "任务规模": "continuous 持续执行；finite 执行指定数量后停止。", "有限任务用例数": "finite 模式下要执行的用例数。",
         "算子（多选；不选表示全部）": "只生成选中的算子；不选择表示使用全部算子。", "性能测试": "是否额外采集性能数据，会增加执行时间。",
@@ -1520,6 +1524,7 @@ async function taskConfigurationPanel() {
       };
       function field(parent, title, object, key, values, fallback, multiple=false) {
         const node = values ? el("select", {multiple}, ...values.map(v=>el("option",{value:v},v))) : el("input", {type:typeof fallback === "number" ? "number":"text"});
+        if (title.startsWith("最大节点数")) node.max = "64";
         const value=object[key] ?? fallback;
         if (multiple) for (const option of node.options) option.selected=value.includes(option.value);
         else node.value=value;
@@ -1527,38 +1532,41 @@ async function taskConfigurationPanel() {
         parent.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title] || "高级生成参数，可按需要调整。"),node)); return node;
       }
       field(common,"静态 / 动态",gen,"shape_mode",["static","dynamic","mixed"],"mixed");
-      const scale = field(common,"Tensor 规模",gen,"tensor_scale",["default","small","medium","large","16k","32k","64k","128k"],"default");
-      field(common,"数据类型",gen,"dtype_mode",["all","float32","float16","mixed"],"all");
-      field(common,"最大节点数",gen,"max_nodes",null,10);
-      field(common,"后端（多选）",config.execution,"backends",Object.keys(BACKEND_LABEL),["cpu","af-mlir"],true);
-      const devices=el("input",{value:config.execution.devices.join(","),placeholder:"npu:0,npu:1"});
+      const scale = field(common,"Tensor 规模",gen,"tensor_scale",["default","small","medium","large","16k","32k","64k","128k"],"128k");
+      field(common,"数据类型（仅保留全部）",gen,"dtype_mode",["all"],"all");
+      field(common,"最大节点数（上限 64）",gen,"max_nodes",null,10);
+      field(common,"后端（多选）",config.execution,"backends",Object.keys(BACKEND_LABEL),["cpu","af-legacy","af-mlir"],true);
+      const deviceValue=config.execution.devices.includes("all")?"all":(config.execution.devices[0]||"all");
+      const devices=el("select",{},[["all","全部本地设备（自适应）"],["npu:0","npu:0"],["npu:1","npu:1"]].map(([v,t])=>el("option",{value:v},t))); devices.value=deviceValue;
       common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},"设备"),el("span",{class:"config-help"},help["设备"]),devices));
-      controls.push(()=>config.execution.devices=devices.value.split(",").map(v=>v.trim()).filter(Boolean));
+      controls.push(()=>config.execution.devices=[devices.value]);
       const term=config.termination;
-      field(common,"任务规模",term,"mode",["finite","continuous"],"finite");
-      field(common,"有限任务用例数",term,"max_cases",null,100);
+      const taskMode=field(common,"任务规模",term,"mode",["continuous","finite"],"continuous");
+      const maxCases=field(common,"有限任务用例数",term,"max_cases",null,100);
+      const updateMaxCases=()=>{maxCases.disabled=taskMode.value==="continuous";}; taskMode.addEventListener("change",updateMaxCases); updateMaxCases();
       const operators=field(common,"算子（多选；不选表示全部）",gen,"ops",catalog.items.map(o=>o.id),[],true);
-      operators.size=8;
-      for (const [title,obj,key] of [["性能测试",config.evaluation.performance,"enabled"],["上传结果",config.results,"upload"]]) {
-        const toggle=el("input",{type:"checkbox",checked:obj[key]});common.append(el("label",{class:"config-field config-toggle"},toggle,el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title])));controls.push(()=>obj[key]=toggle.checked);
+      operators.size=8; for (const [i,o] of catalog.items.entries()) operators.options[i].textContent=o.name||o.id;
+      for (const [title,obj,key,values,fallback] of [["性能测试",config.evaluation.performance,"enabled",[["false","不启用"],["true","启用"]],"false"],["上传结果",config.results,"upload",[["true","上传"],["false","不上传"]],"true"]]) {
+        const select=el("select",{},values.map(([v,t])=>el("option",{value:v},t))); select.value=String(obj[key]??fallback); common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title]),select)); controls.push(()=>obj[key]=select.value==="true");
       }
-      for (const [title,key,value] of [["最小轴长","dim_min",1],["最大轴长","dim_max",131072],["单 Tensor 元素上限","max_elements_per_tensor",524288],["动态 Shape 数量","dynamic_variants",3]]) field(advanced,title,gen,key,null,value);
+      for (const [title,key,value] of [["每个维度 Shape（最小）","dim_min",1],["每个维度 Shape（最大）","dim_max",131072],["单 Tensor 元素上限","max_elements_per_tensor",524288],["动态 Shape 数量","dynamic_variants",3]]) field(advanced,title,gen,key,null,value);
       field(advanced,"维度分布",gen,"dim_dist_mode",["uniform","half_normal","log_normal"],"half_normal");
       field(advanced,"数值分布",gen,"value_dist_mode",["uniform","log_scale","llm","recommendation"],"uniform");
+      help["构图方法"] = "symbolic-cinit：符号构图并初始化；symbolic：纯符号构图；concolic：符号与具体值结合。";
       field(advanced,"构图方法",gen,"method",["symbolic-cinit","symbolic","concolic"],"symbolic-cinit");
-      field(advanced,"生成超时",gen,"timeout",null,"300s");
-      field(advanced,"执行环境",config,"environment",null,"local");
+      help["生成超时"] = "单个用例的 NNSmith 构图与生成阶段最长时间，不是整批任务时间。"; field(advanced,"生成超时",gen,"timeout",null,"300s");
+      help["执行环境"] = "客户端已安装的执行环境；local 表示客户端本地默认环境。"; field(advanced,"执行环境",config,"environment",["local"],"local");
       field(advanced,"执行超时",config.execution,"timeout",null,"120s");
-      field(advanced,"Worker 回收阶段数",config.execution.resources,"worker_max_tasks",null,16);
+      help["Worker 回收阶段数"] = "每个 Worker 最多连续处理多少个任务，达到后回收重启，用于控制内存增长。"; field(advanced,"Worker 回收阶段数",config.execution.resources,"worker_max_tasks",null,16);
       const save=el("input",{type:"checkbox",checked:config.results.save});
       advanced.append(el("label",{class:"config-field config-toggle"},save,el("span",{class:"config-label"},"保存本地结果"),el("span",{class:"config-help"},help["保存本地结果"])));controls.push(()=>config.results.save=save.checked);
-      field(advanced,"预热次数",config.evaluation.performance,"warmup_steps",null,3);
-      field(advanced,"测量次数",config.evaluation.performance,"measured_steps",null,10);
+      help["预热次数"] = "每个 Shape 先执行的预热次数，结果不计入性能统计。"; field(advanced,"预热次数",config.evaluation.performance,"warmup_steps",null,3);
+      help["测量次数"] = "预热后正式测量的次数；默认是预热 3 次、测量 50 次。"; field(advanced,"测量次数",config.evaluation.performance,"measured_steps",null,50);
       const presets={small:[1,64,65536,10,"uniform"],medium:[8,4096,1048576,30,"uniform"],large:[8,8192,16777216,60,"uniform"],"16k":[8,16384,65536,90,"log_normal"],"32k":[8,32768,131072,120,"log_normal"],"64k":[8,65536,262144,180,"log_normal"],"128k":[8,131072,524288,300,"log_normal"],default:[1,131072,524288,300,"half_normal"]};
       scale.addEventListener("change",()=>{
         const values=presets[scale.value];
         const labels=[...advanced.querySelectorAll('label')];
-        for(const [label,value] of [["最小轴长",values[0]],["最大轴长",values[1]],["单 Tensor 元素上限",values[2]],["生成超时",values[3]+"s"],["维度分布",values[4]]]) {
+      for(const [label,value] of [["每个维度 Shape（最小）",values[0]],["每个维度 Shape（最大）",values[1]],["单 Tensor 元素上限",values[2]],["生成超时",values[3]+"s"],["维度分布",values[4]]]) {
           const row=labels.find(x=>x.querySelector('.config-label')?.textContent===label);if(row)row.querySelector('input,select').value=value;
         }
       });

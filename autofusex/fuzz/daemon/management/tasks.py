@@ -18,6 +18,11 @@ def prepare(store, spec):
     local=trusted(store.home).get('resource_limits',{})
     policy=store.get('effective_policy',validate(dict(schema_version=1,kind='client_policy')))
     limits=policy['resources']; requested=spec['execution']['resources']
+    if spec['execution']['devices'] == ['all']:
+        available = local.get('allowed_devices') or limits.get('allowed_devices') or []
+        if not available:
+            raise PermissionError('no authorized NPU devices available')
+        spec['execution']['devices'] = list(available)
     if any(backend!='cpu' for backend in spec['execution']['backends']) and not set(spec['execution']['devices']).issubset(local.get('allowed_devices',[])):
         raise PermissionError('NPU execution requires explicit local device authorization')
     if not set(spec['execution']['devices']).issubset(limits['allowed_devices']):
