@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import sys
+import traceback
 
 
 def main(path):
@@ -46,7 +47,11 @@ def main(path):
         atomic(state,dict(state='completed',result=result))
         return 0
     except Exception as exc:
-        atomic(state,dict(state='failed',error=type(exc).__name__))
+        # The parent persists the terminal state, while execution.log contains
+        # the complete traceback because the worker's stderr is redirected
+        # there by tasks.start().
+        atomic(state,dict(state='failed',error=type(exc).__name__,message=str(exc)[:1000]))
+        traceback.print_exc()
         return 1
 
 
