@@ -1202,9 +1202,6 @@ PAGES.ops = async root => {
     ["复测队列", `${fmt(data.retest_queue.pending || 0)} 等待 / ${fmt(data.retest_queue.leased || 0)} 执行中`], ["数据库", mb.toFixed(1) + " MB"]].map(([k, v, tip]) =>
     el("div", { class: "tile", "data-tooltip": tip }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))));
   const selected = new Set();
-  root.append(el("section", { class: "panel" }, el("h2", {}, "用户提交概览"), el("div", { class: "muted small" }, "按用户聚合；最近 10 分钟速率按已落库的非 CPU 用例计算。"),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "使用卡数", "近 10 分钟用例", "用例/分钟", "近 24 小时执行", "近 24 小时上传"].map(t => el("th", {}, t)))),
-      el("tbody", {}, (data.users || []).map(u => el("tr", {}, el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)), el("td", {}, fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)), el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)), el("td", {}, fmt(u.uploads_24h)))))))));
   const version = el("input", { placeholder: "目标 afx 版本，如 " + (data.latest_afx_version || "0.2.0"), style: { width: "220px" }, oninput: () => { clientsPanel.dataset.custom = "1"; } });
   const updateBtn = el("button", { class: "primary", onclick: async () => {
     if (!selected.size || !version.value.trim()) return alert("先选择客户端并填写版本");
@@ -1223,11 +1220,17 @@ PAGES.ops = async root => {
         el("td", {}, isAdmin() && !c.online ? el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${c.display_name || c.client_id}？`)) return; try { await api(`/api/admin/clients/${c.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除") : "—"),
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
   root.append(clientsPanel);
+  const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "客户端运行概览"),
+    el("div", { class: "muted small" }, "按用户汇总提交速率、卡数、节点运行状态和工具效率；展开明细查看单个运行窗口。"),
+    el("h3", {}, "用户提交"),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "使用卡数", "近 10 分钟用例", "用例/分钟", "近 24 小时执行", "近 24 小时上传"].map(t => el("th", {}, t)))),
+      el("tbody", {}, (data.users || []).map(u => el("tr", {}, el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)), el("td", {}, fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)), el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)), el("td", {}, fmt(u.uploads_24h))))))));
+  root.append(overviewPanel);
   const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
-  root.append(fleetPanel(data.clients, fleetScope));
+  overviewPanel.append(fleetPanel(data.clients, fleetScope));
   const effBox = el("section", { class: "panel" });
-  root.append(effBox);
+  overviewPanel.append(effBox);
   renderEfficiency(effBox, await api("/api/ops/efficiency"));
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
