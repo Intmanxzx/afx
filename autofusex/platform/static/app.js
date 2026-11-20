@@ -1220,53 +1220,28 @@ PAGES.ops = async root => {
         el("td", {}, isAdmin() && !c.online ? el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${c.display_name || c.client_id}？`)) return; try { await api(`/api/admin/clients/${c.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除") : "—"),
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
   root.append(clientsPanel);
-  const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "客户端运行概览"),
-    el("div", { class: "muted small" }, "按用户汇总提交速率、卡数、节点运行状态和工具效率；展开明细查看单个运行窗口。"),
-    el("h3", {}, "用户提交"),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "使用卡数", "近 10 分钟用例", "用例/分钟", "近 24 小时执行", "近 24 小时上传"].map(t => el("th", {}, t)))),
-      el("tbody", {}, (data.users || []).map(u => el("tr", {}, el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)), el("td", {}, fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)), el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)), el("td", {}, fmt(u.uploads_24h))))))));
+  const efficiencyData = await api("/api/ops/efficiency");
+  const efficiencyUsers = new Map((efficiencyData.users || []).map(u => [u.user_id, u]));
+  const overviewRows = (data.users || []).map(u => {
+    const e = efficiencyUsers.get(u.user_id) || {};
+    return el("tr", {},
+      el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)),
+      el("td", {}, fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)),
+      el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)),
+      el("td", {}, fmt(u.uploads_24h)), el("td", {}, fmt(e.windows)), el("td", {}, fmt(e.success)),
+      el("td", {}, fmt(e.completed)), el("td", {}, fmt(e.failed)), el("td", {}, fmt(e.case_errors)),
+      el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
+  });
+  const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
+    el("div", { class: "muted small" }, "每个用户一行：提交量、资源占用和工具效率使用同一套聚合口径。"),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" },
+      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "卡数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "效率窗口", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
+      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 14, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
   const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
-  overviewPanel.append(fleetPanel(data.clients, fleetScope));
-  const effBox = el("section", { class: "panel" });
-  overviewPanel.append(effBox);
-  renderEfficiency(effBox, await api("/api/ops/efficiency"));
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
-// Only the viewer's own online nodes (the server withholds other users' snapshots); admins can widen it.
-const FLEET_SCOPE_KEY = "afx.fleet.scope";
-const RECYCLE_LABEL = { isolated: "后端不复用", stage_failed: "阶段失败", case_error: "用例报错/不支持", max_tasks: "达到任务上限", rss_growth: "内存增长",
-  device_resident: "设备显存残留", scratch: "缓存超限", evicted: "被其他后端挤出", crashed: "进程异常/超时" };
-function workerSummary(w) {
-  const recycled = Object.entries(w.recycled || {}).sort((a, b) => b[1] - a[1]);
-  const total = recycled.reduce((n, [, v]) => n + v, 0);
-  return `Worker：新建 ${fmt(w.spawned || 0)} · 复用 ${fmt(w.reused || 0)}` + (total ? " · 回收 " + recycled.map(([k, v]) => `${RECYCLE_LABEL[k] || k} ${fmt(v)}（${pct(v, total)}）`).join("，") : "");
-}
-function fleetPanel(clients, scope) {
-  const live = clients.filter(c => c.online && (c.runtime || []).length);
-  const box = el("section", { class: "panel" }, el("h2", {}, "节点运行情况", el("span", { class: "spacer" }),
-    isAdmin() ? select([["mine", "仅我的"], ["all", "全部"]], scope, v => { store.set(FLEET_SCOPE_KEY, v); render(); }) : null));
-  if (!live.length) { box.append(el("div", { class: "empty" }, me ? "暂无运行中的节点" : "登录后可查看自己的节点")); return box; }
-  for (const c of live) {
-    const card = el("div", { class: "fleet-card" }, el("h3", {}, c.display_name || c.machine_id, el("span", { class: "muted small" }, ` · ${c.user_id} · ${archLabel(c.npu_arch)} · 快照于 ${time(c.runtime_at)}`)));
-    const rows = c.runtime.map(r => el("tr", {},
-      el("td", { class: "mono small", "data-tooltip": r.run_id }, String(r.run_id || "").slice(0, 8)),
-      el("td", {}, el("span", { class: "chip " + (r.state === "running" ? "ok" : "gray") }, r.state)),
-      el("td", {}, (r.backend || []).map(label).join(" · ")),
-      el("td", {}, el("div", { class: "device-dots" }, (r.devices || []).map(d => el("span", { class: "device-dot" + (d.busy ? " busy" : ""), "data-tooltip": d.uuid }, `${d.logical} ${d.model || ""}`)))),
-      el("td", {}, Object.entries(r.stages || {}).map(([k, v]) => `${stageName(k)} ×${v}`).join("，") || "—"),
-      el("td", {}, `${fmt(r.success)} / ${fmt(r.completed)}`),
-      el("td", {}, r.elapsed > 0 ? (r.completed * 60 / r.elapsed).toFixed(2) : "—"),
-      el("td", {}, fmt(r.queued)), el("td", {}, fmt(r.case_errors)), el("td", { class: "small" }, Math.round(r.elapsed / 60) + " 分钟")));
-    card.append(el("div", { class: "table-wrap" }, el("table", { class: "grid" },
-      el("thead", {}, el("tr", {}, ["运行", "状态", "后端", "设备（绿=忙）", "进行中阶段", "成功 / 完成 Shape", "Shape/min", "排队", "Case 错误", "已运行"].map(t => el("th", {}, t)))), el("tbody", {}, rows))));
-    for (const r of c.runtime) if (r.workers && r.state === "running") card.append(el("div", { class: "small muted", style: { marginTop: "6px" } }, workerSummary(r.workers)));
-    box.append(card);
-  }
-  return box;
-}
-
 // Tool efficiency (ported): finished stage windows grouped by backend / environment / Shape mode.
 function renderEfficiency(box, payload) {
   box.replaceChildren(el("h2", {}, "工具效率"));
