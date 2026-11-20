@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from .config import canonical, validate
 from ...client.config import data_home
@@ -30,21 +31,38 @@ def _default_task():
     })
 
 
+def _autofuse_path():
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("autofuse")
+        return str(Path(spec.origin).resolve()) if spec and spec.origin else None
+    except (ImportError, ValueError, OSError):
+        return None
+
+
 def _legacy(argv):
     from .cli import parser, _run
     return _run(parser().parse_args(argv))
 
 
 def parser():
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        release = version("autofusex")
+    except PackageNotFoundError:
+        release = "unknown"
     root = argparse.ArgumentParser(prog="afx", description="AutofuseX client")
+    root.add_argument("-v", "--version", action="version", version=f"%(prog)s {release}")
     root.add_argument("--data-dir", dest="data_dir")
     sub = root.add_subparsers(dest="command", required=True)
     init = sub.add_parser("init", help="initialize local or managed client")
     init.add_argument("--endpoint", default="https://autofuse.online")
     init.add_argument("--token", default=None)
     init.add_argument("--local", action="store_true")
-    for name in ("start", "status", "stop"):
-        p = sub.add_parser(name)
+    init.add_argument("--device", action="append", default=None, help="NPU device (repeatable, e.g. npu:0)")
+    for name in ("start", "status", "stop", "restart"):
+        sub.add_parser(name, help={"start": "start the configured client", "status": "show client status",
+                                   "stop": "stop the client", "restart": "restart after environment/package changes"}[name])
 
     cfg = sub.add_parser("config")
     cfg.add_argument("action", choices=("show", "edit", "reset"), nargs="?", default="show")
@@ -67,15 +85,31 @@ def run(argv=None):
         managed = bool(args.token) and not args.local
         if args.token and not args.endpoint:
             raise ValueError("--token requires --endpoint")
+        # These are implementation details. Keep stable defaults in the
+        # persisted configuration so the normal CLI never asks users for
+        # database paths or polling knobs.
+        results = (home / "results" / "results.sqlite").expanduser()
+        state = (home / "platform-sync.sqlite").expanduser()
         client = {"version": 1, "mode": "managed" if managed else "local"}
+        if args.device:
+            if any(d != "all" and not __import__('re').fullmatch(r"npu:[0-9]+", d) for d in args.device):
+                raise ValueError("--device must be npu:<number>")
+            client["devices"] = list(dict.fromkeys(args.device))
         if managed:
             client.update(endpoint=args.endpoint, token=args.token)
         elif args.endpoint:
             client["endpoint"] = args.endpoint
+        client["platform"] = {"results": str(results), "state": str(state),
+                                  "retest": True, "interval": 30.0}
         _write(home / "client.json", client)
         if not (home / "task.json").exists():
             _write(home / "task.json", _default_task())
-        return {"mode": client["mode"], "home": str(home), "task": str(home / "task.json")}
+        if client.get("devices"):
+            task = json.loads((home / "task.json").read_text())
+            task.setdefault("execution", {})["devices"] = client["devices"]
+            _write(home / "task.json", task)
+        return {"mode": client["mode"], "home": str(home), "task": str(home / "task.json"),
+                **({"devices": client["devices"]} if "devices" in client else {})}
     if args.command == "config":
         client_path=home/'client.json'
         client=json.loads(client_path.read_text()) if client_path.exists() else {}
@@ -107,13 +141,37 @@ def run(argv=None):
             from autofusex.platform.client import API
             from .artifacts import atomic
             effective = API(client['endpoint'], client['token']).call('GET','/api/config/me')
-            atomic(home/'task.json', effective['config'])
+            config = effective['config']
+            if client.get('devices'):
+                config.setdefault('execution', {})['devices'] = client['devices']
+            atomic(home/'task.json', config)
         return request(home, {"action": "start_session"})
     if args.command == "status":
-        return _legacy(["daemon", "status", "--data-dir", str(home)])
+        result = _legacy(["daemon", "status", "--data-dir", str(home)])
+        client = json.loads((home / "client.json").read_text()) if (home / "client.json").exists() else {}
+        from autofusex.fuzz.client.environment import collect
+        env = collect(home)
+        result["environment"] = {"cann_version": env.get("cann"),
+                                     "pyautofuse_sha256": env.get("autofuse_binary"),
+                                     "autofuse_path": _autofuse_path()}
+        result["platform_client"] = client.get("platform", {})
+        marker = home / "platform-client.json"
+        if marker.exists():
+            try: result["platform_client"].update(json.loads(marker.read_text()))
+            except (OSError, ValueError): pass
+        return result
     if args.command == "stop":
         from ..runtime import request
         return request(home, {"action": "stop_session"})
+    if args.command == "restart":
+        if not (home / "client.json").exists():
+            raise ValueError("run afx init first")
+        from ..runtime import request
+        request(home, {"action": "stop_session"})
+        # Stop the supervisor as well so a restarted execution process cannot
+        # retain modules loaded from the previous CANN installation.
+        _legacy(["daemon", "stop", "--data-dir", str(home)])
+        return run(["--data-dir", str(home), "start"])
     if args.command == "replay":
         _legacy(["daemon", "start", "--data-dir", str(home)])
         from ..runtime import request
