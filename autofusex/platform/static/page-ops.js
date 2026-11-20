@@ -19,11 +19,11 @@ PAGES.ops = async root => {
     try { const r = await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [...selected], version: version.value.trim() } }); alert(`已通知 ${r.requested} 个客户端，下一次心跳时更新`); render(); }
     catch (err) { alert(err.message); } } }, "一键更新");
   const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "操作", "最后心跳"].map(t => el("th", {}, t)))),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "操作", "最后心跳"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => { e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id); if (selected.size) clientsPanel.dataset.custom = "1"; else delete clientsPanel.dataset.custom; } }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
-        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.client_home || c.machine_id }, (c.client_home || c.hostname || c.machine_id).split("/").pop()), el("td", {}, archLabel(c.npu_arch)),
+        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.client_home || c.machine_id }, (c.client_home || c.hostname || c.machine_id).split("/").pop()), el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
@@ -37,7 +37,7 @@ PAGES.ops = async root => {
     const e = efficiencyUsers.get(u.user_id) || {};
     return el("tr", {},
       el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)),
-      el("td", {}, fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)),
+      el("td", {}, u.card_count == null ? "未上报" : fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)),
       el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)),
       el("td", {}, fmt(u.uploads_24h)), el("td", {}, fmt(e.success)),
       el("td", {}, fmt(e.completed)), el("td", {}, fmt(e.failed)), el("td", {}, fmt(e.case_errors)),
@@ -46,7 +46,7 @@ PAGES.ops = async root => {
   const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
     el("div", { class: "muted small" }, "每个用户一行：提交量、资源占用和执行结果使用同一套聚合口径。"),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" },
-      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "卡数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
+      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "可见 NPU 数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
       el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 13, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));

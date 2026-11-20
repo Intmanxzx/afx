@@ -503,3 +503,17 @@ def test_task_configuration_http(world):
         assert len(api.call('GET','/api/config/operators')['items'])>100
     finally:
         server.shutdown();server.server_close();thread.join()
+
+
+def test_device_inventory_independent_of_runs(world):
+    store, client, admin = world
+    def count():
+        return next(c for c in ops.summary(store, principal=admin, scope="all")["clients"]
+                    if c["machine_id"] == "m1")["card_count"]
+    assert count() is None
+    for devices, expected in [(["npu:0", "npu:1"], 2), ([], 0), (None, None)]:
+        ops.heartbeat(store, client, {"machine_id": "m1", "devices": devices, "runtime": []})
+        assert count() == expected
+    for devices in [["npu:0", "npu:0"], ["cpu"], [True], "npu:0"]:
+        with pytest.raises(IssueError):
+            ops.heartbeat(store, client, {"machine_id": "m1", "devices": devices})
