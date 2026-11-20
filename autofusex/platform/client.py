@@ -703,7 +703,10 @@ class Client:
                                           (self.state.get("fuzz:cursor"),)).fetchone()[0]
         windows = self.unsent_windows()
         home = str(self.home().resolve())
-        machine_id = (env.get("installation_id") or socket.gethostname())[:96] + ":" + home[:31]
+        # installation_id is the stable identity shared with the managed
+        # daemon. client_home is reported separately and must not become part
+        # of machine_id, otherwise one installation creates duplicate clients.
+        machine_id = (env.get("installation_id") or socket.gethostname())[:128]
         body = {"machine_id": machine_id[:128], "client_home": home[:512],
                 "hostname": socket.gethostname()[:128], "npu_arch": env.get("device_model"),
                 "afx_version": env.get("package_version"),
