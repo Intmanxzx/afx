@@ -88,8 +88,17 @@ def start(store,spec,operation_id,processes):
                     worker_python=candidate
             except (OSError, ValueError, TypeError):
                 pass
-        child=subprocess.Popen([worker_python,'-m','autofusex.fuzz.daemon.management.task_worker',str(directory/'spec.json'),str(ownership.fileno())],
-                               env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,pass_fds=(ownership.fileno(),))
+        # Keep the execution worker's stdout/stderr with the run.  The
+        # bootstrap daemon is deliberately quiet, but dropping worker output
+        # made failed runs impossible to diagnose after the child exited.
+        log = (directory / 'execution.log').open('ab', buffering=0)
+        try:
+            child=subprocess.Popen([worker_python,'-m','autofusex.fuzz.daemon.management.task_worker',str(directory/'spec.json'),str(ownership.fileno())],
+                                   env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,pass_fds=(ownership.fileno(),))
+        except BaseException:
+            log.close()
+            raise
+        log.close()
     finally: ownership.close()
     processes[identity]=child
     with store.connect() as db:

@@ -123,12 +123,21 @@ class Manager:
         if query == 'runs':
             with self.store.connect() as db:
                 rows=db.execute('SELECT id,state,pid,result FROM runs ORDER BY rowid DESC LIMIT 100').fetchall()
-            return {'items':[dict(id=r['id'],state=r['state'],pid=r['pid'],result=json.loads(r['result']) if r['result'] else None) for r in rows]}
+            items=[]
+            for r in rows:
+                item=dict(id=r['id'],state=r['state'],pid=r['pid'],result=json.loads(r['result']) if r['result'] else None)
+                log=self.store.home/'runs'/r['id']/'execution.log'
+                if log.exists(): item['log']=str(log)
+                items.append(item)
+            return {'items':items}
         if query == 'run':
             with self.store.connect() as db:
                 row=db.execute('SELECT * FROM runs WHERE id=?',(value,)).fetchone()
             if not row: raise LookupError('run not found')
-            return dict(id=row['id'],state=row['state'],pid=row['pid'],spec=json.loads(row['spec']),result=json.loads(row['result']) if row['result'] else None)
+            result=dict(id=row['id'],state=row['state'],pid=row['pid'],spec=json.loads(row['spec']),result=json.loads(row['result']) if row['result'] else None)
+            log=self.store.home/'runs'/row['id']/'execution.log'
+            if log.exists(): result['log']=str(log)
+            return result
         if query == 'tools':
             requested=value
             root=self.store.home/'tools'; items=[]
