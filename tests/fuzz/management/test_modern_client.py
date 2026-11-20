@@ -14,6 +14,14 @@ def test_init_is_isolated_and_local_even_with_endpoint(tmp_path, monkeypatch):
     assert json.loads((tmp_path/'client/task.json').read_text())['results']['upload'] is False
 
 
+def test_init_device_is_persisted_as_local_override(tmp_path):
+    run(['--data-dir', str(tmp_path/'client'), 'init', '--local', '--device', 'npu:1', '--device', 'npu:0'])
+    client = json.loads((tmp_path/'client/client.json').read_text())
+    task = json.loads((tmp_path/'client/task.json').read_text())
+    assert client['devices'] == ['npu:1', 'npu:0']
+    assert task['execution']['devices'] == ['npu:1', 'npu:0']
+
+
 def test_replay_priority_survives_restart_and_is_fifo(tmp_path):
     ledger=TaskLedger(tmp_path/'queue.sqlite')
     seed=str(SamplingConfig().seed(42))

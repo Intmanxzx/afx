@@ -17,7 +17,14 @@ def synchronize(manager, client):
     version=json.loads(active_path.read_text())['version'] if active_path.exists() else importlib.metadata.version('autofusex')
     beat=api.call('POST','/api/client/heartbeat',dict(machine_id=identity,hostname=socket.gethostname(),afx_version=version,busy=bool(manager.processes)),attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
-    atomic(store.home/'task.json',effective['config'])
+    config = effective['config']
+    # A device selected during `afx init --device` is a local operator
+    # override.  Keep the server config for every other field, but never let
+    # a later sync silently replace that explicit local selection.
+    local = json.loads((store.home/'client.json').read_text())
+    if local.get('devices'):
+        config.setdefault('execution', {})['devices'] = local['devices']
+    atomic(store.home/'task.json',config)
     store.put('config_state',dict(revision=effective['revision'],source=effective['source']))
     if beat.get('update_to'):
         store.submit('client.update',dict(version=beat['update_to'],package='autofusex'),'platform-update:'+beat['update_to'])
