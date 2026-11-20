@@ -96,7 +96,6 @@ function orderedColumns(){return [...columnPreferences.order.map(key=>currentCol
 function isVisible(c){return columnPreferences.visibility[c.key]??(c.defaultVisible&&(c.populated||c.key==='af-mlir:total'));}
 function saveColumns(){try{localStorage.setItem(preferenceKey,JSON.stringify(columnPreferences));}catch{}applyColumns();renderColumnPicker();}
 function configureColumns(definitions){currentColumns=definitions;applyColumns();if(!$('column-picker').open)renderColumnPicker();}
-// Retest controls are injected by retests.js when a user session is available.
 window.afFuzzColumns={setVisibility(key,visible){if(!currentColumns.some(c=>c.key===key))return;columnPreferences.visibility[key]=visible;applyColumns();if(!$('column-picker').open)renderColumnPicker();}};
 function applyColumns(){
  const visible=orderedColumns().filter(isVisible),table=$('rows').closest('table');table.querySelector('colgroup')?.remove();
@@ -315,10 +314,10 @@ function navigate(){
   const attempt=new URLSearchParams(fragment).get('attempt');
   if(attempt){const shape=new URLSearchParams(fragment).get('shape');details(attempt,shape===null?null:Number(shape));return;}
   const route=fragment==='performance'?'efficiency':fragment;
-  const name=['overview','records','efficiency','kernel','issues'].includes(route)?route:'overview';
-  for(const key of ['overview','records','efficiency','kernel','issues'])$(key+'-page').hidden=key!==name;
+  const name=['overview','records','efficiency','kernel'].includes(route)?route:'overview';
+  for(const key of ['overview','records','efficiency','kernel'])$(key+'-page').hidden=key!==name;
   $('detail').hidden=true;$('comparison').hidden=true;
-  $('page-title').textContent={overview:'总览',records:'功能&精度',efficiency:'工具效率',kernel:'Kernel性能',issues:'问题分类',backends:'后端'}[name];
+  $('page-title').textContent={overview:'总览',records:'功能&精度',efficiency:'工具效率',kernel:'Kernel性能',backends:'后端'}[name];
   document.querySelectorAll('nav a').forEach(el=>{el.classList.toggle('active',el.dataset.page===name);if(el.dataset.page===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
 }
 window.addEventListener('hashchange',()=>{hideFieldTooltip();navigate();refreshVisible();});

@@ -2,7 +2,7 @@
 
 Fuzz 由客户端管理进程和执行引擎组成，NPU 客户端执行任务、本地保存结果。代码集中在 [autofusex/fuzz](../../autofusex/fuzz/)，NNSmith fork 是独立执行依赖。
 
-本文档只覆盖这一套 fuzz 测试引擎（daemon/client，`autofusex/fuzz`）。旧版本自带的中心服务（身份、任务下发、问题归类、复测）已经整体下线；结果上报、问题闭环、知识库等产品层功能现在由独立的平台服务 [autofusex/platform](../../autofusex/platform/) 提供，是独立的新 schema 和 API，不是本架构的延伸，见[平台业务与数据设计](platform_v3_design.md)。`autofusex/fuzz/server/` 现在只剩下结果的只读/离线能力（`view/` 离线查看器、`reporting/` 统计与索引），不再承载任何写入或远程管理的服务进程。
+本文档只覆盖这一套 fuzz 测试引擎（daemon/client，`autofusex/fuzz`）。结果上报、问题闭环、知识库等产品层功能由独立的平台服务 [autofusex/platform](../../autofusex/platform/) 提供，有自己的 schema 和 API，见[平台业务与数据设计](platform_v3_design.md)。`autofusex/fuzz/server/` 只提供结果的只读/离线能力（`view/` 离线查看器、`reporting/` 统计与索引），不承载写入或远程管理的服务进程。
 
 ## 运行模块
 
@@ -11,7 +11,7 @@ Fuzz 由客户端管理进程和执行引擎组成，NPU 客户端执行任务�
 | `daemon` | 常驻控制面、watchdog、本地 IPC、client 生命周期、优雅停止、版本切换和回滚 | 由系统服务或 bootstrap 维护，保持稳定 |
 | `client` | 领取任务、生成 Case、CPU/NPU 执行、精度验证、本地保存 | 新版本 `pip install autofusex==VERSION` |
 
-`daemon/management/` 里的设备管理数据模型（`ControlStore`、环境/任务下发、`client.update` 远程升级）仍是独立模块，但把它暴露成 HTTP 的 `ControlAPI` 随旧中心一起删除了——它只在旧中心挂载过，新的 `autofusex/platform/` 没有接入这套协议也没有等价实现，细节见[使用说明：远程控制 API](fuzz_usage.md#远程控制-api)。结果上传改为客户端主动跑 `afx platform client run` 轮询/推送平台服务，不再是中心下发。
+`daemon/management/` 里的设备管理数据模型（`ControlStore`、环境/任务下发、`client.update` 远程升级）是独立模块，供本机 CLI 使用；目前没有把它暴露成远程 HTTP 接口，细节见[使用说明：设备管理](fuzz_usage.md#设备管理)。结果上传由客户端主动跑 `afx platform client run` 轮询/推送平台服务完成。
 
 ## 组件与数据流
 
@@ -96,4 +96,4 @@ shape_processing 是 Shape 处理墙钟时间；端到端、排队、工具吞�
 
 ## 上传、复测与问题闭环
 
-托管设备绑定后使用可撤销设备凭据，供 daemon 侧的远程控制协议使用（见上文"运行模块"关于 `management/central.py` 的说明）。结果上传、复测任务领取、问题归类与认领、Agent 修复闭环都已经迁移到 `autofusex/platform/`，不再是这套 fuzz 引擎自己的职责；完整协议和数据模型见[平台业务与数据设计](platform_v3_design.md)，客户端用法见[使用说明](fuzz_usage.md)。
+结果上传、复测任务领取、问题归类与认领、Agent 修复闭环由 `autofusex/platform/` 负责，不是这套 fuzz 引擎自己的职责；完整协议和数据模型见[平台业务与数据设计](platform_v3_design.md)，客户端用法见[使用说明](fuzz_usage.md)。

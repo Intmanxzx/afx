@@ -1,6 +1,6 @@
 # 平台使用说明
 
-**NPU 客户端**执行用例并上报数据（自动泛化测试、导入用例）。客户端默认交给 daemon 托管；下文"托管"工作流（远程下发任务、管理环境、一键更新）描述的是 daemon 侧协议本身，需要一个挂载了设备管理控制面的服务进程才能远程使用，见下文"远程控制 API"的说明。不需要远程托管时，跳过它直接用"方式二"本机运行即可。问题闭环、知识库等 Agent 工作流已迁移到新的平台服务（`autofusex/platform/`），见[平台业务与数据设计](platform_v3_design.md)；本文档只覆盖 fuzz 执行引擎本身。
+**NPU 客户端**执行用例并上报数据（自动泛化测试、导入用例）。客户端默认交给 daemon 托管；下文"托管"工作流（下发任务、管理环境、一键更新）都是通过本机 `afx` CLI 与本地 daemon 交互，不需要远程托管时，跳过它直接用"方式二"本机运行即可。问题闭环、知识库等 Agent 工作流由独立的平台服务（`autofusex/platform/`）提供，见[平台业务与数据设计](platform_v3_design.md)；本文档只覆盖 fuzz 执行引擎本身。
 
 ## 快速开始
 
@@ -91,7 +91,7 @@ afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 
 `submit --wait` 等待的是提交操作，`task wait` 单独等待执行；超时不取消任务，可用同一 ID 继续等待，重试同一操作沿用 request key，新操作用新 key。`upload: true` 要求设备已绑定，仅本地保存可设为 false；省略 execution 时使用 CPU + AF-MLIR、npu:0 和 staged 调度。重放沿用原环境/后端/资源/评估配置，原任务须先释放所有权，不覆盖旧记录。FILE 参数统一支持 `-` 读取 stdin；可先 `afx task validate task.yaml --wait` 校验环境与规格。
 
-注意：`results.upload` 原来把托管 Run 的本地结果上报给旧中心服务；旧中心已停用，当前这一步是空操作——托管 Run 的结果上传需要另外跑 `afx platform client run`（见上文"快速开始"）。
+注意：`results.upload` 当前是空操作；托管 Run 的结果上传需要另外跑 `afx platform client run`（见上文"快速开始"）。
 
 常用命令：
 
@@ -135,7 +135,7 @@ run --backend 增加被测后端，replay --backend 只执行指定后端；不�
 
 ## 查询结果
 
-公网结果网页：https://autofuse.online 。页面和 HTTP API 由 `autofusex/platform/` 提供（不再是旧版 fuzz 中心），路由与鉴权见[平台业务与数据设计](platform_v3_design.md)，不在本文档重复。
+公网结果网页：https://autofuse.online 。页面和 HTTP API 由 `autofusex/platform/` 提供，路由与鉴权见[平台业务与数据设计](platform_v3_design.md)，不在本文档重复。
 
 本地结果可导出快照后离线查看：
 
@@ -144,25 +144,13 @@ afx fuzz maintenance snapshot /path/results.sqlite ./results.snapshot.sqlite
 afx fuzz view ./results.snapshot.sqlite --no-browser
 ~~~
 
-## 远程控制 API
+## 设备管理
 
-设备管理的数据模型（`ControlStore`，[management/central.py](../../autofusex/fuzz/daemon/management/central.py)）独立于执行依赖保留了下来，但把它暴露成 HTTP 的 `ControlAPI`（连同它依赖的会话/CSRF/限流协作对象）随旧中心一起删除了——它只在旧中心的 `server/central/server.py` 里挂载过，新的平台服务（`autofusex/platform/`）没有接入这套协议，也没有等价实现。以下路由描述的是这套协议曾经的形状，仅供将来重新接入时参考；当前没有可访问的 HTTPS 端点，需要远程设备管理必须先重新实现 HTTP 层。
+设备管理（配对、环境、任务下发、`client.update` 远程升级）是本机 `afx` CLI 与本地 daemon 之间的协议，数据模型见 [management/central.py](../../autofusex/fuzz/daemon/management/central.py)。目前没有暴露对应的远程 HTTP 接口，所有管理操作都在本机通过上文"快速开始"列出的 `afx` 命令完成。
 
-白名单包含 `client.update`：payload `{"version":"0.1.4","package":"autofusex"}`，可选 `index_url`（仅用于受控 PyPI 镜像）；version 必须精确，daemon 不执行无版本的升级，也不自行探测最新版本。
+`client.update` 的 payload 是 `{"version":"0.1.4","package":"autofusex"}`，可选 `index_url`（仅用于受控 PyPI 镜像）；version 必须精确，daemon 不执行无版本的升级，也不自行探测最新版本。
 
-网页用户控制走登录会话：`POST /api/session {"token":"..."}`，需与站点 Host 一致的 HTTPS Origin，保留返回的会话 Cookie 和 CSRF token；后续写请求带 Origin/Cookie/X-CSRF-Token/Content-Type: application/json，body 上限 64 KiB。设备 Bearer 凭据不能替代用户控制凭据。
-
-| 路由 | 方法 / body | 作用 |
-|---|---|---|
-| /api/manage/devices、/api/manage/schemas | GET | 当前用户设备、配置 schema |
-| /api/manage/validate | POST {"config": SPEC} | 纯配置校验，不解析本机执行环境 |
-| /api/manage/submit | POST device_id、kind、payload、request_key | 异步远程操作（kind 复用本地操作白名单，例如 task.submit 的 payload 是任务规格，task.action 是 {"run_id": ID, "action":"stop"}） |
-| /api/manage/operations | POST {"device_id": ID} | 设备操作与回执 |
-| /api/manage/config | POST device_id、config、base_revision | 按修订号更新设备策略 |
-
-服务端拒绝跨用户设备操作，本地 trust 仍限制最终权限。设备使用 Bearer 调用 `/api/manage/poll`、`ack`、`revoke`；注册配对由 enroll/pair/exchange 完成。这套路由形状详见 [management/central.py](../../autofusex/fuzz/daemon/management/central.py) 顶部的说明；`ControlAPI` 本身已不在代码里。
-
-问题领取、知识库、Agent 修复闭环已迁移到新平台的 `/api/issues/*` 等接口，见[平台业务与数据设计](platform_v3_design.md)第 5、8 节；本地 skill [afx-repair](../../skills/afx-repair/SKILL.md) 把那份文档当作当前 API 参考。
+问题领取、知识库、Agent 修复闭环由平台服务的 `/api/issues/*` 等接口提供，见[平台业务与数据设计](platform_v3_design.md)第 5 节；本地 skill [afx-repair](../../skills/afx-repair/SKILL.md) 把那份文档当作当前 API 参考。
 
 ## 当前自动化边界
 

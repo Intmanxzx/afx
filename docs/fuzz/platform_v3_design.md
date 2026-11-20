@@ -1,6 +1,6 @@
 # AutofuseX 一站式开发平台：业务与数据设计（v3）
 
-状态：持续演进中。目标是把 autofusex 从"fuzz 测试平台"升级为"基于 Agent 的 Autofuse 一站式开发平台"；第 8 节起记录的 P0/P1 已实现并在用（[afx-repair skill](../../skills/afx-repair/SKILL.md) 把本文件第 5、8 节当作当前 API 参考），第 9 节"分期计划"中标为未完成的部分仍是设计稿，不代表已有接口。其余章节（业务闭环、状态机、数据库设计、页面设计）是当前实现与后续迭代共用的设计依据，不是一次性草案。
+autofusex 一站式开发平台：基于 Agent 的问题闭环、知识库、数据库与 HTTP API。[afx-repair skill](../../skills/afx-repair/SKILL.md) 把本文件第 5、8 节当作当前 API 参考。Baize 导入、整网分析两项尚未实现，接口返回 501，见第 5、7 节。
 
 本次按新产品开发：从空库部署，不迁移历史数据，不保留旧接口、旧页面或旧协议的兼容层。现有代码中可复用的部分（租约、幂等 request_key、复测客户端协议、client.update）按新设计重写接入。
 
@@ -73,7 +73,7 @@ flowchart LR
 
 指定用例存放在 `regression_pins(pin_id, scope, scope_value, case_id, added_by, reason, created_at, revoked_at)` 中。单问题的指定只能在问题进入 `regressing` 之前提交（由租约持有者或管理员提交），提交后冻结。页面入口：问题发现页选中用例后点"加入回归集"；问题详情抽屉中有"指定回归用例"。
 
-挑选结果冻结在 `issue_cases(role='regression', pick_reason=pinned|neighbor|sentinel|history|random)` 中。回归判定：回归集中原 Pass 用例变为非 Pass 即回归失败；原本就不稳定（历史上同版本结果翻转过）的用例标记 `flaky`，不阻塞但在页面提示（P1 尚未实现 flaky 识别）。
+挑选结果冻结在 `issue_cases(role='regression', pick_reason=pinned|neighbor|sentinel|history|random)` 中。回归判定：回归集中原 Pass 用例变为非 Pass 即回归失败；原本就不稳定（历史上同版本结果翻转过）的用例设计上会标记 `flaky`，不阻塞但在页面提示；flaky 识别当前未实现。
 
 ## 3. 用例标识
 
@@ -501,7 +501,7 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 - **Baize 导入**：`cases.case_source / external_ref / import_source_id` 和 `import_sources(id, framework, package_version, imported_at, user)`，以及 `POST /api/import/baize`。导入后走同一执行流程，只是 workload 不是 `generate` 而是 `imported`。
 - **整网分析**：使用独立表 `model_jobs(job_id, model_name, model_kind=rec|llm, config_content_id, backend, env_id, status, …)` 和 `model_reports(job_id, metric, value, content_id)`，不进入用例统计与聚类；接入 autofusex 现有非 fuzz 能力（graph dump、精度对比、HTML 报告）作为报告内容。将来在整网中定位到问题子图时，可以导出为 `M:` 用例，进入同一修复闭环。这是唯一明确的复用点。
 
-## 8. P0 实现说明
+## 8. 服务端实现
 
 代码在 [autofusex/platform](../../autofusex/platform/)，测试在 [tests/platform](../../tests/platform/)，容量基准在 [tools/platform/bench_platform.py](../../tools/platform/bench_platform.py)。
 
@@ -513,6 +513,10 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 | `ingest.py` | 上报校验、用例/环境/特征 upsert、导入用例改图、执行头推进、设置修改 |
 | `aggregates.py` | `stat_buckets` / `perf_pair_buckets` 增量维护与全量重建 |
 | `queries.py` | 总览管道、单 backend 分布、两两 Kernel 对比、用例分组列表、执行详情 |
+| `issues.py` | 聚类签名、执行头变化时归类、领取/续租/释放、提交验证、指定回归用例、提交知识、管理员合并/关闭、请求幂等 |
+| `retests.py` | 验证/回归任务的创建、按版本领取、完成判定、轮次评估与状态推进 |
+| `regression.py` | 回归集挑选（指定 + 四层）、预览、全局/特征范围指定用例管理 |
+| `knowledge.py` | 知识校验、创建、检索（结构化过滤 + FTS5 trigram，短词回退 LIKE）、JSONL 导出 |
 | `server.py` | HTTP 路由、请求体上限、并发与限流、统一错误响应 |
 
 管理命令：
@@ -526,20 +530,61 @@ afx platform --data DIR serve --port 8100
 afx platform --data DIR rebuild-stats
 ```
 
-P0 已实现的路由：`POST /api/client/executions`；`GET /api/me`、`/api/overview/{pipeline,backend,perf,dims}`、`/api/cases`、`/api/executions/{exec_uuid}`、`/api/clients`、`/api/settings`；`PUT /api/admin/settings`。全部要求 Bearer token。
+已实现的路由（全部要求 Bearer token，写请求都带 `request_key`，同 key 同 body 返回首次结果，不同 body 返回 409）：
 
-实现时确定的规则：
+| 方法 | 路由 | 权限 |
+|---|---|---|
+| POST | `/api/client/executions` | 写 |
+| GET | `/api/me`、`/api/overview/{pipeline,backend,perf,dims}`、`/api/cases`、`/api/executions/{exec_uuid}`、`/api/clients`、`/api/settings` | 任意 |
+| PUT | `/api/admin/settings` | admin |
+| GET | `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/cases?role=`、`/api/issues/{id}/rounds/{n}/tasks` | 任意 |
+| POST | `/api/issues/claim`；`/api/issues/{id}/{renew,release,verify,regression-cases,knowledge}` | 写 |
+| POST | `/api/admin/issues/{id}/{close,merge}` | admin |
+| GET / POST / DELETE | `/api/regression/preview?issue_id=`、`/api/regression/pins`、`/api/regression/pins/{id}` | 任意 / admin |
+| POST | `/api/client/retests/claim`、`/api/client/retests/{task_id}/complete` | 写 |
+| GET | `/api/knowledge/search`、`/api/knowledge/{id}`、`/api/knowledge/export`（NDJSON） | 任意 |
+| POST | `/api/knowledge`（草稿）、`/api/admin/knowledge/{id}/status` | 写 / admin |
+
+规则：
 
 - **执行头**：只有 `fuzz` / `retest` / `import` 批次会成为当前结果。`verify` / `regress` 批次跑的是候选修复版本，只作为历史保留，不改变总览。迟到的旧执行（`created_at` 更早）只进历史。
 - **上报幂等**：同一用户同一 `request_key` 必须是逐字节相同的请求体，相同则返回首次响应，不同则返回 409。单条记录按 `exec_uuid` 去重：内容相同返回 duplicate，内容不同返回 conflict。校验失败的单条记录返回 rejected，不影响同批其他记录。
 - **聚合一致性**：core 与 stats 各记一个序号，每次写入同时推进。启动时两者不一致（例如两个文件提交之间崩溃）就从 core 全量重建 stats。修改持平阈值也会触发重建。
 - **两两对比**：每对 backend 只存一份（字典序 x<y），反向查询时翻转结论与直方图。只有两边都功能通过、精度不失败、且有 kernel 耗时的用例才参与对比。
-- **管道共享阶段**：P0 接口按 backend 分别返回各阶段计数，并给出 `shared_stages` 配置；P2 页面在同族 backend 计数一致时合并显示。按用例求同族交集需要单独的聚合，留到 P2 再定。
+- **管道共享阶段**：接口按 backend 分别返回各阶段计数，并给出 `shared_stages` 配置；页面在同族 backend 计数一致时合并显示。按用例求同族交集需要单独的聚合，暂未实现。
 - **用例特征**：服务端自动补充 `source`、`dynamic`、`size_bucket` 三个离散特征和 `node_count`、`max_numel`、`max_dim`、`shape_count` 四个数值特征。可分组统计的维度为 `op_category`、`dtype`、`size_bucket`、`dynamic`、`source`。
+- **聚类粒度**：签名使用一个"主算子类别"（按 reduce > broadcast > view > compare > cast > elementwise 取最高者），不用全部类别的组合，避免多类别的图把同一个 bug 拆成几十类。精度问题在 ≤4 个节点的小图上使用精确算子集合。
+- **何时归类**：只有成为当前结果（fuzz/retest/import）的失败执行会归入问题。verify/regress 的失败执行只记录签名，不归入问题。
+- **重新打开**：已解决的问题只在新失败满足两个条件时重新打开：执行时间晚于解决时间；所在 backend 版本是修复版本，或不在解决前已知失败的版本里。修复合入前，旧版本持续失败是预期内的，不会反复打开问题。
+- **回归失败不另建问题**：回归跑的是尚未合入的候选包，用它的失败建新问题会污染问题池。失败用例记在该轮回归结果中（`issue_cases.result=fail`），问题退回修复中。`caused_by` 字段保留，等候选包合入后再考虑使用。
+- **租约**：问题租约默认 5 天，在下一次写请求时检查过期。过期后，处于修复中的问题回到未领取；处于验证中、回归中或归档中的问题保持原状态，只清空持有人，其他 Agent 可以按 issue_id 接管，旧租约的写请求会被拒绝。
+- **轮次评估**：一轮的全部任务都结束后才评估。有 fail 时退回修复中（没有有效租约则回到未领取）；没有 fail 但有 invalid 时同样退回；全部 pass 时，验证轮自动进入回归轮，回归轮进入归档中。回归集为空时直接进入归档中。
+- **知识**：回归通过后由租约持有者提交，生成 `verified / published` 条目，自动附带证据（问题、各轮结果、样例用例、修复版本）。`version_range` 默认为"≥ 修复版本"。领取问题时返回同 backend 的相关知识 Top-5。
 
-### 8.1 本地容量基准（2026-11-17）
+客户端复测协议：
 
-环境：Linux 本机，Python 3.12，SQLite 3.45.1，单线程直接调用入库代码。数据为 100 万用例 × 3 个 backend（af-mlir / af-legacy / triton-npu）= 300 万条执行记录，状态分布与日志均为合成。没有经过 HTTP，没有并发，也不是服务器硬件，所以**只能作为查询计划和存储结构的基线，不能当作 P0 容量验收**。验收还需要在服务器或同规格机器上重跑，并补充并发混合压测（同时上传与查询，走 HTTP）。
+1. `POST /api/client/retests/claim`，带 `machine_id`、`npu_arch` 和已安装包 `installed: {backend: {version, sha256}}`。只会领到 arch、backend、版本、sha256 全部匹配的任务（每次最多 20 个）。返回内容包括建议的 `run_uuid`、`run_kind`（verify/regress）和需要执行的 backend 列表；导入用例还会附带构图规格。
+2. 执行后按普通方式上报（`run.kind` 为 verify 或 regress）。这些结果不会成为当前结果，也不进入总览统计。
+3. `POST /api/client/retests/{task_id}/complete`，带 `lease_id`、`exec_uuids` 和执行时的 `installed`。服务端核对执行记录归属与用例，再判定任务结果：
+   - **pass**：目标 backend 功能通过且精度不失败。性能问题还要求 kernel 耗时与锚点的比值 < `issue.perf_slowdown`。
+   - **fail**：未达到上述条件。
+   - **invalid**：上报的已安装包与待测版本不符，或缺少结果。
+
+   invalid 不算修复失败；一轮里没有 fail、只有 invalid 时，问题退回修复中，需要重新提交验证。任务租约默认 60 分钟，超时重新排队，连续超时 3 次判为 invalid。
+
+当前未实现：flaky 用例识别；验证/回归任务的优先级与公平调度；按特征把多个问题打包领取；Baize 导入与整网分析（见第 7 节，接口返回 501）。
+
+入库吞吐（1 万用例本地合成，含签名计算与性能对比）：约 5500 执行/秒。
+
+### 问题用例重新归类
+
+普通运行的当前结果与已确认的复测结果使用同一个归类函数。仍属于原问题记 Fail；通过记 Pass；问题签名或维度变化时在原问题记 Skip，并在对应 F/A/P 问题登记 Fail。Skip 保留目标问题和历史记录，不使用表示旧图的 stale 标记。后续验证和领取复现集排除 Skip，用例总数保留历史涉及范围。
+
+复测结果必须匹配本任务运行和当前用例版本，安装包校验通过后才归类。性能归类使用同次复测的基准耗时；缺少基准数据不清除已有性能问题。后台运行不会覆盖正在修复的问题用例结论。Skip 不计为原问题失败。
+
+### 8.1 本地容量基准
+
+环境：Linux 本机，Python 3.12，SQLite 3.45.1，单线程直接调用入库代码。数据为 100 万用例 × 3 个 backend（af-mlir / af-legacy / triton-npu）= 300 万条执行记录，状态分布与日志均为合成。没有经过 HTTP，没有并发，也不是服务器硬件，**只能作为查询计划和存储结构的基线**，不覆盖 HTTP/TLS 开销、并发写锁竞争和真实日志重复率，上生产前需要在服务器或同规格机器上补充并发混合压测（同时上传与查询，走 HTTP）。
 
 | 指标 | 1 万用例 | 100 万用例 |
 |---|---:|---:|
@@ -556,80 +601,3 @@ P0 已实现的路由：`POST /api/client/executions`；`GET /api/me`、`/api/ov
 - 磁盘：core.db 1.52 GB（每条执行记录约 505 字节，含用例、特征、索引）；content.db 108 MB（只存失败日志，合成日志偏短）；stats.db 112 KB。按真实日志估算，content.db 会明显更大，需在服务器上用真实数据复核。
 - 失败过滤的耗时取决于失败比例。如果某个 backend 几乎全部通过，按"失败"过滤需要扫描更多执行头；合成数据中失败率约 40%，没有覆盖这种情况。
 - 未覆盖：HTTP/TLS 开销、并发写锁竞争、真实日志重复率、Python 3.9 与旧版 SQLite。
-
-### 8.2 P1 实现说明（问题闭环）
-
-| 文件 | 内容 |
-|---|---|
-| `issues.py` | 聚类签名、执行头变化时归类、领取/续租/释放、提交验证、指定回归用例、提交知识、管理员合并/关闭、请求幂等 |
-| `retests.py` | 验证/回归任务的创建、按版本领取、完成判定、轮次评估与状态推进 |
-| `regression.py` | 回归集挑选（指定 + 四层）、预览、全局/特征范围指定用例管理 |
-| `knowledge.py` | 知识校验、创建、检索（结构化过滤 + FTS5 trigram，短词回退 LIKE）、JSONL 导出 |
-
-新增路由（全部要求 Bearer token，写请求都带 `request_key`，同 key 同 body 返回首次结果，不同 body 返回 409）：
-
-| 方法 | 路由 | 权限 |
-|---|---|---|
-| GET | `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/cases?role=`、`/api/issues/{id}/rounds/{n}/tasks` | 任意 |
-| POST | `/api/issues/claim`；`/api/issues/{id}/{renew,release,verify,regression-cases,knowledge}` | 写 |
-| POST | `/api/admin/issues/{id}/{close,merge}` | admin |
-| GET / POST / DELETE | `/api/regression/preview?issue_id=`、`/api/regression/pins`、`/api/regression/pins/{id}` | 任意 / admin |
-| POST | `/api/client/retests/claim`、`/api/client/retests/{task_id}/complete` | 写 |
-| GET | `/api/knowledge/search`、`/api/knowledge/{id}`、`/api/knowledge/export`（NDJSON） | 任意 |
-| POST | `/api/knowledge`（草稿）、`/api/admin/knowledge/{id}/status` | 写 / admin |
-
-客户端复测协议：
-
-1. `POST /api/client/retests/claim`，带 `machine_id`、`npu_arch` 和已安装包 `installed: {backend: {version, sha256}}`。只会领到 arch、backend、版本、sha256 全部匹配的任务（每次最多 20 个）。返回内容包括建议的 `run_uuid`、`run_kind`（verify/regress）和需要执行的 backend 列表；导入用例还会附带构图规格。
-2. 执行后按普通方式上报（`run.kind` 为 verify 或 regress）。这些结果不会成为当前结果，也不进入总览统计。
-3. `POST /api/client/retests/{task_id}/complete`，带 `lease_id`、`exec_uuids` 和执行时的 `installed`。服务端核对执行记录归属与用例，再判定任务结果：
-   - **pass**：目标 backend 功能通过且精度不失败。性能问题还要求 kernel 耗时与锚点的比值 < `issue.perf_slowdown`。
-   - **fail**：未达到上述条件。
-   - **invalid**：上报的已安装包与待测版本不符，或缺少结果。
-
-   invalid 不算修复失败；一轮里没有 fail、只有 invalid 时，问题退回修复中，需要重新提交验证。任务租约默认 60 分钟，超时重新排队，连续超时 3 次判为 invalid。
-
-实现时确定的规则：
-
-- **聚类粒度**：签名使用一个"主算子类别"（按 reduce > broadcast > view > compare > cast > elementwise 取最高者），不用全部类别的组合。否则多类别的图会把同一个 bug 拆成几十类：1 万用例合成数据中，功能问题从每个 backend 665 类降到 102 类。精度问题在 ≤4 个节点的小图上使用精确算子集合。
-- **何时归类**：只有成为当前结果（fuzz/retest/import）的失败执行会归入问题。verify/regress 的失败执行只记录签名，不归入问题。
-- **重新打开**：已解决的问题只在新失败满足两个条件时重新打开：执行时间晚于解决时间；所在 backend 版本是修复版本，或不在解决前已知失败的版本里。修复合入前，旧版本持续失败是预期内的，不会反复打开问题。
-- **回归失败不另建问题**：回归跑的是尚未合入的候选包，用它的失败建新问题会污染问题池。失败用例记在该轮回归结果中（`issue_cases.result=fail`），问题退回修复中。`caused_by` 字段保留，等候选包合入后再考虑使用。
-- **租约**：问题租约默认 5 天，在下一次写请求时检查过期。过期后，处于修复中的问题回到未领取；处于验证中、回归中或归档中的问题保持原状态，只清空持有人，其他 Agent 可以按 issue_id 接管，旧租约的写请求会被拒绝。
-- **轮次评估**：一轮的全部任务都结束后才评估。有 fail 时退回修复中（没有有效租约则回到未领取）；没有 fail 但有 invalid 时同样退回；全部 pass 时，验证轮自动进入回归轮，回归轮进入归档中。回归集为空时直接进入归档中。
-- **知识**：回归通过后由租约持有者提交，生成 `verified / published` 条目，自动附带证据（问题、各轮结果、样例用例、修复版本）。`version_range` 默认为"≥ 修复版本"。领取问题时返回同 backend 的相关知识 Top-5。
-
-未实现（留待后续）：flaky 用例识别；验证/回归任务的优先级与公平调度；按特征把多个问题打包领取。
-
-P1 后入库吞吐（1 万用例本地合成）：约 5500 执行/秒，比 P0 下降约 26%，原因是入库时增加了签名计算和性能对比。
-
-## 9. 分期计划
-
-| 期 | 内容 | 验收 |
-|---|---|---|
-| P0 | 新 schema（三库）、用户/token、执行上报、环境维度、执行头与增量聚合 | 百万用例/300 万执行合成数据下，首页与总览 p95 < 300 ms |
-| P1 | 聚类签名与问题表、领取/续租/验证 API、复测带版本校验、回归挑选、知识提交 | 端到端：Agent 领取 → 验证失败重试 → 回归 → 归档，状态与事件一致 |
-| P2 | 新页面：总览管道、问题发现双视图、修复闭环地铁线、平台运维 | 移动端、暗色模式、全局搜索联动 |
-| P3 | 知识库页面与导出、能力画像点云、measured 知识自动草稿 | — |
-| P4 | Baize 导入、整网分析 | 另行设计 |
-
-## 10. 已确认决策（2026-11-17）
-
-| # | 决策 |
-|---|---|
-| 1 | 问题状态命名：`verifying` 验证中、`regressing` 回归中、`summarizing` 归档中 |
-| 2 | 回归挑选采用"指定用例 + 四层自动挑选"，默认预算 100，管理员可在页面调整；人工和 Agent 都可以通过页面或 API 指定必选回归用例 |
-| 3 | Kernel 对比加入 ±5%"持平"档，阈值可在设置页调整 |
-| 4 | 本期继续使用 SQLite（三文件拆分 + 增量聚合），PostgreSQL 只作为达到触发条件后的出路 |
-| 5 | 以 EagerNPU 为标杆时，精度不一致与精度失败同样处理、同样进入聚类，页面显示"EagerNPU"小浮标 |
-| 6 | 验证/回归只在问题实际出现的 NPU arch 上执行 |
-| 7 | 导入用例同 ID 但图结构变化时，覆盖原用例并递增 `case_revision`，旧执行记录保留为历史、不参与统计 |
-| 8 | 不预留占位扩展列；结构化字段随时加列，低频属性放 `attrs` JSON，特征走纵表注册 |
-| 9 | 保留每个用例的复测入口，改为行内图标 + 批量操作栏 + 复测抽屉，去掉单独的按钮列 |
-| 10 | 按新产品开发，不考虑历史数据和旧功能兼容 |
-
-### 问题用例重新归类
-
-普通运行的当前结果与已确认的复测结果使用同一个归类函数。仍属于原问题记 Fail；通过记 Pass；问题签名或维度变化时在原问题记 Skip，并在对应 F/A/P 问题登记 Fail。Skip 保留目标问题和历史记录，不使用表示旧图的 stale 标记。后续验证和领取复现集排除 Skip，用例总数保留历史涉及范围。
-
-复测结果必须匹配本任务运行和当前用例版本，安装包校验通过后才归类。性能归类使用同次复测的基准耗时；缺少基准数据不清除已有性能问题。后台运行不会覆盖正在修复的问题用例结论。Skip 不计为原问题失败。
