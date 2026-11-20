@@ -133,6 +133,16 @@ def test_viewer_cannot_upload(env):
         upload(ingestor, viewer, body([item("exec-0001")]))
 
 
+def test_server_reclassifies_first_call_dtype_failure(env):
+    store, ingestor, principal = env
+    payload = body([item("exec-dtype01", status="runtime_fail", accuracy=None,
+                        fail_stage="first_call_combined", log_summary="InductorError",
+                        log="Check dtype failed for graph_hint/cast1 Cast; input_dtypes: [DT_INT64]")], key="dtype-1")
+    upload(ingestor, principal, payload)
+    row = store.reader().execute("SELECT function_status, fail_stage, failure_owner, classifier_version FROM executions WHERE exec_uuid=?", ("exec-dtype01",)).fetchone()
+    assert tuple(row) == ("compile_fail", "graph_check", "autofuse_ascir", 1)
+
+
 def test_validation_rejects_bad_case_keys(env):
     _, ingestor, principal = env
     bad_seed = item("exec-0001", c=case(key=str(10 * 2**160 + 1)))

@@ -425,6 +425,8 @@ ALTER TABLE clients ADD COLUMN display_name TEXT;
 ALTER TABLE clients ADD COLUMN runtime TEXT;
 ALTER TABLE clients ADD COLUMN runtime_at INTEGER;
 ALTER TABLE executions ADD COLUMN detail_content_id INTEGER;
+ALTER TABLE executions ADD COLUMN classifier_version INTEGER;
+ALTER TABLE executions ADD COLUMN failure_owner TEXT;
 CREATE TABLE efficiency_windows(
   client_id INTEGER NOT NULL,
   window_id TEXT NOT NULL,
