@@ -1495,7 +1495,8 @@ if (matchMedia("(hover: none)").matches) document.body.classList.add("touch");
 
 
 async function taskConfigurationPanel() {
-  const panel = el("section", {class:"panel"}, el("h2", {}, "测试任务配置"));
+  const panel = el("section", {class:"panel config-panel"}, el("h2", {}, "测试任务配置"),
+    el("p", {class:"config-intro"}, "配置客户端下一次启动后执行什么任务。常用选项直接展示，生成细节收在“高级参数”中。"));
   const target = el("select", {}, el("option", {value:"me"}, "我的配置"), isAdmin() ? el("option", {value:"default"}, "管理员默认配置") : null);
   const body = el("div", {}), notice = el("div", {role:"status"});
   let config, collect;
@@ -1505,16 +1506,25 @@ async function taskConfigurationPanel() {
       config = result.config;
       const gen = config.workload.generation ||= {};
       const controls = [];
-      const common = el("div", {class:"form-grid"});
-      const details = el("details", {}, el("summary", {}, "建议默认参数"));
-      const advanced = el("div", {class:"form-grid"}); details.append(advanced);
+      const common = el("div", {class:"config-grid"});
+      const details = el("details", {class:"config-advanced"}, el("summary", {}, "高级参数：生成范围、超时和性能"));
+      const advanced = el("div", {class:"config-grid"}); details.append(advanced);
+      const help = {
+        "静态 / 动态": "生成固定 Shape、动态 Shape，或两者混合。", "Tensor 规模": "一组预设范围，会联动生成范围参数。",
+        "数据类型": "限制生成用例的数据类型。all 表示不限制。", "最大节点数": "单个计算图最多包含多少个算子节点。",
+        "后端（多选）": "选择要执行的后端，可同时选择多个。", "设备": "客户端使用的设备，例如 npu:0,npu:1。",
+        "任务规模": "continuous 持续执行；finite 执行指定数量后停止。", "有限任务用例数": "finite 模式下要执行的用例数。",
+        "算子（多选；不选表示全部）": "只生成选中的算子；不选择表示使用全部算子。", "性能测试": "是否额外采集性能数据，会增加执行时间。",
+        "上传结果": "是否把执行结果上传到平台。", "执行环境": "任务在哪类环境中执行。",
+        "保存本地结果": "是否在客户端本地保留结果数据库。",
+      };
       function field(parent, title, object, key, values, fallback, multiple=false) {
         const node = values ? el("select", {multiple}, ...values.map(v=>el("option",{value:v},v))) : el("input", {type:typeof fallback === "number" ? "number":"text"});
         const value=object[key] ?? fallback;
         if (multiple) for (const option of node.options) option.selected=value.includes(option.value);
         else node.value=value;
         controls.push(()=>object[key]=multiple ? [...node.selectedOptions].map(o=>o.value) : typeof fallback === "number" ? Number(node.value) : node.value);
-        parent.append(el("label",{},title,node)); return node;
+        parent.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title] || "高级生成参数，可按需要调整。"),node)); return node;
       }
       field(common,"静态 / 动态",gen,"shape_mode",["static","dynamic","mixed"],"mixed");
       const scale = field(common,"Tensor 规模",gen,"tensor_scale",["default","small","medium","large","16k","32k","64k","128k"],"default");
@@ -1522,7 +1532,7 @@ async function taskConfigurationPanel() {
       field(common,"最大节点数",gen,"max_nodes",null,10);
       field(common,"后端（多选）",config.execution,"backends",Object.keys(BACKEND_LABEL),["cpu","af-mlir"],true);
       const devices=el("input",{value:config.execution.devices.join(","),placeholder:"npu:0,npu:1"});
-      common.append(el("label",{},"设备",devices));
+      common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},"设备"),el("span",{class:"config-help"},help["设备"]),devices));
       controls.push(()=>config.execution.devices=devices.value.split(",").map(v=>v.trim()).filter(Boolean));
       const term=config.termination;
       field(common,"任务规模",term,"mode",["finite","continuous"],"finite");
@@ -1530,7 +1540,7 @@ async function taskConfigurationPanel() {
       const operators=field(common,"算子（多选；不选表示全部）",gen,"ops",catalog.items.map(o=>o.id),[],true);
       operators.size=8;
       for (const [title,obj,key] of [["性能测试",config.evaluation.performance,"enabled"],["上传结果",config.results,"upload"]]) {
-        const toggle=el("input",{type:"checkbox",checked:obj[key]});common.append(el("label",{},toggle,title));controls.push(()=>obj[key]=toggle.checked);
+        const toggle=el("input",{type:"checkbox",checked:obj[key]});common.append(el("label",{class:"config-field config-toggle"},toggle,el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title])));controls.push(()=>obj[key]=toggle.checked);
       }
       for (const [title,key,value] of [["最小轴长","dim_min",1],["最大轴长","dim_max",131072],["单 Tensor 元素上限","max_elements_per_tensor",524288],["动态 Shape 数量","dynamic_variants",3]]) field(advanced,title,gen,key,null,value);
       field(advanced,"维度分布",gen,"dim_dist_mode",["uniform","half_normal","log_normal"],"half_normal");
@@ -1541,7 +1551,7 @@ async function taskConfigurationPanel() {
       field(advanced,"执行超时",config.execution,"timeout",null,"120s");
       field(advanced,"Worker 回收阶段数",config.execution.resources,"worker_max_tasks",null,16);
       const save=el("input",{type:"checkbox",checked:config.results.save});
-      advanced.append(el("label",{},save,"保存本地结果"));controls.push(()=>config.results.save=save.checked);
+      advanced.append(el("label",{class:"config-field config-toggle"},save,el("span",{class:"config-label"},"保存本地结果"),el("span",{class:"config-help"},help["保存本地结果"])));controls.push(()=>config.results.save=save.checked);
       field(advanced,"预热次数",config.evaluation.performance,"warmup_steps",null,3);
       field(advanced,"测量次数",config.evaluation.performance,"measured_steps",null,10);
       const presets={small:[1,64,65536,10,"uniform"],medium:[8,4096,1048576,30,"uniform"],large:[8,8192,16777216,60,"uniform"],"16k":[8,16384,65536,90,"log_normal"],"32k":[8,32768,131072,120,"log_normal"],"64k":[8,65536,262144,180,"log_normal"],"128k":[8,131072,524288,300,"log_normal"],default:[1,131072,524288,300,"half_normal"]};
@@ -1549,7 +1559,7 @@ async function taskConfigurationPanel() {
         const values=presets[scale.value];
         const labels=[...advanced.querySelectorAll('label')];
         for(const [label,value] of [["最小轴长",values[0]],["最大轴长",values[1]],["单 Tensor 元素上限",values[2]],["生成超时",values[3]+"s"],["维度分布",values[4]]]) {
-          const row=labels.find(x=>x.firstChild.textContent===label);if(row)row.querySelector('input,select').value=value;
+          const row=labels.find(x=>x.querySelector('.config-label')?.textContent===label);if(row)row.querySelector('input,select').value=value;
         }
       });
       collect=()=>{controls.forEach(fn=>fn());if(term.mode==='continuous')delete term.max_cases;return config;};
@@ -1557,6 +1567,9 @@ async function taskConfigurationPanel() {
     } catch(err) {notice.textContent=err.message;}
   }
   target.addEventListener("change",load);
-  panel.append(target,body,el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:collect()}});notice.textContent="已保存，下次启动使用新配置";}catch(err){notice.textContent=err.message;}}},"保存"),el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:null}});await load();}catch(err){notice.textContent=err.message;}}},"恢复默认"),notice);
+  const actions = el("div", {class:"config-actions"}, el("label", {class:"config-target"}, el("span", {}, "配置来源"), target),
+    el("button",{class:"primary",onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:collect()}});notice.textContent="已保存，下次启动使用新配置";}catch(err){notice.textContent=err.message;}}},"保存配置"),
+    el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:null}});await load();}catch(err){notice.textContent=err.message;}}},"恢复默认"));
+  panel.append(actions,body,notice);
   await load();return panel;
 }
