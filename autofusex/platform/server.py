@@ -58,6 +58,12 @@ def _static(name: str):
 
 
 _INDEX_CACHE: dict = {}
+# The only static files index.html references by a literal name that _versioned_index rewrites
+# to a content-hashed query string; only these may be cached as immutable (see _serve_static).
+# app.js imports its submodules (router.js, page-*.js, ...) by plain relative path from inside
+# its own source text, which this function never touches, so those files keep a stable URL and
+# must stay revalidate-on-every-request or a browser could run stale code after a deploy.
+_HASHED_ASSETS = ("app.js", "app.css", "favicon.svg")
 
 
 def _versioned_index(html: bytes) -> bytes:
@@ -66,7 +72,7 @@ def _versioned_index(html: bytes) -> bytes:
     key = hashlib.sha256(html).hexdigest()
     if key not in _INDEX_CACHE:
         out = html
-        for asset in ("app.js", "app.css", "favicon.svg"):
+        for asset in _HASHED_ASSETS:
             found = _static(asset)
             if found:
                 digest = hashlib.sha256(found[0]).hexdigest()[:12]
@@ -584,9 +590,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        # HTML must always be revalidated; hashed assets may be cached forever.
-        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate" if name == "index.html"
-                         else "public, max-age=31536000, immutable")
+        # HTML must always be revalidated. Only the assets _versioned_index actually content-hashes
+        # may be cached forever; everything else (including app.js's own ES module imports) is
+        # referenced by a stable, un-hashed URL and must be revalidated on every request instead.
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if name in _HASHED_ASSETS
+                         else "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(data)
 
