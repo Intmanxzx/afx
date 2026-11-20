@@ -32,7 +32,7 @@ class SamplingConfig:
     value_dist_mode: str = 'uniform'
     dtype_mode: str = 'all'
     max_nodes: int = 10
-    timeout_seconds: int = 300
+    timeout_seconds: int = 60
     dynamic_variants: int = 3
     method: str = "symbolic-cinit"
 

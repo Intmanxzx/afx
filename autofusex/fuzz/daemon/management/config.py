@@ -130,7 +130,7 @@ DEFAULTS = {
     'environment': {},
     'fuzz_task': dict(workload=dict(mode='generate', generation=dict(tensor_scale='128k', dtype_mode='all', max_nodes=10)),
                       execution=dict(backends=['cpu', 'af-legacy', 'af-mlir'], devices=['all'], scheduling='staged', static_only=False,
-                        timeout='120s', resources=dict(policy='auto', worker_max_tasks=16)),
+                      timeout='120s', resources=dict(policy='auto', worker_max_tasks=100)),
                       evaluation=dict(performance=dict(enabled=False, warmup_steps=3, measured_steps=50)),
                       results=dict(save=True, upload=True), termination=dict(mode='continuous'))}
 

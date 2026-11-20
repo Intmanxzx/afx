@@ -1290,7 +1290,7 @@ async function settingsPanel() {
     try { await api("/api/admin/settings", { method: "PUT", body: { changes, base_revisions: base } }); out.replaceChildren(el("span", { class: "chip ok" }, "已保存")); }
     catch (err) { out.replaceChildren(errorBox(err)); }
   };
-  return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("p", {class:"config-intro"}, "平台级规则影响问题识别、回归和验证流程。"), grid, el("div", { class: "config-actions" }, el("button", { class: "primary", onclick: save }, "保存配置"), out),
+  return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("p", {class:"config-intro"}, "平台级规则影响问题识别、回归和验证流程。"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
@@ -1531,11 +1531,17 @@ async function taskConfigurationPanel() {
         controls.push(()=>object[key]=multiple ? [...node.selectedOptions].map(o=>o.value) : typeof fallback === "number" ? Number(node.value) : node.value);
         parent.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title] || "高级生成参数，可按需要调整。"),node)); return node;
       }
+      function checkboxGroup(parent, title, object, key, values, fallback) {
+        const current = object[key] || fallback;
+        const checks = values.map(([value, text]) => { const input=el("input",{type:"checkbox",value,checked:current.includes(value)}); return el("label",{class:"config-check"},input,el("span",{},text)); });
+        parent.append(el("div",{class:"config-field config-check-group"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title]),el("div",{class:"config-checks"},checks)));
+        controls.push(()=>object[key]=checks.map(x=>x.querySelector('input')).filter(x=>x.checked).map(x=>x.value));
+      }
       field(common,"静态 / 动态",gen,"shape_mode",["static","dynamic","mixed"],"mixed");
       const scale = field(common,"Tensor 规模",gen,"tensor_scale",["default","small","medium","large","16k","32k","64k","128k"],"128k");
       field(common,"数据类型（仅保留全部）",gen,"dtype_mode",["all"],"all");
       field(common,"最大节点数（上限 64）",gen,"max_nodes",null,10);
-      field(common,"后端（多选）",config.execution,"backends",Object.keys(BACKEND_LABEL),["cpu","af-legacy","af-mlir"],true);
+      checkboxGroup(common,"后端（多选）",config.execution,"backends",Object.keys(BACKEND_LABEL).map(v=>[v,BACKEND_LABEL[v]]),["cpu","af-legacy","af-mlir"]);
       const deviceValue=config.execution.devices.includes("all")?"all":(config.execution.devices[0]||"all");
       const devices=el("select",{},[["all","全部本地设备（自适应）"],["npu:0","npu:0"],["npu:1","npu:1"]].map(([v,t])=>el("option",{value:v},t))); devices.value=deviceValue;
       common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},"设备"),el("span",{class:"config-help"},help["设备"]),devices));
@@ -1544,8 +1550,7 @@ async function taskConfigurationPanel() {
       const taskMode=field(common,"任务规模",term,"mode",["continuous","finite"],"continuous");
       const maxCases=field(common,"有限任务用例数",term,"max_cases",null,100);
       const updateMaxCases=()=>{maxCases.disabled=taskMode.value==="continuous";}; taskMode.addEventListener("change",updateMaxCases); updateMaxCases();
-      const operators=field(common,"算子（多选；不选表示全部）",gen,"ops",catalog.items.map(o=>o.id),[],true);
-      operators.size=8; for (const [i,o] of catalog.items.entries()) operators.options[i].textContent=o.name||o.id;
+      checkboxGroup(common,"算子（多选；不选表示全部）",gen,"ops",catalog.items.map(o=>[o.id,o.name||o.id]),[]);
       for (const [title,obj,key,values,fallback] of [["性能测试",config.evaluation.performance,"enabled",[["false","不启用"],["true","启用"]],"false"],["上传结果",config.results,"upload",[["true","上传"],["false","不上传"]],"true"]]) {
         const select=el("select",{},values.map(([v,t])=>el("option",{value:v},t))); select.value=String(obj[key]??fallback); common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title]),select)); controls.push(()=>obj[key]=select.value==="true");
       }
@@ -1554,19 +1559,20 @@ async function taskConfigurationPanel() {
       field(advanced,"数值分布",gen,"value_dist_mode",["uniform","log_scale","llm","recommendation"],"uniform");
       help["构图方法"] = "symbolic-cinit：符号构图并初始化；symbolic：纯符号构图；concolic：符号与具体值结合。";
       field(advanced,"构图方法",gen,"method",["symbolic-cinit","symbolic","concolic"],"symbolic-cinit");
-      help["生成超时"] = "单个用例的 NNSmith 构图与生成阶段最长时间，不是整批任务时间。"; field(advanced,"生成超时",gen,"timeout",null,"300s");
+      help["生成超时（秒）"] = "单个用例的 NNSmith 构图与生成阶段最长时间，不是整批任务时间。";
+      const generationTimeout=field(advanced,"生成超时（秒）",gen,"timeout",null,60); generationTimeout.value=parseInt(gen.timeout||60,10)||60; controls.push(()=>gen.timeout=Math.max(1,Number(generationTimeout.value))+"s");
       help["执行环境"] = "客户端已安装的执行环境；local 表示客户端本地默认环境。"; field(advanced,"执行环境",config,"environment",["local"],"local");
-      field(advanced,"执行超时",config.execution,"timeout",null,"120s");
-      help["Worker 回收阶段数"] = "每个 Worker 最多连续处理多少个任务，达到后回收重启，用于控制内存增长。"; field(advanced,"Worker 回收阶段数",config.execution.resources,"worker_max_tasks",null,16);
-      const save=el("input",{type:"checkbox",checked:config.results.save});
-      advanced.append(el("label",{class:"config-field config-toggle"},save,el("span",{class:"config-label"},"保存本地结果"),el("span",{class:"config-help"},help["保存本地结果"])));controls.push(()=>config.results.save=save.checked);
+      help["执行超时（秒）"] = "单个用例从执行开始到结束的最长时间。"; const executionTimeout=field(advanced,"执行超时（秒）",config.execution,"timeout",null,120); executionTimeout.value=parseInt(config.execution.timeout||120,10)||120; controls.push(()=>config.execution.timeout=Math.max(1,Number(executionTimeout.value))+"s");
+      help["Worker 回收阶段数"] = "每个 Worker 最多连续处理多少个任务，达到后回收重启，用于控制内存增长。"; field(advanced,"Worker 回收阶段数",config.execution.resources,"worker_max_tasks",null,100);
+      const save=el("select",{},[["true","保存"],["false","不保存"]].map(([v,t])=>el("option",{value:v},t))); save.value=String(config.results.save);
+      advanced.append(el("label",{class:"config-field"},el("span",{class:"config-label"},"保存本地结果"),el("span",{class:"config-help"},help["保存本地结果"]),save)); controls.push(()=>config.results.save=save.value==="true");
       help["预热次数"] = "每个 Shape 先执行的预热次数，结果不计入性能统计。"; field(advanced,"预热次数",config.evaluation.performance,"warmup_steps",null,3);
       help["测量次数"] = "预热后正式测量的次数；默认是预热 3 次、测量 50 次。"; field(advanced,"测量次数",config.evaluation.performance,"measured_steps",null,50);
       const presets={small:[1,64,65536,10,"uniform"],medium:[8,4096,1048576,30,"uniform"],large:[8,8192,16777216,60,"uniform"],"16k":[8,16384,65536,90,"log_normal"],"32k":[8,32768,131072,120,"log_normal"],"64k":[8,65536,262144,180,"log_normal"],"128k":[8,131072,524288,300,"log_normal"],default:[1,131072,524288,300,"half_normal"]};
       scale.addEventListener("change",()=>{
         const values=presets[scale.value];
         const labels=[...advanced.querySelectorAll('label')];
-      for(const [label,value] of [["每个维度 Shape（最小）",values[0]],["每个维度 Shape（最大）",values[1]],["单 Tensor 元素上限",values[2]],["生成超时",values[3]+"s"],["维度分布",values[4]]]) {
+      for(const [label,value] of [["每个维度 Shape（最小）",values[0]],["每个维度 Shape（最大）",values[1]],["单 Tensor 元素上限",values[2]],["生成超时（秒）",values[3]],["维度分布",values[4]]]) {
           const row=labels.find(x=>x.querySelector('.config-label')?.textContent===label);if(row)row.querySelector('input,select').value=value;
         }
       });
