@@ -10,6 +10,20 @@ from .config import canonical, fingerprint, quantity, validate
 from .environments import resolve
 
 
+def _expand_devices(devices):
+    """Resolve the user-facing ``all`` device wildcard to logical NPUs.
+
+    Device names in task and policy files are logical ``npu:<index>`` names;
+    physical IDs reported by ``npu-smi`` must not leak into the task ledger.
+    """
+    values = list(dict.fromkeys(devices or []))
+    if "all" not in values:
+        return values
+    from ...client.scheduling.devices import select_devices
+    discovered = select_devices(None)
+    return list(dict.fromkeys([value for value in values if value != "all"] + discovered))
+
+
 def prepare(store, spec):
     spec=validate(spec)
     if spec['kind']!='fuzz_task': raise ValueError('task required')
@@ -18,14 +32,16 @@ def prepare(store, spec):
     local=trusted(store.home).get('resource_limits',{})
     policy=store.get('effective_policy',validate(dict(schema_version=1,kind='client_policy')))
     limits=policy['resources']; requested=spec['execution']['resources']
+    local_allowed = _expand_devices(local.get('allowed_devices', []))
+    policy_allowed = _expand_devices(limits.get('allowed_devices', []))
     if spec['execution']['devices'] == ['all']:
-        available = local.get('allowed_devices') or limits.get('allowed_devices') or []
+        available = local_allowed or policy_allowed
         if not available:
             raise PermissionError('no authorized NPU devices available')
         spec['execution']['devices'] = list(available)
-    if any(backend!='cpu' for backend in spec['execution']['backends']) and not set(spec['execution']['devices']).issubset(local.get('allowed_devices',[])):
+    if any(backend!='cpu' for backend in spec['execution']['backends']) and not set(spec['execution']['devices']).issubset(local_allowed):
         raise PermissionError('NPU execution requires explicit local device authorization')
-    if not set(spec['execution']['devices']).issubset(limits['allowed_devices']):
+    if not set(spec['execution']['devices']).issubset(policy_allowed):
         raise PermissionError('task requests devices outside local policy')
     for name, cap in [('workers','max_workers'),('compile_threads','max_compile_threads')]:
         if requested.get(name,1)>limits[cap]: raise ValueError(name+' exceeds device limit')
