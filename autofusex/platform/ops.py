@@ -159,7 +159,26 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
             "WHERE client_id=? AND hour>?", (item["client_id"], hour - 24)).fetchone()
         item["last_24h"] = dict(totals)
         item["last_24h"]["executions"], item["last_24h"]["retests"] = ran.get(item["client_id"], (0, 0))
+        snapshots = item["runtime"] if mine else []
+        item["card_count"] = max((len({d.get("uuid") or d.get("logical") for d in r.get("devices", [])})
+                                      for r in snapshots if isinstance(r, dict)), default=0)
         clients.append(item)
+    users = []
+    user_ids = sorted({c["user_id"] for c in clients if see_all or c["user_id"] == viewer})
+    for user_id in user_ids:
+        owned = [c for c in clients if c["user_id"] == user_id]
+        ids = [c["client_id"] for c in owned]
+        marks = ",".join("?" for _ in ids)
+        recent = conn.execute(f"SELECT COUNT(*) FROM executions WHERE client_id IN ({marks}) AND created_at>=? AND backend<>'cpu'",
+                              [*ids, now - 600_000]).fetchone()[0] if ids else 0
+        latest = conn.execute(f"SELECT MAX(created_at) FROM executions WHERE client_id IN ({marks}) AND backend<>'cpu'", ids).fetchone()[0] if ids else None
+        users.append({"user_id": user_id, "clients": len(owned),
+                      "online_clients": sum(c["online"] for c in owned),
+                      "card_count": sum(c["card_count"] for c in owned),
+                      "executions_24h": sum(c["last_24h"]["executions"] for c in owned),
+                      "uploads_24h": sum(c["last_24h"]["uploads"] for c in owned),
+                      "executions_10m": recent, "cases_per_minute": round(recent / 10, 2),
+                      "last_execution_at": latest})
     buckets = {}
     for r in conn.execute(
             "SELECT created_at/3600000 AS hour, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests "
@@ -182,14 +201,14 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
         "executions_24h": sum(c["last_24h"]["executions"] for c in clients),
         "pending_uploads": sum(c["pending_uploads"] or 0 for c in clients if c["online"]),
         "retest_queue": queue, "db_bytes": sizes, "latest_afx_version": latest,
-        "clients": clients, "hourly": series,
+        "clients": clients, "users": users, "hourly": series,
     }
 
 
 def efficiency(store: Store, client_id=None, limit: int = 100) -> dict:
     """Finished stage windows reported by clients (same rows the old tool-efficiency page used)."""
     conn = store.reader()
-    sql = ("SELECT w.client_id, c.display_name, w.window_id, w.received_at, w.payload FROM efficiency_windows w "
+    sql = ("SELECT w.client_id, c.user_id, c.display_name, w.window_id, w.received_at, w.payload FROM efficiency_windows w "
            "JOIN clients c ON c.client_id=w.client_id")
     args = []
     if client_id is not None:
@@ -197,10 +216,40 @@ def efficiency(store: Store, client_id=None, limit: int = 100) -> dict:
         args.append(client_id)
     windows = []
     for row in conn.execute(sql + " ORDER BY w.received_at DESC LIMIT ?", args + [min(limit, 200)]):
-        windows.append({"client_id": row["client_id"], "client_name": row["display_name"],
+        windows.append({"client_id": row["client_id"], "user_id": row["user_id"], "client_name": row["display_name"],
                         "window_id": row["window_id"], "received_at": row["received_at"],
                         "rows": json.loads(row["payload"])})
-    return {"windows": windows}
+    users = {}
+    for window in windows:
+        user = users.setdefault(window["user_id"], {"user_id": window["user_id"], "windows": 0, "clients": set(), "seconds": 0.0, "success": 0, "completed": 0, "failed": 0, "case_errors": 0})
+        user["windows"] += 1; user["clients"].add(window["client_id"])
+        for row in window["rows"]:
+            user["seconds"] += float(row.get("window_seconds") or 0)
+            for key in ("success", "completed", "failed", "case_errors"):
+                user[key] += int(row.get(key) or 0)
+    for user in users.values():
+        user["clients"] = len(user["clients"]); user["success_per_minute"] = round(user["success"] * 60 / user["seconds"], 2) if user["seconds"] else None
+    # A client may not have finished a stage window yet. Keep the efficiency
+    # panel useful by deriving a recent per-user throughput fallback directly
+    # from stored non-CPU executions.
+    since = now_ms() - 86_400_000
+    where = "e.created_at>=? AND e.backend<>'cpu'"
+    args = [since]
+    if client_id is not None:
+        where += " AND e.client_id=?"; args.append(client_id)
+    for row in conn.execute("SELECT e.user_id, COUNT(*) AS completed,"
+                            "SUM(e.function_status='pass') AS success,"
+                            "SUM(e.function_status<>'pass') AS failed,"
+                            "COUNT(DISTINCT e.client_id) AS clients,"
+                            "MIN(e.created_at) AS first_at, MAX(e.created_at) AS last_at "
+                            f"FROM executions e WHERE {where} GROUP BY e.user_id", args):
+        user = users.setdefault(row["user_id"], {"user_id": row["user_id"], "windows": 0, "clients": 0, "seconds": 0.0, "success": 0, "completed": 0, "failed": 0, "case_errors": 0})
+        if not user["windows"]:
+            user.update(completed=row["completed"], success=row["success"] or 0, failed=row["failed"] or 0, clients=row["clients"],
+                        executions_24h=row["completed"], first_at=row["first_at"], last_at=row["last_at"], fallback=True)
+            span = max(60.0, ((row["last_at"] or row["first_at"]) - (row["first_at"] or row["last_at"])) / 1000)
+            user["success_per_minute"] = round((row["success"] or 0) * 60 / span, 2)
+    return {"windows": windows, "users": list(users.values())}
 
 
 def _version_key(version: str):
