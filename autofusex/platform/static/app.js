@@ -1550,7 +1550,7 @@ async function taskConfigurationPanel() {
       const taskMode=field(common,"任务规模",term,"mode",["continuous","finite"],"continuous");
       const maxCases=field(common,"有限任务用例数",term,"max_cases",null,100);
       const updateMaxCases=()=>{maxCases.disabled=taskMode.value==="continuous";}; taskMode.addEventListener("change",updateMaxCases); updateMaxCases();
-      checkboxGroup(common,"算子（多选；不选表示全部）",gen,"ops",catalog.items.map(o=>[o.id,o.name||o.id]),[]);
+      // 算子目录数量较大，暂不在任务配置页展开；已有 ops 配置继续原样保留。
       for (const [title,obj,key,values,fallback] of [["性能测试",config.evaluation.performance,"enabled",[["false","不启用"],["true","启用"]],"false"],["上传结果",config.results,"upload",[["true","上传"],["false","不上传"]],"true"]]) {
         const select=el("select",{},values.map(([v,t])=>el("option",{value:v},t))); select.value=String(obj[key]??fallback); common.append(el("label",{class:"config-field"},el("span",{class:"config-label"},title),el("span",{class:"config-help"},help[title]),select)); controls.push(()=>obj[key]=select.value==="true");
       }
