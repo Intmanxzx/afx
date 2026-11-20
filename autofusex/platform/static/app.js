@@ -4,6 +4,7 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const TOKEN_KEY = "afx.token";
 const COLS_KEY = "afx.discovery.columns";
+const FLEET_SCOPE_KEY = "afx.fleet.scope";
 const VIEW_KEY = "afx.discovery.view";
 const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "Legacy", "af-mlir": "MLIR", "triton-npu": "TritonNPU" };
 const STAGE_LABEL = { schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
