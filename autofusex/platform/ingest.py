@@ -9,6 +9,7 @@ import sqlite3
 from . import aggregates, issues
 from .auth import Principal
 from .store import Store, canonical_json, now_ms, put_content
+from .failure_attribution import classify as classify_failure
 
 MAX_ITEMS = 500
 MAX_LOG_BYTES = 256 * 1024
@@ -148,7 +149,9 @@ def validate_case(case) -> dict:
 def validate_item(item) -> dict:
     if not isinstance(item, dict):
         raise UploadError("invalid", "item must be an object")
-    function_status = _enum(item, "function_status", FUNCTION_STATUS)
+    # Kept for wire compatibility. The server recomputes this value from the
+    # raw execution evidence below and never trusts the client's classification.
+    function_status = _enum(item, "function_status", FUNCTION_STATUS, required=False) or "runtime_fail"
     accuracy_status = _enum(item, "accuracy_status", ACCURACY_STATUS, required=False)
     if function_status != "pass" and accuracy_status not in (None, "skipped"):
         raise UploadError("invalid", "accuracy_status must be empty or skipped when function failed")
@@ -168,7 +171,7 @@ def validate_item(item) -> dict:
             raise UploadError("invalid", "shape must be an object")
         clean_shapes.append({
             "shape_index": index,
-            "function_status": _enum(shape, "function_status", FUNCTION_STATUS),
+            "function_status": _enum(shape, "function_status", FUNCTION_STATUS, required=False) or "runtime_fail",
             "accuracy_status": _enum(shape, "accuracy_status", ACCURACY_STATUS, required=False),
             "max_abs_err": _float(shape, "max_abs_err"), "max_rel_err": _float(shape, "max_rel_err"),
             "kernel_ns": _int(shape, "kernel_ns"), "e2e_ns": _int(shape, "e2e_ns"),
@@ -424,18 +427,27 @@ class Ingestor:
         if existing is not None:
             return ("duplicate" if existing[0] == item["content_hash"] else "conflict"), False
         case_id, revision, current = self._case(conn, item["case"], tie)
+        # Classification is server authoritative. Detail contains the raw
+        # client execution record, including error_stage and diagnostics.
+        raw_detail = item.get("detail")
+        status, phase, owner, classifier_version = classify_failure(
+            backend=item["backend"], declared_status=item.get("function_status"),
+            declared_stage=item.get("fail_stage"), summary=item.get("log_summary"),
+            log=item.get("log"), detail=raw_detail)
+        item["function_status"], item["fail_stage"], item["failure_owner"] = status, phase, owner
+        item["classifier_version"] = classifier_version
         log_id = put_content(conn, item["log"]) if item["log"] else None
         detail_id = put_content(conn, item["detail"]) if item["detail"] else None
         exec_id = conn.execute(
             "INSERT INTO executions(exec_uuid, content_hash, case_id, case_revision, backend, npu_arch, user_id, "
             "client_id, run_id, run_kind, env_id, function_status, fail_stage, accuracy_status, accuracy_ref, "
             "max_abs_err, max_rel_err, compile_ns, kernel_ns, e2e_ns, log_summary, log_content_id, created_at, "
-            "received_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "received_at, classifier_version, failure_owner) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (item["exec_uuid"], item["content_hash"], case_id, revision, item["backend"], item["npu_arch"], user_id,
              client_id, run_id, run_kind, self._env(conn, item["env"]), item["function_status"], item["fail_stage"],
              item["accuracy_status"], item["accuracy_ref"], item["max_abs_err"], item["max_rel_err"],
              item["compile_ns"], item["kernel_ns"], item["e2e_ns"], item["log_summary"], log_id,
-             item["created_at"], now_ms())).lastrowid
+             item["created_at"], now_ms(), item["classifier_version"], item["failure_owner"])).lastrowid
         if detail_id is not None:
             conn.execute("UPDATE executions SET detail_content_id=? WHERE exec_id=?", (detail_id, exec_id))
         if item["shapes"]:
