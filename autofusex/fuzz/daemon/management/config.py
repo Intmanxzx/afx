@@ -105,7 +105,7 @@ SCHEMAS = {
             obj(dict(mode=enum('generate'), generation=obj(dict(tensor_scale=enum('small', 'medium', 'large', '16k', '32k', '64k', '128k', 'default'),
                 max_nodes=dict(type='integer',minimum=1,maximum=64), max_elements_per_tensor=POSITIVE, timeout=DURATION,
                 shape_mode=enum('static','dynamic','mixed'), dim_min=POSITIVE, dim_max=POSITIVE,
-                dim_dist_mode=enum('uniform','half_normal','log_normal'), value_dist_mode=enum('uniform','log_scale','llm','recommendation'),
+                dim_dist_mode=enum('uniform','half_normal','log_normal'), value_dist_mode=enum('log_scale','llm','recommendation'),
                 dtype_mode=enum('float32','float16','mixed','all'), dynamic_variants=dict(type='integer',minimum=2,maximum=8),
                 method=enum('symbolic-cinit','symbolic','concolic'), ops=dict(type='array',items=TEXT),
                 exclude_ops=dict(type='array', items=enum('transpose'), uniqueItems=True)))), ('mode',))]),

@@ -1556,7 +1556,7 @@ async function taskConfigurationPanel() {
       }
       for (const [title,key,value] of [["每个维度 Shape（最小）","dim_min",1],["每个维度 Shape（最大）","dim_max",131072],["单 Tensor 元素上限","max_elements_per_tensor",524288],["动态 Shape 数量","dynamic_variants",3]]) field(advanced,title,gen,key,null,value);
       field(advanced,"维度分布",gen,"dim_dist_mode",["uniform","half_normal","log_normal"],"half_normal");
-      field(advanced,"数值分布",gen,"value_dist_mode",["uniform","log_scale","llm","recommendation"],"uniform");
+      field(advanced,"数值分布",gen,"value_dist_mode",["log_scale","llm","recommendation"],"log_scale");
       help["构图方法"] = "symbolic-cinit：符号构图并初始化；symbolic：纯符号构图；concolic：符号与具体值结合。";
       field(advanced,"构图方法",gen,"method",["symbolic-cinit","symbolic","concolic"],"symbolic-cinit");
       help["生成超时（秒）"] = "单个用例的 NNSmith 构图与生成阶段最长时间，不是整批任务时间。";
