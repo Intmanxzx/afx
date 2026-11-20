@@ -8,10 +8,12 @@ from ..generation.sampling import SamplingConfig
 from ..contracts import canonical_json
 
 
-def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None, ops=None, budget=None):
+def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=None, sampling=None, ops=None, budget=None, shape_mode='mixed'):
     """Persist the fully resolved launch config, not just what the operator typed:
     everything `--continue` (and `fuzz status`) need to reconstruct or show this
     exact campaign later, including flags that silently fell back to a default."""
+    if shape_mode not in ('static','dynamic','mixed'):
+        raise ValueError('invalid shape mode')
     if count is not None and (type(count) is not int or count < 0):
         raise ValueError('campaign count must be nonnegative or unlimited')
     with ledger._connection() as conn:
@@ -19,7 +21,7 @@ def initialize(ledger, configs, evaluation, count, devices=None, exclude_ops=Non
             raise ValueError('campaign backend matrix exceeds task capacity')
         conn.execute('CREATE TABLE IF NOT EXISTS campaign (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, remaining INTEGER, stopped INTEGER NOT NULL)')
         conn.execute('INSERT OR REPLACE INTO campaign VALUES (1,?,?,0)',
-                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'ops':ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig()),'generation_protocol':'aten/2','budget':budget,'started_at':datetime.now(timezone.utc).isoformat()}),count))
+                     (canonical_json({'configs':[asdict(c) for c in configs],'evaluation':asdict(evaluation),'devices':devices or [],'next_device':0,'exclude_ops':exclude_ops or [],'ops':ops or [],'sampling':sampling if sampling is not None else asdict(SamplingConfig()),'shape_mode':shape_mode,'generation_protocol':'aten/2','budget':budget,'started_at':datetime.now(timezone.utc).isoformat()}),count))
 
 
 def read(ledger):
@@ -64,6 +66,8 @@ def refill(ledger, target_pending=1):
         if covered or len(pending)>=prefetch_limit:return False
         entropy=secrets.randbelow(36**9)
         dynamic=not all(c.get('static_only') for c in config['configs']) and bool(entropy & 1)
+        if config.get('shape_mode') in ('static','dynamic'):
+            dynamic = config['shape_mode']=='dynamic'
         seed = str(SamplingConfig(**config['sampling']).seed(entropy % 2**32, dynamic))
         active = conn.execute("SELECT count(*) FROM tasks WHERE state NOT IN ('completed','cancelled')").fetchone()[0]
         capacity = conn.execute('SELECT max_active FROM queue_config').fetchone()[0]

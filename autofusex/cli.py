@@ -564,6 +564,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    # Compact client surface. The legacy management tree remains available
+    # for compatibility and for administrator/maintenance workflows.
+    modern = raw_argv and raw_argv[0] in {"init", "start", "status", "stop", "replay", "env"}
+    modern = modern or (raw_argv and raw_argv[0] == "config" and len(raw_argv) > 1 and raw_argv[1] in {"show", "edit", "reset"})
+    if modern:
+        from autofusex.fuzz.daemon.management.modern_cli import main as modern_main
+        # Accept the repository-wide convention of placing --data-dir at the
+        # end as well as before the subcommand.
+        if "--data-dir" in raw_argv[1:]:
+            index = raw_argv.index("--data-dir", 1)
+            if index + 1 >= len(raw_argv):
+                return modern_main(raw_argv)
+            raw_argv = ["--data-dir", raw_argv[index + 1], *raw_argv[:index], *raw_argv[index + 2:]]
+        return modern_main(raw_argv)
     if raw_argv and raw_argv[0] in {"daemon", "device", "environment", "task", "operation", "config", "build", "tool", "management"}:
         from autofusex.fuzz.daemon.management.cli import main as management_main
         return management_main(raw_argv)

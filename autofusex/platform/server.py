@@ -311,6 +311,18 @@ class Handler(BaseHTTPRequestHandler):
     # -- routes -----------------------------------------------------------------
     def _route(self, method: str, path: str, params, principal: Principal):
         store = self.server.store
+        if method == 'GET' and path == '/api/config/operators':
+            principal.require_write()
+            from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
+            return {'items':[{'id':r.target,'name':r.display_name,'category':r.category} for r in RULES]},200
+        if path in {"/api/config/me", "/api/config/default"}:
+            from . import task_config
+            administrator = path.endswith('/default')
+            if method == 'GET':
+                return task_config.get(store, principal, administrator=administrator), 200
+            if method == 'POST':
+                return task_config.put(store, principal, self._json_body(), administrator=administrator), 200
+
         if method == "POST" and path == "/api/client/executions":
             if not self.server.upload_limit.allow(principal.token_id):
                 raise HTTPError(429, "rate_limited", "too many uploads", {"Retry-After": "5"})

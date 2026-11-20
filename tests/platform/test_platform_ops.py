@@ -467,3 +467,39 @@ def test_environment_errors_are_not_uploaded(tmp_path):
     statuses = upload_new(NoAPI(), Mapper(str(db)), state, Counters(), key_prefix="fuzz")
     assert statuses == {"a1": "environment"}
     assert state.conn.execute("SELECT reason FROM rejected").fetchone()[0].startswith("environment:")
+
+
+def test_task_configuration_inheritance_and_user_isolation(world):
+    from autofusex.platform import task_config
+    store, dev, admin = world
+    default=task_config.default()
+    default['termination']={'mode':'continuous'}
+    task_config.put(store,admin,{'config':default},administrator=True)
+    assert task_config.get(store,dev)['config']['termination']['mode']=='continuous'
+    personal=task_config.default()
+    personal['workload']['generation']={'shape_mode':'dynamic','dtype_mode':'float32','max_nodes':3}
+    task_config.put(store,dev,{'config':personal})
+    assert task_config.get(store,dev)['source']=='personal'
+    assert task_config.get(store,admin)['config']['termination']['mode']=='continuous'
+    with pytest.raises(auth.AuthError):
+        task_config.put(store,dev,{'config':personal},administrator=True)
+    task_config.put(store,dev,{'config':None})
+    assert task_config.get(store,dev)['config']['termination']['mode']=='continuous'
+
+
+def test_task_configuration_http(world):
+    from autofusex.platform.client import API
+    store, dev, admin=world
+    token=auth.issue_token(store,'dev')
+    server=PlatformServer(store,('127.0.0.1',0))
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        api=API('http://127.0.0.1:'+str(server.server_port),token)
+        result=api.call('GET','/api/config/me')
+        spec=result['config'];spec['workload']['generation']={'shape_mode':'dynamic','dtype_mode':'float32'}
+        saved=api.call('POST','/api/config/me',{'config':spec})
+        assert saved['source']=='personal'
+        assert api.call('GET','/api/config/me')['config']['workload']['generation']['shape_mode']=='dynamic'
+        assert len(api.call('GET','/api/config/operators')['items'])>100
+    finally:
+        server.shutdown();server.server_close();thread.join()

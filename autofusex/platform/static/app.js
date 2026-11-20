@@ -1220,6 +1220,7 @@ PAGES.ops = async root => {
         el("td", {}, isAdmin() && !c.online ? el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${c.display_name || c.client_id}？`)) return; try { await api(`/api/admin/clients/${c.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除") : "—"),
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
   root.append(clientsPanel);
+  const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
   root.append(fleetPanel(data.clients, fleetScope));
   const effBox = el("section", { class: "panel" });
@@ -1555,3 +1556,71 @@ if (matchMedia("(hover: none)").matches) document.body.classList.add("touch");
   if (token()) { try { await loadMe(); } catch { me = null; updateWho(); } }
   render();
 })();
+
+
+async function taskConfigurationPanel() {
+  const panel = el("section", {class:"panel"}, el("h2", {}, "测试任务配置"));
+  const target = el("select", {}, el("option", {value:"me"}, "我的配置"), isAdmin() ? el("option", {value:"default"}, "管理员默认配置") : null);
+  const body = el("div", {}), notice = el("div", {role:"status"});
+  let config, collect;
+  async function load() {
+    try {
+      const [result, catalog] = await Promise.all([api("/api/config/"+target.value),api("/api/config/operators")]);
+      config = result.config;
+      const gen = config.workload.generation ||= {};
+      const controls = [];
+      const common = el("div", {class:"form-grid"});
+      const details = el("details", {}, el("summary", {}, "建议默认参数"));
+      const advanced = el("div", {class:"form-grid"}); details.append(advanced);
+      function field(parent, title, object, key, values, fallback, multiple=false) {
+        const node = values ? el("select", {multiple}, ...values.map(v=>el("option",{value:v},v))) : el("input", {type:typeof fallback === "number" ? "number":"text"});
+        const value=object[key] ?? fallback;
+        if (multiple) for (const option of node.options) option.selected=value.includes(option.value);
+        else node.value=value;
+        controls.push(()=>object[key]=multiple ? [...node.selectedOptions].map(o=>o.value) : typeof fallback === "number" ? Number(node.value) : node.value);
+        parent.append(el("label",{},title,node)); return node;
+      }
+      field(common,"静态 / 动态",gen,"shape_mode",["static","dynamic","mixed"],"mixed");
+      const scale = field(common,"Tensor 规模",gen,"tensor_scale",["default","small","medium","large","16k","32k","64k","128k"],"default");
+      field(common,"数据类型",gen,"dtype_mode",["all","float32","float16","mixed"],"all");
+      field(common,"最大节点数",gen,"max_nodes",null,10);
+      field(common,"后端（多选）",config.execution,"backends",Object.keys(BACKEND_LABEL),["cpu","af-mlir"],true);
+      const devices=el("input",{value:config.execution.devices.join(","),placeholder:"npu:0,npu:1"});
+      common.append(el("label",{},"设备",devices));
+      controls.push(()=>config.execution.devices=devices.value.split(",").map(v=>v.trim()).filter(Boolean));
+      const term=config.termination;
+      field(common,"任务规模",term,"mode",["finite","continuous"],"finite");
+      field(common,"有限任务用例数",term,"max_cases",null,100);
+      const operators=field(common,"算子（多选；不选表示全部）",gen,"ops",catalog.items.map(o=>o.id),[],true);
+      operators.size=8;
+      for (const [title,obj,key] of [["性能测试",config.evaluation.performance,"enabled"],["上传结果",config.results,"upload"]]) {
+        const toggle=el("input",{type:"checkbox",checked:obj[key]});common.append(el("label",{},toggle,title));controls.push(()=>obj[key]=toggle.checked);
+      }
+      for (const [title,key,value] of [["最小轴长","dim_min",1],["最大轴长","dim_max",131072],["单 Tensor 元素上限","max_elements_per_tensor",524288],["动态 Shape 数量","dynamic_variants",3]]) field(advanced,title,gen,key,null,value);
+      field(advanced,"维度分布",gen,"dim_dist_mode",["uniform","half_normal","log_normal"],"half_normal");
+      field(advanced,"数值分布",gen,"value_dist_mode",["uniform","log_scale","llm","recommendation"],"uniform");
+      field(advanced,"构图方法",gen,"method",["symbolic-cinit","symbolic","concolic"],"symbolic-cinit");
+      field(advanced,"生成超时",gen,"timeout",null,"300s");
+      field(advanced,"执行环境",config,"environment",null,"local");
+      field(advanced,"执行超时",config.execution,"timeout",null,"120s");
+      field(advanced,"Worker 回收阶段数",config.execution.resources,"worker_max_tasks",null,16);
+      const save=el("input",{type:"checkbox",checked:config.results.save});
+      advanced.append(el("label",{},save,"保存本地结果"));controls.push(()=>config.results.save=save.checked);
+      field(advanced,"预热次数",config.evaluation.performance,"warmup_steps",null,3);
+      field(advanced,"测量次数",config.evaluation.performance,"measured_steps",null,10);
+      const presets={small:[1,64,65536,10,"uniform"],medium:[8,4096,1048576,30,"uniform"],large:[8,8192,16777216,60,"uniform"],"16k":[8,16384,65536,90,"log_normal"],"32k":[8,32768,131072,120,"log_normal"],"64k":[8,65536,262144,180,"log_normal"],"128k":[8,131072,524288,300,"log_normal"],default:[1,131072,524288,300,"half_normal"]};
+      scale.addEventListener("change",()=>{
+        const values=presets[scale.value];
+        const labels=[...advanced.querySelectorAll('label')];
+        for(const [label,value] of [["最小轴长",values[0]],["最大轴长",values[1]],["单 Tensor 元素上限",values[2]],["生成超时",values[3]+"s"],["维度分布",values[4]]]) {
+          const row=labels.find(x=>x.firstChild.textContent===label);if(row)row.querySelector('input,select').value=value;
+        }
+      });
+      collect=()=>{controls.forEach(fn=>fn());if(term.mode==='continuous')delete term.max_cases;return config;};
+      body.replaceChildren(common,details); notice.textContent=result.source==='personal' ? "使用个人配置":"继承管理员默认配置";
+    } catch(err) {notice.textContent=err.message;}
+  }
+  target.addEventListener("change",load);
+  panel.append(target,body,el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:collect()}});notice.textContent="已保存，下次启动使用新配置";}catch(err){notice.textContent=err.message;}}},"保存"),el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:null}});await load();}catch(err){notice.textContent=err.message;}}},"恢复默认"),notice);
+  await load();return panel;
+}

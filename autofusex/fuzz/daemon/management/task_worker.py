@@ -35,11 +35,12 @@ def main(path):
         else:
             from dataclasses import asdict
             generation=workload.get('generation',{})
-            sampling=SamplingConfig.profile(generation.get('tensor_scale','default'),max_nodes=generation.get('max_nodes'),
+            sampling=SamplingConfig.profile(generation.get('tensor_scale','default'),
+                    **{k:generation[k] for k in ('dim_min','dim_max','dim_dist_mode','value_dist_mode','dtype_mode','dynamic_variants','method') if k in generation},max_nodes=generation.get('max_nodes'),
                     max_elem_per_tensor=generation.get('max_elements_per_tensor'),timeout_seconds=int(quantity(generation['timeout'])) if generation.get('timeout') else None)
-            campaign=(configs,evaluation,spec['termination'].get('max_cases'),ex['devices'],generation.get('exclude_ops',[]),asdict(sampling))
+            campaign=(configs,evaluation,spec['termination'].get('max_cases'),ex['devices'] if any(c.backend!='cpu' for c in configs) else [],generation.get('exclude_ops',[]),asdict(sampling),generation.get('ops',[]),None,generation.get('shape_mode','mixed'))
         atomic(state,dict(state='running'))
-        result=launch(ledger,database,tasks,foreground=True,budget=budget,devices=ex['devices'],campaign=campaign,timeout=quantity(ex['timeout']))
+        result=launch(ledger,database,tasks,foreground=True,budget=budget,devices=ex['devices'] if any(c.backend!='cpu' for c in configs) else [],campaign=campaign,timeout=quantity(ex['timeout']))
         if json.loads((directory/'control.json').read_text()).get('action')=='reconfigure':
             return 75
         atomic(state,dict(state='completed',result=result))
