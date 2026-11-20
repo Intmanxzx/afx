@@ -707,7 +707,8 @@ class Client:
         # daemon. client_home is reported separately and must not become part
         # of machine_id, otherwise one installation creates duplicate clients.
         machine_id = (env.get("installation_id") or socket.gethostname())[:128]
-        body = {"machine_id": machine_id[:128], "client_home": home[:512],
+        from autofusex.fuzz.client.scheduling.devices import device_inventory
+        body = {"devices": device_inventory(), "machine_id": machine_id[:128], "client_home": home[:512],
                 "hostname": socket.gethostname()[:128], "npu_arch": env.get("device_model"),
                 "afx_version": env.get("package_version"),
                 "backend_versions": {"af-mlir": env.get("cann"), "triton-npu": env.get("triton"),

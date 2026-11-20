@@ -481,6 +481,9 @@ CREATE INDEX clients_active ON clients(deleted_at, last_seen_at);
     (9, """
 ALTER TABLE clients ADD COLUMN client_home TEXT;
 """),
+    (10, """
+ALTER TABLE clients ADD COLUMN devices TEXT;
+"""),
 ]
 
 CONTENT = [

@@ -28,6 +28,11 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
         value = body.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > 128):
             raise IssueError("invalid", f"{key} must be a short string")
+    devices = body.get("devices")
+    if devices is not None and (not isinstance(devices, list) or len(devices) > 64 or
+            any(not isinstance(d, str) or not re.fullmatch(r"npu:[0-9]+", d) for d in devices) or
+            len(set(devices)) != len(devices)):
+        raise IssueError("invalid", "devices must be distinct logical npu:index identifiers")
     versions = body.get("backend_versions") or {}
     if not isinstance(versions, dict) or len(versions) > 16 or not all(
             isinstance(k, str) and _NAME.match(k) and (v is None or (isinstance(v, str) and len(v) <= 128))
@@ -59,6 +64,9 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
                      "busy=?, pending_uploads=? WHERE client_id=?",
                      (json.dumps(versions, sort_keys=True) if versions else None, now, int(bool(body.get("busy"))),
                       pending, client_id))
+        if "devices" in body:
+            conn.execute("UPDATE clients SET devices=? WHERE client_id=?",
+                         (json.dumps(devices) if devices is not None else None, client_id))
         if runtime is not None:
             conn.execute("UPDATE clients SET runtime=?, runtime_at=? WHERE client_id=?",
                          (json.dumps(runtime), now, client_id))
@@ -146,7 +154,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
     clients = []
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
-            "target_afx_version, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at "
+            "target_afx_version, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
             "FROM clients WHERE deleted_at IS NULL "
             "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
         item = dict(row)
@@ -161,9 +169,10 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
             "WHERE client_id=? AND hour>?", (item["client_id"], hour - 24)).fetchone()
         item["last_24h"] = dict(totals)
         item["last_24h"]["executions"], item["last_24h"]["retests"] = ran.get(item["client_id"], (0, 0))
-        snapshots = item["runtime"] if mine else []
-        item["card_count"] = max((len({d.get("uuid") or d.get("logical") for d in r.get("devices", [])})
-                                      for r in snapshots if isinstance(r, dict)), default=0)
+        raw_devices = item.pop("devices")
+        devices = json.loads(raw_devices) if raw_devices is not None else None
+        item["devices"] = devices if mine else None
+        item["card_count"] = len(devices) if mine and devices is not None else None
         clients.append(item)
     users = []
     user_ids = sorted({c["user_id"] for c in clients if see_all or c["user_id"] == viewer})
@@ -176,7 +185,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
         latest = conn.execute(f"SELECT MAX(created_at) FROM executions WHERE client_id IN ({marks}) AND backend<>'cpu'", ids).fetchone()[0] if ids else None
         users.append({"user_id": user_id, "clients": len(owned),
                       "online_clients": sum(c["online"] for c in owned),
-                      "card_count": sum(c["card_count"] for c in owned),
+                      "card_count": sum(c["card_count"] for c in owned) if all(c["card_count"] is not None for c in owned) else None,
                       "executions_24h": sum(c["last_24h"]["executions"] for c in owned),
                       "uploads_24h": sum(c["last_24h"]["uploads"] for c in owned),
                       "executions_10m": recent, "cases_per_minute": round(recent / 10, 2),
