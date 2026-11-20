@@ -1196,7 +1196,7 @@ function drawScatter(canvas, data, info) {
 // 平台运维
 // =====================================================================
 PAGES.ops = async root => {
-  const fleetScope = isAdmin() ? store.get(FLEET_SCOPE_KEY, "all") : "mine";
+  const fleetScope = isAdmin() || !me ? "all" : store.get(FLEET_SCOPE_KEY, "all");
   const data = await api("/api/ops/summary" + qs({ scope: fleetScope === "all" ? "all" : null }));
   const mb = Object.values(data.db_bytes).reduce((a, b) => a + b, 0) / 1048576;
   root.append(el("div", { class: "tiles" }, [["在线客户端", fmt(data.online_clients)], ["近 24 小时执行", fmt(data.executions_24h), "按执行发生时间统计，不含 CPU 基线；含复测"], ["待上传", fmt(data.pending_uploads)],
@@ -1240,7 +1240,7 @@ PAGES.ops = async root => {
       el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 13, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
-  const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel);
+  if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
 // One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).

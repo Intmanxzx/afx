@@ -135,7 +135,9 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
     now = now_ms()
     hour = now // 3_600_000
     viewer = principal.user_id if principal is not None and not principal.anonymous else None
-    see_all = scope == "all" and principal is not None and not principal.anonymous and principal.role == "admin"
+    # The operations dashboard is public read-only. Anonymous viewers may see
+    # fleet aggregates; mutation routes still require authentication.
+    see_all = scope == "all" and principal is not None and (principal.anonymous or principal.role == "admin")
     ran = {}
     for row in conn.execute(
             "SELECT client_id, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests FROM executions "
