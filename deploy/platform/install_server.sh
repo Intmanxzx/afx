@@ -30,8 +30,11 @@ DIGEST=$(sha256sum "$WHEEL" | cut -c1-16)
 VENV="$ROOT/deployments/platform-$DIGEST"
 if [[ ! -x $VENV/bin/python ]]; then
   "$PYTHON_BIN" -m venv "$VENV"
-  "$VENV/bin/python" -m pip install -q "$WHEEL"
 fi
+# Reinstall on every deployment, even when the digest directory already
+# exists. This repairs partially-installed environments and guarantees that
+# wheel dependencies (including PyYAML used by task configuration) are present.
+"$VENV/bin/python" -m pip install -q --upgrade "$WHEEL"
 # The venv may be created by root while the service runs as USER_NAME.
 # Keep the deployment private, but make the interpreter and installed files
 # traversable/readable by that service account.
