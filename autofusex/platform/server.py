@@ -150,6 +150,297 @@ def _param(params, name, *, required=False, integer=False):
     return value
 
 
+# ---------------------------------------------------------------------------
+# GET routes with no path parameters. Each handler takes (h, store, principal,
+# params) where `h` is the request Handler (needed only by routes that read
+# the request body or query admin-only state through it).
+# ---------------------------------------------------------------------------
+def _get_me(h, store, principal, params):
+    return {"user_id": principal.user_id, "role": principal.role}
+
+
+def _get_cases(h, store, principal, params):
+    return queries.case_page(
+        store, after=_param(params, "after", integer=True),
+        limit=_param(params, "limit", integer=True) or 50, backend=_param(params, "backend"),
+        status=_param(params, "status"), arch=_param(params, "arch"),
+        case_key=_param(params, "case_key"), case_id=_param(params, "case_id", integer=True),
+        q=_text(params, "q"))
+
+
+def _get_clients(h, store, principal, params):
+    return queries.clients(store)
+
+
+def _get_settings(h, store, principal, params):
+    return queries.settings(store)
+
+
+def _get_search_fields(h, store, principal, params):
+    return search.field_values(store)
+
+
+def _get_issues(h, store, principal, params):
+    return issues.list_issues(store, dimension=_param(params, "dimension"), backend=_param(params, "backend"),
+                              status=_param(params, "status"), q=_text(params, "q"), after=_param(params, "after"),
+                              limit=_param(params, "limit", integer=True) or 50)
+
+
+def _get_ops_summary(h, store, principal, params):
+    return ops.summary(store, principal, _param(params, "scope") or "mine")
+
+
+def _get_ops_efficiency(h, store, principal, params):
+    return ops.efficiency(store, _param(params, "client_id", integer=True))
+
+
+def _get_retests(h, store, principal, params):
+    return retests.list_manual(store, principal)
+
+
+def _get_profile_axes(h, store, principal, params):
+    return profile.axes(store)
+
+
+def _get_models_jobs(h, store, principal, params):
+    ops.not_implemented("model analysis")
+
+
+def _get_regression_preview(h, store, principal, params):
+    return regression.preview(store, _param(params, "issue_id", required=True))
+
+
+def _get_regression_pins(h, store, principal, params):
+    return regression.list_pins(store, _param(params, "scope"))
+
+
+def _get_knowledge_search(h, store, principal, params):
+    return knowledge.search(store.reader(), q=_text(params, "q"), kind=_param(params, "kind"),
+                            op=_param(params, "op"), dtype=_param(params, "dtype"),
+                            backend=_param(params, "backend"), confidence=_param(params, "confidence"),
+                            include_unpublished=principal.role == "admin",
+                            after=_param(params, "after", integer=True),
+                            limit=_param(params, "limit", integer=True) or 20)
+
+
+def _get_knowledge_export(h, store, principal, params):
+    data = "".join(knowledge.export_jsonl(store.reader())).encode()
+    return RawBody(data, "application/x-ndjson; charset=utf-8")
+
+
+# Exact-path GET routes, outside /api/overview/* and /api/executions/* (which
+# need prefix matching) and /api/profile/{points,patterns} (which need the
+# aggregate semaphore, see _AGGREGATE_ROUTES).
+_GET_ROUTES = {
+    "/api/me": _get_me,
+    "/api/cases": _get_cases,
+    "/api/clients": _get_clients,
+    "/api/settings": _get_settings,
+    "/api/search/fields": _get_search_fields,
+    "/api/issues": _get_issues,
+    "/api/ops/summary": _get_ops_summary,
+    "/api/ops/efficiency": _get_ops_efficiency,
+    "/api/retests": _get_retests,
+    "/api/profile/axes": _get_profile_axes,
+    "/api/regression/preview": _get_regression_preview,
+    "/api/regression/pins": _get_regression_pins,
+    "/api/knowledge/search": _get_knowledge_search,
+    "/api/knowledge/export": _get_knowledge_export,
+}
+# Path prefixes that should fall back to _get_models_jobs regardless of what
+# follows (mirrors the historical `path.startswith(...)` behaviour).
+_GET_PREFIX_ROUTES = [
+    ("/api/models/jobs", _get_models_jobs),
+]
+
+
+def _get_round_tasks(h, store, principal, params, match):
+    return retests.round_tasks(store, match.group(1), int(match.group(2)))
+
+
+def _get_issue(h, store, principal, params, match):
+    issue_id, sub = match.groups()
+    if sub is None:
+        return issues.issue_detail(store, issue_id)
+    if sub == "cases":
+        return issues.issue_cases(store, issue_id, _param(params, "role") or "affected",
+                                  _param(params, "after", integer=True))
+    return None
+
+
+def _get_case(h, store, principal, params, match):
+    key = unquote(match.group(1))
+    if not _CASE_KEY.match(key):
+        raise HTTPError(400, "invalid", "invalid case key")
+    if match.group(2) == "history":
+        return queries.case_history(store, key, after=_param(params, "after", integer=True),
+                                    limit=_param(params, "limit", integer=True) or 50)
+    return queries.case_spec(store, key)
+
+
+def _get_knowledge_item(h, store, principal, params, match):
+    return knowledge.get(store.reader(), match.group(1), include_unpublished=principal.role == "admin")
+
+
+# Regex GET routes, tried in order after the exact-path table misses.
+_GET_PATTERNS = [
+    (_ROUND_PATH, _get_round_tasks),
+    (_ISSUE_PATH, _get_issue),
+    (_CASE_PATH, _get_case),
+    (_KNOWLEDGE_PATH, _get_knowledge_item),
+]
+
+
+# ---------------------------------------------------------------------------
+# POST routes. Each handler takes (h, store, principal) and reads its own
+# body via h._json_body()/h._body()/h._json() when it needs one.
+# ---------------------------------------------------------------------------
+def _post_issues_claim(h, store, principal):
+    return issues.claim(store, principal, h._json_body())
+
+
+def _post_heartbeat(h, store, principal):
+    # carries run snapshots and finished efficiency windows, larger than ordinary writes
+    body = h._json(h._body(MAX_HEARTBEAT_BODY))
+    if not isinstance(body, dict):
+        raise HTTPError(400, "invalid", "body must be a JSON object")
+    return ops.heartbeat(store, principal, body)
+
+
+def _post_admin_clients_update(h, store, principal):
+    return ops.request_update(store, principal, h._json_body())
+
+
+def _post_retests(h, store, principal):
+    return retests.create_manual(store, principal, h._json_body())
+
+
+def _post_admin_profile_drafts(h, store, principal):
+    return profile.create_drafts(store, principal, h._json_body())
+
+
+def _post_import_baize(h, store, principal):
+    ops.not_implemented("Baize case import")
+
+
+def _post_models_jobs(h, store, principal):
+    ops.not_implemented("model analysis")
+
+
+def _post_client_retests_claim(h, store, principal):
+    return retests.claim(store, principal, h._json_body())
+
+
+def _post_regression_pins(h, store, principal):
+    return regression.add_pins(store, principal, h._json_body())
+
+
+def _post_knowledge(h, store, principal):
+    return knowledge.propose(store, principal, h._json_body())
+
+
+_POST_ROUTES = {
+    "/api/issues/claim": _post_issues_claim,
+    "/api/client/heartbeat": _post_heartbeat,
+    "/api/admin/clients/update": _post_admin_clients_update,
+    "/api/retests": _post_retests,
+    "/api/admin/profile/drafts": _post_admin_profile_drafts,
+    "/api/import/baize": _post_import_baize,
+    "/api/models/jobs": _post_models_jobs,
+    "/api/client/retests/claim": _post_client_retests_claim,
+    "/api/regression/pins": _post_regression_pins,
+    "/api/knowledge": _post_knowledge,
+}
+
+_ISSUE_ACTIONS = {"renew": issues.renew, "release": issues.release, "verify": issues.verify,
+                   "regression-cases": issues.pin_cases, "knowledge": issues.submit_knowledge}
+
+
+def _post_issue_action(h, store, principal, match):
+    issue_id, action = match.groups()
+    if action is None:
+        return None  # a bare /api/issues/{id} has no POST action
+    handler = _ISSUE_ACTIONS.get(action)
+    if handler is None:
+        return None
+    return handler(store, principal, issue_id, h._json_body())
+
+
+def _post_admin_issue_action(h, store, principal, match):
+    issue_id, action = match.groups()
+    handler = issues.close if action == "close" else issues.merge
+    return handler(store, principal, issue_id, h._json_body())
+
+
+def _post_task_complete(h, store, principal, match):
+    return retests.complete(store, principal, int(match.group(1)), h._json_body())
+
+
+def _post_admin_knowledge_status(h, store, principal, match):
+    return knowledge.set_status(store, principal, match.group(1), h._json_body())
+
+
+# Regex POST routes, tried in order after the exact-path table misses.
+_POST_PATTERNS = [
+    (_ISSUE_PATH, _post_issue_action),
+    (_ADMIN_ISSUE_PATH, _post_admin_issue_action),
+    (_TASK_PATH, _post_task_complete),
+    (_ADMIN_KNOWLEDGE_PATH, _post_admin_knowledge_status),
+]
+
+
+# ---------------------------------------------------------------------------
+# Aggregate routes: run under the aggregate semaphore (bounded concurrency,
+# since each one can scan a lot of rows). Handlers take (store, params, arch,
+# dim) and may ignore the args they don't need.
+# ---------------------------------------------------------------------------
+def _agg_pipeline(store, params, arch, dim):
+    return queries.pipeline(store, arch, _text(params, "q"))
+
+
+def _agg_backend(store, params, arch, dim):
+    return queries.backend_stats(store, _param(params, "backend", required=True), dim, arch, _text(params, "q"))
+
+
+def _agg_profile_points(store, params, arch, dim):
+    return profile.points(store, _param(params, "x", required=True), _param(params, "y", required=True),
+                          _param(params, "fx", required=True), _param(params, "fy", required=True), arch)
+
+
+def _agg_profile_patterns(store, params, arch, dim):
+    return profile.patterns(store, _param(params, "x", required=True), _param(params, "y", required=True), arch)
+
+
+def _agg_perf(store, params, arch, dim):
+    return queries.perf_pair(store, _param(params, "x", required=True), _param(params, "y", required=True), dim, arch)
+
+
+def _agg_dims(store, params, arch, dim):
+    return queries.dims(store)
+
+
+def _agg_matrix(store, params, arch, dim):
+    raw = (params.get("backends") or [""])[0]
+    backends = [b for b in raw.split(",") if b][:8]
+    if not backends or not all(_PARAM.match(b) for b in backends):
+        raise HTTPError(400, "invalid", "backends must be a comma separated list of backend names")
+    q = _text(params, "q")
+    dims = queries.dims(store)
+    return {"dims": dims, "backends": backends,
+            "cells": {b: {d: queries.backend_stats(store, b, d, arch, q) for d in dims} for b in backends}}
+
+
+_AGGREGATE_ROUTES = {
+    "/api/overview/pipeline": _agg_pipeline,
+    "/api/overview/backend": _agg_backend,
+    "/api/profile/points": _agg_profile_points,
+    "/api/profile/patterns": _agg_profile_patterns,
+    "/api/overview/perf": _agg_perf,
+    "/api/overview/dims": _agg_dims,
+    "/api/overview/matrix": _agg_matrix,
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server: PlatformServer
     protocol_version = "HTTP/1.1"
@@ -331,17 +622,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.server.read_limit.allow(self._rate_key(principal)):
             raise HTTPError(429, "rate_limited", "too many requests", {"Retry-After": "5"})
         if method == "GET":
-            if path == "/api/me":
-                return {"user_id": principal.user_id, "role": principal.role}, 200
             if path.startswith("/api/overview/"):
                 return self._aggregate(path, params), 200
-            if path == "/api/cases":
-                return queries.case_page(
-                    store, after=_param(params, "after", integer=True),
-                    limit=_param(params, "limit", integer=True) or 50, backend=_param(params, "backend"),
-                    status=_param(params, "status"), arch=_param(params, "arch"),
-                    case_key=_param(params, "case_key"), case_id=_param(params, "case_id", integer=True),
-                    q=_text(params, "q")), 200
             if path.startswith("/api/executions/"):
                 exec_uuid = path[len("/api/executions/"):]
                 if not _PARAM.match(exec_uuid):
@@ -350,18 +632,17 @@ class Handler(BaseHTTPRequestHandler):
                 if detail is None:
                     raise HTTPError(404, "not_found", "execution not found")
                 return detail, 200
-            if path == "/api/clients":
-                return queries.clients(store), 200
-            if path == "/api/settings":
-                return queries.settings(store), 200
-            if path == "/api/search/fields":
-                return search.field_values(store), 200
-            routed = self._get_lifecycle(path, params, principal)
-            if routed is not None:
+            if path in ("/api/profile/points", "/api/profile/patterns"):
+                return self._aggregate(path, params), 200
+            routed = self._dispatch_table(_GET_ROUTES, _GET_PATTERNS, path, store, principal, params)
+            if routed is not None or path in _GET_ROUTES:
                 return routed, 200
+            for prefix, handler in _GET_PREFIX_ROUTES:
+                if path.startswith(prefix):
+                    return handler(self, store, principal, params), 200
         if method == "POST" and path.startswith("/api/") and path != "/api/client/executions":
-            routed = self._post_lifecycle(path, principal)
-            if routed is not None:
+            routed = self._dispatch_table(_POST_ROUTES, _POST_PATTERNS, path, store, principal, None)
+            if routed is not None or path in _POST_ROUTES:
                 return routed, 200
         if method == "DELETE":
             match = _PIN_PATH.match(path)
@@ -379,148 +660,41 @@ class Handler(BaseHTTPRequestHandler):
             return update_settings(store, principal.user_id, body["changes"], body["base_revisions"]), 200
         raise HTTPError(404, "not_found", "no such route")
 
+    def _dispatch_table(self, exact: dict, patterns: list, path: str, store, principal, params):
+        """Look `path` up in an exact-match table, then try regex patterns in order.
+
+        GET handlers take (h, store, principal, params[, match]); POST handlers take
+        (h, store, principal[, match]) since they read their own body. Returns None
+        when nothing in either table recognizes the path (falls through to 404) or
+        when a matched pattern's handler decides the specific path isn't one it serves.
+        """
+        handler = exact.get(path)
+        if handler is not None:
+            return handler(self, store, principal, params) if params is not None else handler(self, store, principal)
+        for regex, handler in patterns:
+            match = regex.match(path)
+            if match:
+                return (handler(self, store, principal, params, match) if params is not None
+                        else handler(self, store, principal, match))
+        return None
+
     def _json_body(self) -> dict:
         body = self._json(self._body(MAX_BODY))
         if not isinstance(body, dict):
             raise HTTPError(400, "invalid", "body must be a JSON object")
         return body
 
-    def _get_lifecycle(self, path, params, principal):
-        store = self.server.store
-        if path == "/api/issues":
-            return issues.list_issues(store, dimension=_param(params, "dimension"), backend=_param(params, "backend"),
-                                      status=_param(params, "status"), q=_text(params, "q"), after=_param(params, "after"),
-                                      limit=_param(params, "limit", integer=True) or 50)
-        match = _ROUND_PATH.match(path)
-        if match:
-            return retests.round_tasks(store, match.group(1), int(match.group(2)))
-        match = _ISSUE_PATH.match(path)
-        if match:
-            issue_id, sub = match.groups()
-            if sub is None:
-                return issues.issue_detail(store, issue_id)
-            if sub == "cases":
-                return issues.issue_cases(store, issue_id, _param(params, "role") or "affected",
-                                          _param(params, "after", integer=True))
-            return None
-        if path == "/api/ops/summary":
-            return ops.summary(store, principal, _param(params, "scope") or "mine")
-        if path == "/api/ops/efficiency":
-            return ops.efficiency(store, _param(params, "client_id", integer=True))
-        match = _CASE_PATH.match(path)
-        if match:
-            key = unquote(match.group(1))
-            if not _CASE_KEY.match(key):
-                raise HTTPError(400, "invalid", "invalid case key")
-            if match.group(2) == "history":
-                return queries.case_history(store, key, after=_param(params, "after", integer=True),
-                                            limit=_param(params, "limit", integer=True) or 50)
-            return queries.case_spec(store, key)
-        if path == "/api/retests":
-            return retests.list_manual(store, principal)
-        if path == "/api/profile/axes":
-            return profile.axes(store)
-        if path in ("/api/profile/points", "/api/profile/patterns"):
-            return self._aggregate(path, params)
-        if path.startswith("/api/models/jobs"):
-            ops.not_implemented("model analysis")
-        if path == "/api/regression/preview":
-            return regression.preview(store, _param(params, "issue_id", required=True))
-        if path == "/api/regression/pins":
-            return regression.list_pins(store, _param(params, "scope"))
-        if path == "/api/knowledge/search":
-            return knowledge.search(store.reader(), q=_text(params, "q"), kind=_param(params, "kind"),
-                                    op=_param(params, "op"), dtype=_param(params, "dtype"),
-                                    backend=_param(params, "backend"), confidence=_param(params, "confidence"),
-                                    include_unpublished=principal.role == "admin",
-                                    after=_param(params, "after", integer=True),
-                                    limit=_param(params, "limit", integer=True) or 20)
-        if path == "/api/knowledge/export":
-            data = "".join(knowledge.export_jsonl(store.reader())).encode()
-            return RawBody(data, "application/x-ndjson; charset=utf-8")
-        match = _KNOWLEDGE_PATH.match(path)
-        if match:
-            return knowledge.get(store.reader(), match.group(1), include_unpublished=principal.role == "admin")
-        return None
-
-    def _post_lifecycle(self, path, principal):
-        store = self.server.store
-        if path == "/api/issues/claim":
-            return issues.claim(store, principal, self._json_body())
-        if path == "/api/client/heartbeat":
-            # carries run snapshots and finished efficiency windows, larger than ordinary writes
-            body = self._json(self._body(MAX_HEARTBEAT_BODY))
-            if not isinstance(body, dict):
-                raise HTTPError(400, "invalid", "body must be a JSON object")
-            return ops.heartbeat(store, principal, body)
-        if path == "/api/admin/clients/update":
-            return ops.request_update(store, principal, self._json_body())
-        if path == "/api/retests":
-            return retests.create_manual(store, principal, self._json_body())
-        if path == "/api/admin/profile/drafts":
-            return profile.create_drafts(store, principal, self._json_body())
-        if path == "/api/import/baize":
-            ops.not_implemented("Baize case import")
-        if path == "/api/models/jobs":
-            ops.not_implemented("model analysis")
-        match = _ISSUE_PATH.match(path)
-        if match and match.group(2) is not None:
-            handler = {"renew": issues.renew, "release": issues.release, "verify": issues.verify,
-                       "regression-cases": issues.pin_cases, "knowledge": issues.submit_knowledge}.get(match.group(2))
-            if handler is not None:
-                return handler(store, principal, match.group(1), self._json_body())
-            return None
-        match = _ADMIN_ISSUE_PATH.match(path)
-        if match:
-            handler = issues.close if match.group(2) == "close" else issues.merge
-            return handler(store, principal, match.group(1), self._json_body())
-        if path == "/api/client/retests/claim":
-            return retests.claim(store, principal, self._json_body())
-        match = _TASK_PATH.match(path)
-        if match:
-            return retests.complete(store, principal, int(match.group(1)), self._json_body())
-        if path == "/api/regression/pins":
-            return regression.add_pins(store, principal, self._json_body())
-        if path == "/api/knowledge":
-            return knowledge.propose(store, principal, self._json_body())
-        match = _ADMIN_KNOWLEDGE_PATH.match(path)
-        if match:
-            return knowledge.set_status(store, principal, match.group(1), self._json_body())
-        return None
-
     def _aggregate(self, path, params):
         store = self.server.store
+        handler = _AGGREGATE_ROUTES.get(path)
+        if handler is None:
+            raise HTTPError(404, "not_found", "no such route")
         if not self.server.aggregate_slots.acquire(timeout=5):
             raise HTTPError(503, "busy", "aggregate queries busy", {"Retry-After": "2"})
         try:
             arch = _param(params, "arch")
             dim = _param(params, "dim") or "all"
-            if path == "/api/overview/pipeline":
-                return queries.pipeline(store, arch, _text(params, "q"))
-            if path == "/api/overview/backend":
-                return queries.backend_stats(store, _param(params, "backend", required=True), dim, arch,
-                                             _text(params, "q"))
-            if path == "/api/profile/points":
-                return profile.points(store, _param(params, "x", required=True), _param(params, "y", required=True),
-                                      _param(params, "fx", required=True), _param(params, "fy", required=True), arch)
-            if path == "/api/profile/patterns":
-                return profile.patterns(store, _param(params, "x", required=True),
-                                        _param(params, "y", required=True), arch)
-            if path == "/api/overview/perf":
-                return queries.perf_pair(store, _param(params, "x", required=True),
-                                         _param(params, "y", required=True), dim, arch)
-            if path == "/api/overview/dims":
-                return queries.dims(store)
-            if path == "/api/overview/matrix":
-                raw = (params.get("backends") or [""])[0]
-                backends = [b for b in raw.split(",") if b][:8]
-                if not backends or not all(_PARAM.match(b) for b in backends):
-                    raise HTTPError(400, "invalid", "backends must be a comma separated list of backend names")
-                q = _text(params, "q")
-                dims = queries.dims(store)
-                return {"dims": dims, "backends": backends,
-                        "cells": {b: {d: queries.backend_stats(store, b, d, arch, q) for d in dims} for b in backends}}
-            raise HTTPError(404, "not_found", "no such route")
+            return handler(store, params, arch, dim)
         finally:
             self.server.aggregate_slots.release()
 
