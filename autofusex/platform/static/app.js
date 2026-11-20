@@ -1242,55 +1242,6 @@ PAGES.ops = async root => {
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
-// Tool efficiency (ported): finished stage windows grouped by backend / environment / Shape mode.
-function renderEfficiency(box, payload) {
-  box.replaceChildren(el("h2", {}, "工具效率"));
-  const windows = payload.windows || [], users = payload.users || [];
-  if (!windows.length && !users.length) { box.append(el("div", { class: "empty" }, "暂无效率数据；客户端完成运行窗口后会显示详细指标。")); return; }
-  if (users.length) box.append(el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["用户", "客户端", "窗口数", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))), el("tbody", {}, users.map(u => el("tr", {}, el("td", {}, u.user_id, u.fallback ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "按执行记录") : null), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.windows)), el("td", {}, fmt(u.success)), el("td", {}, fmt(u.completed)), el("td", {}, fmt(u.failed)), el("td", {}, fmt(u.case_errors)), el("td", {}, u.success_per_minute == null ? "—" : Number(u.success_per_minute).toFixed(2))))))));
-  box.append(el("div", { class: "muted small", style: { marginTop: "12px" } }, "以下为运行窗口明细，按用户汇总已显示在上方。"));
-  let chosen = windows[0];
-  const pick = select(windows.map((w, i) => [w.window_id + "|" + w.client_id, `${i === 0 ? "最新" : "历史 " + i} · ${w.client_name || w.client_id} · ${w.window_id.slice(0, 12)}`]), "", v => { chosen = windows.find(w => w.window_id + "|" + w.client_id === v); box.dataset.custom = "1"; draw(); });
-  const filter = el("input", { type: "search", placeholder: "筛选后端 / 环境 / static / dynamic", oninput: () => { box.dataset.custom = "1"; draw(); } });
-  const body = el("div");
-  box.append(el("div", { class: "toolbar" }, "运行窗口", pick, filter), body);
-  const seconds = v => v == null ? "未采集" : (v / 1e9).toFixed(2) + "s";
-  const draw = () => {
-    const rows = chosen.rows || [];
-    if (!rows.length) { body.replaceChildren(el("div", { class: "muted" }, "该窗口没有可统计的记录")); return; }
-    const w = rows[0], duration = Number(w.window_seconds);
-    const devices = Object.entries(w.npu_slot_utilization || {});
-    const tokens = filter.value.toLowerCase().split(/\s+/).filter(Boolean);
-    const groups = new Map();
-    for (const r of rows) {
-      const k = JSON.stringify([r.backend, r.environment_id, r.mode]);
-      if (!groups.has(k)) groups.set(k, { backend: r.backend, environment_id: r.environment_id || "", mode: r.mode, rows: [], success: 0, failed: 0, case_errors: 0, completed: 0 });
-      const g = groups.get(k); g.rows.push(r);
-      for (const n of ["success", "failed", "case_errors", "completed"]) g[n] += Number(r[n] || 0);
-    }
-    const list = [...groups.values()].filter(g => tokens.every(t => [g.backend, g.environment_id, g.mode, ...g.rows.map(r => r.hardware || "")].join(" ").toLowerCase().includes(t)));
-    const rate = n => duration > 0 ? (n * 60 / duration).toFixed(2) : "未采集";
-    const latency = (g, k) => g.rows.length === 1 ? `${seconds(g.rows[0][k + "_p50_ns"])} / ${seconds(g.rows[0][k + "_p95_ns"])}` : "见明细";
-    body.replaceChildren(
-      el("div", { class: "muted small" }, `窗口 ${chosen.window_id} · 节点 ${chosen.client_name || chosen.client_id} · 时长 ${Number.isFinite(duration) ? duration.toFixed(1) + " s" : "未采集"}。吞吐按完整窗口时长计算；资源占用属于整个窗口，不随筛选变化。`),
-      el("div", { class: "tiles" }, [["CPU 资源池使用率", w.cpu_pool_utilization == null ? "未采集" : (100 * w.cpu_pool_utilization).toFixed(1) + "%"],
-        ...devices.map(([uuid, v], i) => [`NPU ${i + 1} 执行槽使用率`, (100 * v).toFixed(1) + "%", uuid]),
-        ["窗口取消 / 写库失败", `${w.cancelled_attempts ?? "未采集"} / ${w.record_failed_attempts ?? "未采集"}`]].map(([k, v, tip]) => el("div", { class: "tile", "data-tooltip": tip || null }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))),
-      el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端 / Shape 模式", "环境", "成功 / 失败 Shape / Case 错误", "成功 Shape/min", "已完成 Shape/min", "处理 P50 / P95", "端到端 P50 / P95"].map(t => el("th", {}, t)))),
-        el("tbody", {}, list.map(g => el("tr", {}, el("td", {}, `${label(g.backend)} / ${g.mode}`), el("td", { class: "mono small", "data-tooltip": g.environment_id }, g.environment_id.slice(0, 12)),
-          el("td", {}, `${g.success} / ${g.failed} / ${g.case_errors}`), el("td", {}, rate(g.success)), el("td", {}, rate(g.completed)), el("td", {}, latency(g, "processing")), el("td", {}, latency(g, "e2e"))))))),
-      el("details", {}, el("summary", {}, "诊断明细：冷 / 热、状态、延迟与环境"),
-        ...list.map(g => el("div", {}, el("h3", {}, `${label(g.backend)} / ${g.mode} · ${g.environment_id.slice(0, 12)}`),
-          el("pre", { class: "log" }, JSON.stringify({ environment_id: g.environment_id, hardware: g.rows[0].hardware, software: g.rows[0].software }, null, 2)),
-          el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["冷 / 热 · 状态", "成功 / 失败 / Case 错误", "处理 P50 / P95", "端到端 P50 / P95", "唯一 Shape / 重试", "摊销秒/Shape", "冷 / 热调用数"].map(t => el("th", {}, t)))),
-            el("tbody", {}, g.rows.map(r => el("tr", {}, el("td", {}, `${r.temperature} / ${r.status}`), el("td", {}, `${r.success} / ${r.failed} / ${r.case_errors}`),
-              el("td", {}, `${seconds(r.processing_p50_ns)} / ${seconds(r.processing_p95_ns)}`), el("td", {}, `${seconds(r.e2e_p50_ns)} / ${seconds(r.e2e_p95_ns)}`),
-              el("td", {}, `${r.unique_shapes ?? "—"} / ${r.retry_attempts ?? "—"}`), el("td", {}, r.amortized_seconds_per_shape == null ? "—" : Number(r.amortized_seconds_per_shape).toFixed(2)),
-              el("td", {}, `${r.cold ?? "—"} / ${r.warm ?? "—"}`)))))))));
-  };
-  draw();
-}
-
 // One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).
 function hourly(series) {
   if (!series.length) return el("div", { class: "empty" }, "暂无执行数据");
