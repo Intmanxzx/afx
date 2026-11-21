@@ -105,6 +105,10 @@ svg text { fill: var(--muted); font-size: 11px; }
 
 /* tables */
 .table-wrap { overflow-x: auto; }
+.users-table td { white-space: nowrap; }
+table.users-table td { vertical-align: middle; }
+.users-table .user-name { font-weight: 600; white-space: normal; overflow-wrap: anywhere; min-width: 100px; }
+.user-actions { display: flex; align-items: center; gap: 6px; }
 table.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.grid th { text-align: left; font-weight: 600; color: var(--muted); padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; position: sticky; top: 0; background: var(--panel); }
 table.grid td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
