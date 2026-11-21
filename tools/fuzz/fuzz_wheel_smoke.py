@@ -15,7 +15,9 @@ def main():
     import autofusex
     assert importlib.util.find_spec('autofusedebugger') is None
     distribution = importlib.metadata.distribution('autofusex')
-    assert distribution.version == afx.__version__ == autofusex.__version__
+    # PEP 440 normalizes release spellings such as 0.2.2.001 to 0.2.2.1.
+    assert distribution.version == '.'.join(str(int(part)) for part in autofusex.__version__.split('.'))
+    assert afx.__version__ == autofusex.__version__
     assert not any(str(path).startswith('autofusedebugger/') for path in distribution.files)
     entries = {entry.name: entry.value for entry in distribution.entry_points
                if entry.group == 'console_scripts'}
