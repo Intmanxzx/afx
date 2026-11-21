@@ -16,6 +16,13 @@ _SCHEDULE = re.compile(r"schedule|autoschedule|optimize module", re.I)
 _LOWER = re.compile(r"lower(?:ing)?", re.I)
 _TILING = re.compile(r"tiling", re.I)
 _CODEGEN = re.compile(r"codegen|generate kernel", re.I)
+# Errors raised by an NPU operator during the first execution are runtime
+# failures.  In particular, generated Inductor source often includes a
+# ``torch/_inductor/lowering.py`` warning; that filename is not evidence that
+# lowering itself failed.
+_NPU_RUNTIME = re.compile(
+    r"NPU function error|aclnn[A-Za-z0-9_]* failed|op[_ -]?plugin|"
+    r"Tensor self not implemented for DT_|AclNN_Parameter_Error", re.I)
 
 def _detail_text(detail):
     if not detail:
@@ -65,6 +72,10 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
         return "runtime_fail", "environment", "infrastructure", VERSION
     if _TORCH.search(evidence):
         return "build_fail", "torch", "torch", VERSION
+    # Prefer the recorded execution stage and concrete NPU runtime evidence
+    # over incidental warning text such as ``torch/_inductor/lowering.py``.
+    if execution_stage in {"first_call_combined", "kernel", "synchronize"} and _NPU_RUNTIME.search(evidence):
+        return "runtime_fail", execution_stage, "npu_runtime", VERSION
     if backend in {"af-mlir", "af-legacy"}:
         if _GRAPH.search(evidence):
             return "compile_fail", "graph_check", "autofuse_ascir", VERSION

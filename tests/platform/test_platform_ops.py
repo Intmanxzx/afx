@@ -15,6 +15,7 @@ import pytest
 from autofusex.platform import auth, ops, profile, queries, retests, search
 from autofusex.platform.client import af_error_line, function_status
 from autofusex.platform.ingest import Ingestor
+from autofusex.platform.failure_attribution import classify as classify_failure
 from autofusex.platform.issues import IssueError
 from autofusex.platform.server import PlatformServer
 from autofusex.platform.store import Store, now_ms
@@ -177,6 +178,21 @@ def test_client_failure_attribution_uses_real_error_lines():
     assert (status, stage) == ("compile_fail", "graph_check") and line.startswith("Check dtype")
     assert function_status("af-mlir", "ok", "", "", None, -1) == ("pass", None, None)
     assert function_status("af-mlir", "unsupported", "", "", None, -1)[0] == "unsupported"
+
+
+def test_npu_operator_error_at_first_call_is_runtime_failure_despite_lowering_warning():
+    detail = {
+        "execution": {"error_stage": "first_call_combined"},
+        "shape_results": [{
+            "error_stage": "first_call_combined",
+            "error_summary": "RuntimeError: all: NPU function error: call aclnnAll failed",
+        }],
+    }
+    log = ("torch/_inductor/lowering.py:2156: UserWarning: Torchinductor does not support code generation for complex operators\n"
+           "AclNN_Parameter_Error: Tensor self not implemented for DT_COMPLEX64")
+    assert classify_failure(backend="af-legacy", declared_status="compile_fail",
+                            declared_stage="lowering", summary=detail["shape_results"][0]["error_summary"],
+                            log=log, detail=detail)[:3] == ("runtime_fail", "first_call_combined", "npu_runtime")
 
 
 def test_http_static_reserved_and_security_headers(world):
