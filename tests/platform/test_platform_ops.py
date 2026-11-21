@@ -533,3 +533,23 @@ def test_upgrade_pre_attribution_database(tmp_path):
     assert {'classifier_version', 'failure_owner'} <= columns
     assert conn.execute('SELECT count(*) FROM schema_migrations WHERE version=11').fetchone()[0] == 1
     conn.close()
+
+
+def test_update_request_identity_survives_retries_and_changes_on_new_request(world):
+    store, client, admin = world
+    body = {'machine_id':'upgrade-retry', 'afx_version':'0.2.0'}
+    cid = ops.heartbeat(store, client, body)['client_id']
+    request = {'client_ids':[cid], 'version':'0.2.1', 'request_key':'upgrade-first'}
+    ops.request_update(store, admin, dict(request))
+    first = ops.heartbeat(store, client, body)['update_request_id']
+    assert first
+    ops.request_update(store, admin, dict(request))
+    assert ops.heartbeat(store, client, body)['update_request_id'] == first
+    ops.request_update(store, admin, dict(request, request_key='upgrade-second'))
+    assert ops.heartbeat(store, client, body)['update_request_id'] != first
+    complete = ops.heartbeat(store, client, dict(body, afx_version='0.2.1'))
+    assert complete['update_to'] is None and complete['update_request_id'] is None
+    ops.request_update(store, admin, dict(request, request_key='upgrade-third'))
+    ops.request_update(store, admin, dict(request, request_key='upgrade-cancel', version=None))
+    cancelled = ops.heartbeat(store, client, body)
+    assert cancelled['update_to'] is None and cancelled['update_request_id'] is None

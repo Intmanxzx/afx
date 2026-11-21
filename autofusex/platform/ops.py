@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 
 from .auth import Principal
 from .issues import IssueError, idempotent
@@ -89,15 +90,17 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
                 + ", ".join(f"{name}={name}+excluded.{name}" for name in COUNTERS), (client_id, hour, *values))
             if now % 100 == 0:  # occasional cheap expiry
                 conn.execute("DELETE FROM metric_rollups WHERE hour<?", (hour - ROLLUP_DAYS * 24,))
-        row = conn.execute("SELECT target_afx_version, afx_version FROM clients WHERE client_id=?",
+        row = conn.execute("SELECT target_afx_version, afx_version, update_request_id FROM clients WHERE client_id=?",
                            (client_id,)).fetchone()
         target = row["target_afx_version"]
         if target is not None and target == row["afx_version"]:
-            conn.execute("UPDATE clients SET target_afx_version=NULL WHERE client_id=?", (client_id,))
+            conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL WHERE client_id=?", (client_id,))
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                          (now, principal.user_id, "client.updated", f"client {client_id} -> {target}"))
             target = None
-    return {"client_id": client_id, "update_to": target, "server_time": now, "windows_accepted": accepted}
+    return {"client_id": client_id, "update_to": target,
+            "update_request_id": row["update_request_id"] if target else None,
+            "server_time": now, "windows_accepted": accepted}
 
 
 def request_update(store: Store, principal: Principal, body: dict):
@@ -111,9 +114,10 @@ def request_update(store: Store, principal: Principal, body: dict):
 
     def action(conn):
         count = 0
+        request_id = str(uuid.uuid4()) if version else None
         for client_id in ids:
-            count += conn.execute("UPDATE clients SET target_afx_version=? WHERE client_id=?",
-                                  (version, client_id)).rowcount
+            count += conn.execute("UPDATE clients SET target_afx_version=?, update_request_id=? WHERE client_id=?",
+                                  (version, request_id, client_id)).rowcount
         conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                      (now_ms(), principal.user_id, "client.update_requested", f"{ids} -> {version}"))
         return {"requested": count, "version": version}
