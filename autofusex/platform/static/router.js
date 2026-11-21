@@ -27,6 +27,7 @@ export function caseDrawer(group) { openCase(group.case.case_key); }
 
 let renderToken = 0;
 let overviewRedraw = null;
+let loadingTimer = null, loadingToast = null;
 export async function render() {
   $("#top").classList.remove("hidden");
   const { page, params } = route();
@@ -38,19 +39,32 @@ export async function render() {
   const main = $("#main");
   const q = params.get("q");
   const content = el("div");
-  const loading = el("div", { class: "empty" }, "加载中…");
   if (q) content.append(el("div", { class: "filter-note" }, "已过滤：", el("span", { class: "mono" }, q),
     el("button", { onclick: () => go(page, { q: null }) }, "清除")));
   // Attach before rendering so canvases and widths measure real layout.
-  main.replaceChildren(loading, content);
+  main.replaceChildren(content);
   const ticket = ++renderToken;
+  clearTimeout(loadingTimer);
+  loadingToast?.remove();
+  loadingToast = null;
+  // Delay the floating status so fast navigation does not flash a message.
+  loadingTimer = setTimeout(() => {
+    if (ticket !== renderToken) return;
+    loadingToast = el("div", { class: "page-loading-toast", role: "status", "aria-live": "polite" }, "加载中…");
+    document.body.append(loadingToast);
+  }, 200);
   try {
     await (PAGES[page] || PAGES.overview)(content, params);
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) content.append(errorBox(err));
+  } finally {
+    if (ticket === renderToken) {
+      clearTimeout(loadingTimer);
+      loadingToast?.remove();
+      loadingToast = null;
+    }
   }
   if (ticket === renderToken) {
-    loading.remove();
     overviewRedraw = content.redraw || null;
     view = { ticket, page: PAGES[page] ? page : "overview", params, content };
     lastRefresh = Date.now();
