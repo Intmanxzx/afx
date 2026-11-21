@@ -118,6 +118,34 @@ def test_clustering_groups_same_normalized_error(world):
         "error at <hex> in <path>: shape <shape> <str>"
 
 
+def test_function_title_new_and_legacy(world):
+    summary = ('[ERROR] GE(12345,python):2026-11-20-18:00:00.123.456 '
+               '[./autofuse/lowering/view.cpp:812]12345 Operator Reshape failed: shape [3, 4], axis 2')
+    world.upload([item('exec-title', 301, status='compile_fail', fail_stage='lowering',
+                       summary=summary, c=case(301, 'view'))])
+    row = issues.list_issues(world.store)['issues'][0]
+    expected = '[af-mlir] lowering: Operator Reshape failed: shape [3, 4], axis 2 (view)'
+    assert row['title'] == expected
+    assert row['log_summary'] == summary
+    with world.store.write() as conn:
+        stored = conn.execute('SELECT title, signature FROM issues WHERE issue_id=?', (row['issue_id'],)).fetchone()
+        assert stored['title'] == expected
+        legacy = '[af-mlir] lowering: ' + issues.normalize(summary)[:80] + ' (view)'
+        conn.execute('UPDATE issues SET title=? WHERE issue_id=?', (legacy, row['issue_id']))
+    assert issues.list_issues(world.store)['issues'][0]['title'] == expected
+    assert world.issue(row['issue_id'])['title'] == expected
+    assert world.store.reader().execute('SELECT signature FROM issues WHERE issue_id=?',
+                                       (row['issue_id'],)).fetchone()[0] == stored['signature']
+
+
+def test_function_title_plain_missing_and_long_summary():
+    assert issues.function_title('af-mlir', 'lowering', 'Mismatch: expected 32, got 64', 'view') == (
+        '[af-mlir] lowering: Mismatch: expected 32, got 64 (view)')
+    assert issues.function_title('af-mlir', 'lowering', None, 'view') == (
+        '[af-mlir] lowering: lowering (view)')
+    assert len(issues.function_title('af-mlir', 'lowering', 'x' * 500, 'view')) == 300
+
+
 def test_reclassifies_case_when_failure_dimension_changes(world):
     world.upload([item("exec-reclass-f", 101, status="compile_fail", fail_stage="schedule",
                         summary="schedule failure")])
