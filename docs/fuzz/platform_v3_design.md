@@ -30,7 +30,7 @@ flowchart LR
 | 能力画像 | af-legacy / af-mlir 对比其他 backend 的性能特征分布 | 实现 |
 | 导入用例 | Baize（TF/Torch）用例导入，复用执行流程 | 预留字段与接口 |
 | 整网分析 | 推荐模型 / LLM 整网执行与分析 | 预留接口与独立表 |
-| 用户登录 | 离线发放 token，客户端/Agent/网页唯一凭证 | 实现 |
+| 用户登录 | 申请审核后领取 token，客户端/Agent/网页唯一凭证 | 实现 |
 
 ## 2. 问题状态机
 
@@ -147,7 +147,7 @@ user_tokens(
 
 - token 为 32 字节随机数，只在发放时显示一次；高熵随机 token 用带服务端密钥的 HMAC 即可，不必用慢哈希。
 - 每个用户只有一个 token：客户端脚本、Agent、浏览器都用同一个，鉴权只看该 token 所属用户的 `role`（`admin` 可做一切；`developer` 可读写；`viewer` 只能读）。不再区分 token 种类或单独的权限范围（scope）——早期设计按 client/agent/web 签发不同 token 并各自限定 scope，实践中这些 scope 集合几乎重叠，只增加了需要记住的概念，所以去掉了。重新 `token issue` 会吊销该用户之前的 token。
-- 离线发放：`afx server user add / token issue / token revoke` 管理命令。
+- 申请审核与用户管理见[申请加入说明](../user_registration.md)。也支持离线发放：`afx server user add / token issue / token revoke` 管理命令。
 
 ### 4.3 用例 `cases`
 
@@ -403,7 +403,7 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 
 页面全部重写，不沿用旧页面结构。
 
-"平台效率"建议改名"**平台运维**"：页面里有版本管理和一键更新等操作，不只是效率数据。修复验证建议叫"**修复闭环**"，覆盖领取到归档的全过程。用户/token 管理放在右上角头像菜单（仅管理员可见），不占一级菜单。
+"平台效率"建议改名"**平台运维**"：页面里有版本管理和一键更新等操作，不只是效率数据。修复验证建议叫"**修复闭环**"，覆盖领取到归档的全过程。用户管理使用独立页面，仅管理员可见。
 
 ### 6.2 总览
 

@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     user = sub.add_parser("user", help="manage users").add_subparsers(dest="action", required=True)
     add = user.add_parser("add")
     add.add_argument("user_id")
-    add.add_argument("--role", choices=("admin", "developer", "viewer"), default="developer")
+    add.add_argument("--role", choices=("admin", "developer"), default="developer")
     add.add_argument("--name")
     for action in ("disable", "enable"):
         user.add_parser(action).add_argument("user_id")

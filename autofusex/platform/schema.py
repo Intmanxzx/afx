@@ -486,6 +486,18 @@ ALTER TABLE clients ADD COLUMN devices TEXT;
 """),
     (11, None),  # Repair attribution columns omitted by already-applied migration 4.
     (12, "ALTER TABLE clients ADD COLUMN update_request_id TEXT;"),
+    (13, """
+CREATE TABLE registration_requests(
+ id INTEGER PRIMARY KEY,
+ user_id TEXT NOT NULL,
+ receipt_hash BLOB NOT NULL UNIQUE,
+ status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected','claimed','expired')),
+ created_at INTEGER NOT NULL,
+ expires_at INTEGER NOT NULL,
+ reviewed_by TEXT
+);
+CREATE UNIQUE INDEX registration_pending_user ON registration_requests(user_id) WHERE status IN ('pending','approved');
+"""),
 ]
 
 CONTENT = [

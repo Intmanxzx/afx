@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from .store import Store, now_ms
 
-ROLES = ("admin", "developer", "viewer")
+ROLES = ("admin", "developer")
 TOKEN_PREFIX = "afx_"
 _USER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # Only record last_used_at when it moved by more than this, to avoid a write per request.

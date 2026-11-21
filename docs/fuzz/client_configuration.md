@@ -1,23 +1,52 @@
 # 客户端配置与重放
 
-本地初始化：
+## 快速开始
 
-    afx init
-    afx config show
-    afx config edit task.yaml
-    afx start
+在 NPU 机器的当前 shell 中加载匹配的 PyTorch、torch_npu、CANN 和 Autofuse 环境，然后执行：
+
+```bash
+python -m pip install 'autofusex[execution]'
+afx init
+afx start
+```
+
+`init` 只需一次；`start` 自动启动 daemon，登记当前 Python 环境并准备基础资源授权，无需手工编写 trust 或 environment 文件。初始化不会安装 Torch/CANN，也不代表已通过完整 NPU 执行验证。默认持续生成、使用全部可见 NPU、自动计算资源并保存结果，性能测量关闭。
+
+日常控制：
+
     afx status
     afx stop
+    afx start
+
+更换运行环境或安装包后，加载相应环境并执行 `afx restart`，同时重启 daemon 与执行进程。
+
+## 接入平台与设备选择
 
 带 token 初始化使用平台配置：
 
-    afx init --token TOKEN --endpoint https://autofuse.online
+    afx init --token YOUR_TOKEN --endpoint https://autofuse.online
+    afx start
+
+token 由管理员发放，`--endpoint` 默认就是上述地址，可以省略。带 token 时 daemon 自动发送心跳、同步配置，并按 `results.upload` 上传结果，无需另起上传进程。平台默认任务启用保存与上传，个人或管理员配置可覆盖这些选项。
+
+需要限定设备时，在首次初始化命令中增加 `--device npu:0`，多卡可重复指定，如 `afx init --device npu:0 --device npu:1`。显式选择的设备会覆盖平台配置中的设备列表。以上初始化方式按需选一个；已初始化的目录再次 `init` 会报错，不会覆盖身份或切换模式。
 
 不带 token 的客户端不进行心跳、配置同步或结果上传。配置和结果位于客户端数据目录。测试请始终指定独立的 --data-dir；此选项不会修改全局默认目录指针。
 
-平台配置接口：GET/POST /api/config/me；管理员默认配置 GET/POST /api/config/default。POST 的 config 为 null 表示恢复继承。个人配置为完整快照；没有个人配置时继承管理员默认配置。配置页面位于客户端管理页面。保存配置在下次 start 生效，运行中任务继续使用原快照。
+## 配置与数据目录
 
-资源由客户端根据设备数量、有效 CPU 和内存计算，仍受本机资源授权上限约束。性能和上传默认关闭。
+```bash
+afx config show
+afx config edit task.yaml
+```
+
+`config edit` 读取已有 JSON/YAML 任务文件，不会打开编辑器。任务规格见[进阶命令](fuzz_usage.md)。本地模式写入本机配置，须设置 `results.upload: false`；带 token 时保存平台个人配置。
+
+平台配置接口：GET/POST /api/config/me；管理员默认配置 GET/POST /api/config/default。POST 的 config 为 null 表示恢复继承。个人配置为完整快照；没有个人配置时继承管理员默认配置。配置页面位于客户端管理页面。保存配置在下次 start 生效，运行中任务继续使用原快照。带 token 时 `afx config reset` 清除个人配置；本地 `reset` 使用通用默认值，其中上传为开启，启动前需用 `config edit` 关闭上传。
+
+数据目录可用 `AUTOFUSEX_HOME` 或命令末尾的 `--data-dir DIR` 指定，以 `init` 返回的 `home` 为准。指定独立目录时，每条命令都需保持一致，例如 `afx init --data-dir /path/to/afx-client`、`afx start --data-dir /path/to/afx-client`。托管任务结果分别保存在 `runs/RUN_ID/results.sqlite`，可用 `afx task list`、`afx task results RUN_ID` 查询。
+
+资源由客户端根据设备数量、有效 CPU 和内存计算，仍受本机资源授权上限约束。本地模式关闭上传，带 token 时以上述平台配置为准。
 
 ## Replay
 
@@ -34,22 +63,3 @@
 平台管理员继续使用客户端管理页面下发目标 afx 版本。daemon 心跳接收后执行 client.update，安装到独立 client-releases 目录，校验版本后切换执行端。上一版本指针保存在 previous-client.json。连续任务在升级后重新提交。该机制更新执行端，bootstrap daemon 本身的签名升级仍沿用 tool.stage/tool.activate。
 
 每次管理员下发升级都有独立请求编号；同一次请求的重复心跳不会重复安装，重新下发相同版本会创建新操作。心跳上报 active-client.json 指向的执行端版本，服务端收到目标版本后清除升级目标。新初始化的数据目录生成独立持久化身份，已有 config.json 身份保持不变。旧 daemon 需要更新并重启才能采用上述协议；仅切换执行端不会更新 daemon。
-
-## 升级修复验证（2026-11-20，America/Phoenix）
-
-- 本地平台及相关测试 81 项通过；mlir 独立候选 daemon 回归测试 2 项通过。
-- afx 服务端完成私有一致性备份后部署候选包；真实 HTTP 下发，mlir 独立客户端完成 0.2.0 → 0.2.1 → 0.2.0 → 0.2.1，每次均由真实心跳确认版本并清除目标。
-- 使用当前源已发布的旧版本验证切换；候选 bootstrap 为 0.2.2。未覆盖生产批量升级或运行中连续任务恢复。
-- 原 mlir daemon 和任务保持运行，未替换；本次使用独立 bootstrap 验证客户端修复。
-
-## 本次验证记录（2026-11-19）
-
-- 本地：management + platform ops 共 80 项通过；JavaScript 语法和 diff 空白检查通过。
-- afx：独立目录 /tmp/afx-refactor-priority-test/final，管理/API 共 80 项通过。
-- mlir：独立目录 /tmp/afx-refactor-priority-test；加载 ~/env.sh，独立 venv 引用现有 Torch/CANN 运行时；两张卡健康正常。
-- mlir：调度器与新命令测试 37 项通过；真实 CPU + AF-MLIR 运行完成 28 条执行记录、0 失败，14 条跳过；运行时插入的高优先级 replay 两个后端完成。
-- mlir：停止后重新启动 daemon，按历史配置独立 replay，CPU 与 AF-MLIR 均为 ok。
-- afx：独立 upgrade-client 目录安装 PyPI 已发布版本 0.2.1，版本校验和导入成功。0.2.1.1119 未发布，安装拒绝且未切换版本。
-- mlir 系统 SQLite 缺少 trigram tokenizer，平台服务测试在该运行时不能初始化；平台 API 已在 afx 验证。
-
-以上未部署生产服务。浏览器交互尚未做视觉验收；升级测试验证执行端安装切换，未验证生产批量升级。

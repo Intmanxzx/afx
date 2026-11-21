@@ -2,7 +2,21 @@
 
 日常任务见[使用说明](fuzz_usage.md)，服务端部署见 [deploy/platform/README.md](../../deploy/platform/README.md)。以下记录当前约定，不记录某次线上部署状态。
 
+## 普通客户端首次准备
+
+在已加载 NPU 运行环境的 shell 中执行：
+
+~~~sh
+python -m pip install 'autofusex[execution]'
+afx init
+afx start
+~~~
+
+接入平台时，首次初始化改用 `afx init --token YOUR_TOKEN`。`start` 自动启动 daemon、登记当前 Python 环境并准备基础资源授权。配置、设备选择和重放见[客户端配置与重放](client_configuration.md)。`init` 不安装 Torch/CANN。已有客户端无需重新初始化；更换运行环境或安装包后使用 `afx restart`。
+
 ## 托管客户端首次准备
+
+本节是管理员手工安装受信环境的进阶流程；普通客户端使用上面的 `init/start` 即可。
 
 1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`），启动 afx daemon start。
 2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。执行 afx management trust trust.json。trust 保存在 home 下私有文件，仅本地可修改。
@@ -34,7 +48,7 @@ packages:
   nnsmith: "实际版本"
 ~~~
 
-trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../../autofusex/fuzz/daemon/management/environments.py) 和 [artifacts.py](../../autofusex/fuzz/daemon/management/artifacts.py)。目前没有自动生成本机 trust/兼容配置的一步入口，只复制上述 YAML 不能完成新机器初始化。
+trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../../autofusex/fuzz/daemon/management/environments.py) 和 [artifacts.py](../../autofusex/fuzz/daemon/management/artifacts.py)。普通 init/start 流程会准备当前环境的基础资源授权；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
 
 多卡或更高并发需同时配置 trust 和 afx config apply policy.yaml --wait 的资源上限。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
 

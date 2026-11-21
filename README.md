@@ -1,229 +1,88 @@
-# autofusex
+# AFX 平台
 
-`autofusex` 是一个用于分析并可视化各类机器学习网络（包括大模型训练、推荐等）的功能、精度、性能以及能力评估的自动化（agent化）工具，命令简称 `afx`。
-当前仅支持pytorch+ascendc后端的网络分析，后续计划拓展到tensorflow/jax前端框架以及af-mlir等后端。
+AFX（AutofuseX）是面向 Autofuse 开发与验证的平台，集成自动化测试、模型精度分析、结果管理、客户端管理，以及问题复测与修复闭环。NPU 客户端负责执行，平台汇总结果、管理配置并跟踪问题。
 
-## 模块划分
+平台入口：[autofuse.online](https://autofuse.online) · [文档](#4-文档汇总)
 
-AFX 按用途划分为精度性能对比定位工具和 fuzz 自动泛化工具。前者负责已有模型的执行、张量对比、图定位和报告；后者负责随机图生成、批量验证、任务调度、结果管理和客户端管理。
+## 1. 环境准备
 
-Fuzz 实现统一位于 `autofusex/fuzz/`：`nnsmith/` 是内部的 NNSmith 适配层，`management/` 管理 fuzz 客户端、执行环境和任务。NNSmith fork 仍作为独立的可选执行依赖安装，不作为与 fuzz 并列的业务模块。
+### 1.1 安装CANN Toolkit 和用例必要（Torch&TorchNPU等）环境
 
-相关测试、辅助脚本和文档分别位于 `tests/fuzz/`、`tools/fuzz/` 和 `docs/fuzz/`；部署文件位于 `deploy/platform/`。命令继续使用 `afx fuzz`，客户端管理命令保持现有入口。
+安装方式请参考: [Autofuse 指导文档](https://gitcode.com/cann/graph-autofusion/blob/master/autofuse/mlir/README.md)
 
-## Fuzz 测试平台
+### 1.2 执行环境初始化命令
 
-```sh
-afx fuzz run --count 100 --save
-afx fuzz replay SEED  # 使用结果中的当前 E/F seed
-afx fuzz view ./results.sqlite
+```shell
+# CANN软件包环境初始化命令，默认安装目录：~/Ascend，可根据上述指导文档自行修改
+source ~/Ascend/ascend-toolkit/set_env.sh
+
+# Python&Torch 独立环境，通常安装在下列目录，其中 torch210_daily 是默认使用的 torch 版本，可根据上述指导文档自行修改
+source /mnt/workspace/env/venv/torch210_daily/bin/activate
 ```
 
-需要上报到云端时，`--save` 只写入本地结果库；上传、心跳和复测由 `afx platform client run` 独立完成，用法见 [deploy/platform/README.md](deploy/platform/README.md#客户端npu机器)。
+## 2. 快速开始
 
-[文档入口](docs/fuzz/README.md) · [使用说明与 Agent API](docs/fuzz/fuzz_usage.md) · [运维说明](docs/fuzz/operations.md)
+> 先执行上述两条环境初始化命令，确保处于 `torchXXX` python 环境，通常命令行左侧带有 `(torchXXX) ` 前缀。
 
-[设计文档](docs/fuzz/fuzz_design.md)：seed协议、执行、存储、查询和扩展边界。
-
-公网结果入口：https://autofuse.online 。CPU作为精度对照，按shape统计用例。
-
-## 安装
-
-执行模型前准备匹配的 PyTorch、torch_npu 和 CANN；云端和本地查看不需要这些运行环境。
-
-### 方式一：wheel 包安装
-
-从 [GitHub Release](https://github.com/Intmanxzx/afx/releases) 下载所需版本的 wheel，或按 [Fuzz 运维说明](docs/fuzz/operations.md) 构建。当前版本为 v0.2.0；旧版 v0.1.2 wheel 不包含这里的新 fuzz 功能：
+### 2.1 安装并初始化客户端
 
 ```bash
-python3 -m pip install ./autofusex-0.2.0-py3-none-any.whl
+# 安装工具
+python -m pip install 'autofusex[execution]'
+# 初始化工具，其中 XXX 在网页申请获批后领取
+afx init --token XXX
 ```
 
-发行包名称为 `autofusex`，命令为 `afx`，也支持 `python3 -m afx`。
-源码包和目录统一为 `autofusex`，环境变量使用 `AUTOFUSEX_*`。此版本按全新数据环境使用，不提供旧包路径或历史数据兼容。
-也可使用 `python3 -m pip install autofusex` 从 PyPI 安装。
-
-执行 fuzz 时安装 execution 扩展，pip 会从 PyPI 安装固定版本的 `nnsmith-autofusex` 及其依赖：
+### 2.2 启动客户端
 
 ```bash
-python3 -m pip install './autofusex-0.2.0-py3-none-any.whl[execution]'
-# 源码开发环境
-python3 -m pip install -e '.[execution]'
+afx start
 ```
+客户端启动后，默认目录：
+* 工作目录（客户端配置等）：`~/.local/share/autofusex`
+* 执行实例目录（含实例日志、任务参数配置、用例数据等）：`~/.local/share/autofusex/runs`
 
-也可用 `python3 -m pip install --index-url https://pypi.org/simple nnsmith-autofusex==0.1.2.post1` 单独安装，Python 导入名仍为 `nnsmith`。不要在同一环境中安装上游 `nnsmith`，两者会写入相同的模块目录。离线部署时可从 PyPI 下载 fork wheel 或自行构建，通过 pip 同时安装 AutofuseX 的 `[execution]` 扩展和本地 fork wheel。
-NNSmith 的修改直接维护在 fork 中，本项目不再携带或应用补丁。
+> 工作说明：
+>
+> 1. 默认连接 [autofuse.online](https://autofuse.online)，可在初始化时用 `--endpoint URL` 指定其他平台。
+> 2. 带 --token 时，自动拉取服务端配置并上报结果，用户可使用同一个`token`登录 [autofuse.online](https://autofuse.online) 的`平台运维` 页面，管理自己的任务参数配置。
+> 3. 不带 --token 时，在本机运行。
 
-### 方式二：源码安装
+### 2.3 其他命令
 
 ```bash
-git clone https://github.com/Intmanxzx/afx.git
-cd afx
-python3 -m pip install -e .
+afx status                 # 查看客户端状态
+afx stop                   # 停止当前任务
+afx start                  # 按当前配置启动任务
+afx restart                # 若更新了CANN包等，可热加载配置
 ```
 
-安装完成后可以执行以下命令验证：
+更多详细介绍，参考：[客户端使用说明](docs/fuzz/client_configuration.md)。
 
-```bash
-afx --help
-```
+## 3. 平台能力
 
-## 使用
+- 自动化验证：生成测试用例，执行多后端对比并保存结果。
+- 模型分析：运行已有模型，进行张量精度比较、图定位和报告展示。
+- 客户端管理：查看设备与运行环境、同步任务配置、管理执行端版本。
+- 问题闭环：汇总问题，组织复测、回归验证与修复知识。
+- 已有用例分析：支持导入测试用例和整网用例、功能/精度/性能问题可视化分析定位，可参考：[模型分析使用说明](docs/usage.md)。
 
-对于已有的 PyTorch 推理脚本，最简单的方式是在原始 `python3` 命令前加上
-`afx`。工具会自动识别脚本路径，原样传递脚本参数，并在当前执行目录生成报告：
+## 4. 文档汇总
 
-```bash
-afx python3 /path/to/model.py \
-    --device npu \
-    --device_id 0
-```
-
-默认输出为：
-
-```text
-./model_autofusex/
-./model_autofusex.html
-```
-
-其中 `model` 是脚本文件名（不含 `.py`）。该快捷方式会根据脚本中的框架导入自动选择
-`pytorch`、`tensorflow` 或 `jax`；当前只有 PyTorch + Inductor Autofuse 路径可执行，TF/JAX
-识别结果会给出明确的未实现提示。快捷方式默认只执行 **NPU eager ↔ NPU Autofuse 两方精度
-采集与比较**（大网络下更快）；需要三方 CPU 对比时增加 `--with-cpu`（完整命令
-`run-script`/`run-torch-model` 同名参数）。需要指定 `--capture-call`、
-`--save-elementwise-data`、输出目录或其他工具参数时，使用下面的完整命令。
-
-### 通过 shell 启动脚本运行
-
-很多网络通过 shell 脚本启动：脚本里 export 一批环境变量，再调用 python。此时可以直接把
-启动脚本交给工具：
-
-```bash
-afx bash launch.sh
-# 或
-afx ./launch.sh
-```
-
-工具静态解析启动脚本（不执行它）：提取 `export KEY=VALUE` 注入当前进程环境，找到
-`python xxx.py ...` 命令行作为模型入口（`for` 循环变量取第一项展开），然后进入正常的采集
-流程。启动脚本中的 `rm`/`mkdir`/`source` 等语句不会执行，缓存清理由用户自行决定；
-`source` 的外部脚本（如 CANN `set_env.sh`）不会被展开，需要先在 shell 中 source 后再运行
-工具。`TORCHINDUCTOR_NPU_BACKEND` 等少量由工具管理的变量以工具为准，脚本中的同名值会被
-忽略并提示。
-
-也可以只继承环境文件而不改变入口方式：
-
-```bash
-afx run-script \
-    --script /path/to/model.py \
-    --env-file /path/to/launch.sh \
-    --env EXTRA_KEY=VALUE \
-    --out-dir /tmp/model_accuracy \
-    -- \
-    --device npu
-```
-
-`--env-file` 只读取文件中的 export 行（同样不执行），`--env KEY=VALUE` 可重复使用。
-先在 shell 中 `export` 再直接运行 `afx python3 model.py` 时，这些变量天然
-生效（工具与模型同进程执行）。
-
-直接运行一个会构造模型、输入并执行推理的 PyTorch 脚本：
-
-```bash
-python3 -m afx run-script \
-    --framework pytorch \
-    --backend inductor_autofuse \
-    --script /path/to/model.py \
-    --out-dir /tmp/model_accuracy \
-    --html /tmp/model_accuracy.html \
-    -- \
-    --device npu \
-    --device_id 0
-```
-
-`--` 后面的参数会原样传给模型脚本。如需在 HTML 中查看输出 Tensor 的逐元素数据时，增加 `--save-elementwise-data`；不指定时仍会正常进行逐元素精度对比，但不保存逐元素数据。
-
-### 可选 Agent 配置
-
-Agent 只在显式启用归一化或失败诊断时调用：
-
-```bash
-export AUTOFUSEX_AGENT_NORMALIZE=1
-export AUTOFUSEX_AGENT_RECOVER=1
-afx python3 /path/to/model.py --device npu
-```
-
-等价地，也可以在 `run-script` 中增加 `--agent-normalize --agent-recover`，或使用
-`normalize-script` 单独生成归一化 JSON。Agent 只做静态分析和失败诊断，不执行、修改或自动修补模型脚本。
-
-工具通过传输通道连接 Agent，不绑定某一个模型厂商或客户端。目前支持：
-
-| 通道 | 含义 | 适用场景 |
-|---|---|---|
-| `http` | 调用 OpenAI-compatible Chat Completions HTTP endpoint | 推荐；适用于任何能提供兼容 HTTP 接口的 Agent 服务 |
-| `cannbot` | 启动本地 CANNBot CLI | 当前工具内置的本地 CLI 适配 |
-| `auto` | 优先选择 HTTP；否则选择本地 CANNBot | 不确定通道时使用，默认值 |
-
-HTTP Agent 的通用配置如下，`endpoint`、`model` 的具体值由 Agent 服务提供方决定：
-
-```bash
-export AUTOFUSEX_AGENT_TRANSPORT=http
-export AUTOFUSEX_AGENT_ENDPOINT=https://agent.example.com/v1/chat/completions
-export AUTOFUSEX_AGENT_API_KEY='your-api-key'
-export AUTOFUSEX_AGENT_MODEL='your-model-name'
-```
-
-各环境变量的含义如下：
-
-| 环境变量 | 含义 | 默认值 |
-|---|---|---|
-| `AUTOFUSEX_AGENT_TRANSPORT` | Agent 连接通道：`auto`、`http` 或 `cannbot` | `auto` |
-| `AUTOFUSEX_AGENT_ENDPOINT` | OpenAI-compatible HTTP POST 地址；使用 `http` 时必填 | 空 |
-| `AUTOFUSEX_AGENT_API_KEY` | HTTP 请求的 Bearer API key；不需要鉴权时可不设置 | 空 |
-| `AUTOFUSEX_AGENT_MODEL` | 传给 Agent 服务的模型标识，不是工具内部固定枚举 | `default` |
-| `AUTOFUSEX_AGENT_COMMAND` | CANNBot 可执行文件路径；例如 CANNBot 不在 `PATH` 时使用 | 自动查找 `cannbot` |
-| `AUTOFUSEX_AGENT_TIMEOUT` | 单次 Agent 请求超时时间，单位为秒 | `90` |
-| `AUTOFUSEX_AGENT_JSON_MODE` | 是否请求服务端返回 JSON：`1/true` 开启，`0/false` 关闭 | 开启 |
-| `AUTOFUSEX_AGENT_NORMALIZE` | 快捷模式是否执行脚本归一化：`1/true` 开启 | 关闭 |
-| `AUTOFUSEX_AGENT_RECOVER` | 快捷模式失败后是否请求诊断建议：`1/true` 开启 | 关闭 |
-
-如果使用的是 Codex、Claude、OpenCode 等非 CANNBot 工具，有两种方式：
-
-1. 如果它们通过网关或服务提供 OpenAI-compatible HTTP 接口，按上面的 `http` 方式设置
-   `ENDPOINT/API_KEY/MODEL`；工具不需要知道 Agent 的品牌名称。
-2. 如果只有本地 CLI，当前版本不能把 `codex`、`claude` 或 `opencode` 直接填入
-   `AUTOFUSEX_AGENT_COMMAND`。该变量当前只适用于内置的 CANNBot 调用格式
-   `cannbot run --format json --model MODEL PROMPT`。此时应提供一个兼容包装器，将工具传入的
-   prompt 转交给本地 CLI，并让标准输出只返回一个 JSON 对象；或者将该 CLI 暴露为 HTTP
-   endpoint，再使用 `http` 通道。不能只把 `AUTOFUSEX_AGENT_MODEL` 设置为 `codex` 或
-   `claude` 来完成切换。
-
-完整的请求格式、归一化 JSON、失败诊断和本地 CLI 包装器约定见
-[docs/agent_normalization.md](docs/agent_normalization.md)。
-
-## 输出
-
-`--out-dir` 保存运行中间产物和 JSON/CSV 数据，`--html` 保存可视化报告。常见文件包括：
-
-```text
-OUT_DIR/
-  cpu_dump/              CPU 节点输出
-  npu_eager_dump/        NPU eager 节点输出
-  npu_dump/              NPU Autofuse/fallback kernel 输出
-  inductor_compile/      Inductor 图、IR 和编译产物
-  autofuse_dump/         AutoFuseAfterOptimize 图
-  *_manifest.json        各执行路径的输出清单
-  report.json             精度对比结果
-  report.csv              表格结果
-  report.html             HTML 报告
-```
-
-启用 `--save-elementwise-data` 后，还会生成 HTML 使用的逐元素数据目录。完整的执行阶段、算子映射、精度指标、报告字段和离线命令见：
-
-| 文档 | 说明 |
+| 文档 | 内容 |
 |---|---|
-| [docs/usage.md](docs/usage.md) | 工具使用方式、执行阶段、输出目录和离线分析命令 |
-| [docs/accuracy_mapping.md](docs/accuracy_mapping.md) | CPU、NPU eager 和 NPU Autofuse 之间的算子映射策略 |
-| [docs/manifest_schema.md](docs/manifest_schema.md) | manifest 文件的字段、数据格式和状态码说明 |
-| [docs/feature_gallery.md](docs/feature_gallery.md) | 精度对比、图展示和生命周期分析等功能示例 |
-| [docs/agent_normalization.md](docs/agent_normalization.md) | Agent 归一化协议、配置方式和失败诊断流程 |
+| [申请加入与用户管理](docs/user_registration.md) | 申请、审核、领取 token 和账号管理 |
+| [客户端使用说明](docs/fuzz/client_configuration.md) | 初始化、设备选择、配置、重放与更新 |
+| [进阶命令](docs/fuzz/fuzz_usage.md) | 手工管理任务、环境及临时调试 |
+| [模型分析](docs/usage.md) | 模型运行、精度定位和报告 |
+| [功能示例](docs/feature_gallery.md) | 精度比较、图展示和生命周期分析 |
+| [Agent 配置](docs/agent_normalization.md) | 归一化与失败诊断 |
+| [平台业务与 API](docs/fuzz/platform_v3_design.md) | 问题闭环、知识库及接口 |
+| [服务端部署与备份](deploy/platform/README.md) | 安装、身份发放、备份与恢复 |
+| [运维说明](docs/fuzz/operations.md) | 环境管理、数据维护、构建与发布 |
+| [执行引擎架构](docs/fuzz/fuzz_design.md) | 用例生成、调度、执行与存储 |
+| [ATen 算子清单](docs/fuzz/aten_op_list.md) | 生成器算子目录 |
+| [精度映射](docs/accuracy_mapping.md) | CPU、NPU eager 与 Autofuse 的节点对应关系 |
+| [Manifest 格式](docs/manifest_schema.md) | 采集字段和状态 |
+| [Inductor / AscendC 流程](docs/inductor_ascendc_pipeline.md) | 编译执行链路 |
+| [模型分析设计](docs/design.md) | 工具设计及历史离线适配背景 |
