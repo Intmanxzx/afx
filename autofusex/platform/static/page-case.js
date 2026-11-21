@@ -5,7 +5,7 @@ import { el, svg, api, errorBox, fmt, label, archLabel, time, ns } from "./core.
 import { statusChip } from "./widgets.js";
 import { PAGES, go } from "./router.js";
 import { isAdmin } from "./auth.js";
-import { retestDrawer, pinGlobal, batchClasses } from "./page-discovery.js";
+import { retestDrawer, pinGlobal, batchClasses, replayCommand } from "./page-discovery.js";
 
 const STAGE_NAME = { generate: "共享生成", reference: "CPU 期望结果", compare: "CPU 结果校验", record: "持久化",
   shape_processing: "Shape 处理耗时（墙钟跨度）", generation: "生成用例", capability: "后端能力检查", prepare: "准备执行器（不代表编译完成）",
@@ -27,7 +27,7 @@ PAGES.case = async (root, params) => {
   let executions = history.executions, cursor = history.next_cursor;
   const shapes = (spec.shape_variants || []).length;
   let shape = Number(params.get("shape") || (shapes ? 0 : -1));
-  const command = `afx fuzz replay ${c.case_key}`;
+  const command = replayCommand(c.case_key, executions);
   const copy = el("button", { onclick: () => navigator.clipboard && navigator.clipboard.writeText(command).then(() => { copy.textContent = "已复制"; }) }, "复制");
   root.append(el("button", { class: "back-btn",
     onclick: () => { if (window.history.length > 1) window.history.back(); else go("discovery"); } }, "← 返回"));

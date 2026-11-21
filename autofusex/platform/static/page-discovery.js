@@ -6,6 +6,15 @@ import { PAGES, go, render, caseDrawer } from "./router.js";
 import { isAdmin } from "./auth.js";
 import { showActionBar, hideActionBar, popMenu, openDrawer } from "./ui.js";
 
+// Keep copied commands tied to the backend represented by the row.
+export function replayCommand(caseKey, executions = []) {
+  const target = executions.find(e => e.backend !== "cpu" &&
+    (e.function_status === "fail" || e.accuracy_status === "fail" || e.status === "error"))
+    || executions.find(e => e.backend !== "cpu") || executions[0];
+  return target && target.backend ? "afx fuzz replay " + caseKey + " --backend " + target.backend
+    : "afx fuzz replay " + caseKey;
+}
+
 export const COLUMNS = [
   ["user_id", "用户"], ["client", "节点"], ["backend", "后端"], ["npu_arch", "芯片"], ["status", "结果"], ["log_summary", "日志摘要"],
   ["compile_ns", "编译"], ["kernel_ns", "Kernel"], ["e2e_ns", "E2E"], ["run", "批次"], ["created_at", "时间"],
@@ -60,7 +69,7 @@ function caseCell(group, selected, updateBar, rowSpan) {
   const box = el("input", { type: "checkbox", checked: selected.has(c.case_key), "aria-label": "选择用例",
     onchange: e => { e.target.checked ? selected.add(c.case_key) : selected.delete(c.case_key); updateBar(); } });
   const copyBtn = el("button", { class: "mini-btn" }, "复现命令");
-  copyBtn.addEventListener("click", () => { if (!navigator.clipboard) return; navigator.clipboard.writeText(`afx fuzz replay ${c.case_key}`); copyBtn.textContent = "已复制"; setTimeout(() => { copyBtn.textContent = "复现命令"; }, 1200); });
+  copyBtn.addEventListener("click", () => { if (!navigator.clipboard) return; navigator.clipboard.writeText(replayCommand(c.case_key, group.executions)); copyBtn.textContent = "已复制"; setTimeout(() => { copyBtn.textContent = "复现命令"; }, 1200); });
   const menuBtn = isAdmin() ? el("button", { class: "icon-btn", title: "更多操作", onclick: e => popMenu(e.currentTarget, [
     ["加入回归集", () => pinGlobal([c.case_key])],
   ]) }, "⋯") : null;

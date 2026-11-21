@@ -161,7 +161,11 @@ def replay(argv):
         for backend in ('cpu', 'af-mlir'):
             selected = copy.copy(args)
             selected.backend = backend
-            selected.device = 'cpu' if backend == 'cpu' else (args.device or 'npu:0')
+            if backend == 'cpu':
+                selected.device = 'cpu'
+            else:
+                from .scheduling.devices import select_replay_device
+                selected.device = select_replay_device(args.device)
             codes.append(execute_args(selected))
         return max(codes)
     return execute_args(args)

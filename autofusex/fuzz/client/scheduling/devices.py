@@ -53,3 +53,24 @@ def select_devices(requested=None):
     else: raise ValueError('NPU discovery returned no device count')
     if type(count) is not int or not 1<=count<=64:raise ValueError('no available NPU devices')
     return ['npu:'+str(i) for i in range(count)]
+
+
+def select_replay_device(requested=None):
+    """Pick the least occupied visible NPU for an ad-hoc replay."""
+    if requested:
+        return requested
+    probe = subprocess.run([sys.executable, '-c',
+        'import json,torch,torch_npu; '
+        'print(json.dumps([{"device":"npu:"+str(i),"free":int(torch.npu.mem_get_info(i)[0])} '
+        'for i in range(torch.npu.device_count())]))'],
+        capture_output=True, text=True, timeout=30)
+    if probe.returncode:
+        raise ValueError('NPU discovery failed; check torch_npu/CANN environment or select --device explicitly')
+    for line in reversed(probe.stdout.splitlines()):
+        try:
+            rows = json.loads(line)
+            if isinstance(rows, list) and rows:
+                return max(rows, key=lambda row: int(row['free']))['device']
+        except (ValueError, KeyError, TypeError):
+            continue
+    raise ValueError('NPU discovery returned no device inventory')
