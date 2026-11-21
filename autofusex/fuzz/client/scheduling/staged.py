@@ -440,7 +440,12 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
 
 
 def replay(args):
-    """Replay feeds the same scheduler, using a private ephemeral task ledger."""
+    """Replay through the managed queue when one is running, else run standalone.
+
+    A managed campaign has one supervisor and one device admission domain;
+    replay tasks enter that ledger at priority 100.  Standalone replay keeps
+    the historical ephemeral queue for hosts with no running campaign.
+    """
     from ..config import data_home,load_config
     from ..resources import adaptive_defaults
     from .ledger import TaskLedger
@@ -448,13 +453,56 @@ def replay(args):
     from ..contracts import Seed
     home=data_home();home.mkdir(parents=True,exist_ok=True)
     budget=Budget.configured(load_config(home) or adaptive_defaults(home),args.compile_threads)
+    from .devices import select_replay_device
+    replay_device = select_replay_device(args.device) if args.backend != 'cpu' else None
+    # A running managed campaign owns the real queue.  Replay joins that queue
+    # at priority 100 so the supervisor can dispatch it before normal fuzz work.
+    # This keeps device admission and the result database shared with campaign,
+    # while avoiding a second supervisor competing for the same cards.
+    managed_ledger = home / 'tasks' / 'tasks.sqlite'
+    managed_status = managed_ledger.with_name(managed_ledger.name + '.supervisor.json')
+    if managed_ledger.exists() and managed_status.exists() and not args.database:
+        try:
+            status = json.loads(managed_status.read_text()).get('state')
+        except (OSError, ValueError):
+            status = None
+        if status in {'starting', 'running'}:
+            from .contracts import ExecutionConfig, EvaluationConfig
+            from .ledger import TaskLedger
+            ledger = TaskLedger(managed_ledger)
+            batch = str(uuid.uuid4()); seed = Seed.parse(args.seed)
+            backends = [args.backend] if args.backend else ['cpu', 'af-mlir']
+            evaluation = EvaluationConfig(performance=args.performance,
+                warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
+            tasks = [(seed, ExecutionConfig(backend,
+                        'cpu' if backend == 'cpu' else replay_device,
+                        budget.compile_threads, scheduling='staged',
+                        static_only=args.static_only or not seed.dynamic,
+                        batch_id=batch, save_results=True), evaluation, None)
+                     for backend in backends]
+            ids = ledger.enqueue_many(tasks, priority=100)
+            # Keep the CLI synchronous: the existing supervisor performs the
+            # work, while this process only waits on the durable task states.
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                rows = [ledger.get(identity) for identity in ids]
+                if all(row['state'] in {'completed', 'cancelled', 'interrupted'} for row in rows):
+                    result = {'queued': len(ids), 'priority': 100, 'task_ids': ids,
+                              'states': [row['state'] for row in rows],
+                              'queue': str(managed_ledger)}
+                    print(json.dumps(result))
+                    return 0 if all(row['state'] == 'completed' for row in rows) else 1
+                time.sleep(0.25)
+            print(json.dumps({'queued': len(ids), 'priority': 100, 'task_ids': ids,
+                              'state': 'running', 'queue': str(managed_ledger)}))
+            return 1
     with tempfile.TemporaryDirectory(prefix='.replay-stages-',dir=home) as directory:
         ledger=TaskLedger(Path(directory)/'tasks.sqlite')
         database=Path(args.database) if args.database else (home/'results/results.sqlite' if args.save else Path(directory)/'results.sqlite')
         write_policy(ledger,budget)
         batch=str(uuid.uuid4());seed=Seed.parse(args.seed)
         for backend in ([args.backend] if args.backend else ['cpu','af-mlir']):
-            config=ExecutionConfig(backend,'cpu' if backend=='cpu' else args.device or 'npu:0',budget.compile_threads,
+            config=ExecutionConfig(backend,'cpu' if backend=='cpu' else replay_device,budget.compile_threads,
                 scheduling='staged',static_only=args.static_only or not seed.dynamic,batch_id=batch,save_results=args.save)
             ledger.enqueue(seed,config,EvaluationConfig(performance=args.performance,warmup_steps=args.warmup_steps,measured_steps=args.measured_steps))
         result=drain(ledger,database,timeout=120)
