@@ -347,6 +347,8 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 
 ## 5. HTTP API
 
+当前 HTTP 层使用 FastAPI + Uvicorn，实时接口定义由服务端 /openapi.json 自动生成，见 [OpenAPI 接口](../openapi.md)。下方表格用于业务概览，具体字段以运行版本的 OpenAPI 为准。
+
 统一 `Authorization: Bearer <token>`，统一响应 `{"schema_version":1,"ok":…,"data"|"error":…}`，写请求均带 `request_key`，语义与现有 Agent API 一致（同 key 同 body 幂等，不同 body 409）。
 
 鉴权只看登录与否和 `role`（无 token/scope 区分）：「任意」= 登录即可（`viewer` 也行）；「写」= 需 `developer` 或 `admin`；「admin」= 需 `admin`。

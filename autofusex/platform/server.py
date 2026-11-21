@@ -1,23 +1,26 @@
-"""HTTP API for the platform (design 5). Loopback upstream behind a TLS proxy.
-
-Every route requires a bearer token. Responses use the envelope
-{"schema_version":1,"ok":true,"data":...} or {"ok":false,"error":{"code","message"}}.
-"""
+"""FastAPI HTTP transport for the AutofuseX platform."""
 from __future__ import annotations
 
-import json
 import re
+import inspect
+import socket
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlsplit
-
 from importlib import resources
+from typing import Optional
+from typing_extensions import Annotated
+
+import uvicorn
+from fastapi import FastAPI, Request, Depends, Query, Path as PathParam
+from fastapi.exceptions import RequestValidationError
+from fastapi.security import HTTPBearer
+from fastapi.responses import Response, JSONResponse
+from starlette.exceptions import HTTPException
+from starlette.concurrency import run_in_threadpool
 
 from . import accounts, issues, knowledge, ops, profile, queries, regression, retests, search
-from .issues import IssueError
-from .search import SearchError
-from .auth import ANONYMOUS, AuthError, Principal, authenticate
+from . import api_models as m
+from .auth import ANONYMOUS, AuthError, authenticate
 from .ingest import Ingestor, UploadError, check_stats, update_settings
 from .store import Store
 
@@ -26,18 +29,10 @@ MAX_BODY = 64 * 1024
 MAX_HEARTBEAT_BODY = 1024 * 1024
 MAX_CONCURRENT = 16
 MAX_AGGREGATE_CONCURRENT = 4
-_PARAM = re.compile(r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")
-_TEXT_PARAM = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
-_ISSUE_PATH = re.compile(r"^/api/issues/([FAP]\d{1,9})(?:/(\w[\w-]*))?$")
-_ADMIN_ISSUE_PATH = re.compile(r"^/api/admin/issues/([FAP]\d{1,9})/(close|merge)$")
-_ADMIN_CLIENT_PATH = re.compile(r"^/api/admin/clients/(\d{1,12})$")
-_ROUND_PATH = re.compile(r"^/api/issues/([FAP]\d{1,9})/rounds/(\d{1,6})/tasks$")
-_TASK_PATH = re.compile(r"^/api/client/retests/(\d{1,12})/complete$")
-_KNOWLEDGE_PATH = re.compile(r"^/api/knowledge/(K\d{1,9})$")
-_ADMIN_KNOWLEDGE_PATH = re.compile(r"^/api/admin/knowledge/(K\d{1,9})/status$")
-_PIN_PATH = re.compile(r"^/api/regression/pins/(\d{1,12})$")
-_CASE_PATH = re.compile(r"^/api/cases/([^/]{1,600})/(history|spec)$")
-_CASE_KEY = re.compile(r"^(?:[EF][0-9A-Z]{26}|[BM]:[^\x00-\x1f]{1,256})$")
+
+QueryValue = Annotated[Optional[str], Query(pattern=r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")]
+QueryText = Annotated[Optional[str], Query(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")]
+RequiredValue = Annotated[str, Query(pattern=r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")]
 
 
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -82,11 +77,6 @@ def _versioned_index(html: bytes) -> bytes:
     return _INDEX_CACHE[key]
 
 
-class RawBody:
-    def __init__(self, data: bytes, content_type: str):
-        self.data, self.content_type = data, content_type
-
-
 class RateLimiter:
     """Token bucket per (principal, class)."""
 
@@ -116,628 +106,534 @@ class HTTPError(Exception):
         self.status, self.code, self.headers = status, code, headers or {}
 
 
-class PlatformServer(ThreadingHTTPServer):
-    daemon_threads = True
-    request_queue_size = 128
 
+def _error(code, message):
+    return {'schema_version': 1, 'ok': False, 'error': {'code': code, 'message': message}}
+
+
+def _success(data):
+    return {'schema_version': 1, 'ok': True, 'data': data}
+
+
+def _rate_key(request, principal):
+    if not principal.anonymous:
+        return principal.token_id
+    peer = request.client.host if request.client else ''
+    forwarded = request.headers.get('X-Forwarded-For')
+    if forwarded and peer in ('127.0.0.1', '::1'):
+        peer = forwarded.split(',')[0].strip()[:64]
+    return 'ip:' + peer
+
+
+bearer = HTTPBearer(auto_error=False)
+
+
+def identity(request: Request, credentials=Depends(bearer)):
+    header = request.headers.get('Authorization')
+    if header is None:
+        return ANONYMOUS
+    try:
+        return authenticate(request.app.state.store, header)
+    except AuthError as exc:
+        raise HTTPError(401, 'unauthorized', str(exc)) from None
+
+
+def writer(principal=Depends(identity)):
+    if principal.anonymous:
+        raise HTTPError(401, 'unauthorized', 'Bearer token required')
+    principal.require_write()
+    return principal
+
+
+def administrator(principal=Depends(writer)):
+    principal.require_admin()
+    return principal
+
+
+def data(body):
+    # Preserve omission vs explicit null and unknown extension fields for idempotency.
+    return body.model_dump(exclude_unset=True)
+
+
+def create_app(store: Store) -> FastAPI:
+    app = FastAPI(title='AutofuseX Platform API', version='1', docs_url=None, redoc_url=None,
+                  redirect_slashes=False)
+    app.state.store = store
+    ingestor = Ingestor(store)
+    slots = threading.BoundedSemaphore(MAX_CONCURRENT)
+    aggregate_slots = threading.BoundedSemaphore(MAX_AGGREGATE_CONCURRENT)
+    read_limit, upload_limit = RateLimiter(600), RateLimiter(1200)
+    application_limit, application_global_limit, receipt_limit = RateLimiter(3), RateLimiter(30), RateLimiter(60)
+
+    @app.middleware('http')
+    async def transport(request: Request, call_next):
+        if not slots.acquire(blocking=False):
+            return JSONResponse(_error('busy', 'server busy'), 503, headers={'Retry-After': '2'})
+        try:
+            length = request.headers.get('Content-Length')
+            if request.headers.get('Transfer-Encoding'):
+                raise HTTPError(411, 'length_required', 'chunked bodies are not accepted; send Content-Length')
+            if length is not None and not length.isdigit():
+                raise HTTPError(400, 'invalid', 'invalid Content-Length')
+            path = request.url.path
+            limit = (MAX_UPLOAD_BODY if path == '/api/client/executions' else
+                     MAX_HEARTBEAT_BODY if path == '/api/client/heartbeat' else MAX_BODY)
+            if length is not None and int(length) > limit:
+                raise HTTPError(413, 'too_large', f'body exceeds {limit} bytes')
+            raw = bytearray()
+            async for chunk in request.stream():
+                raw.extend(chunk)
+                if len(raw) > limit:
+                    raise HTTPError(413, 'too_large', f'body exceeds {limit} bytes')
+            request._body = bytes(raw)
+            request.state.raw = bytes(raw)
+            if path.startswith('/api/'):
+                public_application = request.method == 'POST' and path in (
+                    '/api/registration/apply', '/api/registration/status', '/api/registration/claim')
+                if public_application:
+                    principal = ANONYMOUS
+                else:
+                    principal = await run_in_threadpool(identity, request, None)
+                    if principal.anonymous and (request.method != 'GET' or path == '/api/me'):
+                        raise HTTPError(401, 'unauthorized', 'Bearer token required')
+                limiter = upload_limit if path == '/api/client/executions' else read_limit
+                if not limiter.allow(_rate_key(request, principal)):
+                    raise HTTPError(429, 'rate_limited', 'too many requests', {'Retry-After': '5'})
+                needs_body = request.method in ('POST', 'PUT') or (
+                    request.method == 'DELETE' and path.startswith('/api/regression/pins/'))
+                if needs_body:
+                    if length is None:
+                        raise HTTPError(411, 'length_required', 'Content-Length is required')
+                    if request.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
+                        raise HTTPError(415, 'unsupported_media_type', 'Content-Type must be application/json')
+            response = await call_next(request)
+        except HTTPError as exc:
+            response = JSONResponse(_error(exc.code, str(exc)), exc.status, headers=exc.headers)
+        except Exception:
+            response = JSONResponse(_error('internal', 'internal error'), 500)
+        finally:
+            slots.release()
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('Cache-Control', 'no-store')
+        return response
+
+    @app.exception_handler(HTTPError)
+    async def http_error(request, exc):
+        return JSONResponse(_error(exc.code, str(exc)), exc.status, headers=exc.headers)
+
+    @app.exception_handler(AuthError)
+    async def auth_error(request, exc):
+        return JSONResponse(_error('forbidden', str(exc)), 403)
+
+    @app.exception_handler(accounts.AccountError)
+    async def account_error(request, exc):
+        return JSONResponse(_error('account_error', str(exc)), exc.status)
+
+    async def business_error(request, exc):
+        return JSONResponse(_error(exc.code, str(exc)), exc.status)
+    for error_type in (UploadError, issues.IssueError, search.SearchError):
+        app.add_exception_handler(error_type, business_error)
+
+    @app.exception_handler(queries.QueryError)
+    async def query_error(request, exc):
+        return JSONResponse(_error('invalid', str(exc)), 400)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        errors = exc.errors()
+        code = 'invalid_json' if any(e['type'] == 'json_invalid' for e in errors) else 'invalid'
+        message = '; '.join('.'.join(map(str, e['loc'])) + ': ' + e['msg'] for e in errors)
+        return JSONResponse(_error(code, message), 400)
+
+    @app.exception_handler(HTTPException)
+    async def framework_error(request, exc):
+        # Preserve the old transport's 404 for unsupported methods.
+        status = 404 if exc.status_code == 405 else exc.status_code
+        return JSONResponse(_error('not_found' if status == 404 else 'http_error', str(exc.detail)), status)
+
+    def route(path, method='GET', **kwargs):
+        def register(endpoint):
+            dependencies = [getattr(p.default, 'dependency', None)
+                            for p in inspect.signature(endpoint).parameters.values()]
+            extra = {}
+            if identity in dependencies:
+                extra['security'] = [{}, {'HTTPBearer': []}]
+            if administrator in dependencies:
+                extra['x-required-role'] = 'admin'
+            elif writer in dependencies:
+                extra['x-required-role'] = 'developer'
+            return app.api_route(path, methods=[method], response_model=m.Success,
+                                 responses={400: {'model': m.Error}, 401: {'model': m.Error},
+                                            403: {'model': m.Error}, 404: {'model': m.Error},
+                                            409: {'model': m.Error}, 429: {'model': m.Error},
+                                            500: {'model': m.Error}, 503: {'model': m.Error}},
+                                 openapi_extra=extra, **kwargs)(endpoint)
+        return register
+
+    def aggregate():
+        if not aggregate_slots.acquire(timeout=5):
+            raise HTTPError(503, 'busy', 'aggregate queries busy', {'Retry-After': '2'})
+        try:
+            yield
+        finally:
+            aggregate_slots.release()
+
+    @route('/api/me')
+    def me(principal=Depends(writer)):
+        return _success({'user_id': principal.user_id, 'role': principal.role})
+
+    @route('/api/cases')
+    def cases(after: Optional[int] = None, limit: int = 50, backend: QueryValue = None,
+              status: QueryValue = None, arch: QueryValue = None, case_key: QueryValue = None,
+              case_id: Optional[int] = None, q: QueryText = None, principal=Depends(identity)):
+        return _success(queries.case_page(store, after=after, limit=limit, backend=backend, status=status,
+                                          arch=arch, case_key=case_key, case_id=case_id, q=q))
+
+    @route('/api/cases/{case_key:path}/history')
+    def case_history(case_key: str, after: Optional[int] = None, limit: int = 50, principal=Depends(identity)):
+        return _success(queries.case_history(store, case_key, after=after, limit=limit))
+
+    @route('/api/cases/{case_key:path}/spec')
+    def case_spec(case_key: str, principal=Depends(identity)):
+        return _success(queries.case_spec(store, case_key))
+
+    @route('/api/executions/{exec_uuid:path}')
+    def execution(exec_uuid: str, principal=Depends(identity)):
+        result = queries.execution_detail(store, exec_uuid)
+        if result is None:
+            raise HTTPError(404, 'not_found', 'execution not found')
+        return _success(result)
+
+    @route('/api/clients')
+    def clients(principal=Depends(identity)):
+        return _success(queries.clients(store))
+
+    @route('/api/settings')
+    def settings(principal=Depends(identity)):
+        return _success(queries.settings(store))
+
+    @route('/api/search/fields')
+    def search_fields(principal=Depends(identity)):
+        return _success(search.field_values(store))
+
+    @route('/api/issues')
+    def issue_list(dimension: QueryValue = None, backend: QueryValue = None, status: QueryValue = None,
+                   q: QueryText = None, after: QueryValue = None, limit: int = 50,
+                   principal=Depends(identity)):
+        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status, q=q, after=after, limit=limit))
+
+    @route('/api/issues/claim', 'POST')
+    def claim(body: m.Claim, principal=Depends(writer)):
+        return _success(issues.claim(store, principal, data(body)))
+
+    @route('/api/issues/{issue_id}')
+    def issue_detail(issue_id: str = PathParam(pattern='^[FAP][0-9]{1,9}$'), principal=Depends(identity)):
+        return _success(issues.issue_detail(store, issue_id))
+
+    @route('/api/issues/{issue_id}/cases')
+    def issue_cases(issue_id: str, role: RequiredValue = 'affected', after: Optional[int] = None, principal=Depends(identity)):
+        return _success(issues.issue_cases(store, issue_id, role, after))
+
+    @route('/api/issues/{issue_id}/rounds/{round_no}/tasks')
+    def round_tasks(issue_id: str, round_no: int, principal=Depends(identity)):
+        return _success(retests.round_tasks(store, issue_id, round_no))
+
+    @route('/api/issues/{issue_id}/renew', 'POST')
+    def renew(issue_id: str, body: m.Lease, principal=Depends(writer)):
+        return _success(issues.renew(store, principal, issue_id, data(body)))
+
+    @route('/api/issues/{issue_id}/release', 'POST')
+    def release(issue_id: str, body: m.Lease, principal=Depends(writer)):
+        return _success(issues.release(store, principal, issue_id, data(body)))
+
+    @route('/api/issues/{issue_id}/verify', 'POST')
+    def verify(issue_id: str, body: m.Verify, principal=Depends(writer)):
+        return _success(issues.verify(store, principal, issue_id, data(body)))
+
+    @route('/api/issues/{issue_id}/regression-cases', 'POST')
+    def issue_pins(issue_id: str, body: m.IssuePins, principal=Depends(writer)):
+        return _success(issues.pin_cases(store, principal, issue_id, data(body)))
+
+    @route('/api/issues/{issue_id}/knowledge', 'POST')
+    def submit_knowledge(issue_id: str, body: m.SubmitKnowledge, principal=Depends(writer)):
+        return _success(issues.submit_knowledge(store, principal, issue_id, data(body)))
+
+    @route('/api/admin/issues/{issue_id}/close', 'POST')
+    def close_issue(issue_id: str, body: m.CloseIssue, principal=Depends(administrator)):
+        return _success(issues.close(store, principal, issue_id, data(body)))
+
+    @route('/api/admin/issues/{issue_id}/merge', 'POST')
+    def merge_issue(issue_id: str, body: m.MergeIssue, principal=Depends(administrator)):
+        return _success(issues.merge(store, principal, issue_id, data(body)))
+
+    @route('/api/ops/summary')
+    def summary(scope: RequiredValue = 'mine', principal=Depends(identity)):
+        return _success(ops.summary(store, principal, scope))
+
+    @route('/api/ops/efficiency')
+    def efficiency(client_id: Optional[int] = None, principal=Depends(identity)):
+        return _success(ops.efficiency(store, client_id))
+
+    @route('/api/client/heartbeat', 'POST')
+    def heartbeat(body: m.Heartbeat, principal=Depends(writer)):
+        return _success(ops.heartbeat(store, principal, data(body)))
+
+    @route('/api/admin/clients/update', 'POST')
+    def client_update(body: m.ClientUpdate, principal=Depends(administrator)):
+        return _success(ops.request_update(store, principal, data(body)))
+
+    @route('/api/admin/clients/{client_id}', 'DELETE')
+    def delete_client(client_id: int, principal=Depends(administrator)):
+        return _success(ops.delete_client(store, principal, client_id))
+
+    @route('/api/client/executions', 'POST')
+    def upload(request: Request, body: m.Upload, principal=Depends(writer)):
+        return _success(ingestor.upload(principal, data(body), request.state.raw))
+
+    @route('/api/retests')
+    def retest_list(principal=Depends(identity)):
+        return _success(retests.list_manual(store, principal))
+
+    @route('/api/retests', 'POST')
+    def manual_retest(body: m.ManualRetest, principal=Depends(writer)):
+        return _success(retests.create_manual(store, principal, data(body)))
+
+    @route('/api/client/retests/claim', 'POST')
+    def claim_retests(body: m.ClaimRetests, principal=Depends(writer)):
+        return _success(retests.claim(store, principal, data(body)))
+
+    @route('/api/client/retests/{task_id}/complete', 'POST')
+    def complete_retest(task_id: int, body: m.CompleteRetest, principal=Depends(writer)):
+        return _success(retests.complete(store, principal, task_id, data(body)))
+
+    @route('/api/regression/preview')
+    def preview(issue_id: str, principal=Depends(identity)):
+        return _success(regression.preview(store, issue_id))
+
+    @route('/api/regression/pins')
+    def pins(scope: QueryValue = None, principal=Depends(identity)):
+        return _success(regression.list_pins(store, scope))
+
+    @route('/api/regression/pins', 'POST')
+    def add_pins(body: m.Pins, principal=Depends(administrator)):
+        return _success(regression.add_pins(store, principal, data(body)))
+
+    @route('/api/regression/pins/{pin_id}', 'DELETE')
+    def revoke_pin(pin_id: int, body: m.RequestKey, principal=Depends(administrator)):
+        return _success(regression.revoke_pin(store, principal, pin_id, data(body)))
+
+    @route('/api/knowledge/search')
+    def knowledge_search(q: QueryText = None, kind: QueryValue = None,
+                         op: QueryValue = None, dtype: QueryValue = None, backend: QueryValue = None,
+                         confidence: QueryValue = None, after: Optional[int] = None, limit: int = 20,
+                         principal=Depends(identity)):
+        return _success(knowledge.search(store.reader(), q=q, kind=kind, op=op, dtype=dtype, backend=backend,
+                                         confidence=confidence, after=after, limit=limit, include_unpublished=principal.role == 'admin'))
+
+    @app.get('/api/knowledge/export', response_class=Response,
+             responses={200: {'content': {'application/x-ndjson': {'schema': {'type': 'string'}}}}})
+    def knowledge_export(principal=Depends(identity)):
+        return Response(''.join(knowledge.export_jsonl(store.reader())), media_type='application/x-ndjson')
+
+    @route('/api/knowledge/{knowledge_id}')
+    def knowledge_item(knowledge_id: str, principal=Depends(identity)):
+        return _success(knowledge.get(store.reader(), knowledge_id, include_unpublished=principal.role == 'admin'))
+
+    @route('/api/knowledge', 'POST')
+    def propose_knowledge(body: m.ProposeKnowledge, principal=Depends(writer)):
+        return _success(knowledge.propose(store, principal, data(body)))
+
+    @route('/api/admin/knowledge/{knowledge_id}/status', 'POST')
+    def knowledge_status(knowledge_id: str, body: m.KnowledgeStatus, principal=Depends(administrator)):
+        return _success(knowledge.set_status(store, principal, knowledge_id, data(body)))
+
+    @route('/api/admin/settings', 'PUT')
+    def change_settings(body: m.Settings, principal=Depends(administrator)):
+        return _success(update_settings(store, principal.user_id, body.changes, body.base_revisions))
+
+    @route('/api/config/operators')
+    def operators(principal=Depends(writer)):
+        from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
+        return _success({'items': [{'id': r.target, 'name': r.display_name, 'category': r.category} for r in RULES]})
+
+    @route('/api/config/me')
+    def config_me(principal=Depends(writer)):
+        from . import task_config
+        return _success(task_config.get(store, principal))
+
+    @route('/api/config/default')
+    def config_default(principal=Depends(administrator)):
+        from . import task_config
+        return _success(task_config.get(store, principal, administrator=True))
+
+    @route('/api/config/me', 'POST')
+    def put_config_me(body: m.Configuration, principal=Depends(writer)):
+        from . import task_config
+        return _success(task_config.put(store, principal, data(body)))
+
+    @route('/api/config/default', 'POST')
+    def put_config_default(body: m.Configuration, principal=Depends(administrator)):
+        from . import task_config
+        return _success(task_config.put(store, principal, data(body), administrator=True))
+
+    @route('/api/registration/apply', 'POST')
+    def apply(request: Request, body: m.Application):
+        if not application_global_limit.allow('all') or not application_limit.allow(_rate_key(request, ANONYMOUS)):
+            raise HTTPError(429, 'rate_limit', '申请过于频繁，请稍后再试')
+        return _success(accounts.apply(store, data(body)))
+
+    def receipt_guard(request: Request):
+        if not receipt_limit.allow(_rate_key(request, ANONYMOUS)):
+            raise HTTPError(429, 'rate_limit', '请求过于频繁，请稍后再试')
+
+    @route('/api/registration/status', 'POST', dependencies=[Depends(receipt_guard)])
+    def application_status(body: m.Receipt):
+        return _success(accounts.status(store, data(body)))
+
+    @route('/api/registration/claim', 'POST', dependencies=[Depends(receipt_guard)])
+    def application_claim(body: m.Receipt):
+        return _success(accounts.claim(store, data(body)))
+
+    @route('/api/admin/users')
+    def users(principal=Depends(administrator)):
+        return _success(accounts.listing(store, principal))
+
+    @route('/api/admin/users/review', 'POST')
+    def review(body: m.Review, principal=Depends(administrator)):
+        return _success(accounts.review(store, principal, data(body)))
+
+    @route('/api/admin/users/manage', 'POST')
+    def manage(body: m.Manage, principal=Depends(administrator)):
+        return _success(accounts.manage(store, principal, data(body)))
+
+    @route('/api/overview/pipeline', dependencies=[Depends(aggregate)])
+    def pipeline(arch: QueryValue = None, q: QueryText = None, principal=Depends(identity)):
+        return _success(queries.pipeline(store, arch, q))
+
+    @route('/api/overview/backend', dependencies=[Depends(aggregate)])
+    def backend(backend: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, principal=Depends(identity)):
+        return _success(queries.backend_stats(store, backend, dim, arch, q))
+
+    @route('/api/overview/perf', dependencies=[Depends(aggregate)])
+    def perf(x: RequiredValue, y: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, principal=Depends(identity)):
+        return _success(queries.perf_pair(store, x, y, dim, arch))
+
+    @route('/api/overview/dims', dependencies=[Depends(aggregate)])
+    def dims(principal=Depends(identity)):
+        return _success(queries.dims(store))
+
+    @route('/api/overview/matrix', dependencies=[Depends(aggregate)])
+    def matrix(backends: str, arch: QueryValue = None, q: QueryText = None, principal=Depends(identity)):
+        names = [b for b in backends.split(',') if b][:8]
+        if not names or not all(re.fullmatch('[A-Za-z0-9_.:/+<>=-]{1,256}', b) for b in names):
+            raise HTTPError(400, 'invalid', 'backends must be a comma separated list of backend names')
+        dimensions = queries.dims(store)
+        return _success({'dims': dimensions, 'backends': names,
+                         'cells': {b: {d: queries.backend_stats(store, b, d, arch, q) for d in dimensions} for b in names}})
+
+    @route('/api/profile/axes')
+    def axes(principal=Depends(identity)):
+        return _success(profile.axes(store))
+
+    @route('/api/profile/points', dependencies=[Depends(aggregate)])
+    def points(x: RequiredValue, y: RequiredValue, fx: RequiredValue, fy: RequiredValue, arch: QueryValue = None, principal=Depends(identity)):
+        return _success(profile.points(store, x, y, fx, fy, arch))
+
+    @route('/api/profile/patterns', dependencies=[Depends(aggregate)])
+    def patterns(x: RequiredValue, y: RequiredValue, arch: QueryValue = None, principal=Depends(identity)):
+        return _success(profile.patterns(store, x, y, arch))
+
+    @route('/api/admin/profile/drafts', 'POST')
+    def drafts(body: m.Drafts, principal=Depends(administrator)):
+        return _success(profile.create_drafts(store, principal, data(body)))
+
+    @app.post('/api/import/baize', responses={501: {'model': m.Error}})
+    def import_baize(body: m.Payload, principal=Depends(writer)):
+        ops.not_implemented('Baize case import')
+
+    @app.post('/api/models/jobs', responses={501: {'model': m.Error}})
+    def create_model_job(body: m.Payload, principal=Depends(writer)):
+        ops.not_implemented('model analysis')
+
+    @app.get('/api/models/jobs', responses={501: {'model': m.Error}})
+    @app.get('/api/models/jobs/{job_id:path}', responses={501: {'model': m.Error}})
+    def model_job(job_id: str = '', principal=Depends(identity)):
+        ops.not_implemented('model analysis')
+
+    @route('/healthz', include_in_schema=False)
+    def health():
+        return _success({'status': 'up'})
+
+    @app.get('/', include_in_schema=False)
+    @app.get('/{path}', include_in_schema=False)
+    @app.get('/static/{path}', include_in_schema=False)
+    def static(path: str = ''):
+        full = '/' + path
+        name = 'index.html' if full in ('/', '/index.html') else full.rsplit('/', 1)[-1]
+        found = _static(name) if full.count('/') <= 2 and not full.startswith('/api/') else None
+        if found is None:
+            raise HTTPError(404, 'not_found', 'no such page')
+        content, content_type = found
+        if name == 'index.html':
+            content = _versioned_index(content)
+        return Response(content, headers={
+            'Content-Type': content_type, 'Content-Security-Policy': CSP,
+            'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer',
+            'Cache-Control': 'public, max-age=31536000, immutable' if name in _HASHED_ASSETS
+                             else 'no-cache, no-store, must-revalidate',
+        })
+
+    generate_openapi = app.openapi
+
+    def openapi():
+        schema = generate_openapi()
+        for methods in schema['paths'].values():
+            for operation in methods.values():
+                if isinstance(operation, dict) and 'responses' in operation:
+                    if '422' in operation['responses']:
+                        operation['responses'].pop('422')
+                        operation['responses']['400'] = {'description': 'Invalid request',
+                            'content': {'application/json': {'schema': {'$ref': '#/components/schemas/Error'}}}}
+        return schema
+
+    app.openapi = openapi
+    return app
+
+
+class PlatformServer:
+    """Uvicorn lifecycle adapter preserving the CLI and embedded-server API."""
     def __init__(self, store: Store, address):
         self.store = store
-        self.ingestor = Ingestor(store)
-        self.slots = threading.BoundedSemaphore(MAX_CONCURRENT)
-        self.aggregate_slots = threading.BoundedSemaphore(MAX_AGGREGATE_CONCURRENT)
-        self.read_limit = RateLimiter(600)
-        self.upload_limit = RateLimiter(1200)
-        self.application_limit = RateLimiter(3)
-        self.application_global_limit = RateLimiter(30)
-        self.receipt_limit = RateLimiter(60)
-        super().__init__(address, Handler)
+        self.app = create_app(store)
+        self.socket = socket.socket(socket.AF_INET6 if ':' in address[0] else socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.bind(address)
+        self.socket.listen(128)
+        self.server_address = self.socket.getsockname()
+        self.server_port = self.server_address[1]
+        self._server = uvicorn.Server(uvicorn.Config(self.app, log_level='error', access_log=False,
+                                                    proxy_headers=False, timeout_keep_alive=30))
+        self._finished = threading.Event()
+        self._running = False
 
-
-def _text(params, name):
-    values = params.get(name)
-    if not values:
-        return None
-    if not _TEXT_PARAM.match(values[0]):
-        raise HTTPError(400, "invalid", f"{name} must be 1..128 printable chars")
-    return values[0]
-
-
-def _param(params, name, *, required=False, integer=False):
-    values = params.get(name)
-    if not values:
-        if required:
-            raise HTTPError(400, "invalid", f"{name} is required")
-        return None
-    value = values[0]
-    if not _PARAM.match(value):
-        raise HTTPError(400, "invalid", f"{name} has invalid characters or length")
-    if integer:
+    def serve_forever(self):
+        self._running = True
         try:
-            return int(value)
-        except ValueError:
-            raise HTTPError(400, "invalid", f"{name} must be an integer") from None
-    return value
-
-
-# ---------------------------------------------------------------------------
-# GET routes with no path parameters. Each handler takes (h, store, principal,
-# params) where `h` is the request Handler (needed only by routes that read
-# the request body or query admin-only state through it).
-# ---------------------------------------------------------------------------
-def _get_me(h, store, principal, params):
-    return {"user_id": principal.user_id, "role": principal.role}
-
-
-def _get_cases(h, store, principal, params):
-    return queries.case_page(
-        store, after=_param(params, "after", integer=True),
-        limit=_param(params, "limit", integer=True) or 50, backend=_param(params, "backend"),
-        status=_param(params, "status"), arch=_param(params, "arch"),
-        case_key=_param(params, "case_key"), case_id=_param(params, "case_id", integer=True),
-        q=_text(params, "q"))
-
-
-def _get_clients(h, store, principal, params):
-    return queries.clients(store)
-
-
-def _get_settings(h, store, principal, params):
-    return queries.settings(store)
-
-
-def _get_search_fields(h, store, principal, params):
-    return search.field_values(store)
-
-
-def _get_issues(h, store, principal, params):
-    return issues.list_issues(store, dimension=_param(params, "dimension"), backend=_param(params, "backend"),
-                              status=_param(params, "status"), q=_text(params, "q"), after=_param(params, "after"),
-                              limit=_param(params, "limit", integer=True) or 50)
-
-
-def _get_ops_summary(h, store, principal, params):
-    return ops.summary(store, principal, _param(params, "scope") or "mine")
-
-
-def _get_ops_efficiency(h, store, principal, params):
-    return ops.efficiency(store, _param(params, "client_id", integer=True))
-
-
-def _get_retests(h, store, principal, params):
-    return retests.list_manual(store, principal)
-
-
-def _get_profile_axes(h, store, principal, params):
-    return profile.axes(store)
-
-
-def _get_models_jobs(h, store, principal, params):
-    ops.not_implemented("model analysis")
-
-
-def _get_regression_preview(h, store, principal, params):
-    return regression.preview(store, _param(params, "issue_id", required=True))
-
-
-def _get_regression_pins(h, store, principal, params):
-    return regression.list_pins(store, _param(params, "scope"))
-
-
-def _get_knowledge_search(h, store, principal, params):
-    return knowledge.search(store.reader(), q=_text(params, "q"), kind=_param(params, "kind"),
-                            op=_param(params, "op"), dtype=_param(params, "dtype"),
-                            backend=_param(params, "backend"), confidence=_param(params, "confidence"),
-                            include_unpublished=principal.role == "admin",
-                            after=_param(params, "after", integer=True),
-                            limit=_param(params, "limit", integer=True) or 20)
-
-
-def _get_knowledge_export(h, store, principal, params):
-    data = "".join(knowledge.export_jsonl(store.reader())).encode()
-    return RawBody(data, "application/x-ndjson; charset=utf-8")
-
-
-# Exact-path GET routes, outside /api/overview/* and /api/executions/* (which
-# need prefix matching) and /api/profile/{points,patterns} (which need the
-# aggregate semaphore, see _AGGREGATE_ROUTES).
-_GET_ROUTES = {
-    "/api/me": _get_me,
-    "/api/cases": _get_cases,
-    "/api/clients": _get_clients,
-    "/api/settings": _get_settings,
-    "/api/search/fields": _get_search_fields,
-    "/api/issues": _get_issues,
-    "/api/ops/summary": _get_ops_summary,
-    "/api/ops/efficiency": _get_ops_efficiency,
-    "/api/retests": _get_retests,
-    "/api/profile/axes": _get_profile_axes,
-    "/api/regression/preview": _get_regression_preview,
-    "/api/regression/pins": _get_regression_pins,
-    "/api/knowledge/search": _get_knowledge_search,
-    "/api/knowledge/export": _get_knowledge_export,
-}
-# Path prefixes that should fall back to _get_models_jobs regardless of what
-# follows (mirrors the historical `path.startswith(...)` behaviour).
-_GET_PREFIX_ROUTES = [
-    ("/api/models/jobs", _get_models_jobs),
-]
-
-
-def _get_round_tasks(h, store, principal, params, match):
-    return retests.round_tasks(store, match.group(1), int(match.group(2)))
-
-
-def _get_issue(h, store, principal, params, match):
-    issue_id, sub = match.groups()
-    if sub is None:
-        return issues.issue_detail(store, issue_id)
-    if sub == "cases":
-        return issues.issue_cases(store, issue_id, _param(params, "role") or "affected",
-                                  _param(params, "after", integer=True))
-    return None
-
-
-def _get_case(h, store, principal, params, match):
-    key = unquote(match.group(1))
-    if not _CASE_KEY.match(key):
-        raise HTTPError(400, "invalid", "invalid case key")
-    if match.group(2) == "history":
-        return queries.case_history(store, key, after=_param(params, "after", integer=True),
-                                    limit=_param(params, "limit", integer=True) or 50)
-    return queries.case_spec(store, key)
-
-
-def _get_knowledge_item(h, store, principal, params, match):
-    return knowledge.get(store.reader(), match.group(1), include_unpublished=principal.role == "admin")
-
-
-# Regex GET routes, tried in order after the exact-path table misses.
-_GET_PATTERNS = [
-    (_ROUND_PATH, _get_round_tasks),
-    (_ISSUE_PATH, _get_issue),
-    (_CASE_PATH, _get_case),
-    (_KNOWLEDGE_PATH, _get_knowledge_item),
-]
-
-
-# ---------------------------------------------------------------------------
-# POST routes. Each handler takes (h, store, principal) and reads its own
-# body via h._json_body()/h._body()/h._json() when it needs one.
-# ---------------------------------------------------------------------------
-def _post_issues_claim(h, store, principal):
-    return issues.claim(store, principal, h._json_body())
-
-
-def _post_heartbeat(h, store, principal):
-    # carries run snapshots and finished efficiency windows, larger than ordinary writes
-    body = h._json(h._body(MAX_HEARTBEAT_BODY))
-    if not isinstance(body, dict):
-        raise HTTPError(400, "invalid", "body must be a JSON object")
-    return ops.heartbeat(store, principal, body)
-
-
-def _post_admin_clients_update(h, store, principal):
-    return ops.request_update(store, principal, h._json_body())
-
-
-def _post_retests(h, store, principal):
-    return retests.create_manual(store, principal, h._json_body())
-
-
-def _post_admin_profile_drafts(h, store, principal):
-    return profile.create_drafts(store, principal, h._json_body())
-
-
-def _post_import_baize(h, store, principal):
-    ops.not_implemented("Baize case import")
-
-
-def _post_models_jobs(h, store, principal):
-    ops.not_implemented("model analysis")
-
-
-def _post_client_retests_claim(h, store, principal):
-    return retests.claim(store, principal, h._json_body())
-
-
-def _post_regression_pins(h, store, principal):
-    return regression.add_pins(store, principal, h._json_body())
-
-
-def _post_knowledge(h, store, principal):
-    return knowledge.propose(store, principal, h._json_body())
-
-
-_POST_ROUTES = {
-    "/api/issues/claim": _post_issues_claim,
-    "/api/client/heartbeat": _post_heartbeat,
-    "/api/admin/clients/update": _post_admin_clients_update,
-    "/api/retests": _post_retests,
-    "/api/admin/profile/drafts": _post_admin_profile_drafts,
-    "/api/import/baize": _post_import_baize,
-    "/api/models/jobs": _post_models_jobs,
-    "/api/client/retests/claim": _post_client_retests_claim,
-    "/api/regression/pins": _post_regression_pins,
-    "/api/knowledge": _post_knowledge,
-}
-
-_ISSUE_ACTIONS = {"renew": issues.renew, "release": issues.release, "verify": issues.verify,
-                   "regression-cases": issues.pin_cases, "knowledge": issues.submit_knowledge}
-
-
-def _post_issue_action(h, store, principal, match):
-    issue_id, action = match.groups()
-    if action is None:
-        return None  # a bare /api/issues/{id} has no POST action
-    handler = _ISSUE_ACTIONS.get(action)
-    if handler is None:
-        return None
-    return handler(store, principal, issue_id, h._json_body())
-
-
-def _post_admin_issue_action(h, store, principal, match):
-    issue_id, action = match.groups()
-    handler = issues.close if action == "close" else issues.merge
-    return handler(store, principal, issue_id, h._json_body())
-
-
-def _post_task_complete(h, store, principal, match):
-    return retests.complete(store, principal, int(match.group(1)), h._json_body())
-
-
-def _post_admin_knowledge_status(h, store, principal, match):
-    return knowledge.set_status(store, principal, match.group(1), h._json_body())
-
-
-# Regex POST routes, tried in order after the exact-path table misses.
-_POST_PATTERNS = [
-    (_ISSUE_PATH, _post_issue_action),
-    (_ADMIN_ISSUE_PATH, _post_admin_issue_action),
-    (_TASK_PATH, _post_task_complete),
-    (_ADMIN_KNOWLEDGE_PATH, _post_admin_knowledge_status),
-]
-
-
-# ---------------------------------------------------------------------------
-# Aggregate routes: run under the aggregate semaphore (bounded concurrency,
-# since each one can scan a lot of rows). Handlers take (store, params, arch,
-# dim) and may ignore the args they don't need.
-# ---------------------------------------------------------------------------
-def _agg_pipeline(store, params, arch, dim):
-    return queries.pipeline(store, arch, _text(params, "q"))
-
-
-def _agg_backend(store, params, arch, dim):
-    return queries.backend_stats(store, _param(params, "backend", required=True), dim, arch, _text(params, "q"))
-
-
-def _agg_profile_points(store, params, arch, dim):
-    return profile.points(store, _param(params, "x", required=True), _param(params, "y", required=True),
-                          _param(params, "fx", required=True), _param(params, "fy", required=True), arch)
-
-
-def _agg_profile_patterns(store, params, arch, dim):
-    return profile.patterns(store, _param(params, "x", required=True), _param(params, "y", required=True), arch)
-
-
-def _agg_perf(store, params, arch, dim):
-    return queries.perf_pair(store, _param(params, "x", required=True), _param(params, "y", required=True), dim, arch)
-
-
-def _agg_dims(store, params, arch, dim):
-    return queries.dims(store)
-
-
-def _agg_matrix(store, params, arch, dim):
-    raw = (params.get("backends") or [""])[0]
-    backends = [b for b in raw.split(",") if b][:8]
-    if not backends or not all(_PARAM.match(b) for b in backends):
-        raise HTTPError(400, "invalid", "backends must be a comma separated list of backend names")
-    q = _text(params, "q")
-    dims = queries.dims(store)
-    return {"dims": dims, "backends": backends,
-            "cells": {b: {d: queries.backend_stats(store, b, d, arch, q) for d in dims} for b in backends}}
-
-
-_AGGREGATE_ROUTES = {
-    "/api/overview/pipeline": _agg_pipeline,
-    "/api/overview/backend": _agg_backend,
-    "/api/profile/points": _agg_profile_points,
-    "/api/profile/patterns": _agg_profile_patterns,
-    "/api/overview/perf": _agg_perf,
-    "/api/overview/dims": _agg_dims,
-    "/api/overview/matrix": _agg_matrix,
-}
-
-
-class Handler(BaseHTTPRequestHandler):
-    server: PlatformServer
-    protocol_version = "HTTP/1.1"
-    timeout = 30
-
-    def log_message(self, fmt, *args):  # keep stdout quiet; proxies log access
-        pass
-
-    # -- plumbing ---------------------------------------------------------------
-    def _send(self, status: int, payload: dict, headers=None) -> None:
-        body = queries.as_json(payload)
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Cache-Control", "no-store")
-        for key, value in (headers or {}).items():
-            self.send_header(key, value)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _drain(self) -> None:
-        """Consume the request body up front so no response can leave bytes on a reused connection.
-
-        A reverse proxy reuses upstream connections: an unread body would be parsed as the
-        next request. Bodies that are missing a length or exceed the upload cap close the
-        connection instead of being read.
-        """
-        self._raw = b""
-        if self.headers.get("Transfer-Encoding"):
-            self.close_connection = True
-            raise HTTPError(411, "length_required", "chunked bodies are not accepted; send Content-Length")
-        length = self.headers.get("Content-Length")
-        if length is None:
-            return
-        if not length.isdigit():
-            self.close_connection = True
-            raise HTTPError(400, "invalid", "invalid Content-Length")
-        if int(length) > MAX_UPLOAD_BODY:
-            self.close_connection = True
-            raise HTTPError(413, "too_large", f"body exceeds {MAX_UPLOAD_BODY} bytes")
-        self._raw = self.rfile.read(int(length))
-
-    def _body(self, limit: int) -> bytes:
-        if self.headers.get("Content-Length") is None:
-            raise HTTPError(411, "length_required", "Content-Length is required")
-        if len(self._raw) > limit:
-            raise HTTPError(413, "too_large", f"body exceeds {limit} bytes")
-        if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
-            raise HTTPError(415, "unsupported_media_type", "Content-Type must be application/json")
-        return self._raw
-
-    def _json(self, raw: bytes):
-        try:
-            return json.loads(raw)
-        except (ValueError, UnicodeDecodeError):
-            raise HTTPError(400, "invalid_json", "body is not valid JSON") from None
-
-    def _dispatch(self, method: str) -> None:
-        self._raw = b""
-        if not self.server.slots.acquire(blocking=False):
-            self.close_connection = True
-            self._send(503, _error("busy", "server busy"), {"Retry-After": "2"})
-            return
-        try:
-            self._drain()
-            url = urlsplit(self.path)
-            if method == "GET" and not url.path.startswith("/api/"):
-                self._serve_static(url.path)
-                return
-            params = parse_qs(url.query, max_num_fields=16)
-            header = self.headers.get("Authorization")
-            public_application = method == "POST" and url.path in (
-                "/api/registration/apply", "/api/registration/status", "/api/registration/claim")
-            if public_application:
-                principal = ANONYMOUS
-            elif header is None and method == "GET" and url.path != "/api/me":
-                principal = ANONYMOUS  # browsing is public; changes and commands need a token
-            else:
-                try:
-                    principal = authenticate(self.server.store, header)
-                except AuthError as exc:
-                    raise HTTPError(401, "unauthorized", str(exc)) from None
-            try:
-                data, status = self._route(method, url.path, params, principal)
-            except AuthError as exc:
-                if principal.anonymous:
-                    raise HTTPError(401, "unauthorized", str(exc)) from None
-                raise
-            if isinstance(data, RawBody):
-                self._send_raw(status, data)
-            else:
-                self._send(status, {"schema_version": 1, "ok": True, "data": data})
-        except HTTPError as exc:
-            self._send(exc.status, _error(exc.code, str(exc)), exc.headers)
-        except AuthError as exc:  # authenticated but not allowed
-            self._send(403, _error("forbidden", str(exc)))
-        except accounts.AccountError as exc:
-            self._send(exc.status, _error("account_error", str(exc)))
-        except (UploadError, IssueError, SearchError) as exc:
-            self._send(exc.status, _error(exc.code, str(exc)))
-        except queries.QueryError as exc:
-            self._send(400, _error("invalid", str(exc)))
-        except Exception:  # never leak internals
-            self._send(500, _error("internal", "internal error"))
+            self._server.run(sockets=[self.socket])
         finally:
-            self.server.slots.release()
+            self._finished.set()
 
-    def _rate_key(self, principal: Principal):
-        if not principal.anonymous:
-            return principal.token_id
-        peer = self.client_address[0]
-        forwarded = self.headers.get("X-Forwarded-For")
-        # Only trust the proxy header when the request comes from the local reverse proxy.
-        if forwarded and peer in ("127.0.0.1", "::1"):
-            peer = forwarded.split(",")[0].strip()[:64]
-        return "ip:" + peer
+    def shutdown(self):
+        self._server.should_exit = True
+        if self._running:
+            self._finished.wait(timeout=30)
 
-    def do_GET(self):
-        self._dispatch("GET")
-
-    def do_POST(self):
-        self._dispatch("POST")
-
-    def do_PUT(self):
-        self._dispatch("PUT")
-
-    def do_DELETE(self):
-        self._dispatch("DELETE")
-
-    def _serve_static(self, path: str) -> None:
-        if path == "/healthz":
-            self._send(200, {"schema_version": 1, "ok": True, "data": {"status": "up"}})
-            return
-        name = "index.html" if path in ("/", "/index.html") else path.rsplit("/", 1)[-1]
-        found = _static(name) if path.count("/") <= 2 else None
-        if found is None:
-            self._send(404, _error("not_found", "no such page"))
-            return
-        data, content_type = found
-        if name == "index.html":
-            data = _versioned_index(data)
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Content-Security-Policy", CSP)
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Referrer-Policy", "no-referrer")
-        # HTML must always be revalidated. Only the assets _versioned_index actually content-hashes
-        # may be cached forever; everything else (including app.js's own ES module imports) is
-        # referenced by a stable, un-hashed URL and must be revalidated on every request instead.
-        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if name in _HASHED_ASSETS
-                         else "no-cache, no-store, must-revalidate")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _send_raw(self, status: int, raw: RawBody) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", raw.content_type)
-        self.send_header("Content-Length", str(len(raw.data)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(raw.data)
-
-    # -- routes -----------------------------------------------------------------
-    def _route(self, method: str, path: str, params, principal: Principal):
-        store = self.server.store
-        if method == 'GET' and path == '/api/config/operators':
-            principal.require_write()
-            from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
-            return {'items':[{'id':r.target,'name':r.display_name,'category':r.category} for r in RULES]},200
-        if path in {"/api/config/me", "/api/config/default"}:
-            from . import task_config
-            administrator = path.endswith('/default')
-            if method == 'GET':
-                return task_config.get(store, principal, administrator=administrator), 200
-            if method == 'POST':
-                return task_config.put(store, principal, self._json_body(), administrator=administrator), 200
-
-        if method == "POST" and path == "/api/client/executions":
-            if not self.server.upload_limit.allow(principal.token_id):
-                raise HTTPError(429, "rate_limited", "too many uploads", {"Retry-After": "5"})
-            raw = self._body(MAX_UPLOAD_BODY)
-            return self.server.ingestor.upload(principal, self._json(raw), raw), 200
-        if not self.server.read_limit.allow(self._rate_key(principal)):
-            raise HTTPError(429, "rate_limited", "too many requests", {"Retry-After": "5"})
-        if method == "GET":
-            if path.startswith("/api/overview/"):
-                return self._aggregate(path, params), 200
-            if path.startswith("/api/executions/"):
-                exec_uuid = path[len("/api/executions/"):]
-                if not _PARAM.match(exec_uuid):
-                    raise HTTPError(400, "invalid", "invalid execution id")
-                detail = queries.execution_detail(store, exec_uuid)
-                if detail is None:
-                    raise HTTPError(404, "not_found", "execution not found")
-                return detail, 200
-            if path in ("/api/profile/points", "/api/profile/patterns"):
-                return self._aggregate(path, params), 200
-            routed = self._dispatch_table(_GET_ROUTES, _GET_PATTERNS, path, store, principal, params)
-            if routed is not None or path in _GET_ROUTES:
-                return routed, 200
-            for prefix, handler in _GET_PREFIX_ROUTES:
-                if path.startswith(prefix):
-                    return handler(self, store, principal, params), 200
-        if method == "GET" and path == "/api/admin/users":
-            return accounts.listing(store, principal), 200
-        if method == "POST" and path.startswith("/api/registration/"):
-            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-                raise HTTPError(415, "invalid", "application/json required")
-            if path == "/api/registration/apply":
-                if not self.server.application_global_limit.allow("all") or not self.server.application_limit.allow(self._rate_key(ANONYMOUS)):
-                    raise HTTPError(429, "rate_limit", "申请过于频繁，请稍后再试")
-                return accounts.apply(store, self._json_body()), 200
-            handler = {"/api/registration/status": accounts.status, "/api/registration/claim": accounts.claim}.get(path)
-            if handler:
-                if not self.server.receipt_limit.allow(self._rate_key(ANONYMOUS)):
-                    raise HTTPError(429, "rate_limit", "请求过于频繁，请稍后再试")
-                return handler(store, self._json_body()), 200
-        if method == "POST" and path in ("/api/admin/users/review", "/api/admin/users/manage"):
-            handler = accounts.review if path.endswith("/review") else accounts.manage
-            return handler(store, principal, self._json_body()), 200
-        if method == "POST" and path.startswith("/api/") and path != "/api/client/executions":
-            routed = self._dispatch_table(_POST_ROUTES, _POST_PATTERNS, path, store, principal, None)
-            if routed is not None or path in _POST_ROUTES:
-                return routed, 200
-        if method == "DELETE":
-            match = _PIN_PATH.match(path)
-            if match:
-                return regression.revoke_pin(store, principal, int(match.group(1)), self._json_body()), 200
-            match = _ADMIN_CLIENT_PATH.match(path)
-            if match:
-                return ops.delete_client(store, principal, int(match.group(1))), 200
-        if method == "PUT" and path == "/api/admin/settings":
-            principal.require_admin()
-            body = self._json(self._body(MAX_BODY))
-            if not isinstance(body, dict) or not isinstance(body.get("changes"), dict) \
-                    or not isinstance(body.get("base_revisions"), dict):
-                raise HTTPError(400, "invalid", "changes and base_revisions objects are required")
-            return update_settings(store, principal.user_id, body["changes"], body["base_revisions"]), 200
-        raise HTTPError(404, "not_found", "no such route")
-
-    def _dispatch_table(self, exact: dict, patterns: list, path: str, store, principal, params):
-        """Look `path` up in an exact-match table, then try regex patterns in order.
-
-        GET handlers take (h, store, principal, params[, match]); POST handlers take
-        (h, store, principal[, match]) since they read their own body. Returns None
-        when nothing in either table recognizes the path (falls through to 404) or
-        when a matched pattern's handler decides the specific path isn't one it serves.
-        """
-        handler = exact.get(path)
-        if handler is not None:
-            return handler(self, store, principal, params) if params is not None else handler(self, store, principal)
-        for regex, handler in patterns:
-            match = regex.match(path)
-            if match:
-                return (handler(self, store, principal, params, match) if params is not None
-                        else handler(self, store, principal, match))
-        return None
-
-    def _json_body(self) -> dict:
-        body = self._json(self._body(MAX_BODY))
-        if not isinstance(body, dict):
-            raise HTTPError(400, "invalid", "body must be a JSON object")
-        return body
-
-    def _aggregate(self, path, params):
-        store = self.server.store
-        handler = _AGGREGATE_ROUTES.get(path)
-        if handler is None:
-            raise HTTPError(404, "not_found", "no such route")
-        if not self.server.aggregate_slots.acquire(timeout=5):
-            raise HTTPError(503, "busy", "aggregate queries busy", {"Retry-After": "2"})
-        try:
-            arch = _param(params, "arch")
-            dim = _param(params, "dim") or "all"
-            return handler(store, params, arch, dim)
-        finally:
-            self.server.aggregate_slots.release()
+    def server_close(self):
+        self.shutdown()
+        self.socket.close()
 
 
-def _error(code: str, message: str) -> dict:
-    return {"schema_version": 1, "ok": False, "error": {"code": code, "message": message}}
-
-
-def create_server(data_dir, host: str = "127.0.0.1", port: int = 8100) -> PlatformServer:
+def create_server(data_dir, host='127.0.0.1', port=8100):
     store = Store(data_dir)
     check_stats(store)
     return PlatformServer(store, (host, port))
