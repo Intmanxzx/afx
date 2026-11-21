@@ -84,20 +84,30 @@ PAGES.users = async (root, params) => {
         button("批准", () => review("approve"), notice), button("拒绝", () => review("reject"), notice)));
     }
   } else {
+    const rows = el("tbody");
+    root.append(el("div", { class: "panel table-wrap" },
+      el("table", { class: "grid users-table" },
+        el("thead", {}, el("tr", {},
+          ["用户名", "状态", "创建时间", "最近使用", "角色", "操作"].map(label => el("th", { scope: "col" }, label)))), rows)));
+    if (!data.users.length) rows.append(el("tr", {}, el("td", { colspan: 6 }, "暂无用户")));
     for (const user of data.users) {
       const role = roles(user.role);
       const change = async (action, extra = {}) => {
         const result = await api("/api/admin/users/manage", { method: "POST", body: { user_id: user.user_id, action, ...extra } });
         if (result.token) secret(root, result.token); else await reload();
       };
-      root.append(el("div", { class: "panel" }, el("h2", {}, user.user_id),
-        el("p", {}, "角色：" + user.role + " · " + (user.status === "active" ? "启用" : "禁用")),
-        el("p", {}, "创建：" + time(user.created_at) + " · 最近使用：" + time(user.last_seen_at)), role,
-        button("保存角色", () => change("role", { role: role.value }), notice),
+      rows.append(el("tr", {},
+        el("td", { class: "user-name" }, user.user_id),
+        el("td", {}, user.status === "active" ? "启用" : "禁用"),
+        el("td", {}, time(user.created_at)),
+        el("td", {}, time(user.last_seen_at)),
+        el("td", {}, el("div", { class: "user-actions" }, role,
+          button("保存角色", () => change("role", { role: role.value }), notice))),
+        el("td", {}, el("div", { class: "user-actions" },
         button(user.status === "active" ? "禁用" : "启用", () => change(user.status === "active" ? "disable" : "enable"), notice),
-        button("遗失后重置 token", async () => {
+        button("重置 token", async () => {
           if (confirm("仅在用户遗失 token 时重置。旧 token 将立即失效，已有客户端需更新凭据。继续？")) await change("reset-token");
-        }, notice)));
+        }, notice)))));
     }
   }
 };
