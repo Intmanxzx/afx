@@ -127,7 +127,9 @@ def test_upload_idempotent_and_conflicts(env):
 
 def test_viewer_cannot_upload(env):
     store, ingestor, _ = env
-    auth.add_user(store, "eve", "viewer")
+    # Historical read-only accounts remain unchanged; new viewers are disallowed.
+    with store.write() as db:
+        db.execute("INSERT INTO users(user_id,role,created_at) VALUES('eve','viewer',0)")
     viewer = auth.authenticate(store, "Bearer " + auth.issue_token(store, "eve"))
     with pytest.raises(auth.AuthError):
         upload(ingestor, viewer, body([item("exec-0001")]))

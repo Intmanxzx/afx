@@ -100,7 +100,7 @@ export async function api(path, { method = "GET", body, raw = false } = {}) {
       const { clearSession } = await import("./auth.js");
       clearSession();
     }
-    if (!quietRefresh) { const { showLogin } = await import("./auth.js"); showLogin(expired ? "登录已失效，请重新输入 token；也可以返回以访客身份浏览" : "该操作需要登录：请输入管理员离线发放的 token"); }
+    if (!quietRefresh) { const { showLogin } = await import("./auth.js"); showLogin(expired ? "登录已失效，请重新输入 token；也可以返回以访客身份浏览" : "该操作需要登录：请输入 token，或申请加入平台"); }
     throw new ApiError(401, "unauthorized", "需要登录");
   }
   if (!res.ok || !payload || !payload.ok) {

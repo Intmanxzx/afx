@@ -11,14 +11,15 @@ Fuzz 由客户端管理进程和执行引擎组成，NPU 客户端执行任务�
 | `daemon` | 常驻控制面、watchdog、本地 IPC、client 生命周期、优雅停止、版本切换和回滚 | 由系统服务或 bootstrap 维护，保持稳定 |
 | `client` | 领取任务、生成 Case、CPU/NPU 执行、精度验证、本地保存 | 新版本 `pip install autofusex==VERSION` |
 
-`daemon/management/` 里的设备管理数据模型（`ControlStore`、环境/任务下发、`client.update` 远程升级）是独立模块，供本机 CLI 使用；目前没有把它暴露成远程 HTTP 接口，细节见[使用说明：设备管理](fuzz_usage.md#设备管理)。结果上传由客户端主动跑 `afx platform client run` 轮询/推送平台服务完成。
+`daemon/management/` 里的设备管理数据模型（`ControlStore`、环境/任务下发、`client.update` 远程升级）是独立模块，供本机 CLI 使用；目前没有把它暴露成远程 HTTP 接口，细节见[使用说明：设备管理](fuzz_usage.md)。普通客户端由 `afx init/start` 驱动 daemon，带 token 时自动同步心跳、配置及启用上传的 Run 结果。直接调试产生的结果可通过独立的 `afx platform client run` 上传。
 
 ## 组件与数据流
 
 ~~~mermaid
 flowchart TD
     CLI[afx fuzz run / replay] --> Engine[阶段调度器]
-    Manager[客户端管理 daemon] --> Run[托管任务 worker]
+    Entry[afx init / start] --> Manager[客户端管理 daemon]
+    Manager --> Run[托管任务 worker]
     Run --> Engine
     Engine --> Gen[NNSmith + ATen 构图]
     Gen --> CPU[共享 CPU 参考]
@@ -26,7 +27,9 @@ flowchart TD
     CPU --> Compare[精度比较 / 可选性能测量]
     NPU --> Compare
     Compare --> DB[本地结果与执行事实]
-    DB --> PlatformClient[afx platform client run]
+    DB --> Sync[daemon 平台同步]
+    Sync --> Platform[平台服务 autofusex/platform]
+    DB --> PlatformClient[独立 platform client]
     PlatformClient --> Platform[平台服务 autofusex/platform]
     View[afx fuzz view / 离线查看器] --> DB
 ~~~
@@ -62,7 +65,7 @@ flowchart TD
 - Autofuse 覆盖依据运行时编译候选事件与调度汇总；进入 Autofuse 后的 lowering、schedule、codegen 或精度失败仍保留。
 - NNSmith fork 由 [pyproject.toml](../../pyproject.toml) 固定，执行时校验源码和依赖，缺失或不匹配直接失败，没有备用手写图生成器。
 
-[limits.py](../../autofusex/fuzz/limits.py) 统一维护预算：当前最多 64 个计算节点、8 组 Shape、每组 256 个张量，CaseSpec 512 KiB、执行 context 768 KiB。生成时检查序列化大小；上传单请求上限 2 MiB，按实际编码大小分批。
+[limits.py](../../autofusex/fuzz/client/limits.py) 统一维护预算：当前最多 64 个计算节点、8 组 Shape、每组 256 个张量，CaseSpec 512 KiB、执行 context 768 KiB。生成时检查序列化大小；上传单请求上限 2 MiB，按实际编码大小分批。
 
 ## 执行与资源
 

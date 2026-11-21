@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from importlib import resources
 
-from . import issues, knowledge, ops, profile, queries, regression, retests, search
+from . import accounts, issues, knowledge, ops, profile, queries, regression, retests, search
 from .issues import IssueError
 from .search import SearchError
 from .auth import ANONYMOUS, AuthError, Principal, authenticate
@@ -127,6 +127,9 @@ class PlatformServer(ThreadingHTTPServer):
         self.aggregate_slots = threading.BoundedSemaphore(MAX_AGGREGATE_CONCURRENT)
         self.read_limit = RateLimiter(600)
         self.upload_limit = RateLimiter(1200)
+        self.application_limit = RateLimiter(3)
+        self.application_global_limit = RateLimiter(30)
+        self.receipt_limit = RateLimiter(60)
         super().__init__(address, Handler)
 
 
@@ -519,7 +522,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             params = parse_qs(url.query, max_num_fields=16)
             header = self.headers.get("Authorization")
-            if header is None and method == "GET" and url.path != "/api/me":
+            public_application = method == "POST" and url.path in (
+                "/api/registration/apply", "/api/registration/status", "/api/registration/claim")
+            if public_application:
+                principal = ANONYMOUS
+            elif header is None and method == "GET" and url.path != "/api/me":
                 principal = ANONYMOUS  # browsing is public; changes and commands need a token
             else:
                 try:
@@ -540,6 +547,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(exc.status, _error(exc.code, str(exc)), exc.headers)
         except AuthError as exc:  # authenticated but not allowed
             self._send(403, _error("forbidden", str(exc)))
+        except accounts.AccountError as exc:
+            self._send(exc.status, _error("account_error", str(exc)))
         except (UploadError, IssueError, SearchError) as exc:
             self._send(exc.status, _error(exc.code, str(exc)))
         except queries.QueryError as exc:
@@ -648,6 +657,23 @@ class Handler(BaseHTTPRequestHandler):
             for prefix, handler in _GET_PREFIX_ROUTES:
                 if path.startswith(prefix):
                     return handler(self, store, principal, params), 200
+        if method == "GET" and path == "/api/admin/users":
+            return accounts.listing(store, principal), 200
+        if method == "POST" and path.startswith("/api/registration/"):
+            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+                raise HTTPError(415, "invalid", "application/json required")
+            if path == "/api/registration/apply":
+                if not self.server.application_global_limit.allow("all") or not self.server.application_limit.allow(self._rate_key(ANONYMOUS)):
+                    raise HTTPError(429, "rate_limit", "申请过于频繁，请稍后再试")
+                return accounts.apply(store, self._json_body()), 200
+            handler = {"/api/registration/status": accounts.status, "/api/registration/claim": accounts.claim}.get(path)
+            if handler:
+                if not self.server.receipt_limit.allow(self._rate_key(ANONYMOUS)):
+                    raise HTTPError(429, "rate_limit", "请求过于频繁，请稍后再试")
+                return handler(store, self._json_body()), 200
+        if method == "POST" and path in ("/api/admin/users/review", "/api/admin/users/manage"):
+            handler = accounts.review if path.endswith("/review") else accounts.manage
+            return handler(store, principal, self._json_body()), 200
         if method == "POST" and path.startswith("/api/") and path != "/api/client/executions":
             routed = self._dispatch_table(_POST_ROUTES, _POST_PATTERNS, path, store, principal, None)
             if routed is not None or path in _POST_ROUTES:

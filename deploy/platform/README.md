@@ -73,6 +73,21 @@ ROOT/bin/afx platform --data ROOT/data token revoke afx_XXXXXXXX
 
 ## 客户端（NPU 机器）
 
+普通客户端在已加载 NPU 运行环境的 shell 中执行：
+
+```bash
+python -m pip install 'autofusex[execution]'
+afx init --token YOUR_TOKEN
+afx start
+afx status
+```
+
+默认连接 `https://autofuse.online`，可在初始化时用 `--endpoint URL` 修改。daemon 自动同步配置、发送心跳并上传启用上传的任务结果。日常配置、设备选择和版本更新见[客户端配置与重放](../../docs/fuzz/client_configuration.md)。
+
+### 独立上传进程
+
+以下流程仅用于 `afx fuzz` 直接调试并单独上传结果的场景。
+
 客户端只读取 `afx fuzz run --save` / `afx fuzz replay --save` 写出的本地结果库，上传进度保存在旁边独立的 `platform-sync.sqlite` 中，不与旧版同步状态共用。
 
 ```bash

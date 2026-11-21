@@ -5,7 +5,7 @@
 // from core.js without creating a real circular module graph.
 import { $, el, api, TOKEN_KEY } from "./core.js";
 import { closeDrawer, hideActionBar } from "./ui.js";
-import { render } from "./router.js";
+import { render, go } from "./router.js";
 
 export let me = null;
 
@@ -15,7 +15,7 @@ export function showLogin(message) {
   closeDrawer();
   hideActionBar();
   const input = el("textarea", { placeholder: "afx_…", "aria-label": "token" });
-  const msg = el("div", { class: "muted small" }, message || "使用管理员离线发放的 token 登录。token 只保存在当前标签页。");
+  const msg = el("div", { class: "muted small" }, message || "使用审核后领取的 token 登录。token 只保存在当前标签页。");
   const submit = async () => {
     const value = input.value.trim();
     if (!value.startsWith("afx_")) { msg.textContent = "token 应以 afx_ 开头"; return; }
@@ -24,6 +24,7 @@ export function showLogin(message) {
   };
   $("#main").replaceChildren(el("div", { class: "panel login" }, el("h2", {}, "登录 AutofuseX 平台"), input, msg,
     el("div", { class: "toolbar", style: { marginTop: "10px" } }, el("button", { class: "primary", onclick: submit }, "登录"),
+      el("button", { onclick: () => go("apply", { q: null }) }, "申请加入"),
       el("button", { onclick: () => render() }, "返回浏览"))));
 }
 export async function loadMe() {
@@ -31,6 +32,7 @@ export async function loadMe() {
   updateWho();
 }
 export function updateWho() {
+  $("#users-nav")?.classList.toggle("hidden", !isAdmin());
   $("#who").textContent = me ? `${me.user_id} · ${me.role === "admin" ? "管理员" : me.role}` : "";
   $("#logout").textContent = me ? "退出" : "登录";
 }

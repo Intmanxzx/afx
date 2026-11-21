@@ -18,6 +18,7 @@ import "./page-knowledge.js";
 import "./page-profile.js";
 import "./page-ops.js";
 import "./page-models.js";
+import "./page-users.js";
 
 window.addEventListener("hashchange", render);
 $("#search-form").addEventListener("submit", e => {

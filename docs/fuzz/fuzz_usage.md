@@ -6,18 +6,18 @@
 
 ### 一、NPU 客户端：执行用例并上报数据（自动泛化测试、导入用例）
 
-由中心统一下发任务、管理环境、支持远程一键更新，完整步骤见[运维说明：托管客户端首次准备](operations.md#托管客户端首次准备)，摘要：
+在已加载 PyTorch、torch_npu、CANN 和 Autofuse 运行环境的 NPU 机器上：
 
 ~~~sh
-afx daemon start
-afx management trust trust.json                 # 本机 trust：允许的设备/资源、CANN 路径、wheel 摘要
-afx device enroll --token-stdin                  # 或 afx device pair 后网页批准
-afx environment plan environment.yaml --request-key env-plan-001
-afx operation wait PLAN_OPERATION_ID
-afx environment apply PLAN_ID --request-key env-apply-001
+python -m pip install 'autofusex[execution]'
+afx init
+afx start
+afx status
+# 需要停止时
+afx stop
 ~~~
 
-环境 ready 后提交任务，见下文"方式一"。
+初始化只需一次。接入平台时将 `afx init` 换成 `afx init --token YOUR_TOKEN`。`start` 自动启动 daemon、登记当前环境并启动任务；带 token 时自动同步配置与心跳，按 `results.upload` 上传结果，无需另起上传进程。详见[客户端配置与重放](client_configuration.md)。下文“方式一”是手工管理环境和任务的进阶接口。
 
 不需要托管、只是本机临时调试时，可以跳过上面整套流程，直接：
 
@@ -89,9 +89,9 @@ afx task stop RUN_ID --wait --request-key stop-campaign-001
 afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 ~~~
 
-`submit --wait` 等待的是提交操作，`task wait` 单独等待执行；超时不取消任务，可用同一 ID 继续等待，重试同一操作沿用 request key，新操作用新 key。`upload: true` 要求设备已绑定，仅本地保存可设为 false；省略 execution 时使用 CPU + AF-MLIR、npu:0 和 staged 调度。重放沿用原环境/后端/资源/评估配置，原任务须先释放所有权，不覆盖旧记录。FILE 参数统一支持 `-` 读取 stdin；可先 `afx task validate task.yaml --wait` 校验环境与规格。
+`submit --wait` 等待的是提交操作，`task wait` 单独等待执行；超时不取消任务，可用同一 ID 继续等待，重试同一操作沿用 request key，新操作用新 key。`upload: true` 需要带 token 的客户端同步上传，仅本地保存可设为 false；省略 execution 时使用 CPU、AF-Legacy 和 AF-MLIR，全部可见 NPU 和 staged 调度。重放沿用原环境/后端/资源/评估配置，原任务须先释放所有权，不覆盖旧记录。FILE 参数统一支持 `-` 读取 stdin；可先 `afx task validate task.yaml --wait` 校验环境与规格。
 
-注意：`results.upload` 当前是空操作；托管 Run 的结果上传需要另外跑 `afx platform client run`（见上文"快速开始"）。
+托管 Run 的上传由带 token 客户端的 daemon 自动完成；本地模式须设置 `results.upload: false`。独立上传进程用于下面的 `afx fuzz` 直接调试流程。
 
 常用命令：
 
@@ -108,7 +108,7 @@ afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 | config validate/apply FILE / config effective | 校验或应用客户端策略 |
 | build submit FILE / tool stage FILE / tool activate RELEASE_ID | 本地受信构建与签名制品升级 |
 
-配置 schema 见 [management/config.py](../../autofusex/fuzz/daemon/management/config.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认有限生成 100 例、保存但不上传，资源还受 trust 和 policy 限制。
+配置 schema 见 [management/config.py](../../autofusex/fuzz/daemon/management/config.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），资源还受 trust 和 policy 限制。
 
 ## 方式二：临时运行与重放（afx fuzz，本机直接调试）
 
