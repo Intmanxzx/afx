@@ -21,6 +21,14 @@ from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 import zipfile
 
+def canonical_version(version):
+    """Return the PEP 440 release spelling used by wheel metadata."""
+    parts = version.split('.')
+    if not parts or any(not part.isdigit() for part in parts):
+        raise ValueError('version must contain numeric release segments')
+    return '.'.join(str(int(part)) for part in parts)
+
+
 API = 'https://api.gitcode.com/api/v5'
 GITHUB_API = 'https://api.github.com'
 GITHUB_UPLOADS = 'https://uploads.github.com'
@@ -48,9 +56,10 @@ def request(url, *, method='GET', data=None, headers=None, missing=False):
 def validate(root, tag, dist):
     project = tomllib.loads((root / 'pyproject.toml').read_text())['project']
     version = project['version']
+    normalized = canonical_version(version)
     if project['name'] != 'autofusex':
         raise ValueError('project name must be autofusex')
-    if tag != 'v' + version or not re.fullmatch(r'\d+\.\d+\.\d+', version):
+    if tag != 'v' + version or not re.fullmatch(r'\d+(?:\.\d+)+', version):
         raise ValueError('tag must match the stable project version vX.Y.Z')
     init = (root / 'autofusex/__init__.py').read_text()
     if not re.search(r'__version__\s*=\s*[\'"]' + re.escape(version) + r'[\'"]', init):
@@ -65,7 +74,7 @@ def validate(root, tag, dist):
     if len(wheels) != 1:
         raise ValueError('dist must contain exactly one wheel')
     wheel = wheels[0]
-    if wheel.name != f'autofusex-{version}-py3-none-any.whl':
+    if wheel.name != f'autofusex-{normalized}-py3-none-any.whl':
         raise ValueError('unexpected wheel filename')
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -73,7 +82,7 @@ def validate(root, tag, dist):
         if len(metadata) != 1:
             raise ValueError('invalid wheel metadata')
         info = email.message_from_bytes(archive.read(metadata[0]))
-        if info['Name'] != project['name'] or info['Version'] != version:
+        if info['Name'] != project['name'] or info['Version'] != normalized:
             raise ValueError('wheel metadata differs from project')
         entry_path = metadata[0].removesuffix('METADATA') + 'entry_points.txt'
         entries = configparser.ConfigParser()
@@ -95,7 +104,7 @@ def validate(root, tag, dist):
 
 
 def pypi_present(wheel, version):
-    raw = request(f'https://pypi.org/pypi/autofusex/{version}/json', missing=True)
+    raw = request(f'https://pypi.org/pypi/autofusex/{canonical_version(version)}/json', missing=True)
     if raw is None:
         return False
     for entry in json.loads(raw)['urls']:

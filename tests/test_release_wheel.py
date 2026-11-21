@@ -35,6 +35,12 @@ def artifact(tmp_path):
     return tmp_path, wheel
 
 
+def test_four_segment_version_uses_normalized_wheel_metadata():
+    assert release.canonical_version('0.2.2.001') == '0.2.2.1'
+    with pytest.raises(ValueError):
+        release.canonical_version('0.2.x')
+
+
 def test_plan_is_offline_and_version_checked(artifact, monkeypatch, capsys):
     root, wheel = artifact
     monkeypatch.chdir(root)

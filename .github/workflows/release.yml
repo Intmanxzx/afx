@@ -42,8 +42,8 @@ jobs:
           REQUESTED_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -eu
-          if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "release tag must look like vX.Y.Z" >&2
+          if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+(\.[0-9]+)+$ ]]; then
+            echo "release tag must contain numeric version segments" >&2
             exit 1
           fi
           echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
