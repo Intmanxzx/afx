@@ -90,7 +90,7 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
                 + ", ".join(f"{name}={name}+excluded.{name}" for name in COUNTERS), (client_id, hour, *values))
             if now % 100 == 0:  # occasional cheap expiry
                 conn.execute("DELETE FROM metric_rollups WHERE hour<?", (hour - ROLLUP_DAYS * 24,))
-        row = conn.execute("SELECT target_afx_version, afx_version, update_request_id FROM clients WHERE client_id=?",
+        row = conn.execute("SELECT target_afx_version, afx_version, update_request_id, target_daemon_state, daemon_request_id FROM clients WHERE client_id=?",
                            (client_id,)).fetchone()
         target = row["target_afx_version"]
         if target is not None and target == row["afx_version"]:
@@ -98,8 +98,19 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                          (now, principal.user_id, "client.updated", f"client {client_id} -> {target}"))
             target = None
+        daemon_target = row["target_daemon_state"]
+        daemon_request = row["daemon_request_id"]
+        reported_state = body.get("daemon_state")
+        if reported_state in {"running", "stopped"} and daemon_target == reported_state:
+            conn.execute("UPDATE clients SET target_daemon_state=NULL, daemon_request_id=NULL WHERE client_id=?", (client_id,))
+            conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
+                         (now, principal.user_id, "client.daemon_state", f"client {client_id} -> {reported_state}"))
+            daemon_target = None
+            daemon_request = None
     return {"client_id": client_id, "update_to": target,
             "update_request_id": row["update_request_id"] if target else None,
+            "daemon_state": daemon_target,
+            "daemon_request_id": daemon_request if daemon_target else None,
             "server_time": now, "windows_accepted": accepted}
 
 
@@ -122,6 +133,23 @@ def request_update(store: Store, principal: Principal, body: dict):
                      (now_ms(), principal.user_id, "client.update_requested", f"{ids} -> {version}"))
         return {"requested": count, "version": version}
     return idempotent(store, principal, "client-update", body.pop("request_key", None), body, action)
+
+
+def request_daemon_state(store: Store, principal: Principal, body: dict):
+    """Queue an idempotent daemon lifecycle command for an owned client or any client as admin."""
+    client_id, state = body.get("client_id"), body.get("state")
+    if not isinstance(client_id, int) or isinstance(client_id, bool) or state not in {"running", "stopped"}:
+        raise IssueError("invalid", "client_id and state are required")
+    def action(conn):
+        row = conn.execute("SELECT user_id FROM clients WHERE client_id=? AND deleted_at IS NULL", (client_id,)).fetchone()
+        if row is None: raise IssueError("not_found", "client not found", 404)
+        if principal.role != "admin" and row["user_id"] != principal.user_id:
+            raise IssueError("forbidden", "client is owned by another user", 403)
+        request_id = str(uuid.uuid4())
+        conn.execute("UPDATE clients SET target_daemon_state=?, daemon_request_id=? WHERE client_id=?", (state, request_id, client_id))
+        conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)", (now_ms(), principal.user_id, "client.daemon_requested", f"client {client_id} -> {state}"))
+        return {"client_id": client_id, "state": state, "request_id": request_id}
+    return idempotent(store, principal, "client-daemon", body.pop("request_key", None), body, action)
 
 
 def delete_client(store: Store, principal: Principal, client_id: int):

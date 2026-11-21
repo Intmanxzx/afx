@@ -382,6 +382,10 @@ def create_app(store: Store) -> FastAPI:
     def client_update(body: m.ClientUpdate, principal=Depends(administrator)):
         return _success(ops.request_update(store, principal, data(body)))
 
+    @route('/api/clients/daemon', 'POST')
+    def client_daemon(body: m.ClientControl, principal=Depends(writer)):
+        return _success(ops.request_daemon_state(store, principal, data(body)))
+
     @route('/api/admin/clients/{client_id}', 'DELETE')
     def delete_client(client_id: int, principal=Depends(administrator)):
         return _success(ops.delete_client(store, principal, client_id))
