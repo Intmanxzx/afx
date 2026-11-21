@@ -44,7 +44,6 @@ PAGES.ops = async root => {
       el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
   });
   const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
-    el("div", { class: "muted small" }, "每个用户一行：提交量、资源占用和执行结果使用同一套聚合口径。"),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" },
       el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "可见 NPU 数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
       el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 13, class: "empty" }, "暂无用户运行数据"))]))));
@@ -100,7 +99,7 @@ async function settingsPanel() {
     try { await api("/api/admin/settings", { method: "PUT", body: { changes, base_revisions: base } }); out.replaceChildren(el("span", { class: "chip ok" }, "已保存")); }
     catch (err) { out.replaceChildren(el("div", { class: "error-box" }, String(err.message || err))); }
   };
-  return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("p", {class:"config-intro"}, "平台级规则影响问题识别、回归和验证流程。"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
+  return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
