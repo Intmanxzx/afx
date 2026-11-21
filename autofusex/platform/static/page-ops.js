@@ -30,6 +30,15 @@ PAGES.ops = async root => {
         el("td", {}, fmt(c.last_24h.executions)), el("td", {}, fmt(c.last_24h.upload_errors)), el("td", {}, fmt(c.pending_uploads)),
         el("td", {}, isAdmin() && !c.online ? el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${c.display_name || c.client_id}？`)) return; try { await api(`/api/admin/clients/${c.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除") : "—"),
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
+  const owned = data.clients.filter(c => isAdmin() || c.mine);
+  if (owned.length) root.append(el("section", { class: "panel" }, el("h2", {}, "Daemon 控制"),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" },
+      el("thead", {}, el("tr", {}, ["客户端", "当前状态", "目标状态", "操作"].map(t => el("th", {}, t)))),
+      el("tbody", {}, owned.map(c => el("tr", {},
+        el("td", {}, c.display_name || String(c.client_id)),
+        el("td", {}, c.online ? "在线" : "离线"),
+        el("td", {}, c.target_daemon_state || "—"),
+        el("td", {}, el("button", { class: "mini-btn", onclick: async () => { try { await api("/api/clients/daemon", { method: "POST", body: { request_key: rkey(), client_id: c.client_id, state: "running" } }); render(); } catch (err) { alert(err.message); } } }, "启动"), el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm("停止 daemon？")) return; try { await api("/api/clients/daemon", { method: "POST", body: { request_key: rkey(), client_id: c.client_id, state: "stopped" } }); render(); } catch (err) { alert(err.message); } } }, "停止"))))))));
   root.append(clientsPanel);
   const efficiencyData = await api("/api/ops/efficiency");
   const efficiencyUsers = new Map((efficiencyData.users || []).map(u => [u.user_id, u]));
