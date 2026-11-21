@@ -33,6 +33,15 @@
 
 平台管理员继续使用客户端管理页面下发目标 afx 版本。daemon 心跳接收后执行 client.update，安装到独立 client-releases 目录，校验版本后切换执行端。上一版本指针保存在 previous-client.json。连续任务在升级后重新提交。该机制更新执行端，bootstrap daemon 本身的签名升级仍沿用 tool.stage/tool.activate。
 
+每次管理员下发升级都有独立请求编号；同一次请求的重复心跳不会重复安装，重新下发相同版本会创建新操作。心跳上报 active-client.json 指向的执行端版本，服务端收到目标版本后清除升级目标。新初始化的数据目录生成独立持久化身份，已有 config.json 身份保持不变。旧 daemon 需要更新并重启才能采用上述协议；仅切换执行端不会更新 daemon。
+
+## 升级修复验证（2026-11-20，America/Phoenix）
+
+- 本地平台及相关测试 81 项通过；mlir 独立候选 daemon 回归测试 2 项通过。
+- afx 服务端完成私有一致性备份后部署候选包；真实 HTTP 下发，mlir 独立客户端完成 0.2.0 → 0.2.1 → 0.2.0 → 0.2.1，每次均由真实心跳确认版本并清除目标。
+- 使用当前源已发布的旧版本验证切换；候选 bootstrap 为 0.2.2。未覆盖生产批量升级或运行中连续任务恢复。
+- 原 mlir daemon 和任务保持运行，未替换；本次使用独立 bootstrap 验证客户端修复。
+
 ## 本次验证记录（2026-11-19）
 
 - 本地：management + platform ops 共 80 项通过；JavaScript 语法和 diff 空白检查通过。

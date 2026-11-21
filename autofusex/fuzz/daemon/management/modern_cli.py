@@ -83,6 +83,11 @@ def run(argv=None):
         if (home / "client.json").exists():
             raise ValueError("client already initialized; use its existing configuration")
         managed = bool(args.token) and not args.local
+        # Preserve existing identities; each newly initialized directory is distinct.
+        if not (home / "config.json").exists():
+            import uuid
+            _write(home / "config.json", dict(version=1, source_id=str(uuid.uuid4()),
+                                               cpu_workers=1, resource_policy="auto"))
         if args.token and not args.endpoint:
             raise ValueError("--token requires --endpoint")
         # These are implementation details. Keep stable defaults in the
@@ -103,7 +108,10 @@ def run(argv=None):
                                   "retest": True, "interval": 30.0}
         _write(home / "client.json", client)
         if not (home / "task.json").exists():
-            _write(home / "task.json", _default_task())
+            task = _default_task()
+            if not managed:
+                task['results']['upload'] = False
+            _write(home / "task.json", task)
         if client.get("devices"):
             task = json.loads((home / "task.json").read_text())
             task.setdefault("execution", {})["devices"] = client["devices"]

@@ -485,6 +485,7 @@ ALTER TABLE clients ADD COLUMN client_home TEXT;
 ALTER TABLE clients ADD COLUMN devices TEXT;
 """),
     (11, None),  # Repair attribution columns omitted by already-applied migration 4.
+    (12, "ALTER TABLE clients ADD COLUMN update_request_id TEXT;"),
 ]
 
 CONTENT = [

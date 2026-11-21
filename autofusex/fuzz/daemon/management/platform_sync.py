@@ -23,7 +23,7 @@ def synchronize(manager, client):
     beat=api.call('POST','/api/client/heartbeat',dict(
         machine_id=identity[:128], client_home=home[:512],
         hostname=socket.gethostname(), npu_arch=env.get('device_model'),
-        afx_version=env.get('package_version') or version,
+        afx_version=version,
         backend_versions={'af-mlir': env.get('cann'), 'triton-npu': env.get('triton'),
                           'cpu': env.get('torch')},
         devices=device_inventory(), counters={},
@@ -42,7 +42,8 @@ def synchronize(manager, client):
     atomic(store.home/'task.json',config)
     store.put('config_state',dict(revision=effective['revision'],source=effective['source']))
     if beat.get('update_to'):
-        store.submit('client.update',dict(version=beat['update_to'],package='autofusex'),'platform-update:'+beat['update_to'])
+        store.submit('client.update',dict(version=beat['update_to'],package='autofusex'),
+                     'platform-update:'+str(beat.get('update_request_id') or beat['update_to']))
     with store.connect() as db:
         runs=list(db.execute('SELECT id,spec FROM runs'))
     for run in runs:
