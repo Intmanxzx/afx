@@ -1,3 +1,0 @@
-interface:
-  display_name: "afx-repair"
-  short_description: "领取 Autofuse 问题，经 NPU 调试、隔离安装与中心复测完成修复归档"
