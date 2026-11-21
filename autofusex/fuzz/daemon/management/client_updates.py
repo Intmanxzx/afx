@@ -7,6 +7,12 @@ import json
 
 from .artifacts import atomic, command
 
+def _canonical_version(value):
+    parts = value.split('.')
+    if not parts or any(not part.isdigit() for part in parts):
+        raise ValueError('invalid client version')
+    return '.'.join(str(int(part)) for part in parts)
+
 def _venv_python(path):
     return path / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 
@@ -73,7 +79,7 @@ def install(store, payload, processes, operation_id=None):
     check = [str(python), '-c',
              'import importlib.metadata; print(importlib.metadata.version("autofusex"))']
     verified = subprocess.check_output(check, text=True, stderr=subprocess.STDOUT, timeout=60).strip().splitlines()[-1:]
-    if verified != [version]:
+    if verified != [_canonical_version(version)]:
         raise ValueError('installed client version does not match requested version')
     atomic(root / 'ready.json', dict(version=version, python=str(python), package='autofusex'))
     if (store.home/'active-client.json').exists():
