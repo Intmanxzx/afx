@@ -23,7 +23,7 @@ def test_active_version_and_update_request_retry(tmp_path, monkeypatch):
     from autofusex.fuzz.client import environment
     from autofusex.fuzz.client.scheduling import devices
     monkeypatch.setattr(environment, 'collect', lambda home: {'installation_id':'test', 'package_version':'0.2.2'})
-    monkeypatch.setattr(devices, 'device_inventory', lambda: [])
+    monkeypatch.setattr(devices, 'device_inventory_info', lambda: {'devices': [], 'model': None})
     store = Store(tmp_path)
     (tmp_path/'client.json').write_text('{}')
     (tmp_path/'active-client.json').write_text(json.dumps({'version':'0.2.0'}))

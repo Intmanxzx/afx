@@ -8,6 +8,7 @@ from pathlib import Path
 import socket
 import sqlite3
 import socketserver
+import subprocess
 import threading
 import time
 import hashlib
@@ -214,8 +215,26 @@ class Manager:
             client=json.loads(client_path.read_text())
             if client.get('mode')=='local': return
             if client.get('mode')=='managed':
-                from .management.platform_sync import synchronize
-                return synchronize(self,client)
+                # Platform facts and heartbeat run from the active client
+                # release. The bootstrap supervisor must not own this schema:
+                # installing a new client therefore updates all future facts.
+                active = self.store.home / 'active-client.json'
+                python = None
+                if active.exists():
+                    try:
+                        candidate = json.loads(active.read_text()).get('python')
+                        if isinstance(candidate, str) and Path(candidate).is_file():
+                            python = candidate
+                    except (OSError, ValueError, TypeError):
+                        pass
+                if python is None:
+                    python = os.sys.executable
+                command = [python, '-m', 'autofusex.fuzz.daemon.management.platform_agent',
+                           '--data-dir', str(self.store.home)]
+                subprocess.run(command, check=True, timeout=120,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE, text=True)
+                return
         pairing=self.store.get('pairing');credential=self.store.get('credential')
         if pairing and not credential:
             result=remote(pairing['endpoint'],'exchange',dict(id=pairing['id'],secret=pairing['secret']))
