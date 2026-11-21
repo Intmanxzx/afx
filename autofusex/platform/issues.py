@@ -76,11 +76,35 @@ def case_traits(conn, case_id: int) -> dict:
             "categories": ",".join(categories) or "uncategorized", "primary": primary_category(categories)}
 
 
+_PLOG_PREFIX = re.compile(
+    r"^\[ERROR\]\s+\w+\([^)]*\):\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)*\s+\[[^\]\r\n]+:\d+\]\d*\s*", re.I)
+
+
+def function_title(backend, stage, summary, primary):
+    line = next((line.strip() for line in (summary or "").splitlines() if line.strip()), "")
+    body = _PLOG_PREFIX.sub("", line).strip() or stage
+    prefix, suffix = f"[{backend}] {stage}: ", f" ({primary})"
+    return prefix + body[:max(0, 300 - len(prefix) - len(suffix))] + suffix
+
+
+def _display_issue(row):
+    out = dict(row)
+    # Older rows store the normalized signature as their title. Rebuild from
+    # the retained original summary so existing issues benefit without a migration.
+    if out["dimension"] == "function" and out["log_summary"]:
+        category = re.search(r" \(([^()]*)\)$", out["title"])
+        if category:
+            out["title"] = function_title(out["backend"], out["category"],
+                                          out["log_summary"], category[1])
+    return out
+
+
 def function_signature(execution, traits):
     stage = execution["fail_stage"] or execution["function_status"]
     norm = normalize(execution["log_summary"])
     sig = _digest("function", execution["backend"], stage, norm, traits["primary"])
-    title = f"[{execution['backend']}] {stage}: {norm[:80] or execution['function_status']} ({traits['primary']})"
+    title = function_title(execution["backend"], stage, execution["log_summary"], traits["primary"])
     return sig, stage, title
 
 
@@ -607,7 +631,7 @@ def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=No
     rows = store.reader().execute(
         f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues {clause} "
         "ORDER BY CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END ASC, case_count DESC, issue_no DESC LIMIT ?", args + [limit]).fetchall()
-    items = [dict(row) for row in rows]
+    items = [_display_issue(row) for row in rows]
     if len(items) == limit:
         last = items[-1]
         cursor = f"{0 if last['status'] in ACTIVE else 1 if last['status'] == 'open' else 2}:{last['case_count']}:{last['issue_no']}"
@@ -622,7 +646,7 @@ def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
     row = conn.execute(f"SELECT {_ISSUE_COLUMNS} FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
     if row is None:
         raise IssueError("not_found", "issue not found", 404)
-    out = dict(row)
+    out = _display_issue(row)
     out["rounds"] = [dict(r) for r in conn.execute(
         "SELECT round_no, kind, fix_version, fix_sha256, started_at, finished_at, outcome, pass_count, fail_count, "
         "invalid_count FROM issue_rounds WHERE issue_id=? ORDER BY round_no", (issue_id,))]
