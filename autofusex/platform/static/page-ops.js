@@ -23,7 +23,7 @@ PAGES.ops = async root => {
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => { e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id); if (selected.size) clientsPanel.dataset.custom = "1"; else delete clientsPanel.dataset.custom; } }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
-        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", "data-tooltip": c.client_home || c.machine_id }, (c.client_home || c.hostname || c.machine_id).split("/").pop()), el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
+        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", style: { maxWidth: "280px", overflowWrap: "anywhere" }, "data-tooltip": c.client_home || "客户端尚未上报目录" }, c.client_home || "未上报"), el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
