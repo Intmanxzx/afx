@@ -5,13 +5,17 @@ import sys
 import re
 from .config import validate
 
-KINDS={'environment.plan','environment.apply','environment.inspect','build.submit','task.validate','task.submit','task.action','config.apply','tool.stage','tool.activate','client.update','task.reconfigure','operation.cancel'}
+KINDS={'environment.plan','environment.apply','environment.inspect','build.submit','task.validate','task.submit','task.action','config.apply','tool.stage','tool.activate','client.update','task.reconfigure','daemon.control','operation.cancel'}
 
 
 def validate_operation(kind,payload):
     if kind not in KINDS or not isinstance(payload,dict): raise ValueError('unsupported operation')
     if kind=='operation.cancel':
         if set(payload)!={'operation_id'} or not isinstance(payload['operation_id'],str):raise ValueError('operation ID required')
+        return payload
+    if kind == 'daemon.control':
+        if set(payload) != {'state'} or payload['state'] not in {'running', 'stopped'}:
+            raise ValueError('daemon control requires running or stopped state')
         return payload
     if kind=='task.reconfigure':
         if set(payload)!={'run_id','spec'} or not isinstance(payload['run_id'],str):raise ValueError('run ID and task spec required')
@@ -59,6 +63,15 @@ def execute(store,operation,processes):
         if target['state']=='queued':store.state(target['id'],'cancelled',dict(code='cancelled_before_start'))
         elif target['state']=='running':store.put('cancel:'+target['id'],True)
         return dict(id=target['id'],state='cancel_requested')
+    if kind == 'daemon.control':
+        state = payload['state']
+        if state == 'stopped':
+            for identity in list(processes):
+                tasks.action(store, identity, 'stop', processes)
+            store.put('shutdown_when_idle', True)
+            return {'state': 'stopping'}
+        store.put('shutdown_when_idle', False)
+        return {'state': 'running'}
     if kind in {'environment.apply','tool.activate'}:
         with store.connect() as db:
             if db.execute("SELECT 1 FROM runs WHERE state IN ('preparing','running','pausing','paused','draining','cancelling','needs_attention')").fetchone():

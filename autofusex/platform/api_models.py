@@ -109,6 +109,11 @@ class ClientUpdate(RequestKey):
     version: str
 
 
+class ClientControl(RequestKey):
+    client_id: int
+    state: Literal['running', 'stopped']
+
+
 class Drafts(RequestKey):
     x: str
     y: str
@@ -128,6 +133,7 @@ class Heartbeat(Payload):
     windows: Optional[list[dict[str, Any]]] = None
     pending_uploads: Optional[int] = Field(default=None, ge=0)
     busy: bool = False
+    daemon_state: Optional[Literal['running', 'stopped']] = None
 
 
 class Client(Payload):

@@ -21,13 +21,20 @@ def synchronize(manager, client):
     version=json.loads(active_path.read_text())['version'] if active_path.exists() else importlib.metadata.version('autofusex')
     from ...client.scheduling.devices import device_inventory_info
     inventory = device_inventory_info()
+    control_path = store.home / 'daemon-control.json'
+    current_state = 'running'
+    if control_path.exists():
+        try:
+            current_state = 'stopped' if json.loads(control_path.read_text()).get('state') == 'stopped' else 'running'
+        except (OSError, ValueError, TypeError):
+            current_state = 'running'
     beat=api.call('POST','/api/client/heartbeat',dict(
         machine_id=identity[:128], client_home=home[:512],
         hostname=socket.gethostname(), npu_arch=env.get('device_model') or inventory['model'],
         afx_version=version,
         backend_versions={'af-mlir': env.get('cann'), 'triton-npu': env.get('triton'),
                           'cpu': env.get('torch')},
-        devices=inventory['devices'], counters={},
+        devices=inventory['devices'], counters={}, daemon_state=current_state,
         # `busy` is reserved for a client that is actively executing a
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".
@@ -45,6 +52,10 @@ def synchronize(manager, client):
     if beat.get('update_to'):
         store.submit('client.update',dict(version=beat['update_to'],package='autofusex'),
                      'platform-update:'+str(beat.get('update_request_id') or beat['update_to']))
+    if beat.get('daemon_state') in {'running', 'stopped'}:
+        state = beat['daemon_state']
+        atomic(control_path, {'state': state, 'request_id': beat.get('daemon_request_id')})
+        store.put('shutdown_when_idle', state == 'stopped')
     with store.connect() as db:
         runs=list(db.execute('SELECT id,spec FROM runs'))
     for run in runs:

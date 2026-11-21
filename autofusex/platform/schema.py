@@ -498,6 +498,10 @@ CREATE TABLE registration_requests(
 );
 CREATE UNIQUE INDEX registration_pending_user ON registration_requests(user_id) WHERE status IN ('pending','approved');
 """),
+    (14, """
+ALTER TABLE clients ADD COLUMN target_daemon_state TEXT;
+ALTER TABLE clients ADD COLUMN daemon_request_id TEXT;
+"""),
 ]
 
 CONTENT = [

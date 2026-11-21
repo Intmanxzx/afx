@@ -118,6 +118,18 @@ def test_heartbeat_rollups_and_update(world):
         ops.heartbeat(store, client, {"machine_id": "m1", "counters": {"executions": -1}})
 
 
+def test_daemon_control_is_owner_scoped_and_idempotent(world):
+    store, client, admin = world
+    created = ops.heartbeat(store, client, {"machine_id": "daemon-control"})
+    request = {"request_key": "daemon-stop", "client_id": created["client_id"], "state": "stopped"}
+    queued = ops.request_daemon_state(store, client, request.copy())
+    assert queued["state"] == "stopped"
+    assert ops.request_daemon_state(store, client, request.copy()) == queued
+    beat = ops.heartbeat(store, client, {"machine_id": "daemon-control", "daemon_state": "stopped"})
+    assert beat["daemon_state"] is None
+    assert ops.request_daemon_state(store, admin, {"request_key": "daemon-start", "client_id": created["client_id"], "state": "running"})["state"] == "running"
+
+
 def test_admin_can_delete_offline_client_and_heartbeat_restores_it(world):
     store, client, admin = world
     created = ops.heartbeat(store, client, {"machine_id": "delete-me"})
