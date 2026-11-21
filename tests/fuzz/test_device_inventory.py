@@ -28,3 +28,12 @@ def test_timeout_and_cache(monkeypatch):
     assert devices.device_inventory() is None
     assert devices.device_inventory() is None
     assert len(calls) == 1
+
+
+def test_inventory_reports_chip_model(monkeypatch):
+    monkeypatch.setattr(devices, '_inventory_at', None)
+    monkeypatch.setattr(devices.subprocess, 'run', lambda *a, **k: SimpleNamespace(
+        stdout='{"count":2,"models":["A2A3","A2A3"]}', returncode=0))
+    assert devices.device_inventory_info() == {
+        'devices': ['npu:0', 'npu:1'], 'model': 'A2A3'}
+    assert devices.device_inventory() == ['npu:0', 'npu:1']

@@ -60,6 +60,6 @@ afx config edit task.yaml
 
 ## 更新
 
-平台管理员继续使用客户端管理页面下发目标 afx 版本。daemon 心跳接收后执行 client.update，安装到独立 client-releases 目录，校验版本后切换执行端。上一版本指针保存在 previous-client.json。连续任务在升级后重新提交。该机制更新执行端，bootstrap daemon 本身的签名升级仍沿用 tool.stage/tool.activate。
+平台管理员继续使用客户端管理页面下发目标 afx 版本。bootstrap daemon 只负责接收升级、停止 worker、安装到独立 client-releases 目录并切换 active-client.json；平台 heartbeat、配置同步和硬件/软件事实采集由当前 active client release 的 platform agent 子进程执行。上一版本指针保存在 previous-client.json。连续任务在升级后重新提交。这样新增 heartbeat 字段只需发布并切换 client release，不依赖 bootstrap daemon 加载新模块。
 
-每次管理员下发升级都有独立请求编号；同一次请求的重复心跳不会重复安装，重新下发相同版本会创建新操作。心跳上报 active-client.json 指向的执行端版本，服务端收到目标版本后清除升级目标。新初始化的数据目录生成独立持久化身份，已有 config.json 身份保持不变。旧 daemon 需要更新并重启才能采用上述协议；仅切换执行端不会更新 daemon。
+每次管理员下发升级都有独立请求编号；同一次请求的重复心跳不会重复安装，重新下发相同版本会创建新操作。心跳上报 active-client.json 指向的执行端版本，服务端收到目标版本后清除升级目标。新初始化的数据目录生成独立持久化身份，已有 config.json 身份保持不变。旧 daemon 若不支持 active client agent，需要先手工升级并重启一次；支持该协议后，后续 heartbeat 和平台事实采集会随 active release 自动切换。

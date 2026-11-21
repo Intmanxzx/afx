@@ -19,14 +19,15 @@ def synchronize(manager, client):
     store.put('machine_id', identity[:128])
     active_path=store.home/'active-client.json'
     version=json.loads(active_path.read_text())['version'] if active_path.exists() else importlib.metadata.version('autofusex')
-    from ...client.scheduling.devices import device_inventory
+    from ...client.scheduling.devices import device_inventory_info
+    inventory = device_inventory_info()
     beat=api.call('POST','/api/client/heartbeat',dict(
         machine_id=identity[:128], client_home=home[:512],
-        hostname=socket.gethostname(), npu_arch=env.get('device_model'),
+        hostname=socket.gethostname(), npu_arch=env.get('device_model') or inventory['model'],
         afx_version=version,
         backend_versions={'af-mlir': env.get('cann'), 'triton-npu': env.get('triton'),
                           'cpu': env.get('torch')},
-        devices=device_inventory(), counters={},
+        devices=inventory['devices'], counters={},
         # `busy` is reserved for a client that is actively executing a
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".

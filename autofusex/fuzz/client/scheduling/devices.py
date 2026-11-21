@@ -8,32 +8,44 @@ import time
 
 _inventory_cache = None
 _inventory_at = None
+_inventory_model = None
 
 
-def device_inventory():
+def device_inventory_info():
     """Visible logical NPUs; None means detection failed, [] means zero."""
-    global _inventory_cache, _inventory_at
+    global _inventory_cache, _inventory_at, _inventory_model
     now = time.monotonic()
     if _inventory_at is not None and now - _inventory_at < 60:
-        return _inventory_cache
+        return {"devices": _inventory_cache, "model": _inventory_model}
     result = None
     try:
         probe = subprocess.run([sys.executable, '-c',
-            'import json,torch,torch_npu;print(json.dumps({"count":torch.npu.device_count()}))'],
+            'import json,torch,torch_npu; count=torch.npu.device_count(); '
+            'models=[] if count == 0 else [str(torch.npu.get_device_properties(i).name) for i in range(count)]; '
+            'print(json.dumps({"count":count,"models":models}))'],
             capture_output=True, text=True, timeout=30)
         if probe.returncode == 0:
             for line in reversed(probe.stdout.splitlines()):
                 try:
-                    count = json.loads(line)['count']
+                    payload = json.loads(line)
+                    count = payload['count']
                     if type(count) is int and 0 <= count <= 64:
                         result = ['npu:' + str(i) for i in range(count)]
+                        models = payload.get('models')
+                        if isinstance(models, list):
+                            _inventory_model = next((str(model) for model in models if model), None)
                         break
                 except (ValueError, KeyError, TypeError):
                     continue
     except (OSError, subprocess.TimeoutExpired):
         pass
     _inventory_cache, _inventory_at = result, now
-    return result
+    return {"devices": result, "model": _inventory_model}
+
+
+def device_inventory():
+    """Visible logical NPUs; None means detection failed, [] means zero."""
+    return device_inventory_info()["devices"]
 
 
 def select_devices(requested=None):
