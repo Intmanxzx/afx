@@ -47,5 +47,6 @@ def test_active_version_and_update_request_retry(tmp_path, monkeypatch):
     reply['update_request_id'] = 'second'
     platform_sync.synchronize(manager, client)
     assert store.pending()[0]['id'] != first['id']
-    assert all(b['afx_version']=='0.2.0' for b in beats)
+    import importlib.metadata
+    assert all(b['afx_version']==importlib.metadata.version('autofusex') for b in beats)
 

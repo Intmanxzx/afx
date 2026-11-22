@@ -75,7 +75,7 @@ class Manager:
             from .management.tasks import action as task_action
             for identity in list(self.processes):
                 task_action(self.store,identity,'stop',self.processes)
-            self.store.put('shutdown_when_idle',True)
+            self.store.put('shutdown_when_idle',False)
             return dict(stopping=True)
         if action=='shutdown':
             if self.active or self.processes: raise ValueError('finish active operations and tasks before stopping daemon')
@@ -167,12 +167,14 @@ class Manager:
                     run['result_count']=results.execute('SELECT count(*) FROM attempts').fetchone()[0]
             except sqlite3.Error:
                 pass
-        return dict(protocol=1,paired=bool(self.store.get('credential')),config=self.store.get('config_state',{}),
+        return dict(protocol=1, pid=os.getpid(), agent_python=os.sys.executable, agent_version=__import__('importlib.metadata', fromlist=['version']).version('autofusex'), paired=bool(self.store.get('credential')),config=self.store.get('config_state',{}),
                     active_operation=self.active[0] if self.active else None,runs=runs,environments=environments)
 
     def tick(self):
         from .management.tasks import refresh
         refresh(self.store,self.processes)
+        from .management.session_control import reconcile
+        reconcile(self)
         if self.store.get('shutdown_when_idle') and not self.processes and not self.active:
             self.store.put('shutdown_when_idle',False)
             self.store.put('normal_shutdown',True)
@@ -180,7 +182,10 @@ class Manager:
             return
         if self.active and self.active[1].done():
             identity,future=self.active
-            try: self.store.state(identity,'succeeded',future.result())
+            try:
+                result = future.result()
+                staged = result and result.get('state') == 'staged' and self.store.operation(identity)['kind'] == 'client.update'
+                self.store.state(identity, 'activating' if staged else 'succeeded', result)
             except Exception as exc:
                 # Exception text may contain credentials/URLs from libraries. Only expose safe class/code.
                 cancelled=self.store.get('cancel:'+identity,False)
@@ -219,26 +224,8 @@ class Manager:
             client=json.loads(client_path.read_text())
             if client.get('mode')=='local': return
             if client.get('mode')=='managed':
-                # Platform facts and heartbeat run from the active client
-                # release. The bootstrap supervisor must not own this schema:
-                # installing a new client therefore updates all future facts.
-                active = self.store.home / 'active-client.json'
-                python = None
-                if active.exists():
-                    try:
-                        candidate = json.loads(active.read_text()).get('python')
-                        if isinstance(candidate, str) and Path(candidate).is_file():
-                            python = candidate
-                    except (OSError, ValueError, TypeError):
-                        pass
-                if python is None:
-                    python = os.sys.executable
-                command = [python, '-m', 'autofusex.fuzz.daemon.management.platform_agent',
-                           '--data-dir', str(self.store.home)]
-                subprocess.run(command, check=True, timeout=120,
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE, text=True)
-                return
+                from .management.platform_sync import synchronize
+                return synchronize(self, client)
         pairing=self.store.get('pairing');credential=self.store.get('credential')
         if pairing and not credential:
             result=remote(pairing['endpoint'],'exchange',dict(id=pairing['id'],secret=pairing['secret']))

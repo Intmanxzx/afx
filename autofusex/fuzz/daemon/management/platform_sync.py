@@ -18,9 +18,17 @@ def synchronize(manager, client):
     identity = (env.get('installation_id') or socket.gethostname())[:128]
     store.put('machine_id', identity[:128])
     active_path=store.home/'active-client.json'
-    version=json.loads(active_path.read_text())['version'] if active_path.exists() else importlib.metadata.version('autofusex')
+    version=importlib.metadata.version('autofusex')
     from ...client.scheduling.devices import device_inventory_info
     inventory = device_inventory_info()
+    from .execution_runtime import facts
+    try:
+        execution = facts(store)
+    except (OSError, ValueError, __import__('subprocess').SubprocessError):
+        execution = None
+    if execution:
+        env.update(execution['environment'])
+        inventory = execution['inventory']
     control_path = store.home / 'daemon-control.json'
     session = store.get('session_control', {})
     current_state = store.get('session_state', 'stopped')
