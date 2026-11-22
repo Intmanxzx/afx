@@ -562,6 +562,10 @@ def upload_new(api: API, mapper: Mapper, state: State, counters: Counters, *, ke
             return statuses
         groups: dict = {}
         for row in rows:
+            if run_override is None:
+                context = mapper.conn.execute("SELECT payload FROM contexts WHERE id=?", (row["execution_id"],)).fetchone()
+                if context and str(json.loads(context[0]).get('batch_id', '')).startswith('platform-retest:'):
+                    continue  # The retest coordinator owns its batch and completion receipt.
             env_error = environment_error(mapper, row)
             if env_error:
                 state.conn.execute("INSERT OR REPLACE INTO rejected VALUES(?,?,?)",
@@ -816,6 +820,11 @@ class Client:
                 done = subprocess.run(command, capture_output=True, text=True, timeout=3600)
                 if done.returncode not in (0, 1):
                     log.warning("replay %s exited %s: %s", task["case_key"], done.returncode, done.stderr[-2000:])
+            if not Path(self.retest_db).exists():
+                log.warning("task %s: replay produced no result database", task["task_id"])
+                if self.stop.wait(min(300, 20 * (attempt + 1))):
+                    return
+                continue
             mapper = Mapper(self.retest_db)
             rows = mapper.conn.execute("SELECT id, error_summary FROM attempts WHERE rowid>? AND seed=?",
                                        (before, seed)).fetchall()

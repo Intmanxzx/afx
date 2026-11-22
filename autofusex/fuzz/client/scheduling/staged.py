@@ -446,7 +446,7 @@ def replay(args):
     replay tasks enter that ledger at priority 100.  Standalone replay keeps
     the historical ephemeral queue for hosts with no running campaign.
     """
-    from ..config import data_home,load_config
+    from ..config import data_home,load_config,results_database
     from ..resources import adaptive_defaults
     from .ledger import TaskLedger
     from .budgets import Budget,write_policy
@@ -467,7 +467,6 @@ def replay(args):
         except (OSError, ValueError):
             status = None
         if status in {'starting', 'running'}:
-            from .contracts import ExecutionConfig, EvaluationConfig
             from .ledger import TaskLedger
             ledger = TaskLedger(managed_ledger)
             batch = str(uuid.uuid4()); seed = Seed.parse(args.seed)
@@ -498,7 +497,7 @@ def replay(args):
             return 1
     with tempfile.TemporaryDirectory(prefix='.replay-stages-',dir=home) as directory:
         ledger=TaskLedger(Path(directory)/'tasks.sqlite')
-        database=Path(args.database) if args.database else (home/'results/results.sqlite' if args.save else Path(directory)/'results.sqlite')
+        database=results_database(home, args.database) if args.database or args.save else Path(directory)/'results.sqlite'
         write_policy(ledger,budget)
         batch=str(uuid.uuid4());seed=Seed.parse(args.seed)
         for backend in ([args.backend] if args.backend else ['cpu','af-mlir']):
