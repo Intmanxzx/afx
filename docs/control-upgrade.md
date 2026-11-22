@@ -127,3 +127,35 @@ The upgrade requests used the production platform HTTP endpoint. For unpublished
 candidate artifacts, pip's find-links pointed to the test wheel directory on mlir.
 This validates command delivery and activation, not public package publication.
 Full regression: 181 tests passed. JavaScript syntax check passed.
+
+## 0.2.2.9 candidate acceptance
+
+Commit c94f66f4c905baae6148c94901b794607b58137c was tagged v0.2.2.9
+and pushed to both GitCode repositories. The isolated mlir workspace is
+`/mnt/workspace/afx-0229-e2e`; management and release-tooling tests passed
+(102 tests, `tests.log`). The test client used a manually installed candidate
+baseline, so this does not establish automatic migration from an unmodified
+0.2.2.8 supervisor.
+
+Two full candidate installations succeeded while preserving run
+`0ad09e6a-ffe6-40ac-a693-85d2b3809898`. Local IPC operation
+`450b9469-51cb-4b0e-88dd-9d2b3fd57391` recorded 5.053 seconds of quiescence.
+The production platform then dispatched request
+`bd068227-2f39-47e5-9660-f93be7f49c52` to isolated client 18
+(`upgrade-0229-e2e-npu0`). Operation
+`a90b0867-e0da-472b-827e-5dc392de198d` recorded 5.052 seconds of quiescence
+before installation, switched the control daemon to PID 832018, and restored
+the same run with execution worker version evidence of 0.2.2.9. The server
+recorded `client.updated` and cleared its upgrade target and request ID.
+
+The workload used CPU and eager-NPU backends. Device contention occurred on
+some attempts; successful real NPU execution was also observed. After acceptance,
+the isolated run was stopped with 56 results and its supervisor was shut down.
+The original mlir client was not migrated or stopped.
+
+Both installations used the candidate wheel via `PIP_FIND_LINKS`. They establish
+platform delivery, drain, installation, activation, queue restoration and
+acknowledgement for the candidate. Public PyPI artifact acceptance remains pending
+until the GitCode push mirror delivers the tag to GitHub and the release workflow
+publishes it. Supervisor interruption and network-outage recovery retain the
+validation boundaries described above.
