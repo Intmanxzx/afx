@@ -816,6 +816,11 @@ class Client:
                 done = subprocess.run(command, capture_output=True, text=True, timeout=3600)
                 if done.returncode not in (0, 1):
                     log.warning("replay %s exited %s: %s", task["case_key"], done.returncode, done.stderr[-2000:])
+            if not Path(self.retest_db).exists():
+                log.warning("task %s: replay produced no result database", task["task_id"])
+                if self.stop.wait(min(300, 20 * (attempt + 1))):
+                    return
+                continue
             mapper = Mapper(self.retest_db)
             rows = mapper.conn.execute("SELECT id, error_summary FROM attempts WHERE rowid>? AND seed=?",
                                        (before, seed)).fetchall()

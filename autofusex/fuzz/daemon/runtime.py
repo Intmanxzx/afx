@@ -175,6 +175,8 @@ class Manager:
         refresh(self.store,self.processes)
         from .management.session_control import reconcile
         reconcile(self)
+        from .management.platform_retests import tick as retest_tick
+        retest_tick(self)
         if self.store.get('shutdown_when_idle') and not self.processes and not self.active:
             self.store.put('shutdown_when_idle',False)
             self.store.put('normal_shutdown',True)
@@ -296,5 +298,7 @@ class Manager:
                         interval=quantity(store.get('effective_policy',{}).get('sync',{}).get('interval','10s'))
                         next_sync=time.monotonic()+interval
             finally:
+                from .management.platform_retests import stop as stop_retests
+                stop_retests(self)
                 server.server_close();sockpath.unlink(missing_ok=True)
                 network.shutdown(wait=True);self.pool.shutdown(wait=True)

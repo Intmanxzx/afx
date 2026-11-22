@@ -467,7 +467,6 @@ def replay(args):
         except (OSError, ValueError):
             status = None
         if status in {'starting', 'running'}:
-            from .contracts import ExecutionConfig, EvaluationConfig
             from .ledger import TaskLedger
             ledger = TaskLedger(managed_ledger)
             batch = str(uuid.uuid4()); seed = Seed.parse(args.seed)
