@@ -583,3 +583,11 @@ def test_update_request_identity_survives_retries_and_changes_on_new_request(wor
     ops.request_update(store, admin, dict(request, request_key='upgrade-cancel', version=None))
     cancelled = ops.heartbeat(store, client, body)
     assert cancelled['update_to'] is None and cancelled['update_request_id'] is None
+
+
+def test_execution_upload_does_not_overwrite_control_version(world):
+    store, client, _ = world
+    cid = ops.heartbeat(store, client, {'machine_id':'separate-runtime','afx_version':'0.2.2.9001'})['client_id']
+    with store.write() as conn:
+        Ingestor(store)._client(conn, client.user_id, {'machine_id':'separate-runtime','afx_version':'0.2.2.5'})
+        assert conn.execute('SELECT afx_version FROM clients WHERE client_id=?',(cid,)).fetchone()[0] == '0.2.2.9001'
