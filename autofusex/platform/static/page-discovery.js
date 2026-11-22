@@ -165,14 +165,14 @@ export async function pinGlobal(keys) {
   try { const r = await api("/api/regression/pins", { method: "POST", body: { request_key: rkey(), scope: "global", case_keys: keys, reason } }); alert(`已加入 ${r.pinned} 个用例`); }
   catch (err) { alert(err.message); }
 }
+const expandedRetestBatches = new Set();
 async function renderRetests(root) {
   const rows = await api("/api/retests");
-  root.append(el("section", { class: "panel" }, el("h2", {}, "我提交的复测"),
-    rows.length ? el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["批次", "提交时间", "任务", "进行中", "通过", "失败", "无效", "进度", "用例与结果"].map(t => el("th", {}, t)))),
-      el("tbody", {}, rows.map(r => el("tr", {}, el("td", { class: "mono small" }, (r.batch || "").slice(0, 12)), el("td", {}, time(r.created_at)), el("td", {}, r.tasks), el("td", {}, r.running),
-        el("td", {}, r.passed), el("td", {}, r.failed), el("td", {}, r.invalid),
-        el("td", { style: { minWidth: "160px" } }, el("div", { class: "hbar", style: { gridTemplateColumns: "1fr" } }, stackBar([["c-pass", r.passed, "通过"], ["c-func", r.failed, "失败"], ["c-uns", r.invalid, "无效"], ["c-acc", r.running, "进行中"]], r.tasks))),
-        el("td", {}, el("details", {}, el("summary", {}, "查看 Seed 与结果"),
+  const body = el("tbody");
+  for (const r of rows) {
+    const detailId = "retest-details-" + encodeURIComponent(r.batch);
+    const detail = el("tr", { class: "retest-details", id: detailId },
+      el("td", { colspan: 8 }, el("div", { class: "retest-details-inner" },
           el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Seed", "后端 / 芯片", "状态", "结果详情"].map(t => el("th", {}, t)))),
             el("tbody", {}, (r.items || []).map(t => el("tr", {},
               el("td", {}, el("a", { class: "mono small", href: "#case?key=" + encodeURIComponent(t.case_key), onclick: e => { e.preventDefault(); openCase(t.case_key); } }, t.case_key)),
@@ -180,6 +180,20 @@ async function renderRetests(root) {
               el("td", {}, ({ pass: "通过", fail: "失败", invalid: "无效", skip: "跳过" }[t.result] || { pending: "待执行", leased: "执行中", done: "已完成", invalid: "无效" }[t.status] || t.status),
                 t.detail ? el("div", { class: "muted small" }, t.detail) : null),
               el("td", {}, t.executions.length ? t.executions.map(x => el("a", { href: "#case?key=" + encodeURIComponent(t.case_key) + "&exec=" + encodeURIComponent(x.exec_uuid), style: { marginRight: "10px" } }, label(x.backend) + " 详情")) : "暂无执行结果")
-            ))))))))))
+            )))))));
+    detail.hidden = !expandedRetestBatches.has(r.batch);
+    const toggle = el("button", { class: "retest-batch-toggle mono small", "aria-controls": detailId,
+      "aria-expanded": String(!detail.hidden), title: r.batch, onclick: () => {
+        detail.hidden = !detail.hidden;
+        if (detail.hidden) expandedRetestBatches.delete(r.batch); else expandedRetestBatches.add(r.batch);
+        toggle.setAttribute("aria-expanded", String(!detail.hidden));
+      } }, el("span", { class: "retest-chevron", "aria-hidden": "true" }, "▶"), (r.batch || "").slice(0, 12));
+    body.append(el("tr", {}, el("td", {}, toggle), el("td", {}, time(r.created_at)),
+      el("td", {}, r.tasks), el("td", {}, r.running), el("td", {}, r.passed), el("td", {}, r.failed), el("td", {}, r.invalid),
+      el("td", { style: { minWidth: "160px" } }, el("div", { class: "hbar", style: { gridTemplateColumns: "1fr" } },
+        stackBar([["c-pass", r.passed, "通过"], ["c-func", r.failed, "失败"], ["c-uns", r.invalid, "无效"], ["c-acc", r.running, "进行中"]], r.tasks)))), detail);
+  }
+  root.append(el("section", { class: "panel" }, el("h2", {}, "我提交的复测"),
+    rows.length ? el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["批次", "提交时间", "任务", "进行中", "通过", "失败", "无效", "进度"].map(t => el("th", {}, t)))), body)
       : el("div", { class: "empty" }, "还没有复测记录。在执行记录中选中用例后点击“复测”。")));
 }
