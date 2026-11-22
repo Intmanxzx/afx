@@ -60,3 +60,22 @@ or subprocess tests.
 
 Local source builds used for acceptance must remain in separate test directories;
 do not overwrite or republish the immutable PyPI 0.2.2.6 release.
+
+## mlir validation evidence
+
+Manual migration on the existing data home created private backup
+control-migration-1795327798149809282 and started control PID 417011.
+A local-only 0.2.2.9001 wheel was submitted through the manager operation queue:
+supervisor PID 417010 stayed alive; manager changed to PID 418939; old run
+329fc671-dd25-46eb-bc9a-19f1e4225996 stopped and run
+40a898e1-8125-43d4-a107-97e22bf17844 resumed using the unchanged execution Python.
+The activation operation succeeded only after fresh heartbeat and running state.
+A subsequent platform stop succeeded while control heartbeat remained available.
+A local-only 0.2.2.9002 wheel intentionally failed at Manager.run startup;
+activation rolled back, the operation failed, and 0.2.2.9001 restarted as PID
+421465 without starting tasks (the prior session was stopped).
+
+These wheels were not published. Upgrade submission used local IPC with a local
+wheel directory, not the production platform upgrade endpoint. Network-outage,
+supervisor-interruption and rollback with running NPU work remain unverified.
+The server-side execution-upload/control-version fix has not been deployed.
