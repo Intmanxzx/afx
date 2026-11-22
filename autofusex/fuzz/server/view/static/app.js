@@ -533,11 +533,13 @@ function renderCaseDag(host,result){
  for(const {from,to} of graph.edges){const x=from.x+125,y=from.y+100,endX=to.x+125,endY=to.y;const path=svg('path',{d:`M ${x} ${y} C ${x} ${y+25}, ${endX} ${endY-25}, ${endX} ${endY}`,class:'dag-edge','marker-end':'url(#dag-arrow)'});path.append(svg('title',{},from.name+' → '+to.name));canvas.append(path);}
  for(const node of graph.nodes){
   const tensor=(node.shape?'['+node.shape.join(', ')+']':'Shape 未采集')+' · '+(node.dtype||'Dtype 未采集')+(node.inferred?' *':'');
-  const title=node.label+' · '+node.name+(node.isOutput?' · Output':'');
+  const title=node.label;
   const tooltip=title+'\n'+tensor+(Object.keys(node.attrs).length?'\n'+JSON.stringify(node.attrs):'');
   const group=svg('g',{transform:`translate(${node.x},${node.y})`,class:'dag-node '+node.kind,tabindex:0,'aria-label':tooltip,'data-tooltip':tooltip});group.append(svg('title',{},tooltip),svg('rect',{width:250,height:100,rx:10}));
   function label(y,text,cls){const el=svg('text',{x:12,y,class:cls},text.length>32?text.slice(0,31)+'…':text);group.append(el);}
-  label(26,title,'dag-op');label(50,node.name+(node.isOutput?' → Output':''),'dag-name');label(76,tensor,'dag-tensor');canvas.append(group);
+  label(26,title,'dag-op');
+  label(50,node.shape?'['+node.shape.join(', ')+']':'Shape 未采集','dag-tensor');
+  label(76,node.dtype||'Dtype 未采集','dag-tensor');canvas.append(group);
  }
  const scroll=document.createElement('div');scroll.className='dag-scroll';scroll.append(canvas);host.append(scroll);
 }

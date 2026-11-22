@@ -208,11 +208,13 @@ function renderCaseDag(meta, sample) {
   }
   for (const node of graph.nodes) {
     const tensor = (node.shape ? "[" + node.shape.join(", ") + "]" : "Shape 未采集") + " · " + (node.dtype || "Dtype 未采集") + (node.inferred ? " *" : "");
-    const title = node.label + " · " + node.name + (node.isOutput ? " · Output" : "");
+    const title = node.label;
     const tip = title + "\n" + tensor + (Object.keys(node.attrs).length ? "\n" + JSON.stringify(node.attrs) : "");
     const g = svg("g", { transform: `translate(${node.x},${node.y})`, class: "dag-node " + node.kind, tabindex: 0, "aria-label": tip, "data-tooltip": tip }, svg("rect", { width: 250, height: 100, rx: 10 }));
     const line = (y, text, cls) => g.append(svg("text", { x: 12, y, class: cls }, text.length > 32 ? text.slice(0, 31) + "…" : text));
-    line(26, title, "dag-op"); line(50, node.name + (node.isOutput ? " → Output" : ""), "dag-name"); line(76, tensor, "dag-tensor");
+    line(26, title, "dag-op");
+    line(50, node.shape ? "[" + node.shape.join(", ") + "]" : "Shape 未采集", "dag-tensor");
+    line(76, node.dtype || "Dtype 未采集", "dag-tensor");
     canvas.append(g);
   }
   return el("div", { class: "dag-scroll" }, canvas);
