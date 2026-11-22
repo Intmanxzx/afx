@@ -505,6 +505,10 @@ ALTER TABLE clients ADD COLUMN daemon_request_id TEXT;
     (15, """
 ALTER TABLE clients ADD COLUMN update_status TEXT;
 """),
+    (16, """
+ALTER TABLE clients ADD COLUMN daemon_state TEXT;
+ALTER TABLE clients ADD COLUMN daemon_state_at INTEGER;
+"""),
 ]
 
 CONTENT = [
