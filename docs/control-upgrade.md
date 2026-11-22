@@ -159,3 +159,22 @@ acknowledgement for the candidate. Public PyPI artifact acceptance remains pendi
 until the GitCode push mirror delivers the tag to GitHub and the release workflow
 publishes it. Supervisor interruption and network-outage recovery retain the
 validation boundaries described above.
+
+## 0.2.2.9 publication
+
+After the GitCode mirror was manually synchronized, GitHub received master
+commit `4d625d564cd929dcfa56909a70dee474c9b39067` and tag `v0.2.2.9`.
+Release workflow run 45021299098 completed successfully: build, wheel smoke
+test, metadata/layout validation, GitHub Release upload and PyPI publication
+all passed. The public release is available at
+https://github.com/Intmanxzx/afx/releases/tag/v0.2.2.9 and
+https://pypi.org/project/autofusex/0.2.2.9/.
+
+A clean mlir virtual environment installed `autofusex==0.2.2.9` from PyPI and
+reported both package metadata and import version `0.2.2.9`. The downloaded
+`autofusex-0.2.2.9-py3-none-any.whl` has SHA256
+`7417fe3b07d8dc187d0c054064aee879ef64cd136bb2044df566fd2c440c3664`, matching
+the GitHub Release asset and the PyPI JSON metadata. The full platform E2E
+above used the same source commit and candidate wheel before publication; the
+public artifact itself has additionally passed clean-environment installation
+and provenance checks.
