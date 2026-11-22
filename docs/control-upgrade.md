@@ -79,3 +79,22 @@ These wheels were not published. Upgrade submission used local IPC with a local
 wheel directory, not the production platform upgrade endpoint. Network-outage,
 supervisor-interruption and rollback with running NPU work remain unverified.
 The server-side execution-upload/control-version fix has not been deployed.
+
+## Platform command acceptance
+
+Candidate server 0.2.2.9003 was deployed after a private platform backup.
+On mlir, actual authenticated platform HTTP requests verified:
+- start: task PID 423558;
+- restart: PID 423558 stopped, PID 424363 started, matching request acknowledged;
+- current-version update: succeeded/up_to_date with no installation;
+- update to local test build 0.2.2.9004: queued/activating/succeeded observed in
+  the server summary, new control PID 426236, task restored automatically;
+- a second upgrade request during activation: only one real install/activation;
+  the later request received up_to_date after activation;
+- final stop: task stopped, control PID 426236 and heartbeat remained alive;
+  both server target fields cleared.
+
+The upgrade requests used the production platform HTTP endpoint. For unpublished
+candidate artifacts, pip's find-links pointed to the test wheel directory on mlir.
+This validates command delivery and activation, not public package publication.
+Full regression: 181 tests passed. JavaScript syntax check passed.
