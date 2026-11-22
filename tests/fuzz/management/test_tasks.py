@@ -83,3 +83,11 @@ def test_restart_reconciliation_does_not_kill_pid(tmp_path):
     tasks.action(store,'orphan','stop',{})
     tasks.refresh(store,{})
     with store.connect() as db:assert db.execute('SELECT state FROM runs WHERE id=?',('orphan',)).fetchone()[0]=='interrupted'
+
+
+def test_resolved_memory_budget_can_be_reused_after_upgrade(tmp_path):
+    store, spec = prepared(tmp_path)
+    spec['execution'] = {'resources': {'policy': 'manual', 'workers': 1,
+                         'compile_threads': 1, 'memory_budget': '112742891520B'}}
+    resolved = tasks.prepare(store, spec)
+    assert tasks.prepare(store, resolved['spec'])['spec'] == resolved['spec']

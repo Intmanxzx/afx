@@ -69,8 +69,11 @@ def install(store, payload, processes, operation_id=None):
         # the site's Torch/NPU runtime without reinstalling it globally.
         locations=subprocess.check_output([str(python),'-c','import site; print(site.getsitepackages()[0])'],text=True,timeout=60).strip()
         from pathlib import Path
-        (Path(locations)/'afx-runtime.pth').write_text('\n'.join(site.getsitepackages())+'\n')
-    pip = [str(python), '-m', 'pip', 'install', '--upgrade', '--no-input',
+        runtime_paths = list(dict.fromkeys(site.getsitepackages() + [
+            entry for entry in sys.path if entry and Path(entry).is_dir()
+            and Path(entry).name in {'site-packages', 'dist-packages'}]))
+        (Path(locations)/'afx-runtime.pth').write_text('\n'.join(runtime_paths)+'\n')
+    pip = [str(python), '-m', 'pip', 'install', '--upgrade', '--ignore-installed', '--no-input',
            '--disable-pip-version-check', 'autofusex==' + version]
     if payload.get('index_url'):
         pip[4:4] = ['--index-url', payload['index_url']]
