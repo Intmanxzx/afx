@@ -18,6 +18,8 @@ workers. Rollback is supported only for the current compatible manager schema.
 
 ## Legacy migration
 
+A one-time manual migration is the supported baseline for legacy installations.
+Automatic migration from 0.2.2 is not a release acceptance requirement.
 Legacy 0.2.2–0.2.2.6 launchers cannot acquire these semantics from a wheel update.
 Install the new control build separately, stop existing tasks, load the site's
 working CANN environment and run:
@@ -42,3 +44,19 @@ Production migration, restoration with real NPU work, failure during draining,
 and network outage during activation require end-to-end validation before release.
 Do not publish or label this implementation production-ready based only on unit
 or subprocess tests.
+
+## Required acceptance after manual migration
+
+1. Preserve installation identity, credentials, historical results and task config.
+2. Start and stop through the platform; stopping leaves control and heartbeat alive.
+3. Upgrade between two builds of the new architecture while a task is running.
+   Verify the new control PID, interpreter and imported package, unchanged execution
+   environment, restored task and matching server acknowledgement.
+4. Repeat while stopped; upgrade must not start an unwanted task.
+5. Fail download/install before activation; old work must continue.
+6. Fail new control startup or heartbeat readiness; roll back without duplicate workers.
+7. Restart the supervisor during activation; recover its durable transaction rather
+   than report success from a version pointer alone.
+
+Local source builds used for acceptance must remain in separate test directories;
+do not overwrite or republish the immutable PyPI 0.2.2.6 release.
