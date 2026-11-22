@@ -25,7 +25,18 @@ def main(argv=None) -> int:
     client = json.loads(client_path.read_text(encoding="utf-8"))
     if client.get("mode") != "managed":
         return 0
-    synchronize(type("Manager", (), {"store": Store(home)})(), client)
+    from types import SimpleNamespace
+    from ..runtime import request
+    from .session_control import reconcile
+    store = Store(home)
+    status = request(home, {'action': 'status'})
+    with store.connect() as db:
+        runs = list(db.execute("SELECT id FROM runs WHERE state IN ('preparing','running','paused','pausing','draining','cancelling')"))
+    manager = SimpleNamespace(store=store, processes={row['id']: None for row in runs},
+                              active=status.get('active_operation'),
+                              start_session=lambda: request(home, {'action': 'start_session'}))
+    reconcile(manager)
+    synchronize(manager, client)
     return 0
 
 

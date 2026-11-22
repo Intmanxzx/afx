@@ -17,23 +17,6 @@ def run(home):
         store.put('launcher_enabled',True)
         try:
             while True:
-                control = store.home / 'daemon-control.json'
-                desired = 'running'
-                if control.exists():
-                    try: desired = json.loads(control.read_text()).get('state', 'running')
-                    except (OSError, ValueError, TypeError): pass
-                if desired == 'stopped':
-                    # Keep the bootstrap alive while the managed daemon is stopped.
-                    # The active client agent polls the service and can flip this marker
-                    # back to running without requiring a local shell command.
-                    try:
-                        active = json.loads((store.home/'active-client.json').read_text()) if (store.home/'active-client.json').exists() else {}
-                        python = active.get('python') if isinstance(active.get('python'), str) else sys.executable
-                        subprocess.run([python, '-m', 'autofusex.fuzz.daemon.management.platform_agent', '--data-dir', str(store.home)],
-                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
-                    except (OSError, ValueError, subprocess.SubprocessError): pass
-                    time.sleep(2)
-                    continue
                 active=store.get('active_tool')
                 python=sys.executable
                 if active:
@@ -49,7 +32,7 @@ def run(home):
                         request(store.home,dict(action='status'));healthy=True;break
                     except (OSError,ValueError):time.sleep(.1)
                 if not healthy:
-                    if child.poll()==0 and store.get('normal_shutdown'): continue
+                    if child.poll()==0 and store.get('normal_shutdown'): return 0
                     if child.poll() is None:child.terminate();child.wait(timeout=10)
                     switch=store.get('tool_switch')
                     if switch and switch['state']=='activating':
@@ -70,7 +53,7 @@ def run(home):
                         switching=True;break
                     time.sleep(.2)
                 if not switching:
-                    if child.returncode == 0 and store.get('normal_shutdown'): continue
+                    if child.returncode == 0 and store.get('normal_shutdown'): return 0
                     return child.returncode
         finally:
             store.put('launcher_enabled',False)

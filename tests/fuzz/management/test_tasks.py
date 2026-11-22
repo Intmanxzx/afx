@@ -16,6 +16,7 @@ def prepared(tmp_path):
     atomic(store.home/'trust.json',dict(resource_limits=dict(allowed_devices=['npu:0'],max_workers=1,max_compile_threads=1)))
     store.put('effective_policy',validate(dict(schema_version=1,kind='client_policy')))
     spec=dict(schema_version=1,kind='fuzz_task',environment='fixture',workload=dict(mode='replay',seeds=['E0F8A5E5JE7A4QBAOWXZCIT10YY']))
+    spec['results'] = dict(save=True, upload=False)
     return store,spec
 
 

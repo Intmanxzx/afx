@@ -103,7 +103,8 @@ def test_heartbeat_rollups_and_update(world):
     ops.request_update(store, admin, {"request_key": "u1", "client_ids": [first["client_id"]], "version": "0.2.1"})
     assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.0",
                                          "counters": {"executions": 3}})["update_to"] == "0.2.1"
-    assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.1"})["update_to"] is None
+    ack = ops.heartbeat(store, client, {"machine_id": "m1"})["update_request_id"]
+    assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.1", "update_ack": ack})["update_to"] is None
     # Throughput comes from stored executions by when they ran, not from heartbeat counters.
     with store.write() as conn:
         conn.execute("UPDATE executions SET created_at=? WHERE exec_id IN "
@@ -125,7 +126,7 @@ def test_daemon_control_is_owner_scoped_and_idempotent(world):
     queued = ops.request_daemon_state(store, client, request.copy())
     assert queued["state"] == "stopped"
     assert ops.request_daemon_state(store, client, request.copy()) == queued
-    beat = ops.heartbeat(store, client, {"machine_id": "daemon-control", "daemon_state": "stopped"})
+    beat = ops.heartbeat(store, client, {"machine_id": "daemon-control", "daemon_state": "stopped", "daemon_request_id": queued["request_id"]})
     assert beat["daemon_state"] is None
     assert ops.request_daemon_state(store, admin, {"request_key": "daemon-start", "client_id": created["client_id"], "state": "running"})["state"] == "running"
 
@@ -575,7 +576,8 @@ def test_update_request_identity_survives_retries_and_changes_on_new_request(wor
     assert ops.heartbeat(store, client, body)['update_request_id'] == first
     ops.request_update(store, admin, dict(request, request_key='upgrade-second'))
     assert ops.heartbeat(store, client, body)['update_request_id'] != first
-    complete = ops.heartbeat(store, client, dict(body, afx_version='0.2.1'))
+    ack = ops.heartbeat(store, client, body)['update_request_id']
+    complete = ops.heartbeat(store, client, dict(body, afx_version='0.2.1', update_ack=ack))
     assert complete['update_to'] is None and complete['update_request_id'] is None
     ops.request_update(store, admin, dict(request, request_key='upgrade-third'))
     ops.request_update(store, admin, dict(request, request_key='upgrade-cancel', version=None))

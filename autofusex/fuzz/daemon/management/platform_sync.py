@@ -22,19 +22,23 @@ def synchronize(manager, client):
     from ...client.scheduling.devices import device_inventory_info
     inventory = device_inventory_info()
     control_path = store.home / 'daemon-control.json'
-    current_state = 'running'
-    if control_path.exists():
-        try:
-            current_state = 'stopped' if json.loads(control_path.read_text()).get('state') == 'stopped' else 'running'
-        except (OSError, ValueError, TypeError):
-            current_state = 'running'
+    session = store.get('session_control', {})
+    current_state = store.get('session_state', 'stopped')
+    update_ack = None
+    request_id = store.get('platform_update_request')
+    if request_id:
+        with store.connect() as db:
+            operation = db.execute("SELECT state FROM operations WHERE request_key=?", ('platform-update:'+request_id,)).fetchone()
+        if operation and operation['state'] == 'succeeded':
+            update_ack = request_id
     beat=api.call('POST','/api/client/heartbeat',dict(
         machine_id=identity[:128], client_home=home[:512],
         hostname=socket.gethostname(), npu_arch=env.get('device_model') or inventory['model'],
-        afx_version=version,
+        afx_version=version, update_ack=update_ack,
         backend_versions={'af-mlir': env.get('cann'), 'triton-npu': env.get('triton'),
                           'cpu': env.get('torch')},
-        devices=inventory['devices'], counters={}, daemon_state=current_state,
+        devices=inventory['devices'], counters={}, daemon_state=current_state if current_state in {'running','stopped'} else None,
+        daemon_request_id=session.get('request_id') if session.get('status') == 'succeeded' else None,
         # `busy` is reserved for a client that is actively executing a
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".
@@ -50,12 +54,13 @@ def synchronize(manager, client):
     atomic(store.home/'task.json',config)
     store.put('config_state',dict(revision=effective['revision'],source=effective['source']))
     if beat.get('update_to'):
+        store.put('platform_update_request', beat.get('update_request_id'))
         store.submit('client.update',dict(version=beat['update_to'],package='autofusex'),
                      'platform-update:'+str(beat.get('update_request_id') or beat['update_to']))
     if beat.get('daemon_state') in {'running', 'stopped'}:
         state = beat['daemon_state']
         atomic(control_path, {'state': state, 'request_id': beat.get('daemon_request_id')})
-        store.put('shutdown_when_idle', state == 'stopped')
+        store.put('shutdown_when_idle', False)
     with store.connect() as db:
         runs=list(db.execute('SELECT id,spec FROM runs'))
     for run in runs:
