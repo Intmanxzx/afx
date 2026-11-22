@@ -78,6 +78,16 @@ def prepare(store, spec):
 def start(store,spec,operation_id,processes,resume_run=None):
     if store.get('client_switch', {}).get('state') in {'draining', 'staging', 'requested', 'stage_failed'}:
         raise ValueError('client upgrade blocks task admission')
+    # Runs written by older clients may have auto policy together with the
+    # resolved worker/thread values that were added during preparation.  New
+    # validation correctly rejects that combination for fresh submissions,
+    # but resuming such a durable run must preserve its already selected
+    # resources across an upgrade.
+    if resume_run:
+        spec = json.loads(json.dumps(spec))
+        resources = spec.get('execution', {}).get('resources', {})
+        if resources.get('policy') == 'auto' and any(k in resources for k in ('workers', 'compile_threads')):
+            resources['policy'] = 'manual'
     prepared=prepare(store,spec)
     from ...client.scheduling.hosting import status
     from ...client.scheduling.ledger import TaskLedger

@@ -91,3 +91,23 @@ def test_resolved_memory_budget_can_be_reused_after_upgrade(tmp_path):
                          'compile_threads': 1, 'memory_budget': '112742891520B'}}
     resolved = tasks.prepare(store, spec)
     assert tasks.prepare(store, resolved['spec'])['spec'] == resolved['spec']
+
+
+def test_upgrade_resume_accepts_legacy_resolved_auto_resources(tmp_path, monkeypatch):
+    store, spec = prepared(tmp_path)
+    spec['execution'] = {'resources': {'policy': 'manual', 'workers': 1,
+                         'compile_threads': 1, 'memory_budget': '112742891520B'}}
+    resolved = tasks.prepare(store, spec)
+    legacy = json.loads(json.dumps(resolved['spec']))
+    legacy['execution']['resources']['policy'] = 'auto'
+    directory = store.home / 'runs' / 'legacy'
+    directory.mkdir(parents=True)
+    atomic(directory / 'spec.json', legacy)
+    monkeypatch.setattr(tasks, 'prepare', lambda _store, value: {'spec': value, 'environment': {
+        'id': 'fixture', 'python': sys.executable, 'env': {}}, 'policy': {}, 'hash': 'x'})
+    class Child:
+        pid = 123
+    monkeypatch.setattr(tasks.subprocess, 'Popen', lambda *a, **kw: Child())
+    result = tasks.start(store, legacy, 'op', {}, resume_run='legacy')
+    assert result['run_id'] == 'legacy'
+    assert json.loads((directory / 'spec.json').read_text())['spec']['execution']['resources']['policy'] == 'manual'
