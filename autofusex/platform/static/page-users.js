@@ -67,7 +67,14 @@ PAGES.users = async (root, params) => {
     el("button", { onclick: () => go("users", { tab: "requests", q: null }) }, "待审核（" + data.requests.length + "）"),
     el("button", { onclick: () => go("users", { tab: "users", q: null }) }, "已有用户")));
   const notice = el("div"); root.append(notice);
-  const reload = async () => { root.replaceChildren(); await PAGES.users(root, params); };
+  // Render into a staging node first.  Clearing the live page before the
+  // follow-up request completes leaves an empty page when that request fails
+  // (and the button's error notice is detached, so the failure is invisible).
+  const reload = async () => {
+    const staging = el("div");
+    await PAGES.users(staging, params);
+    root.replaceChildren(...staging.childNodes);
+  };
   const roles = value => {
     const select = el("select", { "aria-label": "角色" }, el("option", { value: "developer" }, "developer"), el("option", { value: "admin" }, "admin"));
     select.value = value; return select;
