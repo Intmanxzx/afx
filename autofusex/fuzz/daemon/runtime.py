@@ -198,10 +198,14 @@ class Manager:
             except Exception as exc:self.store.state(operation['id'],'failed',dict(code=type(exc).__name__))
         if not self.active:
             for operation in self.store.pending():
+                session = self.store.get('session_control', {})
+                if operation['kind'] == 'task.submit' and session.get('state') in {'stopping', 'stopped'}:
+                    continue
                 if operation['kind']=='task.submit' and self.processes:
                     continue
                 self.store.state(operation['id'],'running')
                 self.active=(operation['id'],self.pool.submit(self.perform,operation))
+                break
 
     def perform(self,operation):
         from .management.cancellation import bind

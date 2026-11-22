@@ -18,6 +18,8 @@ def main(path):
     prepared=json.loads(Path(path).read_text());spec=prepared['spec'];directory=Path(prepared['directory'])
     state=directory/'state.json'
     try:
+        if not {'execution', 'evaluation', 'workload'} <= spec.keys() or 'policy' not in prepared:
+            raise KeyError('incomplete task spec')
         source_evidence()
         ex=spec['execution'];resources=ex['resources'];limits=prepared['policy']['resources']
         budget=Budget(cpu_workers=resources.get('workers',limits['max_workers']),

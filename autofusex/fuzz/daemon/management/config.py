@@ -160,6 +160,8 @@ def validate(value):
             raise ValueError('upload requires saved results')
         from ...client.contracts import Seed
         if result['workload']['mode'] == 'replay':
+            result['workload'].pop('generation', None)
+            result.pop('termination', None)
             for seed in result['workload']['seeds']: Seed.parse(seed)
         else:
             from ...client.generation.sampling import SamplingConfig

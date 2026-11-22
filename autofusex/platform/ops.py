@@ -93,7 +93,8 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
         row = conn.execute("SELECT target_afx_version, afx_version, update_request_id, target_daemon_state, daemon_request_id FROM clients WHERE client_id=?",
                            (client_id,)).fetchone()
         target = row["target_afx_version"]
-        if target is not None and target == row["afx_version"]:
+        if (target is not None and target == row["afx_version"]
+                and body.get("update_ack") == row["update_request_id"]):
             conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL WHERE client_id=?", (client_id,))
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                          (now, principal.user_id, "client.updated", f"client {client_id} -> {target}"))
@@ -101,7 +102,8 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
         daemon_target = row["target_daemon_state"]
         daemon_request = row["daemon_request_id"]
         reported_state = body.get("daemon_state")
-        if reported_state in {"running", "stopped"} and daemon_target == reported_state:
+        if (reported_state in {"running", "stopped"} and daemon_target == reported_state
+                and body.get("daemon_request_id") == daemon_request):
             conn.execute("UPDATE clients SET target_daemon_state=NULL, daemon_request_id=NULL WHERE client_id=?", (client_id,))
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                          (now, principal.user_id, "client.daemon_state", f"client {client_id} -> {reported_state}"))
