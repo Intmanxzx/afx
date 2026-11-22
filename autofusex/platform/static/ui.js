@@ -7,7 +7,8 @@ import { $, el } from "./core.js";
 let drawerOutsideHandler = null;
 export function openDrawer(...children) {
   const d = $("#drawer");
-  d.replaceChildren(el("button", { class: "close", onclick: closeDrawer }, "关闭"), ...children);
+  d.replaceChildren(el("button", { class: "close", onclick: closeDrawer }, "关闭"),
+    ...children.flat().filter(child => child !== null && child !== undefined && child !== false));
   d.classList.remove("hidden");
   d.scrollTop = 0;
   if (drawerOutsideHandler) document.removeEventListener("click", drawerOutsideHandler);
@@ -21,7 +22,11 @@ export function closeDrawer() {
   $("#drawer").classList.add("hidden");
   if (drawerOutsideHandler) { document.removeEventListener("click", drawerOutsideHandler); drawerOutsideHandler = null; }
 }
-export function showActionBar(...children) { const b = $("#actionbar"); b.replaceChildren(...children); b.classList.remove("hidden"); }
+export function showActionBar(...children) {
+  const b = $("#actionbar");
+  b.replaceChildren(...children.flat().filter(child => child !== null && child !== undefined && child !== false));
+  b.classList.remove("hidden");
+}
 export function hideActionBar() { $("#actionbar").classList.add("hidden"); }
 let openMenu = null;
 export function popMenu(anchor, items) {
