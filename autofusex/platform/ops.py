@@ -108,6 +108,9 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
         daemon_target = row["target_daemon_state"]
         daemon_request = row["daemon_request_id"]
         reported_state = body.get("daemon_state")
+        if reported_state in {"running", "stopped"}:
+            conn.execute("UPDATE clients SET daemon_state=?, daemon_state_at=? WHERE client_id=?",
+                         (reported_state, now, client_id))
         if (reported_state in {"running", "stopped"} and ('running' if daemon_target == 'restart' else daemon_target) == reported_state
                 and body.get("daemon_request_id") == daemon_request):
             conn.execute("UPDATE clients SET target_daemon_state=NULL, daemon_request_id=NULL WHERE client_id=?", (client_id,))
@@ -194,7 +197,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
     clients = []
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
-            "target_afx_version, update_status, target_daemon_state, daemon_request_id, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
+            "target_afx_version, update_status, target_daemon_state, daemon_request_id, daemon_state, daemon_state_at, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
             "FROM clients WHERE deleted_at IS NULL "
             "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
         item = dict(row)

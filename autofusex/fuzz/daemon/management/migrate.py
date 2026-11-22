@@ -53,7 +53,7 @@ def migrate(home, execution_python):
             try: fcntl.flock(manager_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError: raise RuntimeError('legacy manager still owns installation') from None
         manifest=dict(id='local',name='local',python=execution_python,env={
-            key:os.environ[key] for key in ('ASCEND_HOME_PATH','ASCEND_OPP_PATH','LD_LIBRARY_PATH','PATH') if key in os.environ})
+            key:os.environ[key] for key in ('ASCEND_HOME_PATH','ASCEND_OPP_PATH','LD_LIBRARY_PATH','PATH','PYTHONPATH') if key in os.environ})
         with store.connect() as db:
             db.execute("INSERT OR REPLACE INTO environments VALUES (?,?,?,'ready')",('local','local',json.dumps(manifest)))
         import importlib.metadata

@@ -19,7 +19,7 @@ PAGES.ops = async root => {
     try { const r = await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [...selected], version: version.value.trim() } }); alert(`已通知 ${r.requested} 个客户端，下一次心跳时更新`); render(); }
     catch (err) { alert(err.message); } } }, "一键更新");
   const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "近 24h 执行", "上传失败", "待上传", "操作", "最后心跳"].map(t => el("th", {}, t)))),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "操作", "最后心跳"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => { e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id); if (selected.size) clientsPanel.dataset.custom = "1"; else delete clientsPanel.dataset.custom; } }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
@@ -28,51 +28,57 @@ PAGES.ops = async root => {
           c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中",succeeded:"升级完成",failed:"升级失败",needs_attention:"需要处理"})[c.update_status.state] || "") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
-        el("td", {}, fmt(c.last_24h.executions)), el("td", {}, fmt(c.last_24h.upload_errors)), el("td", {}, fmt(c.pending_uploads)),
-        el("td", {}, isAdmin() && !c.online ? el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${c.display_name || c.client_id}？`)) return; try { await api(`/api/admin/clients/${c.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除") : "—"),
+        el("td", {}, clientControls(c)),
         el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
-  const owned = data.clients.filter(c => isAdmin() || c.mine);
-  if (owned.length) {
-    const rows = owned.map(c => {
-      const controls = ['running', 'stopped', 'restart'].map(state => el('button', {
-        class: 'mini-btn',
-        onclick: async () => {
-          try {
-            await api('/api/clients/daemon', {method: 'POST', body: {request_key: rkey(), client_id: c.client_id, state}});
-            render();
-          } catch (err) { alert(err.message); }
-        }
-      }, state === 'running' ? '启动' : state === 'restart' ? '重启' : '停止'));
-      return el('tr', {}, el('td', {}, c.display_name || String(c.client_id)),
-        el('td', {}, c.online ? '在线' : '离线'),
-        el('td', {}, c.target_daemon_state || '—'), el('td', {}, controls));
-    });
-    const header = el('thead', {}, el('tr', {}, ['客户端', '连接状态', '目标状态', '操作'].map(t => el('th', {}, t))));
-    const table = el('table', {class: 'grid'}, header, el('tbody', {}, rows));
-    root.append(el('section', {class: 'panel'}, el('h2', {}, '客户端控制'), el('div', {class: 'table-wrap'}, table)));
-  }
   root.append(clientsPanel);
   const efficiencyData = await api("/api/ops/efficiency");
   const efficiencyUsers = new Map((efficiencyData.users || []).map(u => [u.user_id, u]));
   const overviewRows = (data.users || []).map(u => {
     const e = efficiencyUsers.get(u.user_id) || {};
+    const clients = data.clients.filter(c => c.user_id === u.user_id);
+    const uploadErrors = clients.reduce((sum, c) => sum + (c.last_24h.upload_errors || 0), 0);
+    const pendingUploads = clients.reduce((sum, c) => sum + (c.pending_uploads || 0), 0);
     return el("tr", {},
       el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)),
       el("td", {}, u.card_count == null ? "未上报" : fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)),
       el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)),
-      el("td", {}, fmt(u.uploads_24h)), el("td", {}, fmt(e.success)),
+      el("td", {}, fmt(u.uploads_24h)), el("td", {}, fmt(uploadErrors)), el("td", {}, fmt(pendingUploads)), el("td", {}, fmt(e.success)),
       el("td", {}, fmt(e.completed)), el("td", {}, fmt(e.failed)), el("td", {}, fmt(e.case_errors)),
       el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
   });
   const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" },
-      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "可见 NPU 数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
-      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 13, class: "empty" }, "暂无用户运行数据"))]))));
+      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "可见 NPU 数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "上传失败（24h）", "待上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
+      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 15, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
   if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
+function clientControls(client) {
+  const fresh = client.online && client.daemon_state_at && Date.now() - client.daemon_state_at < 300000;
+  const state = { running: "运行中", stopped: "已停止" }[client.daemon_state];
+  const status = el("span", { class: "chip " + (fresh && client.daemon_state === "running" ? "ok" : "gray"),
+    "data-tooltip": client.daemon_state_at ? "状态上报时间：" + time(client.daemon_state_at) : "等待客户端上报任务状态" },
+    state ? (fresh ? state : "上次状态：" + state) : "状态未上报");
+  if (!me || !(isAdmin() || client.mine)) return status;
+  const actions = el("div", { style: { display: "flex", gap: "4px", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } });
+  for (const [state, text] of [["running", "启动"], ["stopped", "停止"], ["restart", "重启"]]) {
+    actions.append(el("button", { class: "mini-btn", onclick: async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await api("/api/clients/daemon", { method: "POST", body: { request_key: rkey(), client_id: client.client_id, state } });
+        render();
+      } catch (err) { button.disabled = false; alert(err.message); }
+    } }, text));
+  }
+  if (isAdmin() && !client.online) actions.append(el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${client.display_name || client.client_id}？`)) return; try { await api(`/api/admin/clients/${client.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除"));
+  const pending = { running: "启动中（等待回执）", stopped: "停止中（等待回执）", restart: "重启中（等待回执）" }[client.target_daemon_state];
+  const statuses = el("div", { style: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } },
+    status, pending ? el("span", { class: "chip info" }, pending) : null);
+  return el("div", {}, statuses, actions);
+}
 // One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).
 function hourly(series) {
   if (!series.length) return el("div", { class: "empty" }, "暂无执行数据");

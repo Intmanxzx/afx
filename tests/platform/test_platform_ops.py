@@ -602,3 +602,19 @@ def test_restart_requires_matching_running_ack_and_reports_upgrade_progress(worl
     assert ops.heartbeat(store,client,{'machine_id':'restart-check','daemon_state':'running','daemon_request_id':cmd['request_id'],'update_status':{'state':'activating','version':'9.0'}})['daemon_state'] is None
     row=next(c for c in ops.summary(store,client)['clients'] if c['client_id']==cid)
     assert row['update_status']=={'state':'activating','version':'9.0'}
+
+
+def test_reported_daemon_state_survives_command_ack(world):
+    store, client, admin = world
+    body = {"machine_id": "visible-state", "daemon_state": "stopped"}
+    cid = ops.heartbeat(store, client, body)["client_id"]
+    command = ops.request_daemon_state(store, client, {"client_id": cid, "state": "running", "request_key": "visible-start"})
+    item = next(c for c in ops.summary(store, client)["clients"] if c["client_id"] == cid)
+    assert item["daemon_state"] == "stopped"
+    assert item["target_daemon_state"] == "running"
+    ops.heartbeat(store, client, dict(body, daemon_state="running", daemon_request_id=command["request_id"]))
+    ops.heartbeat(store, client, {"machine_id": "visible-state"})
+    item = next(c for c in ops.summary(store, client)["clients"] if c["client_id"] == cid)
+    assert item["daemon_state"] == "running"
+    assert item["daemon_state_at"] is not None
+    assert item["target_daemon_state"] is None
