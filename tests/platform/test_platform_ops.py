@@ -161,7 +161,12 @@ def test_manual_retest_runs_on_any_build_and_updates_head(world):
     assert done["result"] == "pass"
     head = queries.case_page(store, case_key=seed(5))["groups"][0]["executions"]
     assert next(e for e in head if e["exec_uuid"] == "exec-retest01")["is_head"]
-    assert retests.list_manual(store, client)[0]["passed"] == 1
+    batch = retests.list_manual(store, client)[0]
+    assert batch["passed"] == 1
+    task = batch["items"][0]
+    assert task["case_key"] == seed(5)
+    assert task["result"] == "pass"
+    assert task["executions"] == [{"exec_uuid": "exec-retest01", "backend": "af-mlir"}]
 
 
 def test_profile_points_patterns_and_drafts(world):

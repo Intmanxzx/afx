@@ -321,4 +321,20 @@ def list_manual(store: Store, principal: Principal, limit: int = 50) -> list:
         "SUM(result='fail') AS failed, SUM(result='invalid' OR status='invalid') AS invalid "
         "FROM retest_tasks WHERE requested_by=? AND batch IS NOT NULL GROUP BY batch "
         "ORDER BY MIN(task_id) DESC LIMIT ?", (principal.user_id, limit)).fetchall()
-    return [dict(r) for r in rows]
+    batches = [dict(r) for r in rows]
+    conn = store.reader()
+    for batch in batches:
+        tasks = conn.execute(
+            "SELECT t.task_id, c.case_key, t.backends, t.npu_arch, t.status, t.result, t.detail "
+            "FROM retest_tasks t JOIN cases c ON c.case_id=t.case_id "
+            "WHERE t.requested_by=? AND t.batch=? ORDER BY t.task_id",
+            (principal.user_id, batch['batch'])).fetchall()
+        batch['items'] = []
+        for row in tasks:
+            task = dict(row)
+            task['executions'] = [dict(e) for e in conn.execute(
+                "SELECT e.exec_uuid, e.backend FROM retest_task_execs x "
+                "JOIN executions e ON e.exec_id=x.exec_id WHERE x.task_id=? ORDER BY e.exec_id",
+                (task['task_id'],))]
+            batch['items'].append(task)
+    return batches
