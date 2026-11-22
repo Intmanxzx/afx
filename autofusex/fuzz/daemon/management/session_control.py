@@ -20,13 +20,15 @@ def reconcile(manager):
     if not isinstance(command, dict):
         return
     identity = command.get('request_id')
-    if not identity or command.get('state') not in {'running', 'stopped'}:
+    if not identity or command.get('state') not in {'running', 'stopped', 'restart'}:
         return
     result = store.get('session_control', {})
     if result.get('request_id') == identity and result.get('status') in {'succeeded', 'failed'}:
         return
+    restarting = command['state'] == 'restart'
+    drained = result.get('request_id') == identity and result.get('restart_drained', False)
     try:
-        if command['state'] == 'stopped':
+        if command['state'] == 'stopped' or (restarting and not drained):
             from .tasks import action
             started = result.get('started', time.time()) if result.get('request_id') == identity else time.time()
             for run in set(manager.processes) | set(unresolved):
@@ -39,13 +41,14 @@ def reconcile(manager):
                 action(store, run, 'force-stop' if time.time() - started > 300 else 'stop', manager.processes)
             state = 'stopping' if manager.processes or unresolved or manager.active else 'stopped'
             store.put('session_control', dict(request_id=identity, state=state,
-                      status='running' if state == 'stopping' else 'succeeded', started=started))
+                      status='running' if state == 'stopping' or restarting else 'succeeded',
+                      restart_drained=restarting and state == 'stopped', started=started))
         elif not manager.active:
             from .local_session import start
             if result.get('request_id') != identity or not result.get('run_ids'):
                 started = manager.start_session() if hasattr(manager, 'start_session') else start(manager)
                 runs = started.get('run_ids') or [started['run_id']]
-                store.put('session_control', dict(request_id=identity, run_ids=runs, state='starting', status='running'))
+                store.put('session_control', dict(request_id=identity, run_ids=runs, state='starting', status='running', restart_drained=restarting))
             else:
                 with store.connect() as db:
                     states = [db.execute('SELECT state FROM runs WHERE id=?', (run,)).fetchone() for run in result['run_ids']]

@@ -90,6 +90,12 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
                 + ", ".join(f"{name}={name}+excluded.{name}" for name in COUNTERS), (client_id, hour, *values))
             if now % 100 == 0:  # occasional cheap expiry
                 conn.execute("DELETE FROM metric_rollups WHERE hour<?", (hour - ROLLUP_DAYS * 24,))
+        if body.get('update_status') is not None:
+            progress = body['update_status']
+            if not isinstance(progress, dict) or progress.get('state') not in {'idle','queued','running','activating','succeeded','failed','needs_attention','cancelled'}:
+                raise IssueError('invalid', 'invalid update status')
+            safe = dict(state=progress['state'], version=str(progress.get('version',''))[:64])
+            conn.execute('UPDATE clients SET update_status=? WHERE client_id=?', (json.dumps(safe), client_id))
         row = conn.execute("SELECT target_afx_version, afx_version, update_request_id, target_daemon_state, daemon_request_id FROM clients WHERE client_id=?",
                            (client_id,)).fetchone()
         target = row["target_afx_version"]
@@ -102,7 +108,7 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
         daemon_target = row["target_daemon_state"]
         daemon_request = row["daemon_request_id"]
         reported_state = body.get("daemon_state")
-        if (reported_state in {"running", "stopped"} and daemon_target == reported_state
+        if (reported_state in {"running", "stopped"} and ('running' if daemon_target == 'restart' else daemon_target) == reported_state
                 and body.get("daemon_request_id") == daemon_request):
             conn.execute("UPDATE clients SET target_daemon_state=NULL, daemon_request_id=NULL WHERE client_id=?", (client_id,))
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
@@ -140,7 +146,7 @@ def request_update(store: Store, principal: Principal, body: dict):
 def request_daemon_state(store: Store, principal: Principal, body: dict):
     """Queue an idempotent daemon lifecycle command for an owned client or any client as admin."""
     client_id, state = body.get("client_id"), body.get("state")
-    if not isinstance(client_id, int) or isinstance(client_id, bool) or state not in {"running", "stopped"}:
+    if not isinstance(client_id, int) or isinstance(client_id, bool) or state not in {"running", "stopped", "restart"}:
         raise IssueError("invalid", "client_id and state are required")
     def action(conn):
         row = conn.execute("SELECT user_id FROM clients WHERE client_id=? AND deleted_at IS NULL", (client_id,)).fetchone()
@@ -188,10 +194,11 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
     clients = []
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
-            "target_afx_version, target_daemon_state, daemon_request_id, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
+            "target_afx_version, update_status, target_daemon_state, daemon_request_id, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
             "FROM clients WHERE deleted_at IS NULL "
             "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
         item = dict(row)
+        item["update_status"] = json.loads(item["update_status"]) if item["update_status"] else {"state":"idle"}
         item["backend_versions"] = json.loads(item["backend_versions"]) if item["backend_versions"] else {}
         mine = see_all or (viewer is not None and item["user_id"] == viewer)
         item["runtime"] = json.loads(item["runtime"]) if item["runtime"] and mine else []

@@ -591,3 +591,14 @@ def test_execution_upload_does_not_overwrite_control_version(world):
     with store.write() as conn:
         Ingestor(store)._client(conn, client.user_id, {'machine_id':'separate-runtime','afx_version':'0.2.2.5'})
         assert conn.execute('SELECT afx_version FROM clients WHERE client_id=?',(cid,)).fetchone()[0] == '0.2.2.9001'
+
+
+def test_restart_requires_matching_running_ack_and_reports_upgrade_progress(world):
+    store, client, _ = world
+    cid=ops.heartbeat(store,client,{'machine_id':'restart-check'})['client_id']
+    cmd=ops.request_daemon_state(store,client,{'client_id':cid,'state':'restart','request_key':'restart-check'})
+    for state, identity in [('stopped',cmd['request_id']),('running','stale')]:
+        assert ops.heartbeat(store,client,{'machine_id':'restart-check','daemon_state':state,'daemon_request_id':identity})['daemon_state']=='restart'
+    assert ops.heartbeat(store,client,{'machine_id':'restart-check','daemon_state':'running','daemon_request_id':cmd['request_id'],'update_status':{'state':'activating','version':'9.0'}})['daemon_state'] is None
+    row=next(c for c in ops.summary(store,client)['clients'] if c['client_id']==cid)
+    assert row['update_status']=={'state':'activating','version':'9.0'}

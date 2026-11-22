@@ -2,6 +2,7 @@
 import importlib.metadata
 import json
 import socket
+import time
 from .artifacts import atomic
 from autofusex.platform.client import API, Client
 
@@ -22,10 +23,14 @@ def synchronize(manager, client):
     from ...client.scheduling.devices import device_inventory_info
     inventory = device_inventory_info()
     from .execution_runtime import facts
-    try:
-        execution = facts(store)
-    except (OSError, ValueError, __import__('subprocess').SubprocessError):
-        execution = None
+    cached = store.get('execution_facts', {})
+    execution = cached.get('value')
+    if time.time() - cached.get('at', 0) > 300:
+        try:
+            execution = facts(store)
+            store.put('execution_facts', dict(at=time.time(), value=execution))
+        except (OSError, ValueError, __import__('subprocess').SubprocessError):
+            pass
     if execution:
         env.update(execution['environment'])
         inventory = execution['inventory']
@@ -39,10 +44,11 @@ def synchronize(manager, client):
             operation = db.execute("SELECT state FROM operations WHERE request_key=?", ('platform-update:'+request_id,)).fetchone()
         if operation and operation['state'] == 'succeeded':
             update_ack = request_id
-    beat=api.call('POST','/api/client/heartbeat',dict(
+    from .update_delivery import progress, receive
+    heartbeat=dict(
         machine_id=identity[:128], client_home=home[:512],
         hostname=socket.gethostname(), npu_arch=env.get('device_model') or inventory['model'],
-        afx_version=version, update_ack=update_ack,
+        afx_version=version, update_ack=update_ack, update_status=progress(store),
         backend_versions={'af-mlir': env.get('cann'), 'triton-npu': env.get('triton'),
                           'cpu': env.get('torch')},
         devices=inventory['devices'], counters={}, daemon_state=current_state if current_state in {'running','stopped'} else None,
@@ -50,7 +56,8 @@ def synchronize(manager, client):
         # `busy` is reserved for a client that is actively executing a
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".
-        busy=False, pending_uploads=0, runtime=[]), attempts=1)
+        busy=False, pending_uploads=0, runtime=[])
+    beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
     config = effective['config']
     # A device selected during `afx init --device` is a local operator
@@ -62,10 +69,10 @@ def synchronize(manager, client):
     atomic(store.home/'task.json',config)
     store.put('config_state',dict(revision=effective['revision'],source=effective['source']))
     if beat.get('update_to'):
-        store.put('platform_update_request', beat.get('update_request_id'))
-        store.submit('client.update',dict(version=beat['update_to'],package='autofusex'),
-                     'platform-update:'+str(beat.get('update_request_id') or beat['update_to']))
-    if beat.get('daemon_state') in {'running', 'stopped'}:
+        receive(store, beat['update_to'], beat.get('update_request_id'))
+        heartbeat['update_status'] = progress(store)
+        api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
+    if beat.get('daemon_state') in {'running', 'stopped', 'restart'}:
         state = beat['daemon_state']
         atomic(control_path, {'state': state, 'request_id': beat.get('daemon_request_id')})
         store.put('shutdown_when_idle', False)

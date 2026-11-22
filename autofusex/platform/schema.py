@@ -502,6 +502,9 @@ CREATE UNIQUE INDEX registration_pending_user ON registration_requests(user_id) 
 ALTER TABLE clients ADD COLUMN target_daemon_state TEXT;
 ALTER TABLE clients ADD COLUMN daemon_request_id TEXT;
 """),
+    (15, """
+ALTER TABLE clients ADD COLUMN update_status TEXT;
+"""),
 ]
 
 CONTENT = [
