@@ -8,7 +8,7 @@ def reconcile(manager):
     with store.connect() as db:
         unresolved = [row['id'] for row in db.execute("SELECT id FROM runs WHERE state IN ('needs_attention','draining','cancelling')")]
     store.put('session_state', 'running' if manager.processes or unresolved else 'stopped')
-    if store.get('client_switch', {}).get('state') in {'requested', 'activating'}:
+    if store.get('client_switch', {}).get('state') in {'draining', 'staging', 'requested', 'activating', 'stage_failed'}:
         return
     path = store.home / 'daemon-control.json'
     if not path.exists():

@@ -22,3 +22,12 @@ def test_duplicate_commands_during_upgrade_are_ignored(tmp_path):
         assert s.get('platform_update_request')=='first'
         assert progress(s)['state']==state
     with s.connect() as db:assert db.execute('SELECT count(*) FROM operations').fetchone()[0]==1
+
+
+def test_current_control_version_does_not_hide_old_execution(tmp_path):
+    import json
+    s=Store(tmp_path)
+    with s.connect() as db:
+        db.execute('INSERT INTO environments VALUES (?,?,?,?)',
+                   ('local','local',json.dumps(dict(python='/old/python',env={},afx_version='0.1.0')),'ready'))
+    assert receive(s,importlib.metadata.version('autofusex'),'execution-upgrade')=='queued'

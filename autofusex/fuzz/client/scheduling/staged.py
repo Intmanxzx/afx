@@ -305,6 +305,10 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             while True:
                 control_path = ledger.path.parent / 'control.json'
                 control = json.loads(control_path.read_text()).get('action', 'run') if control_path.exists() else 'run'
+                # Upgrade drains all backends of admitted Cases but preserves
+                # the unclaimed queue and campaign for the next release.
+                if control == 'upgrade' and not cases:
+                    break
                 if control == 'force-stop':
                     from .campaign import stop
                     stop(ledger)
@@ -322,6 +326,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     atomic(ledger.path.parent / 'state.json', {'state': 'running'})
                 # Bounded Case window; no infinite queue or unbounded outputs.
                 while control in {'run', 'reconfigure'} and len(cases)<budget.cpu_workers and len(completed_attempts)<100:
+                    if control_path.exists() and json.loads(control_path.read_text()).get('action') == 'upgrade':
+                        break
                     budget.admit(ledger.path.parent)
                     budget.admit(database.parent)
                     if control == 'run':

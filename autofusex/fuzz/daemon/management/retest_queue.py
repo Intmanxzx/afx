@@ -78,6 +78,9 @@ def synchronize(client, home):
     """Coordinate remote leases and receipts without starting execution processes."""
     from autofusex.platform.client import installed_packages, Mapper, upload_new
     from autofusex.fuzz.daemon.runtime import request
+    from .upgrade_drain import BUSY
+    if Store(home).get('client_switch', {}).get('state') in BUSY:
+        return 0
     installed = installed_packages(client.environment())
     if not installed or not client.devices:
         return 0

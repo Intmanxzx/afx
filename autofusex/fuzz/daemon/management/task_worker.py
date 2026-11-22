@@ -17,6 +17,8 @@ def main(path):
     from ...client.scheduling.ledger import TaskLedger
     prepared=json.loads(Path(path).read_text());spec=prepared['spec'];directory=Path(prepared['directory'])
     state=directory/'state.json'
+    import autofusex
+    atomic(directory/'worker-version.json',dict(python=sys.executable,version=autofusex.__version__))
     try:
         if not {'execution', 'evaluation', 'workload'} <= spec.keys() or 'policy' not in prepared:
             raise KeyError('incomplete task spec')
@@ -42,8 +44,10 @@ def main(path):
                     **{k:generation[k] for k in ('dim_min','dim_max','dim_dist_mode','value_dist_mode','dtype_mode','dynamic_variants','method') if k in generation},max_nodes=generation.get('max_nodes'),
                     max_elem_per_tensor=generation.get('max_elements_per_tensor'),timeout_seconds=int(quantity(generation['timeout'])) if generation.get('timeout') else None)
             campaign=(configs,evaluation,spec['termination'].get('max_cases'),ex['devices'] if any(c.backend!='cpu' for c in configs) else [],generation.get('exclude_ops',[]),asdict(sampling),generation.get('ops',[]),None,generation.get('shape_mode','mixed'))
+        if prepared.get('resume_queue'):
+            tasks=[]; campaign=None
         atomic(state,dict(state='running'))
-        result=launch(ledger,database,tasks,foreground=True,budget=budget,devices=ex['devices'] if any(c.backend!='cpu' for c in configs) else [],campaign=campaign,timeout=quantity(ex['timeout']))
+        result=launch(ledger,database,tasks,foreground=True,budget=budget,devices=ex['devices'] if any(c.backend!='cpu' for c in configs) else [],campaign=campaign,preserve_campaign=bool(prepared.get('resume_queue')),timeout=quantity(ex['timeout']))
         if json.loads((directory/'control.json').read_text()).get('action')=='reconfigure':
             return 75
         atomic(state,dict(state='completed',result=result))

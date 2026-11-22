@@ -30,7 +30,7 @@ def tick(manager):
     desired = json.loads(command.read_text()).get('state') if command.exists() else None
     enabled = (client.get('mode') == 'managed' and client.get('platform', {}).get('retest', False)
                and bool(manager.processes) and desired != 'stopped'
-               and store.get('client_switch', {}).get('state') not in {'requested', 'activating'})
+               and store.get('client_switch', {}).get('state') not in {'draining', 'staging', 'requested', 'activating', 'stage_failed'})
     if not enabled:
         stop(manager)
         return
@@ -52,6 +52,7 @@ def tick(manager):
     env.pop('PYTHONPATH', None)
     env.update(manifest['env'])
     env['AUTOFUSEX_HOME'] = str(store.home)
+    env['AFX_TASK_HOME'] = str(store.home)
     with (store.home / 'retest-runner.log').open('ab') as log:
         manager._retest_process = subprocess.Popen(
             [manifest['python'], '-c',

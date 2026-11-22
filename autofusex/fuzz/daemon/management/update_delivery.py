@@ -18,7 +18,9 @@ def receive(store, version, request_id):
     if busy:return 'upgrading'
     store.put('platform_update_request',request_id)
     operation=store.submit('client.update',dict(version=version,package='autofusex'),'platform-update:'+str(request_id or version))
-    if _canonical_version(importlib.metadata.version('autofusex')) == version:
+    with store.connect() as db:
+        manifests = [json.loads(r[0]) for r in db.execute("SELECT manifest FROM environments WHERE state='ready'")]
+    if _canonical_version(importlib.metadata.version('autofusex')) == version and all(m.get('afx_version') == version for m in manifests):
         store.state(operation['id'],'succeeded',dict(state='up_to_date',version=version))
         return 'up_to_date'
     return operation['state']

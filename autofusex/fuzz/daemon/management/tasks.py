@@ -75,7 +75,9 @@ def prepare(store, spec):
     return dict(spec=spec,environment=manifest,policy=policy,hash=fingerprint(spec))
 
 
-def start(store,spec,operation_id,processes):
+def start(store,spec,operation_id,processes,resume_run=None):
+    if store.get('client_switch', {}).get('state') in {'draining', 'staging', 'requested', 'stage_failed'}:
+        raise ValueError('client upgrade blocks task admission')
     prepared=prepare(store,spec)
     from ...client.scheduling.hosting import status
     from ...client.scheduling.ledger import TaskLedger
@@ -90,11 +92,17 @@ def start(store,spec,operation_id,processes):
     try: fcntl.flock(ownership,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:
         ownership.close();raise ValueError('a previous managed task still owns this device') from None
-    identity=str(uuid.uuid4()); directory=store.home/'runs'/identity;directory.mkdir(parents=True,mode=0o700)
+    identity=resume_run or str(uuid.uuid4()); directory=store.home/'runs'/identity;directory.mkdir(parents=True,mode=0o700,exist_ok=bool(resume_run))
+    if resume_run:
+        old=json.loads((directory/'spec.json').read_text())
+        prepared.update(resume_queue=True, epoch=old.get('epoch',0))
     prepared['run_id']=identity;prepared['directory']=str(directory)
     atomic(directory/'spec.json',prepared)
     atomic(directory/'control.json',dict(action='run'))
+    atomic(directory/'state.json',dict(state='preparing'))
+    (directory/'worker-version.json').unlink(missing_ok=True)
     manifest=prepared['environment'];env=os.environ.copy();env.update(manifest['env'])
+    env['AFX_TASK_HOME']=str(store.home)
     if manifest['id'] != 'local':
         env.pop('PYTHONPATH',None)
     try:
@@ -114,7 +122,7 @@ def start(store,spec,operation_id,processes):
     finally: ownership.close()
     processes[identity]=child
     with store.connect() as db:
-        db.execute('INSERT INTO runs VALUES (?,?,?,?,?)',(identity,canonical(prepared),'preparing',child.pid,None))
+        db.execute('INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?)',(identity,canonical(prepared),'preparing',child.pid,None))
     return dict(run_id=identity,state='preparing',config_hash=prepared['hash'])
 
 
@@ -166,6 +174,8 @@ def refresh(store,processes):
 
 
 def reconfigure(store, identity, spec, processes):
+    if store.get('client_switch', {}).get('state') in {'draining','staging','requested','activating'}:
+        raise ValueError('client upgrade blocks reconfiguration')
     if identity not in processes: raise ValueError('task is not owned by this daemon')
     with store.connect() as db:
         row=db.execute('SELECT spec FROM runs WHERE id=?',(identity,)).fetchone()

@@ -5,8 +5,8 @@ commands, task admission and release staging. The supervisor owns process
 replacement and the activation journal. Execution uses the registered environment
 manifest's interpreter; active-client.json never overrides worker Python.
 
-A release is prepared in a clean control-venv without system site packages.
-Preparation failure does not stop tasks or change active-client.json. A successful
+A release is prepared after whole-case draining in a clean control-venv without system site packages.
+Preparation failure leaves active-client.json unchanged and resumes the old queues. A successful
 preparation records client_switch=requested and leaves the operation activating.
 The supervisor drains work, shuts down the old manager, switches the pointer and
 starts the new manager. Success requires the expected Python and version, a fresh
@@ -34,8 +34,37 @@ credentials, results and task configuration. It registers the explicit execution
 interpreter and starts the new supervisor. If takeover fails, retain the backup
 and diagnose; do not kill PIDs recovered from the database.
 
-Control upgrades do not upgrade the execution environment. Torch, CANN and the
-pinned NNSmith fork must be provisioned and verified in that environment separately.
+Client upgrades now fence admission before installation. Already admitted Cases
+finish all backends and records; unclaimed entries and the campaign remain in the
+same durable queue. The installer waits until task ownership and task descendants
+are absent continuously for five seconds. It then stages both control and execution
+autofusex packages at the target version. Execution releases inherit the registered
+site dependency paths without uninstalling or upgrading Torch, torch_npu or CANN.
+Activation changes the execution manifests with the control pointer; rollback
+restores both. Resumption uses the existing run and queue rather than enqueuing
+the original replay list or resetting the campaign. Worker version evidence is
+required before successful activation acknowledgement.
+
+This protocol requires the updated supervisor and scheduler on the source side.
+Existing 0.2.2.8 processes cannot acquire new drain semantics merely by downloading
+a target wheel; a baseline migration is required before testing this workflow.
+
+## Whole-case upgrade validation
+
+Candidate source was tested on mlir in /mnt/workspace/afx-upgrade-case-check,
+separate from the installed client. Management regression: 85 passed. The
+updated delivery tests (including old execution with current control version):
+3 passed. Targeted activation/drain and real Case tests: 13 passed, including
+CPU plus eager-npu on each of npu:0 and npu:1. The test requests draining after
+generation begins, checks that both backends finish, leaves the next Case
+pending, then resumes and checks exactly four result records.
+
+An isolated execution install probe loaded candidate autofusex 0.2.2.8 from
+its new execution directory while loading torch 2.10.0+cpu and torch_npu
+2.10.0.post7.dev20261015 from the original torch210_daily site-packages.
+This local candidate wheel was not published. Full platform-triggered upgrade
+with installation, running-NPU queue restoration, and supervisor crash recovery
+as one end-to-end transaction still requires acceptance before deployment.
 
 ## Validation boundaries
 
@@ -50,10 +79,10 @@ or subprocess tests.
 1. Preserve installation identity, credentials, historical results and task config.
 2. Start and stop through the platform; stopping leaves control and heartbeat alive.
 3. Upgrade between two builds of the new architecture while a task is running.
-   Verify the new control PID, interpreter and imported package, unchanged execution
-   environment, restored task and matching server acknowledgement.
+   Verify the new control PID, interpreter and imported package, matching execution
+   package version, unchanged Torch/CANN, restored queue and server acknowledgement.
 4. Repeat while stopped; upgrade must not start an unwanted task.
-5. Fail download/install before activation; old work must continue.
+5. Fail download/install after draining; old work must resume from the preserved queue.
 6. Fail new control startup or heartbeat readiness; roll back without duplicate workers.
 7. Restart the supervisor during activation; recover its durable transaction rather
    than report success from a version pointer alone.

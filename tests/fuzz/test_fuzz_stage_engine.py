@@ -25,6 +25,41 @@ def test_dag_waits_for_both_branches():
     assert compare.ready(stages,20) and compare.ready_ns==20
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux managed runtime')
+@pytest.mark.parametrize('device', ['cpu', 'npu:0', 'npu:1'])
+def test_upgrade_finishes_whole_case_and_preserves_next_case(tmp_path, monkeypatch, device):
+    if device != 'cpu':
+        import os
+        if os.environ.get('AFX_TEST_UPGRADE_NPU') != '1':
+            pytest.skip('requires explicit NPU validation environment')
+    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+    from autofusex.fuzz.client.scheduling.staged import drain
+    from autofusex.fuzz.client.scheduling.budgets import write_policy
+    from autofusex.fuzz.daemon.management.artifacts import atomic
+    ledger=TaskLedger(tmp_path/'tasks.sqlite')
+    first=[]; second=[]
+    for batch, ids in [('first', first), ('second', second)]:
+        for backend in ['cpu','cpu-compile' if device == 'cpu' else 'eager-npu']:
+            ids.append(ledger.enqueue(CURRENT_SEED, ExecutionConfig(backend,'cpu' if backend == 'cpu' else device,1,
+                scheduling='staged', static_only=True,batch_id=batch),EvaluationConfig()))
+    write_policy(ledger,Budget(cpu_workers=1))
+    original=Pool.submit
+    def submit(self, task, *args, **kwargs):
+        if task.kind == Kind.GENERATE:
+            atomic(tmp_path/'control.json',dict(action='upgrade'))
+        return original(self, task, *args, **kwargs)
+    monkeypatch.setattr(Pool,'submit',submit)
+    drain(ledger,tmp_path/'results.sqlite')
+    assert all(ledger.get(i)['state']=='completed' for i in first)
+    assert all(ledger.get(i)['state']=='pending' for i in second)
+    monkeypatch.setattr(Pool,'submit',original)
+    atomic(tmp_path/'control.json',dict(action='run'))
+    drain(ledger,tmp_path/'results.sqlite')
+    assert all(ledger.get(i)['state']=='completed' for i in first+second)
+    with sqlite3.connect(tmp_path/'results.sqlite') as db:
+        assert db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == 4
+
+
 def test_atomic_resources_do_not_hold_cpu_waiting_for_device(tmp_path):
     pool=Pool(Budget(cpu_workers=2),tmp_path,0,[Device('npu:0','uuid0',100),Device('npu:1','uuid1',100)])
     try:

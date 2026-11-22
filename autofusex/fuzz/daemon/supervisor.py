@@ -59,14 +59,14 @@ def run(home):
                     raise RuntimeError('management daemon failed local health check')
                 activation = store.get('client_switch', {})
                 if activation.get('state') == 'rolled_back' and activation.get('resume') and not activation.get('restored'):
-                    request(store.home, dict(action='start_session'))
+                    request(store.home, dict(action='resume_upgrade' if activation.get('drained') else 'start_session'))
                     activation['restored'] = True
                     store.put('client_switch', activation)
                 if activation.get('state') == 'activating':
                     from .management.activation import ready, finish
                     try:
                         if activation.get('resume'):
-                            request(store.home, dict(action='start_session'))
+                            request(store.home, dict(action='resume_upgrade' if activation.get('drained') else 'start_session'))
                         deadline = time.monotonic() + 120
                         while time.monotonic() < deadline:
                             if child.poll() is not None:
@@ -79,7 +79,7 @@ def run(home):
                     except Exception:
                         try:
                             if child.poll() is None:
-                                request(store.home, dict(action='stop_session'))
+                                request(store.home, dict(action='drain_upgrade' if activation.get('drained') else 'stop_session'))
                                 deadline = time.monotonic() + 300
                                 while True:
                                     try:
@@ -101,9 +101,17 @@ def run(home):
                 switching=False
                 while child.poll() is None:
                     activation = store.get('client_switch', {})
+                    if activation.get('state') == 'stage_failed':
+                        activation['state'] = 'rolled_back'
+                        activation['drained'] = True
+                        store.put('client_switch', activation)
+                        if activation.get('resume'):
+                            request(store.home, dict(action='resume_upgrade'))
+                        activation['restored'] = True
+                        store.put('client_switch', activation)
                     if activation.get('state') == 'requested':
                         from .management.activation import select, finish
-                        if 'drain_started' not in activation:
+                        if not activation.get('drained') and 'drain_started' not in activation:
                             activation['old_runs'] = [r['id'] for r in request(store.home, dict(action='status'))['runs']]
                             activation['drain_started'] = time.time()
                             store.put('client_switch', activation)
@@ -111,7 +119,7 @@ def run(home):
                         try:
                             request(store.home, dict(action='shutdown'))
                         except (ValueError, OSError):
-                            if time.time() - activation['drain_started'] > 300:
+                            if not activation.get('drained') and time.time() - activation['drain_started'] > 300:
                                 finish(store, activation, False)
                             time.sleep(.2)
                             continue

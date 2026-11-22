@@ -4,6 +4,7 @@ from .artifacts import atomic
 
 
 def select(store, switch):
+    environments(store, switch, 'target')
     atomic(store.home / 'active-client.json', switch['target'])
     switch.update(state='activating', started=time.time())
     store.put('client_switch', switch)
@@ -12,6 +13,7 @@ def select(store, switch):
 def finish(store, switch, success):
     switch['state'] = 'succeeded' if success else 'rolled_back'
     if not success:
+        environments(store, switch, 'previous')
         atomic(store.home / 'active-client.json', switch['previous'])
     store.put('client_switch', switch)
     if switch.get('operation_id'):
@@ -32,6 +34,19 @@ def ready(store, switch, status):
             connection.get('state') == 'ok' and connection.get('time', 0) >= switch['started']):
         return False
     if switch.get('resume'):
-        return any(run['state'] == 'running' and run['id'] not in switch.get('old_runs', [])
+        if switch.get('drained'):
+            for identity in switch.get('old_runs', []):
+                proof = store.home/'runs'/identity/'worker-version.json'
+                if not proof.exists() or json.loads(proof.read_text()).get('version') != switch['target']['version']:
+                    return False
+        return any(run['state'] in {'running', 'completed'} and (switch.get('drained') or run['id'] not in switch.get('old_runs', []))
                    for run in status.get('runs', []))
     return True
+
+
+def environments(store, switch, side):
+    import json
+    with store.connect() as db:
+        for item in switch['target'].get('environments', []):
+            db.execute('UPDATE environments SET manifest=? WHERE id=?', (json.dumps(item[side]), item['id']))
+    store.put('execution_facts', {})

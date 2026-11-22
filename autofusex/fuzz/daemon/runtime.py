@@ -64,6 +64,19 @@ class Manager:
 
     def dispatch(self,body):
         action=body.get('action')
+        if action in {'start_session','replay','platform_retest'} and self.store.get('client_switch', {}).get('state') in {'draining','staging','requested','stage_failed'}:
+            raise ValueError('client upgrade blocks task admission')
+        if action=='resume_upgrade':
+            from .management.tasks import start
+            switch=self.store.get('client_switch', {})
+            results=[]
+            for identity in switch.get('old_runs', []):
+                prepared=json.loads((self.store.home/'runs'/identity/'spec.json').read_text())
+                results.append(start(self.store,prepared['spec'],'upgrade-resume',self.processes,resume_run=identity))
+            return dict(runs=results)
+        if action=='drain_upgrade':
+            from .management.upgrade_drain import begin
+            return dict(runs=begin(self.store, self.processes))
         if action=='start_session':
             from .management.local_session import start
             return start(self)
@@ -208,6 +221,8 @@ class Manager:
             except Exception as exc:self.store.state(operation['id'],'failed',dict(code=type(exc).__name__))
         if not self.active:
             for operation in self.store.pending():
+                if self.store.get('client_switch', {}).get('state') in {'draining', 'staging', 'requested', 'activating'}:
+                    continue
                 session = self.store.get('session_control', {})
                 if operation['kind'] == 'task.submit' and session.get('state') in {'stopping', 'stopped'}:
                     continue

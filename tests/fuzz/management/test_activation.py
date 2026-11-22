@@ -17,11 +17,14 @@ def test_staging_failure_preserves_pointer_and_running_tasks(tmp_path, monkeypat
     def fail(*a, **k): raise RuntimeError('download failed')
     monkeypatch.setattr(client_updates, 'command', fail)
     processes = {'run': object()}
+    from autofusex.fuzz.daemon.management import upgrade_drain
+    monkeypatch.setattr(upgrade_drain, 'begin', lambda *a: ['run'])
+    monkeypatch.setattr(upgrade_drain, 'wait', lambda *a: processes.clear())
     with pytest.raises(RuntimeError):
         client_updates.install(s, {'version':'0.2.2.6'}, processes)
     assert pointer.read_bytes() == before
-    assert list(processes) == ['run']
-    assert s.get('client_switch') is None
+    assert not processes
+    assert s.get('client_switch')['state'] == 'stage_failed'
 
 
 def test_activation_requires_process_identity_heartbeat_and_restoration(tmp_path):
