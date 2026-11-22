@@ -25,6 +25,7 @@ PAGES.ops = async root => {
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
         el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", style: { maxWidth: "280px", overflowWrap: "anywhere" }, "data-tooltip": c.client_home || "客户端尚未上报目录" }, c.client_home || "未上报"), el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
+          c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中",succeeded:"升级完成",failed:"升级失败",needs_attention:"需要处理"})[c.update_status.state] || "") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
         el("td", {}, fmt(c.last_24h.executions)), el("td", {}, fmt(c.last_24h.upload_errors)), el("td", {}, fmt(c.pending_uploads)),
@@ -33,7 +34,7 @@ PAGES.ops = async root => {
   const owned = data.clients.filter(c => isAdmin() || c.mine);
   if (owned.length) {
     const rows = owned.map(c => {
-      const controls = ['running', 'stopped'].map(state => el('button', {
+      const controls = ['running', 'stopped', 'restart'].map(state => el('button', {
         class: 'mini-btn',
         onclick: async () => {
           try {
@@ -41,7 +42,7 @@ PAGES.ops = async root => {
             render();
           } catch (err) { alert(err.message); }
         }
-      }, state === 'running' ? '启动' : '停止'));
+      }, state === 'running' ? '启动' : state === 'restart' ? '重启' : '停止'));
       return el('tr', {}, el('td', {}, c.display_name || String(c.client_id)),
         el('td', {}, c.online ? '在线' : '离线'),
         el('td', {}, c.target_daemon_state || '—'), el('td', {}, controls));

@@ -61,3 +61,25 @@ def test_worker_failure_before_readiness_is_not_acknowledged(tmp_path, monkeypat
         db.execute("UPDATE runs SET state='failed' WHERE id='run'")
     reconcile(manager)
     assert manager.store.get('session_control')['status'] == 'failed'
+
+
+def test_restart_drains_then_starts_once(tmp_path, monkeypatch):
+    manager=SimpleNamespace(store=Store(tmp_path),processes={'old':object()},active=None)
+    stops=[];starts=[]
+    monkeypatch.setattr(tasks,'action',lambda *args:stops.append(args[2]))
+    def start(m):
+        starts.append(1)
+        m.processes['new']=object()
+        with m.store.connect() as db:db.execute("INSERT INTO runs VALUES ('new','{}','running',1,NULL)")
+        return {'run_id':'new'}
+    monkeypatch.setattr(local_session,'start',start)
+    atomic(tmp_path/'daemon-control.json',dict(request_id='restart',state='restart'))
+    reconcile(manager)
+    assert stops==['stop'] and not starts
+    manager.processes.clear()
+    reconcile(manager)
+    reconcile(manager)
+    reconcile(manager)
+    reconcile(manager)
+    assert starts==[1]
+    assert manager.store.get('session_control')['status']=='succeeded'

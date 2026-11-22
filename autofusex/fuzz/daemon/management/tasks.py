@@ -32,7 +32,14 @@ def prepare(store, spec):
     local=trusted(store.home).get('resource_limits',{})
     policy=store.get('effective_policy',validate(dict(schema_version=1,kind='client_policy')))
     limits=policy['resources']; requested=spec['execution']['resources']
-    local_allowed = _expand_devices(local.get('allowed_devices', []))
+    local_devices = local.get('allowed_devices', [])
+    if 'all' in local_devices and spec['execution']['devices'] != ['all']:
+        from .execution_runtime import facts
+        observed = facts(store)
+        local_allowed = observed['inventory']['devices'] if observed else _expand_devices(local_devices)
+        if local_allowed is None: raise ValueError('execution inventory unavailable')
+    else:
+        local_allowed = _expand_devices(local_devices)
     policy_allowed = _expand_devices(limits.get('allowed_devices', []))
     if spec['execution']['devices'] == ['all']:
         available = local_allowed or policy_allowed
@@ -91,19 +98,8 @@ def start(store,spec,operation_id,processes):
     if manifest['id'] != 'local':
         env.pop('PYTHONPATH',None)
     try:
-        # The daemon may activate a separate PyPI-installed client release.
-        # Environment Python remains the fallback for installations that do
-        # not use client version management.
-        client_python = store.home / 'active-client.json'
+        # Execution uses its registered environment, never the control venv.
         worker_python = manifest['python']
-        if client_python.exists():
-            try:
-                active=json.loads(client_python.read_text())
-                candidate=active.get('python')
-                if isinstance(candidate,str) and Path(candidate).is_file():
-                    worker_python=candidate
-            except (OSError, ValueError, TypeError):
-                pass
         # Keep the execution worker's stdout/stderr with the run.  The
         # bootstrap daemon is deliberately quiet, but dropping worker output
         # made failed runs impossible to diagnose after the child exited.

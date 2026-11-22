@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 from .store import Store
-from .platform_sync import synchronize
 
 
 def main(argv=None) -> int:
@@ -25,18 +24,13 @@ def main(argv=None) -> int:
     client = json.loads(client_path.read_text(encoding="utf-8"))
     if client.get("mode") != "managed":
         return 0
-    from types import SimpleNamespace
+    # Compatibility entry point only: never pretend that a new one-shot
+    # helper has upgraded an old resident manager.
     from ..runtime import request
-    from .session_control import reconcile
+    request(home, {'action': 'status'})
     store = Store(home)
-    status = request(home, {'action': 'status'})
-    with store.connect() as db:
-        runs = list(db.execute("SELECT id FROM runs WHERE state IN ('preparing','running','paused','pausing','draining','cancelling')"))
-    manager = SimpleNamespace(store=store, processes={row['id']: None for row in runs},
-                              active=status.get('active_operation'),
-                              start_session=lambda: request(home, {'action': 'start_session'}))
-    reconcile(manager)
-    synchronize(manager, client)
+    if store.get('supervisor_protocol') != 2:
+        raise RuntimeError('explicit control migration required')
     return 0
 
 

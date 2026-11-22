@@ -285,6 +285,12 @@ class Ingestor:
 
     # -- dimensions ------------------------------------------------------------
     def _client(self, conn, user_id, client) -> int:
+        row = conn.execute("SELECT last_heartbeat_at FROM clients WHERE user_id=? AND machine_id=?",
+                           (user_id, client['machine_id'])).fetchone()
+        if row is not None and row['last_heartbeat_at'] is not None:
+            # Execution provenance can lag behind the independently upgraded
+            # control agent. Only heartbeat owns the fleet control version.
+            client = dict(client, afx_version=None)
         return upsert_client(conn, user_id, client)
 
     def _run(self, conn, user_id, client_id, run) -> int:

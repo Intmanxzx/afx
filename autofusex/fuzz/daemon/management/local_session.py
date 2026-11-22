@@ -17,7 +17,12 @@ def start(manager):
     # The local user explicitly selected this configuration. Register only the
     # current interpreter, not a fabricated remote environment installation.
     if spec['environment']=='local':
-        manifest=dict(id='local',name='local',python=sys.executable,env={})
+        with store.connect() as db:
+            existing = db.execute("SELECT manifest FROM environments WHERE id='local'").fetchone()
+        if existing:
+            manifest = json.loads(existing['manifest'])
+        else:
+            manifest=dict(id='local',name='local',python=sys.executable,env={})
         with store.connect() as db:
             db.execute("INSERT OR REPLACE INTO environments VALUES (?,?,?,'ready')",('local','local',canonical(manifest)))
     from .artifacts import atomic
@@ -29,5 +34,14 @@ def start(manager):
     if not (store.home/'trust.json').exists():
         atomic(store.home/'trust.json',dict(resource_limits=resources))
     store.put('effective_policy',validate(dict(schema_version=1,kind='client_policy',resources=resources)))
+    if spec['execution']['devices'] == ['all']:
+        from .execution_runtime import facts
+        execution = facts(store)
+        devices = execution['inventory']['devices'] if execution else None
+        if not devices:
+            raise ValueError('registered execution environment cannot discover devices')
+        spec['execution']['devices'] = devices
+        resources['allowed_devices'] = devices
+        store.put('effective_policy',validate(dict(schema_version=1,kind='client_policy',resources=resources)))
     from .tasks import start as start_task
     return start_task(store,spec,'local-start:'+str(uuid.uuid4()),manager.processes)

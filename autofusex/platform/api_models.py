@@ -111,7 +111,7 @@ class ClientUpdate(RequestKey):
 
 class ClientControl(RequestKey):
     client_id: int
-    state: Literal['running', 'stopped']
+    state: Literal['running', 'stopped', 'restart']
 
 
 class Drafts(RequestKey):
