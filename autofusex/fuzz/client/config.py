@@ -46,6 +46,17 @@ def remember_home(home):
         Path(name).unlink(missing_ok=True)
 
 
+def results_database(home=None, override=None):
+    """Resolve the initialized result archive; explicit paths are optional overrides."""
+    home = data_home(home)
+    if override is not None:
+        return Path(override).expanduser().resolve()
+    path = home / 'client.json'
+    configured = json.loads(path.read_text()).get('platform', {}).get('results') if path.exists() else None
+    result = Path(configured).expanduser() if configured else home / 'results' / 'results.sqlite'
+    return (result if result.is_absolute() else home / result).resolve()
+
+
 def validate_config(config):
     if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] != 1:
         raise ValueError("unsupported or damaged configuration; refusing to replace it")

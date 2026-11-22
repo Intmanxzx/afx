@@ -67,6 +67,9 @@ class Manager:
         if action=='start_session':
             from .management.local_session import start
             return start(self)
+        if action=='platform_retest':
+            from .management.retest_queue import submit
+            return submit(self.store.home, body['task'])
         if action=='replay':
             from .management.replay import submit
             return submit(self.store, body['seeds'], self.processes)

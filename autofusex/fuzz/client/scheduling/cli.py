@@ -1,5 +1,5 @@
 """Managed task command surface; detached by default, explicit foreground option."""
-from ..config import data_home, load_config
+from ..config import data_home, load_config, results_database
 from ..contracts import Seed, ExecutionConfig, EvaluationConfig
 from .ledger import TaskLedger
 
@@ -137,7 +137,7 @@ def dispatch(args):
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise ValueError('a managed campaign owns this device; control it through task CLI/Web') from None
-    database = args.database or home/'results/results.sqlite'
+    database = results_database(home, args.database)
     from .supervisor import resume, _validate_task
     if args.command == 'resume':
         return resume(ledger, database, args.task)

@@ -114,13 +114,15 @@ def run(home):
         allowed = trust.get('resource_limits', {}).get('allowed_devices', [])
         devices = [d for d in devices if d in allowed or 'all' in allowed]
         api = JournalAPI(API(config['endpoint'], config['token'], timeout=15), home/'retest-claims.json')
-        client = Client(api, str(home/'results/results.sqlite'), home/'retest-upload.sqlite', devices=devices)
+        from autofusex.fuzz.client.config import results_database
+        client = Client(api, str(results_database(home)), home/'retest-upload.sqlite', devices=devices)
         client.env = collect(home)
         client.env['device_model'] = available['model']
         # Do not borrow an identity from an unrelated historical results database.
         client.identity = lambda: dict(client.env)
         try:
-            print(json.dumps({'finished': client.retest_once()}), flush=True)
+            from autofusex.fuzz.daemon.management.retest_queue import synchronize
+            print(json.dumps({'finished': synchronize(client, home)}), flush=True)
         finally:
             client.state.conn.close()
 

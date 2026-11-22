@@ -89,7 +89,7 @@ class TaskLedger:
     def enqueue(self, seed, execution, evaluation, *, task_id=None):
         return self.enqueue_many([(seed, execution, evaluation, task_id)])[0]
 
-    def enqueue_many(self, specifications, *, priority=0):
+    def enqueue_many(self, specifications, *, priority=0, devices=None):
         """All-or-nothing bounded batch; canonicalize every spec before SQL writes."""
         if type(priority) is not int or priority not in (0, 100):
             raise ValueError("priority must be normal (0) or replay (100)")
@@ -121,6 +121,11 @@ class TaskLedger:
                 raise ValueError('active task budget exhausted; entire batch rejected')
             conn.executemany("INSERT INTO tasks(id,seed,execution,evaluation,state) VALUES (?,?,?,?,'pending')", additions)
             conn.executemany("INSERT OR IGNORE INTO task_priority VALUES (?,?)", [(row[0], priority) for row in additions])
+            if devices:
+                from .placement import initialize
+                initialize(conn)
+                conn.executemany('INSERT OR IGNORE INTO task_devices VALUES (?,?)',
+                                 [(row[0], canonical_json(list(devices))) for row in additions])
             from .placement import admit
             admit(conn, [row[0] for row in additions])
         return identities
