@@ -2,7 +2,7 @@
 // 问题发现: execution records grouped by case (expanded/pivot views) + manual retests.
 import { el, store, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
 import { select, stackBar, statusChip } from "./widgets.js";
-import { PAGES, go, render, caseDrawer } from "./router.js";
+import { PAGES, go, render, caseDrawer, openCase } from "./router.js";
 import { isAdmin } from "./auth.js";
 import { showActionBar, hideActionBar, popMenu, openDrawer } from "./ui.js";
 
@@ -168,9 +168,18 @@ export async function pinGlobal(keys) {
 async function renderRetests(root) {
   const rows = await api("/api/retests");
   root.append(el("section", { class: "panel" }, el("h2", {}, "我提交的复测"),
-    rows.length ? el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["批次", "提交时间", "任务", "进行中", "通过", "失败", "无效", "进度"].map(t => el("th", {}, t)))),
+    rows.length ? el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["批次", "提交时间", "任务", "进行中", "通过", "失败", "无效", "进度", "用例与结果"].map(t => el("th", {}, t)))),
       el("tbody", {}, rows.map(r => el("tr", {}, el("td", { class: "mono small" }, (r.batch || "").slice(0, 12)), el("td", {}, time(r.created_at)), el("td", {}, r.tasks), el("td", {}, r.running),
         el("td", {}, r.passed), el("td", {}, r.failed), el("td", {}, r.invalid),
-        el("td", { style: { minWidth: "160px" } }, el("div", { class: "hbar", style: { gridTemplateColumns: "1fr" } }, stackBar([["c-pass", r.passed, "通过"], ["c-func", r.failed, "失败"], ["c-uns", r.invalid, "无效"], ["c-acc", r.running, "进行中"]], r.tasks)))))))
+        el("td", { style: { minWidth: "160px" } }, el("div", { class: "hbar", style: { gridTemplateColumns: "1fr" } }, stackBar([["c-pass", r.passed, "通过"], ["c-func", r.failed, "失败"], ["c-uns", r.invalid, "无效"], ["c-acc", r.running, "进行中"]], r.tasks))),
+        el("td", {}, el("details", {}, el("summary", {}, "查看 Seed 与结果"),
+          el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Seed", "后端 / 芯片", "状态", "结果详情"].map(t => el("th", {}, t)))),
+            el("tbody", {}, (r.items || []).map(t => el("tr", {},
+              el("td", {}, el("a", { class: "mono small", href: "#case?key=" + encodeURIComponent(t.case_key), onclick: e => { e.preventDefault(); openCase(t.case_key); } }, t.case_key)),
+              el("td", {}, t.backends.split(",").map(label).join(" / "), el("div", { class: "muted small" }, archLabel(t.npu_arch))),
+              el("td", {}, ({ pass: "通过", fail: "失败", invalid: "无效", skip: "跳过" }[t.result] || { pending: "待执行", leased: "执行中", done: "已完成", invalid: "无效" }[t.status] || t.status),
+                t.detail ? el("div", { class: "muted small" }, t.detail) : null),
+              el("td", {}, t.executions.length ? t.executions.map(x => el("a", { href: "#case?key=" + encodeURIComponent(t.case_key) + "&exec=" + encodeURIComponent(x.exec_uuid), style: { marginRight: "10px" } }, label(x.backend) + " 详情")) : "暂无执行结果")
+            ))))))))))
       : el("div", { class: "empty" }, "还没有复测记录。在执行记录中选中用例后点击“复测”。")));
 }
