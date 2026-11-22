@@ -77,7 +77,7 @@ NAME = dict(type='string', pattern=r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$')
 POSITIVE = dict(type='integer', minimum=1, maximum=2147483647)
 BOOL = dict(type='boolean')
 DURATION = dict(type='string', pattern=r'^[1-9][0-9]{0,7}(ms|s|m|h)$')
-MEMORY = dict(type='string', pattern=r'^[1-9][0-9]{0,9}(B|KiB|MiB|GiB)$')
+MEMORY = dict(type='string', pattern=r'^[1-9][0-9]{0,18}(B|KiB|MiB|GiB)$')
 SHA = dict(type='string', pattern=r'^[0-9a-f]{64}$')
 DEVICES = dict(type='array', uniqueItems=True, minItems=1, maxItems=64,
                items=dict(oneOf=[dict(type='string', enum=['all']), dict(type='string', pattern=r'^npu:[0-9]+$')]))
