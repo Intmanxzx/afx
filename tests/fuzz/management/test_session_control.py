@@ -3,6 +3,26 @@ from autofusex.fuzz.daemon.management.store import Store
 from autofusex.fuzz.daemon.management.artifacts import atomic
 from autofusex.fuzz.daemon.management.session_control import reconcile
 from autofusex.fuzz.daemon.management import local_session, tasks
+from autofusex.fuzz.client.config import debug_directory, sync_directory
+
+
+def test_debug_directory_migrates_legacy_dumps(tmp_path):
+    legacy = tmp_path / 'autofuse_compile_debug'
+    legacy.mkdir()
+    (legacy / 'ascgen_dump_pid_1').mkdir()
+    (legacy / 'ascgen_dump_pid_1' / 'graph.txt').write_text('dump')
+    target = debug_directory(tmp_path)
+    assert target == tmp_path / 'debug' / 'autofuse_compile'
+    assert (target / 'ascgen_dump_pid_1' / 'graph.txt').read_text() == 'dump'
+    assert not legacy.exists()
+
+
+def test_sync_directory_migrates_legacy_state(tmp_path):
+    legacy = tmp_path / 'platform-sync.sqlite'
+    legacy.write_bytes(b'state')
+    target = sync_directory(tmp_path)
+    assert (target / 'platform-sync.sqlite').read_bytes() == b'state'
+    assert not legacy.exists()
 
 
 def test_local_manifest_preserves_execution_environment(monkeypatch):

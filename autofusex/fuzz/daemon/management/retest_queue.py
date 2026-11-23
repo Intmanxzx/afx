@@ -9,11 +9,13 @@ from .artifacts import atomic
 from ...client.contracts import Seed, ExecutionConfig, EvaluationConfig
 from ...client.scheduling.ledger import TaskLedger
 from ...client.scheduling.budgets import read_policy
+from ...client.config import retest_directory
 
 
 def submit(home, task):
     store = Store(home)
-    record = store.home / ('retest-' + str(int(task['task_id'])) + '.json')
+    record_dir = retest_directory(store.home)
+    record = record_dir / ('task-' + str(int(task['task_id'])) + '.json')
     if record.exists():
         saved = json.loads(record.read_text())
         if saved['lease_id'] == task['lease_id']:

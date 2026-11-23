@@ -21,6 +21,8 @@ def test_runner_uses_execution_environment_and_does_not_duplicate(tmp_path, monk
     args,kwargs=spawn.call_args
     assert args[0][0]=='/execution/bin/python'
     assert kwargs['env']['PYTHONPATH']=='/cann/python'
+    assert (tmp_path / 'retest').is_dir()
+    assert kwargs['stdout'].name.endswith('/retest/runner.log')
     assert kwargs['start_new_session']
     kill = Mock();monkeypatch.setattr(retests.os,'killpg',kill)
     (tmp_path/'daemon-control.json').write_text(json.dumps({'state':'stopped'}))

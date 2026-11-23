@@ -4,6 +4,7 @@ import json
 import socket
 import time
 from .artifacts import atomic
+from ...client.config import retest_directory
 from autofusex.platform.client import API, Client
 
 
@@ -58,7 +59,8 @@ def synchronize(manager, client):
         # `busy` is reserved for a client that is actively executing a
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".
-        busy=bool((store.home/'retest-claims.json').exists() and json.loads((store.home/'retest-claims.json').read_text()).get('tasks')), pending_uploads=0, runtime=[])
+        claims_path = retest_directory(store.home) / 'claims.json'
+        busy=bool(claims_path.exists() and json.loads(claims_path.read_text()).get('tasks')), pending_uploads=0, runtime=[])
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
     config = effective['config']

@@ -120,9 +120,17 @@ class Pool:
                 break
         scratch = tempfile.TemporaryDirectory(prefix='runtime-', dir=self.directory)
         a, b = socket.socketpair()
+        from ..config import debug_directory
+        debug_dir = debug_directory(os.environ.get('AFX_TASK_HOME', self.directory))
+        dfx_flags = [item for item in os.environ.get('AUTOFUSE_DFX_FLAGS', '').split(';')
+                     if item and not item.startswith('--debug_dir=')]
+        if '--codegen_compile_debug=true' not in dfx_flags:
+            dfx_flags.append('--codegen_compile_debug=true')
+        dfx_flags.append(f'--debug_dir={debug_dir}')
         env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                    TORCHINDUCTOR_COMPILE_THREADS=str(self.budget.compile_threads),
-                   TMPDIR=scratch.name, TORCHINDUCTOR_CACHE_DIR=scratch.name+'/inductor', TRITON_CACHE_DIR=scratch.name+'/triton')
+                   TMPDIR=scratch.name, TORCHINDUCTOR_CACHE_DIR=scratch.name+'/inductor',
+                   TRITON_CACHE_DIR=scratch.name+'/triton', AUTOFUSE_DFX_FLAGS=';'.join(dfx_flags))
         child = subprocess.Popen([sys.executable,'-m','autofusex.fuzz.client.scheduling.stage_worker',str(b.fileno())],
             pass_fds=(self.fd,b.fileno()),start_new_session=True,stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env)

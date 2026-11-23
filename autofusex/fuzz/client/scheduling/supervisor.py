@@ -261,9 +261,17 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                             append(database, task['attempt_id'], 'ready', observed)
                         append(database, task['attempt_id'], 'dispatched')
                     env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
+                    from ..config import debug_directory
+                    debug_dir = debug_directory(os.environ.get('AFX_TASK_HOME', ledger.path.parent))
+                    dfx_flags = [item for item in os.environ.get('AUTOFUSE_DFX_FLAGS', '').split(';')
+                                 if item and not item.startswith('--debug_dir=')]
+                    if '--codegen_compile_debug=true' not in dfx_flags:
+                        dfx_flags.append('--codegen_compile_debug=true')
+                    dfx_flags.append(f'--debug_dir={debug_dir}')
                     env.update(TMPDIR=scratch.name,TORCHINDUCTOR_CACHE_DIR=str(Path(scratch.name)/'inductor'),
                                TRITON_CACHE_DIR=str(Path(scratch.name)/'triton'),
-                               TORCHINDUCTOR_COMPILE_THREADS=str(execution['compile_threads']))
+                               TORCHINDUCTOR_COMPILE_THREADS=str(execution['compile_threads']),
+                               AUTOFUSE_DFX_FLAGS=';'.join(dfx_flags))
                     state['child']=subprocess.Popen(_worker_command(ledger,database,task),start_new_session=True,
                         pass_fds=(fd,),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                     from ..core_logs import ProcessTail

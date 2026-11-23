@@ -652,7 +652,9 @@ class Client:
         self.state = State(state_path)
         self.counters = Counters()
         self.devices = list(devices)
-        self.retest_db = retest_db or str(Path(state_path).with_name("retest-results.sqlite"))
+        default_retest_dir = Path(state_path).parent / 'retest'
+        default_retest_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.retest_db = retest_db or str(default_retest_dir / "results.sqlite")
         self.afx = afx_command or [sys.executable, "-m", "afx"]
         self.stop = threading.Event()
         self.env = None
@@ -921,7 +923,7 @@ def setup(args) -> int:
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 2
-    state = Path(args.state or results_path.with_name("platform-sync.sqlite"))
+    state = Path(args.state) if args.state else results_path.parent.parent / 'sync' / 'platform-sync.sqlite'
     client = Client(api, str(results_path), state, devices=args.device or [], interval=args.interval)
     try:
         beat = client.heartbeat()
@@ -964,7 +966,7 @@ def main(args) -> int:
         return setup(args)
     token = Path(args.token_file).read_text().strip()
     api = API(args.endpoint, token)
-    state = Path(args.state or (Path(args.results).with_name("platform-sync.sqlite")))
+    state = Path(args.state) if args.state else Path(args.results).parent.parent / 'sync' / 'platform-sync.sqlite'
     client = Client(api, args.results, state, devices=args.device or [], interval=args.interval)
     if args.action == "once":
         statuses = client.upload_once()
