@@ -92,13 +92,15 @@ def claim(store: Store, principal: Principal, body: dict):
         lease_ms = _setting(conn, "retest.lease_minutes") * 60_000
         tasks = []
         for backend, (version, sha) in installed.items():
-            # Issue rounds need the exact candidate package; manual retests ('*') run on any build.
+            # Manual retests run on the requester's clients, on any matching build.
+            # Issue rounds retain their exact candidate-package matching.
             rows = conn.execute(
                 "SELECT t.*, COALESCE(r.kind, t.task_kind) AS kind FROM retest_tasks t LEFT JOIN issue_rounds r "
                 "ON r.issue_id=t.issue_id AND r.round_no=t.round_no WHERE t.status='pending' AND t.npu_arch=? "
                 "AND t.required_backend=? AND ((t.required_version=? AND t.required_sha256=?) "
-                "OR t.required_version='*') ORDER BY t.task_id LIMIT ?",
-                (arch, backend, version, sha, limit - len(tasks))).fetchall()
+                "OR t.required_version='*') AND (t.issue_id<>'' OR t.requested_by=?) "
+                "ORDER BY t.task_id LIMIT ?",
+                (arch, backend, version, sha, principal.user_id, limit - len(tasks))).fetchall()
             for row in rows:
                 lease_id = secrets.token_hex(16)
                 conn.execute("UPDATE retest_tasks SET status='leased', client_id=?, lease_id=?, lease_expires_at=?, "
@@ -274,7 +276,7 @@ def round_tasks(store: Store, issue_id: str, round_no: int) -> list:
 
 # -- manual retests from the discovery page (design 6.3) -------------------------
 def create_manual(store: Store, principal: Principal, body: dict):
-    """Re-run selected cases on any client of the case's arch; results become current heads."""
+    """Re-run cases on the requester's matching clients; results become current heads."""
     principal.require_write()
     keys, backends = body.get("case_keys"), body.get("backends")
     if not isinstance(keys, list) or not 1 <= len(keys) <= 200 or not all(isinstance(k, str) for k in keys):

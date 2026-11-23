@@ -169,6 +169,36 @@ def test_manual_retest_runs_on_any_build_and_updates_head(world):
     assert task["executions"] == [{"exec_uuid": "exec-retest01", "backend": "af-mlir"}]
 
 
+@pytest.mark.parametrize('requester_is_admin', [False, True])
+def test_manual_retest_only_requester_can_claim_even_after_expiry(world, requester_is_admin):
+    store, uploader, admin = world
+    auth.add_user(store, 'requester', 'developer')
+    requester = admin if requester_is_admin else auth.authenticate(
+        store, 'Bearer ' + auth.issue_token(store, 'requester'))
+    retests.create_manual(store, requester, {'request_key': 'own-batch',
+        'case_keys': [seed(5)], 'backends': ['af-mlir']})
+
+    def claim(user, key, arch='910b', backend='af-mlir'):
+        return retests.claim(store, user, {'request_key': key, 'machine_id': 'm1',
+            'npu_arch': arch, 'installed': {backend: {'version': 'any', 'sha256': 'e' * 64}},
+            'limit': 1})['tasks']
+
+    assert claim(uploader, 'uploader-claim') == []
+    if not requester_is_admin:
+        assert claim(admin, 'admin-claim') == []
+    assert claim(requester, 'wrong-arch', arch='910c') == []
+    assert claim(requester, 'wrong-backend', backend='af-legacy') == []
+    tasks = claim(requester, 'requester-claim')
+    assert len(tasks) == 1
+    with store.write() as conn:
+        conn.execute('UPDATE retest_tasks SET lease_expires_at=0 WHERE task_id=?',
+                     (tasks[0]['task_id'],))
+    assert claim(uploader, 'uploader-reclaim') == []
+    reclaimed = claim(requester, 'requester-reclaim')
+    assert [t['task_id'] for t in reclaimed] == [tasks[0]['task_id']]
+    assert reclaimed[0]['lease_id'] != tasks[0]['lease_id']
+
+
 def test_profile_points_patterns_and_drafts(world):
     store, _, admin = world
     profile.MIN_PATTERN_CASES = 5
