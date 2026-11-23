@@ -48,6 +48,7 @@ def synchronize(manager, client):
         if operation and operation['state'] == 'succeeded':
             update_ack = request_id
     from .update_delivery import progress, receive
+    claims_path = retest_directory(store.home) / 'claims.json'
     heartbeat=dict(
         machine_id=identity[:128], client_home=home[:512],
         hostname=socket.gethostname(), npu_arch=env.get('device_model') or inventory['model'],
@@ -59,8 +60,10 @@ def synchronize(manager, client):
         # `busy` is reserved for a client that is actively executing a
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".
-        claims_path = retest_directory(store.home) / 'claims.json'
-        busy=bool(claims_path.exists() and json.loads(claims_path.read_text()).get('tasks')), pending_uploads=0, runtime=[])
+        busy=bool(claims_path.exists() and json.loads(claims_path.read_text()).get('tasks')),
+        pending_uploads=0,
+        runtime=[]
+    )
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
     config = effective['config']
