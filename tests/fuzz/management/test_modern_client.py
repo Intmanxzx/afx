@@ -76,3 +76,39 @@ def test_replay_uses_history_and_enqueues_before_generation(tmp_path):
     assert ledger.claim()['id']==first['task_ids'][0]
     assert ledger.claim()['id']==second['task_ids'][0]
     assert ledger.claim()['id']==normal
+
+
+def test_config_roundtrip_and_reset(tmp_path):
+    prefix = ['--data-dir', str(tmp_path / 'client')]
+    run([*prefix, 'init', '--local'])
+    spec = run([*prefix, 'config', 'export'])
+    spec['execution']['devices'] = ['npu:1']
+    path = tmp_path / 'task.json'
+    path.write_text(json.dumps(spec))
+    assert run([*prefix, 'config', 'validate', str(path)]) == spec
+    assert run([*prefix, 'config'])['config']['execution']['devices'] != ['npu:1']
+    assert run([*prefix, 'config', 'edit', str(path)])['config'] == spec
+    assert run([*prefix, 'config', 'reset'])['config']['results']['upload'] is False
+    path.write_text(json.dumps({'schema_version': 1, 'kind': 'client_policy'}))
+    with pytest.raises(ValueError, match='task configuration'):
+        run([*prefix, 'config', 'validate', str(path)])
+
+
+def test_managed_config_export_and_validation(tmp_path, monkeypatch):
+    from autofusex.platform.client import API
+    from autofusex.fuzz.daemon.management.modern_cli import _default_task
+    prefix = ['--data-dir', str(tmp_path / 'client')]
+    run([*prefix, 'init', '--token', 'test-token'])
+    spec = _default_task()
+    calls = []
+    def call(self, method, path, body=None):
+        calls.append((method, path, body))
+        return {'config': spec, 'source': 'personal'}
+    monkeypatch.setattr(API, 'call', call)
+    assert run([*prefix, 'config', 'export']) == spec
+    path = tmp_path / 'task.json'
+    path.write_text(json.dumps(spec))
+    assert run([*prefix, 'config', 'validate', str(path)]) == spec
+    assert len(calls) == 1
+    run([*prefix, 'config', 'edit', str(path)])
+    assert calls[-1] == ('POST', '/api/config/me', {'config': spec})

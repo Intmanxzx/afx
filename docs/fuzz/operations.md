@@ -19,7 +19,7 @@ afx start
 本节是管理员手工安装受信环境的进阶流程；普通客户端使用上面的 `init/start` 即可。
 
 1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`），启动 afx daemon start。
-2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。执行 afx management trust trust.json。trust 保存在 home 下私有文件，仅本地可修改。
+2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。高级安装由管理员维护 home 下的 trust.json（0600），不提供 CLI 或 IPC 写入接口。trust 保存在 home 下私有文件，仅本地可修改。
 3. 需要远程管理或上传时，使用 afx device enroll --token-stdin 从私有凭据来源读取 token，或执行 afx device pair 后在网页批准。
 4. 准备 environment.yaml，提交计划并执行；成功后取环境 ID 填到任务规格。
 
@@ -50,7 +50,7 @@ packages:
 
 trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../../autofusex/fuzz/daemon/management/environments.py) 和 [artifacts.py](../../autofusex/fuzz/daemon/management/artifacts.py)。普通 init/start 流程会准备当前环境的基础资源授权；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
 
-多卡或更高并发需同时配置 trust 和 afx config apply policy.yaml --wait 的资源上限。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
+多卡或更高并发通过任务配置设置，仍不得超过本机 trust 的资源上限；内部执行策略由客户端维护，不提供独立 policy 命令。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
 
 ## 结果数据库维护
 

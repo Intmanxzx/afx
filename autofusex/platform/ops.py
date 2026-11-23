@@ -392,7 +392,3 @@ def efficiency(store: Store, client_id=None, limit: int = 100) -> dict:
 
 def _version_key(version: str):
     return tuple(int(p) if p.isdigit() else -1 for p in re.split(r"[.+-]", version))
-
-
-def not_implemented(feature: str):
-    raise IssueError("not_implemented", f"{feature} is reserved for a later phase", 501)

@@ -551,19 +551,6 @@ def create_app(store: Store) -> FastAPI:
     def drafts(body: m.Drafts, principal=Depends(administrator)):
         return _success(profile.create_drafts(store, principal, data(body)))
 
-    @app.post('/api/import/baize', responses={501: {'model': m.Error}})
-    def import_baize(body: m.Payload, principal=Depends(writer)):
-        ops.not_implemented('Baize case import')
-
-    @app.post('/api/models/jobs', responses={501: {'model': m.Error}})
-    def create_model_job(body: m.Payload, principal=Depends(writer)):
-        ops.not_implemented('model analysis')
-
-    @app.get('/api/models/jobs', responses={501: {'model': m.Error}})
-    @app.get('/api/models/jobs/{job_id:path}', responses={501: {'model': m.Error}})
-    def model_job(job_id: str = '', principal=Depends(identity)):
-        ops.not_implemented('model analysis')
-
     @route('/healthz', include_in_schema=False)
     def health():
         return _success({'status': 'up'})

@@ -134,12 +134,6 @@ def _build_parser() -> argparse.ArgumentParser:
     action(operation, "logs", "Return bounded structured operation events.", options=[lambda p: p.add_argument("operation_id", metavar="OPERATION_ID"), lambda p: p.add_argument("--after", type=int, default=0)])
     action(operation, "cancel", "Cancel a queued operation or request cancellation of a running one.", options=[lambda p: p.add_argument("operation_id", metavar="OPERATION_ID")])
 
-    config = group("config", "Validate, inspect, apply, and export client policy configuration.")
-    action(config, "effective", "Show the last effective local client policy.")
-    action(config, "validate", "Validate a client policy YAML/JSON file.", options=[lambda p: _add_file(p)])
-    action(config, "apply", "Apply client policy to new tasks; running tasks are unchanged.", options=[lambda p: _add_file(p), lambda p: p.add_argument("--wait", action="store_true")])
-    action(config, "export", "Normalize a configuration file as YAML.", options=[lambda p: _add_file(p)])
-
     build = group("build", "Build a locally authorized CANN RUN package.")
     action(build, "submit", "Submit a build specification; returns an operation ID.", options=[lambda p: _add_file(p), lambda p: p.add_argument("--wait", action="store_true")])
     action(build, "inspect", "Inspect a build operation by operation ID.", options=[lambda p: p.add_argument("operation_id", metavar="OPERATION_ID")])
@@ -157,9 +151,6 @@ def _build_parser() -> argparse.ArgumentParser:
         lambda p: p.add_argument("--wait", action="store_true")])
     action(client, "status", "Show the active client release.")
 
-    management = group("management", "Local management authority and compatibility aliases.")
-    action(management, "trust", "Install a local trust policy; this is never accepted remotely.", options=[lambda p: _add_file(p)])
-    action(management, "status", "Show the same status as daemon status.")
     return root
 
 
@@ -272,10 +263,6 @@ def _run(args):
         if action == "status": return request(home, dict(action="status"))
         if action == "revoke": return request(home, dict(action="revoke"))
 
-    if group == "management":
-        if action == "trust": return request(home, dict(action="trust", policy=_read_file(args.file)))
-        if action == "status": return request(home, dict(action="status"))
-
     if group == "client":
         if action == "status":
             result = request(home, dict(action="status"))
@@ -328,14 +315,6 @@ def _run(args):
         if action == "wait": return _wait(home, args.operation_id, args.timeout)
         if action == "logs": return request(home, dict(action="events", id=args.operation_id, after=args.after))
         if action == "cancel": return _submit(home, args, "operation.cancel", {"operation_id": args.operation_id})
-
-    if group == "config":
-        if action == "effective": return request(home, dict(action="effective"))
-        if action == "validate": return validate(_read_file(args.file))
-        if action == "apply": return _submit(home, args, "config.apply", _read_file(args.file), wait=args.wait)
-        if action == "export":
-            import yaml
-            return {"yaml": yaml.safe_dump(validate(_read_file(args.file)), sort_keys=False, allow_unicode=True)}
 
     if group == "build":
         if action == "submit": return _submit(home, args, "build.submit", _read_file(args.file), wait=args.wait)

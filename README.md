@@ -77,6 +77,7 @@ afx restart                # 若更新了CANN包等，可热加载配置
 | [模型分析](docs/usage.md) | 模型运行、精度定位和报告 |
 | [功能示例](docs/feature_gallery.md) | 精度比较、图展示和生命周期分析 |
 | [Agent 配置](docs/agent_normalization.md) | 归一化与失败诊断 |
+| [统一平台重构设计](docs/platform_refactor_design.md) | 目标目录、进程边界、CLI 对比与迁移验收 |
 | [平台业务与 API](docs/fuzz/platform_v3_design.md) | 问题闭环、知识库及接口 |
 | [OpenAPI 接口](docs/openapi.md) | 下载 `/openapi.json` 与自动生成方式 |
 | [服务端部署与备份](deploy/platform/README.md) | 安装、身份发放、备份与恢复 |

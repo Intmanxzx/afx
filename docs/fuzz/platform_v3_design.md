@@ -1,6 +1,6 @@
 # AutofuseX 一站式开发平台：业务与数据设计（v3）
 
-autofusex 一站式开发平台：基于 Agent 的问题闭环、知识库、数据库与 HTTP API。[afx-repair skill](../../skills/afx-repair/SKILL.md) 把本文件第 5、8 节当作当前 API 参考。Baize 导入、整网分析两项尚未实现，接口返回 501，见第 5、7 节。
+autofusex 一站式开发平台：基于 Agent 的问题闭环、知识库、数据库与 HTTP API。[afx-repair skill](../../skills/afx-repair/SKILL.md) 把本文件第 5、8 节当作当前 API 参考。Baize 导入、整网分析两项尚未实现，尚未开放 HTTP 接口，见第 5、7 节。
 
 本次按新产品开发：从空库部署，不迁移历史数据，不保留旧接口、旧页面或旧协议的兼容层。现有代码中可复用的部分（租约、幂等 request_key、复测客户端协议、client.update）按新设计重写接入。
 
@@ -377,8 +377,8 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 | | `POST /api/admin/issues/{id}/merge` / `close` | admin | 合并/关闭问题 |
 | | `GET/PUT /api/admin/settings` | admin | 回归预算与各层占比、性能持平阈值等；PUT 带 `base_revision` 防并发覆盖 |
 | 复测 | `POST /api/retests` / `GET /api/retests?mine=1` | 写 | 页面手动复测选中用例（不属于问题流程）；按 用例 × backend × arch 合并任务 |
-| 预留 | `POST /api/import/baize` | 写 | 导入 Baize 用例（构图+输入），返回 case_key 列表；本期返回 501 |
-| 预留 | `POST /api/models/jobs`、`GET /api/models/jobs/{id}` | 写 | 整网分析任务与报告；本期返回 501 |
+| 预留 | `POST /api/import/baize` | 写 | 导入 Baize 用例（构图+输入），返回 case_key 列表；尚未开放，不注册路由 |
+| 预留 | `POST /api/models/jobs`、`GET /api/models/jobs/{id}` | 写 | 整网分析任务与报告；尚未开放，不注册路由 |
 
 领取返回示例（关键字段）：
 
@@ -576,7 +576,7 @@ afx platform --data DIR rebuild-stats
 
    invalid 不算修复失败；一轮里没有 fail、只有 invalid 时，问题退回修复中，需要重新提交验证。任务租约默认 60 分钟，超时重新排队，连续超时 3 次判为 invalid。
 
-当前未实现：flaky 用例识别；验证/回归任务的优先级与公平调度；按特征把多个问题打包领取；Baize 导入与整网分析（见第 7 节，接口返回 501）。
+当前未实现：flaky 用例识别；验证/回归任务的优先级与公平调度；按特征把多个问题打包领取；Baize 导入与整网分析（见第 7 节，尚未开放 HTTP 接口）。
 
 入库吞吐（1 万用例本地合成，含签名计算与性能对比）：约 5500 执行/秒。
 

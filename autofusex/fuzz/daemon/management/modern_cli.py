@@ -65,7 +65,7 @@ def parser():
                                    "stop": "stop the client", "restart": "restart after environment/package changes"}[name])
 
     cfg = sub.add_parser("config")
-    cfg.add_argument("action", choices=("show", "edit", "reset"), nargs="?", default="show")
+    cfg.add_argument("action", choices=("show", "edit", "reset", "validate", "export"), nargs="?", default="show")
     cfg.add_argument("file", nargs="?")
     replay = sub.add_parser("replay")
     replay.add_argument("seeds", nargs="+")
@@ -122,23 +122,51 @@ def run(argv=None):
     if args.command == "config":
         client_path=home/'client.json'
         client=json.loads(client_path.read_text()) if client_path.exists() else {}
+        from .config import load, parse, MAX_BYTES
+        spec = None
+        if args.action in {'edit', 'validate'}:
+            if not args.file:
+                raise ValueError('config edit/validate requires a JSON/YAML file or -')
+            if args.file == '-':
+                import sys
+                spec = validate(parse(sys.stdin.read(MAX_BYTES + 1)))
+            else:
+                spec = load(args.file)
+            if spec['kind'] != 'fuzz_task':
+                raise ValueError('config requires a task configuration')
+            if client.get('mode') == 'managed':
+                if spec['workload']['mode'] != 'generate':
+                    raise ValueError('managed task profile must describe generation')
+            elif spec['results']['upload']:
+                raise ValueError('local mode cannot upload results')
+            if args.action == 'validate':
+                return spec
+        elif args.file:
+            raise ValueError('show/reset/export do not accept a file')
         if client.get('mode')=='managed':
             from autofusex.platform.client import API
             api=API(client['endpoint'],client['token'])
-            if args.action=='show':return api.call('GET','/api/config/me')
-            from .config import load
-            return api.call('POST','/api/config/me',{'config':load(args.file) if args.action=='edit' else None})
+            if args.action in {'show', 'export'}:
+                result = api.call('GET', '/api/config/me')
+            else:
+                result = api.call('POST', '/api/config/me', {'config': spec})
+            return result['config'] if args.action == 'export' else result
         task = home / "task.json"
         if args.action == "reset":
-            _write(task, _default_task())
+            spec = _default_task()
+            spec['results']['upload'] = False
+            _write(task, spec)
         elif args.action == "edit":
             if not args.file:
                 raise ValueError("config edit requires a JSON/YAML file path")
             from .config import load
-            _write(task, load(args.file))
+            _write(task, spec)
         elif not task.exists():
-            _write(task, _default_task())
-        return json.loads(task.read_text(encoding="utf-8"))
+            spec = _default_task()
+            spec['results']['upload'] = False
+            return spec if args.action == 'export' else {'config': spec, 'source': 'local'}
+        spec = load(task)
+        return spec if args.action == 'export' else {'config': spec, 'source': 'local'}
     if args.command == "start":
         if not (home / "client.json").exists():
             raise ValueError("run afx init first")
@@ -195,7 +223,11 @@ def run(argv=None):
 def main(argv=None):
     try:
         result = run(argv)
-        print(canonical({"schema_version": 1, "ok": True, "data": result}))
+        args = parser().parse_args(argv)
+        if args.command == 'config' and args.action == 'export':
+            print(canonical(result))
+        else:
+            print(canonical({"schema_version": 1, "ok": True, "data": result}))
         return 0
     except Exception as exc:
         print(canonical({"schema_version": 1, "ok": False, "error": {"code": type(exc).__name__, "message": str(exc)[:400]}}))

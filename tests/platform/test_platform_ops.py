@@ -273,8 +273,8 @@ def test_http_static_reserved_and_security_headers(world):
         assert call("GET", "/../secret.key", auth_header=False)[0].status == 404
         assert call("GET", "/static/../../core.db", auth_header=False)[0].status == 404
         assert call("GET", "/healthz", auth_header=False)[0].status == 200
-        assert call("POST", "/api/import/baize", {"request_key": "x"})[0].status == 501
-        assert call("GET", "/api/models/jobs/abc")[0].status == 501
+        assert call("POST", "/api/import/baize", {"request_key": "x"})[0].status == 404
+        assert call("GET", "/api/models/jobs/abc")[0].status == 404
         response, data = call("GET", "/api/cases?q=" + "backend:x%3BDROP")
         assert response.status == 400 and json.loads(data)["error"]["code"] == "invalid_query"
         response, data = call("GET", "/api/cases?q=category:reduce%20status:fail%20backend:af-mlir")

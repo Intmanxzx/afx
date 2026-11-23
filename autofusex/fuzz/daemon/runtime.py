@@ -102,7 +102,6 @@ class Manager:
             return self.store.submit(body['kind'],payload,body['request_key'])
         if action=='operation': return self.store.operation(body['id'])
         if action=='events': return self.store.events(body['id'],int(body.get('after',0)))
-        if action=='effective': return self.store.get('effective_policy',{})
         if action=='query': return self.query(body.get('query'), body.get('value'))
         if action=='revoke':
             credential=self.store.get('credential')
@@ -121,11 +120,6 @@ class Manager:
             self.store.put('credential',dict(endpoint=body['endpoint'],device_id=result['device_id'],token=result['token']))
             self.store.put('pairing',None)
             return dict(device_id=result['device_id'],state='paired')
-        if action=='trust':
-            # Local socket only. Server operations cannot modify this authority.
-            from .artifacts import atomic
-            if not isinstance(body['policy'],dict): raise ValueError('local trust object required')
-            atomic(self.store.home/'trust.json',body['policy']);return dict(saved=True)
         raise ValueError('unknown local action')
 
     def query(self, query, value=None):
