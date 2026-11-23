@@ -6,11 +6,15 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import logging
 from .runtime import request
 from .management.store import Store
 
+LOG = logging.getLogger('autofusex.supervisor')
+
 
 def run(home):
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
     store=Store(home)
     with (store.home/'launcher.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -29,6 +33,7 @@ def run(home):
                     verify_manifest(store.home,manifest['envelope']);python=manifest['python']
                 store.put('normal_shutdown',False)
                 try:
+                    LOG.info('daemon.start python=%s', python)
                     child=subprocess.Popen([python,'-m','autofusex','daemon','run','--data-dir',str(store.home)],stdin=subprocess.DEVNULL)
                 except OSError:
                     activation = store.get('client_switch', {})
@@ -63,20 +68,31 @@ def run(home):
                     activation['restored'] = True
                     store.put('client_switch', activation)
                 if activation.get('state') == 'activating':
-                    from .management.activation import ready, finish
+                    from .management.activation import readiness, finish
                     try:
                         if activation.get('resume'):
                             request(store.home, dict(action='resume_upgrade' if activation.get('drained') else 'start_session'))
                         deadline = time.monotonic() + 120
+                        last_reason = None
+                        last_event_at = 0.0
                         while time.monotonic() < deadline:
                             if child.poll() is not None:
                                 raise RuntimeError('new control process exited')
-                            if ready(store, activation, request(store.home, dict(action='status'))):
+                            ok, reason = readiness(store, activation, request(store.home, dict(action='status')))
+                            if not ok and (reason != last_reason or time.monotonic() - last_event_at >= 5):
+                                store.event(activation.get('operation_id'), 'activation.wait ' + reason)
+                                last_reason, last_event_at = reason, time.monotonic()
+                            if ok:
+                                store.event(activation.get('operation_id'), 'activation.ready')
                                 break
                             time.sleep(.2)
                         else:
+                            store.event(activation.get('operation_id'), 'activation.timeout last_reason=%s' % reason)
+                            LOG.error('activation readiness timeout operation=%s last_reason=%s', activation.get('operation_id'), reason)
                             raise TimeoutError('activation readiness timeout')
-                    except Exception:
+                    except Exception as exc:
+                        LOG.exception('activation failed version=%s operation=%s', activation.get('target', {}).get('version'), activation.get('operation_id'))
+                        store.event(activation.get('operation_id'), 'activation.error %s: %s' % (type(exc).__name__, str(exc)[:700]))
                         try:
                             if child.poll() is None:
                                 request(store.home, dict(action='drain_upgrade' if activation.get('drained') else 'stop_session'))

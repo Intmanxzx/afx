@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import re
 import uuid
+import urllib.request
+import threading
 
 from .auth import Principal
 from .issues import IssueError, idempotent
@@ -18,6 +20,45 @@ ONLINE_MS = 5 * 60_000
 COUNTERS = ("executions", "uploads", "upload_errors", "retests")
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 _VERSION = re.compile(r"^[A-Za-z0-9_.+-]{1,64}$")
+_PYPI_CACHE = {}
+_PYPI_LOCK = threading.Lock()
+_UPDATE_TIMEOUT_MS = 300_000
+
+
+def latest_pypi_version(store):
+    now = now_ms()
+    with _PYPI_LOCK:
+        cached = dict(_PYPI_CACHE)
+    if cached.get('version') and now - cached.get('at', 0) < 300_000:
+        return cached['version']
+    try:
+        with urllib.request.urlopen('https://pypi.org/pypi/autofusex/json', timeout=5) as response:
+            value = json.loads(response.read()).get('info', {}).get('version')
+        if isinstance(value, str) and _VERSION.fullmatch(value):
+            with _PYPI_LOCK:
+                _PYPI_CACHE.update(version=value, at=now)
+            return value
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return cached.get('version')
+
+
+def _reconcile_update_timeouts(store):
+    now = now_ms()
+    with store.write() as conn:
+        rows = conn.execute("SELECT client_id, target_afx_version, update_status FROM clients WHERE target_afx_version IS NOT NULL").fetchall()
+        for row in rows:
+            try:
+                status = json.loads(row['update_status'] or '{}')
+            except (TypeError, ValueError):
+                status = {}
+            phase = status.get('phase')
+            started = status.get('started_at')
+            if phase not in {'stopping', 'upgrading'} or not isinstance(started, int) or now - started <= _UPDATE_TIMEOUT_MS:
+                continue
+            failed_phase = 'stop_timeout' if phase == 'stopping' else 'upgrade_timeout'
+            conn.execute("UPDATE clients SET update_status=?, target_afx_version=NULL, update_request_id=NULL, target_daemon_state=NULL, daemon_request_id=NULL WHERE client_id=?",
+                         (json.dumps({'state': 'failed', 'version': row['target_afx_version'], 'phase': failed_phase, 'failed_at': now}), row['client_id']))
 
 
 def is_online(last_heartbeat_at, now):
@@ -26,6 +67,7 @@ def is_online(last_heartbeat_at, now):
 
 def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
     principal.require_write()
+    _reconcile_update_timeouts(store)
     machine_id = body.get("machine_id")
     if not isinstance(machine_id, str) or not 1 <= len(machine_id) <= 128:
         raise IssueError("invalid", "machine_id is required")
@@ -99,10 +141,26 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
             if not isinstance(progress, dict) or progress.get('state') not in {'idle','queued','running','activating','succeeded','failed','needs_attention','cancelled'}:
                 raise IssueError('invalid', 'invalid update status')
             safe = dict(state=progress['state'], version=str(progress.get('version',''))[:64])
+            # The server owns stop/upgrade phases and deadlines. Client progress can
+            # update the visible state, but must not move an orchestration backwards.
+            existing = conn.execute('SELECT target_afx_version, update_status FROM clients WHERE client_id=?', (client_id,)).fetchone()
+            current = json.loads(existing['update_status'] or '{}') if existing and existing['update_status'] else {}
+            if existing and existing['target_afx_version'] and current.get('phase') in {'stopping', 'upgrading'}:
+                if progress['state'] in {'succeeded', 'failed', 'needs_attention'}:
+                    safe.update(phase=current.get('phase'), started_at=current.get('started_at'))
+                else:
+                    safe.update(phase=current.get('phase'), started_at=current.get('started_at'))
+            else:
+                phase = str(progress.get('phase',''))[:32]
+                started = progress.get('started_at')
+                if phase or started is not None:
+                    safe.update(phase=phase, started_at=started)
             conn.execute('UPDATE clients SET update_status=? WHERE client_id=?', (json.dumps(safe), client_id))
-        row = conn.execute("SELECT target_afx_version, afx_version, update_request_id, target_daemon_state, daemon_request_id FROM clients WHERE client_id=?",
+        row = conn.execute("SELECT target_afx_version, afx_version, update_request_id, target_daemon_state, daemon_request_id, daemon_state FROM clients WHERE client_id=?",
                            (client_id,)).fetchone()
         target = row["target_afx_version"]
+        progress_row = conn.execute("SELECT update_status FROM clients WHERE client_id=?", (client_id,)).fetchone()
+        progress = json.loads(progress_row[0]) if progress_row and progress_row[0] else {}
         if (target is not None and target == row["afx_version"]
                 and body.get("update_ack") == row["update_request_id"]):
             conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL WHERE client_id=?", (client_id,))
@@ -122,7 +180,15 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
                          (now, principal.user_id, "client.daemon_state", f"client {client_id} -> {reported_state}"))
             daemon_target = None
             daemon_request = None
-    return {"client_id": client_id, "update_to": target,
+    # Release an update only after the daemon has acknowledged a stopped state.
+    # The daemon keeps heartbeating while workers drain, so control visibility
+    # is retained throughout the transition.
+        if target and reported_state == "stopped" and body.get('daemon_request_id') == row['daemon_request_id'] and progress.get('phase') == 'stopping':
+            conn.execute("UPDATE clients SET update_status=? WHERE client_id=?",
+                         (json.dumps({'state': 'running', 'version': target, 'phase': 'upgrading', 'started_at': now}), client_id))
+            progress = {'state': 'running', 'version': target, 'phase': 'upgrading', 'started_at': now}
+        update_ready = target is not None and progress.get('phase') == 'upgrading'
+    return {"client_id": client_id, "update_to": target if update_ready else None,
             "update_request_id": row["update_request_id"] if target else None,
             "daemon_state": daemon_target,
             "daemon_request_id": daemon_request if daemon_target else None,
@@ -135,15 +201,28 @@ def request_update(store: Store, principal: Principal, body: dict):
     if not isinstance(ids, list) or not 1 <= len(ids) <= 200 or not all(
             isinstance(i, int) and not isinstance(i, bool) for i in ids):
         raise IssueError("invalid", "client_ids must list 1..200 client ids")
-    if version is not None and (not isinstance(version, str) or not _VERSION.match(version)):
-        raise IssueError("invalid", "version must be an exact package version or null to cancel")
+    if "version" in body and version is None:
+        def cancel(conn):
+            count = 0
+            for client_id in ids:
+                count += conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL, update_status=?, target_daemon_state=NULL, daemon_request_id=NULL WHERE client_id=?",
+                                     (json.dumps({'state': 'cancelled'}), client_id)).rowcount
+            return {'requested': count, 'cancelled': True}
+        return idempotent(store, principal, "client-update", body.pop("request_key", None), body, cancel)
+    if version is None:
+        version = latest_pypi_version(store)
+    if not isinstance(version, str) or not _VERSION.fullmatch(version):
+        raise IssueError("unavailable", "最新 autofusex 版本暂不可用", 503)
 
     def action(conn):
         count = 0
-        request_id = str(uuid.uuid4()) if version else None
+        request_id = str(uuid.uuid4())
         for client_id in ids:
-            count += conn.execute("UPDATE clients SET target_afx_version=?, update_request_id=? WHERE client_id=?",
-                                  (version, request_id, client_id)).rowcount
+            daemon_request = str(uuid.uuid4())
+            count += conn.execute(
+                "UPDATE clients SET target_afx_version=?, update_request_id=?, update_status=?, "
+                "target_daemon_state='stopped', daemon_request_id=? WHERE client_id=? AND deleted_at IS NULL",
+                (version, request_id, json.dumps({'state': 'queued', 'version': version, 'phase': 'stopping', 'started_at': now_ms()}), daemon_request, client_id)).rowcount
         conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                      (now_ms(), principal.user_id, "client.update_requested", f"{ids} -> {version}"))
         return {"requested": count, "version": version}
@@ -186,6 +265,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
     baselines excluded) so it matches the overview; heartbeat counters would also count re-uploads
     and backfills in the hour they arrive. Live runtime snapshots are returned only for the
     viewer's own clients (admins may ask for scope=all)."""
+    _reconcile_update_timeouts(store)
     conn = store.reader()
     now = now_ms()
     hour = now // 3_600_000
@@ -258,7 +338,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
         "online_clients": sum(c["online"] for c in clients),
         "executions_24h": sum(c["last_24h"]["executions"] for c in clients),
         "pending_uploads": sum(c["pending_uploads"] or 0 for c in clients if c["online"]),
-        "retest_queue": queue, "db_bytes": sizes, "latest_afx_version": latest,
+        "retest_queue": queue, "db_bytes": sizes, "latest_afx_version": latest_pypi_version(store),
         "clients": clients, "users": users, "hourly": series,
     }
 

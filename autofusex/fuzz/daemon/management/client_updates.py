@@ -5,7 +5,10 @@ import subprocess
 import sys
 import uuid
 import time
+import logging
 from .artifacts import atomic, command
+
+LOG = logging.getLogger('autofusex.client_update')
 
 
 def _canonical_version(value):
@@ -20,6 +23,8 @@ def _venv_python(path):
 
 
 def install(store, payload, processes, operation_id=None):
+    LOG.info('update.start operation=%s version=%s processes=%d', operation_id, payload.get('version'), len(processes))
+    store.event(operation_id, 'update.start version=%s processes=%d' % (payload.get('version'), len(processes)))
     from .upgrade_drain import BUSY, begin, wait
     if store.get('client_switch', {}).get('state') in BUSY:
         raise ValueError('another activation is in progress')
@@ -36,9 +41,12 @@ def install(store, payload, processes, operation_id=None):
     switch['state'] = 'staging'
     switch['install_started'] = time.time()
     store.put('client_switch', switch)
+    store.event(operation_id, 'update.staging version=%s' % payload.get('version'))
     try:
         return stage(store, payload, processes, operation_id, switch)
     except Exception:
+        LOG.exception('update.stage_failed operation=%s version=%s', operation_id, payload.get('version'))
+        store.event(operation_id, 'update.stage_failed')
         switch.update(state='stage_failed')
         store.put('client_switch', switch)
         raise
