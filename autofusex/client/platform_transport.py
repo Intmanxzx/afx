@@ -6,12 +6,13 @@ Its own progress lives in a separate SQLite file next to it, so the old sync
 path and this uploader never share state.
 
 usage:
-  afx platform client --endpoint https://host --token-file F --results DB setup
-  afx platform client --endpoint https://host --token-file F --results DB run [--retest --device npu:0]
+  afx sync --endpoint https://host --token-file F --results DB setup
+  afx sync --endpoint https://host --token-file F --results DB run
+  afx retest --endpoint https://host --token-file F --results DB run --device npu:0
 
 `setup` fixes --token-file permissions, creates the --results directory, confirms the
 token/endpoint by sending one heartbeat, and prints the `fuzz run`/`client run` commands
-to copy next. It never writes or invents a token: paste the one `afx platform token issue
+to copy next. It never writes or invents a token: paste the one `afx server token issue
 USER` printed into --token-file first.
 """
 from __future__ import annotations
@@ -900,7 +901,7 @@ def setup(args) -> int:
     if not token_path.exists():
         print(json.dumps({"ok": False, "error":
             f"{token_path} does not exist; paste the token from "
-            "`afx platform token issue USER` into it (chmod 600), then rerun setup"}),
+            "`afx server token issue USER` into it (chmod 600), then rerun setup"}),
             file=sys.stderr)
         return 2
     try:
@@ -934,12 +935,10 @@ def setup(args) -> int:
     except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
         print(json.dumps({"ok": False, "error": f"could not reach {args.endpoint}: {exc}"}), file=sys.stderr)
         return 2
-    client_cmd = ["afx", "platform", "client", "run", "--endpoint", args.endpoint,
+    client_cmd = ["afx", "retest" if args.retest else "sync", "run", "--endpoint", args.endpoint,
                   "--token-file", str(token_path), "--results", str(results_path)]
     for device in args.device or []:
         client_cmd += ["--device", device]
-    if args.retest:
-        client_cmd.append("--retest")
     data_dir = _implied_data_dir(results_path)
     warnings = []
     if data_dir is not None:

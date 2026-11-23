@@ -7,7 +7,7 @@ curl -fsS http://127.0.0.1:8100/openapi.json -o openapi.json
 
 原有启动命令不变：
 
-afx platform --data DIR serve --host 127.0.0.1 --port 8100
+afx server --data DIR serve --host 127.0.0.1 --port 8100
 
 路由、路径和查询参数、请求模型及鉴权依赖在实际 FastAPI 接口中声明；OpenAPI
 由框架自动生成，不再维护第二份路径清单。新增接口时使用同一注册方式和 Pydantic

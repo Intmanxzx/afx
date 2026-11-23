@@ -272,3 +272,5 @@ AFX 默认作为客户端，init/start/stop/restart/status 是正式顶层命令
 mlir 独立临时目录全量回归结果为 1371 passed、7 failed、2 skipped（474 秒）。失败项均在迁移前基线复现：历史 CPU-only 状态期望、生成 golden fingerprints、已删除 session.js 的遗留测试，以及四项独立同步 setup 测试。同步 setup 的实际缺陷是未创建状态数据库父目录，本批修复；其余失败保留记录，不能通过重写历史指纹掩盖。全量中的后台执行测试已通过。加载项目环境后检查两个 NPU 芯片均为 Health OK；未部署或替换现有客户端。
 
 同步初始化修复与序列化抽取后的定向回归：32 passed（96.75 秒），覆盖 contracts 隔离、架构边界、同步 setup、任务队列及后台执行。
+
+CLI 第二阶段已实现 server 与 sync/retest 的职责分离：server 不再注册 client 子命令；sync 提供 setup/run/once/status，retest 提供 run/once（持续模式保留上传与心跳）。部署入口改用 server。mlir 路由和备份回归 10 passed；其他 CLI 分组仍待完成。

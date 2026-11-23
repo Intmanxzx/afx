@@ -29,7 +29,7 @@ afx fuzz run --count 100 --save
 afx fuzz status
 ~~~
 
-完整参数见下文"方式二"。要把结果上传到云端（上传、心跳、复测），独立运行 `afx platform client run`，用法见 [deploy/platform/README.md](../../deploy/platform/README.md#客户端npu机器)。
+完整参数见下文"方式二"。要把结果上传到云端（上传、心跳、复测），独立运行 `afx sync run`，用法见 [deploy/platform/README.md](../../deploy/platform/README.md#客户端npu机器)。
 
 ## 安装与准备
 
@@ -121,7 +121,7 @@ afx fuzz stop
 afx fuzz replay SEED --save
 ~~~
 
-将 SEED 替换为结果中的当前 E/F seed。不传 count 持续生成，`--fg` 前台运行，`--save` 才归档结果到本地库；上传到云端用独立的 `afx platform client run`（见上文"快速开始"）。
+将 SEED 替换为结果中的当前 E/F seed。不传 count 持续生成，`--fg` 前台运行，`--save` 才归档结果到本地库；上传到云端用独立的 `afx sync run`（见上文"快速开始"）。
 
 | 目的 | 命令 |
 |---|---|

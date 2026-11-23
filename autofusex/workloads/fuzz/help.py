@@ -12,7 +12,7 @@ class ScenarioParser(argparse.ArgumentParser):
   status                                 查看任务状态
   stop                                   停止当前测试
 
-云端上报 · 见 afx platform client -h（上传、心跳、复测）
+云端上报 · 见 afx sync -h（上传、心跳、复测）
 
 本地查看 · 无需 Torch / CANN / NPU / Node
   view RESULTS.sqlite                    浏览器查看可信 SQLite 快照

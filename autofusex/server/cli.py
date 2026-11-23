@@ -1,4 +1,4 @@
-"""afx platform: serve the platform API and manage offline-issued users and tokens."""
+"""afx server: serve the platform API and manage offline-issued users and tokens."""
 from __future__ import annotations
 
 import argparse
@@ -7,20 +7,9 @@ import sys
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="afx platform", description="AutofuseX platform server")
+    parser = argparse.ArgumentParser(prog="afx server", description="AutofuseX platform server")
     parser.add_argument("--data", help="server data directory holding core/content/stats databases")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    client = sub.add_parser("client", help="upload local fuzz results, heartbeat and run retest tasks; "
-                             "'setup' bootstraps a new host and checks the token/endpoint first")
-    client.add_argument("action", choices=("setup", "run", "once", "retest-once", "status"))
-    client.add_argument("--endpoint", required=True, help="platform URL, e.g. https://autofuse.online")
-    client.add_argument("--token-file", required=True, help="file holding the client token (chmod 600)")
-    client.add_argument("--results", required=True, help="local results.sqlite written by afx fuzz --save")
-    client.add_argument("--state", help="uploader state file (default: next to --results)")
-    client.add_argument("--device", action="append", help="NPU for retest tasks, repeatable (npu:0)")
-    client.add_argument("--retest", action="store_true", help="also claim and run retest tasks")
-    client.add_argument("--interval", type=float, default=30)
 
     serve = sub.add_parser("serve", help="run the HTTP API (loopback; put a TLS proxy in front)")
     serve.add_argument("--host", default="127.0.0.1")
@@ -59,9 +48,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "client":
-        from autofusex.client.platform_transport import main as client_main
-        return client_main(args)
     if not args.data:
         parser.error("--data is required for server commands")
     if args.command in ("backup", "verify-backup", "restore"):
@@ -87,7 +73,7 @@ def main(argv=None) -> int:
         if args.command == "serve":
             from autofusex.server.server import create_server
             server = create_server(args.data, args.host, args.port)
-            print(f"afx platform listening on http://{args.host}:{args.port}", file=sys.stderr)
+            print(f"afx server listening on http://{args.host}:{args.port}", file=sys.stderr)
             try:
                 server.serve_forever()
             except KeyboardInterrupt:

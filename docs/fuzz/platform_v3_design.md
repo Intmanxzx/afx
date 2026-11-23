@@ -526,12 +526,12 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 管理命令：
 
 ```sh
-afx platform --data DIR user add alice --role developer
-afx platform --data DIR token issue alice
-afx platform --data DIR token list
-afx platform --data DIR token revoke afx_XXXXXXXX
-afx platform --data DIR serve --port 8100
-afx platform --data DIR rebuild-stats
+afx server --data DIR user add alice --role developer
+afx server --data DIR token issue alice
+afx server --data DIR token list
+afx server --data DIR token revoke afx_XXXXXXXX
+afx server --data DIR serve --port 8100
+afx server --data DIR rebuild-stats
 ```
 
 已实现的路由（全部要求 Bearer token，写请求都带 `request_key`，同 key 同 body 返回首次结果，不同 body 返回 409）：

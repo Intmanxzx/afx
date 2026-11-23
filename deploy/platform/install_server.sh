@@ -7,8 +7,8 @@ usage() {
 Usage: install_server.sh --wheel FILE --root DIR [--port 8100] [--user USER] [--service afx-platform] [--python python3]
   ROOT/data holds core.db, content.db, stats.db and secret.key (created on first start).
   Users and tokens are issued afterwards with:
-    ROOT/bin/afx platform --data ROOT/data user add NAME --role admin
-    ROOT/bin/afx platform --data ROOT/data token issue NAME   # one token per user; reissuing revokes the old one
+    ROOT/bin/afx server --data ROOT/data user add NAME --role admin
+    ROOT/bin/afx server --data ROOT/data token issue NAME   # one token per user; reissuing revokes the old one
 HELP
 }
 WHEEL=; ROOT=; PORT=8100; USER_NAME=$(id -un); SERVICE=afx-platform; PYTHON_BIN=python3
@@ -56,7 +56,7 @@ After=network.target
 Type=simple
 User=$USER_NAME
 WorkingDirectory=$ROOT
-ExecStart=$VENV/bin/python -I -m afx platform --data $ROOT/data serve --host 127.0.0.1 --port $PORT
+ExecStart=$VENV/bin/python -I -m afx server --data $ROOT/data serve --host 127.0.0.1 --port $PORT
 Restart=on-failure
 RestartSec=5
 UMask=0077

@@ -13,7 +13,7 @@ def synchronize(manager, client):
     api=API(client['endpoint'],client['token'],timeout=15)
     # Use the same deterministic identity as the standalone platform client.
     # The old daemon path generated a random UUID, so `afx start` and
-    # `afx platform client run` on the same host appeared as two clients.
+    # `afx sync run` on the same host appeared as two clients.
     from autofusex.execution.environment import collect
     env = collect(store.home)
     home = str(store.home.resolve())

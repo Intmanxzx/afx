@@ -34,13 +34,13 @@ sudo systemctl start afx-platform-backup@full.service && journalctl -u afx-platf
 只能恢复到空目录，恢复前先停服务：
 
 ```bash
-afx platform --data /data/afx-platform.new restore afx-platform-20261117T033000Z.tar
+afx server --data /data/afx-platform.new restore afx-platform-20261117T033000Z.tar
 ```
 
 用较新的 core 归档恢复时，用最近一次完整归档补 content：
 
 ```bash
-afx platform --data /data/afx-platform.new restore afx-platform-20261117T153000Z-core.tar --content-from afx-platform-20261117T033000Z.tar
+afx server --data /data/afx-platform.new restore afx-platform-20261117T153000Z-core.tar --content-from afx-platform-20261117T033000Z.tar
 ```
 
 两次快照之间新增的日志无法找回，执行详情会标记 `log_missing`，不会伪造内容。stats.db 在服务启动时自动重建。
@@ -50,7 +50,7 @@ afx platform --data /data/afx-platform.new restore afx-platform-20261117T153000Z
 每月在远端执行一次，确认备份能用：
 
 ```bash
-afx platform --data /tmp/unused verify-backup /srv/backups/afx-platform/afx-platform-最新.tar
+afx server --data /tmp/unused verify-backup /srv/backups/afx-platform/afx-platform-最新.tar
 ```
 
 ## 服务端安装与升级
@@ -63,10 +63,10 @@ bash deploy/platform/install_server.sh --wheel autofusex-0.2.0-py3-none-any.whl 
 - `ROOT/bin/afx` 指向当前版本。用户与 token 离线发放：
 
 ```bash
-ROOT/bin/afx platform --data ROOT/data user add alice --role developer
-ROOT/bin/afx platform --data ROOT/data token issue alice   # one token per user; reissuing revokes the old one
-ROOT/bin/afx platform --data ROOT/data token list
-ROOT/bin/afx platform --data ROOT/data token revoke afx_XXXXXXXX
+ROOT/bin/afx server --data ROOT/data user add alice --role developer
+ROOT/bin/afx server --data ROOT/data token issue alice   # one token per user; reissuing revokes the old one
+ROOT/bin/afx server --data ROOT/data token list
+ROOT/bin/afx server --data ROOT/data token revoke afx_XXXXXXXX
 ```
 
 - Caddy 等 TLS 代理把站点反代到 `127.0.0.1:8100`。服务会在响应前读完请求体，以防代理复用连接时残留的请求体污染下一个请求。
@@ -92,11 +92,11 @@ afx status
 
 ```bash
 afx fuzz run --save --backend af-mlir --backend af-legacy --device npu:0 --device npu:1   # 不带 --count 即为持续运行
-afx platform client run --endpoint https://autofuse.online --token-file client.token \
-  --results $AUTOFUSEX_HOME/results/results.sqlite --retest --device npu:1
+afx retest run --endpoint https://autofuse.online --token-file client.token \
+  --results $AUTOFUSEX_HOME/results/results.sqlite --device npu:1
 ```
 
-- `run`：持续上传，每 60 秒发送一次心跳（携带计数），开启 `--retest` 时还会领取复测任务（问题验证、回归和手动复测），通过 `afx fuzz replay` 执行后上传并回执结果。
+- `run`：持续上传，每 60 秒发送一次心跳（携带计数），使用 `afx retest run` 时还会领取复测任务（问题验证、回归和手动复测），通过 `afx fuzz replay` 执行后上传并回执结果。
 - `once`：上传一次并发送心跳；`status`：查看上传游标，以及可用于验证的已安装包（graph-autofusion Version 与 `pyautofuse.so` 的 SHA256）。
 - 管理员在“平台运维”页点击一键更新后，客户端在下一次心跳时 `pip install autofusex==版本` 并重启自身进程；正在进行的 fuzz 任务需另行重启。
 - 已知限制：当前执行引擎不支持严格的 NPU kernel 计时（replay `--perf` 会报 `strict NPU measurement requires a device lease; not implemented yet`），因此 Kernel 对比与能力画像暂时只能使用其他来源的 kernel 数据。
