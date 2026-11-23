@@ -2,8 +2,24 @@
 import json
 import sys
 import uuid
+import os
 from .config import load, canonical, validate
 from ...client.resources import resource_inventory
+
+
+_EXECUTION_ENV_KEYS = (
+    'ASCEND_HOME_PATH', 'ASCEND_OPP_PATH', 'ASCEND_TOOLKIT_HOME',
+    'LD_LIBRARY_PATH', 'PYTHONPATH', 'PATH',
+)
+
+
+def _local_manifest(existing=None):
+    """Register the environment needed by isolated execution runners."""
+    manifest = dict(existing or {}, id='local', name='local', python=sys.executable)
+    env = dict(manifest.get('env') or {})
+    env.update({key: os.environ[key] for key in _EXECUTION_ENV_KEYS if os.environ.get(key)})
+    manifest['env'] = env
+    return manifest
 
 
 def start(manager):
@@ -12,19 +28,19 @@ def start(manager):
     client=json.loads((store.home/'client.json').read_text())
     if client['mode']=='local' and spec['results']['upload']:
         raise ValueError('local mode cannot upload results')
-    if manager.processes:
-        return dict(state='running',run_ids=list(manager.processes))
     # The local user explicitly selected this configuration. Register only the
     # current interpreter, not a fabricated remote environment installation.
     if spec['environment']=='local':
         with store.connect() as db:
             existing = db.execute("SELECT manifest FROM environments WHERE id='local'").fetchone()
         if existing:
-            manifest = json.loads(existing['manifest'])
+            manifest = _local_manifest(json.loads(existing['manifest']))
         else:
-            manifest=dict(id='local',name='local',python=sys.executable,env={})
+            manifest = _local_manifest()
         with store.connect() as db:
             db.execute("INSERT OR REPLACE INTO environments VALUES (?,?,?,'ready')",('local','local',canonical(manifest)))
+    if manager.processes:
+        return dict(state='running',run_ids=list(manager.processes))
     from .artifacts import atomic
     inventory=resource_inventory(store.home)
     ceiling=inventory['cpu_worker_ceiling'] or 1

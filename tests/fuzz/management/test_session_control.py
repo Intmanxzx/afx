@@ -5,6 +5,21 @@ from autofusex.fuzz.daemon.management.session_control import reconcile
 from autofusex.fuzz.daemon.management import local_session, tasks
 
 
+def test_local_manifest_preserves_execution_environment(monkeypatch):
+    monkeypatch.setenv('ASCEND_HOME_PATH', '/opt/cann')
+    monkeypatch.setenv('PYTHONPATH', '/opt/cann/python')
+    monkeypatch.setenv('LD_LIBRARY_PATH', '/opt/cann/lib64')
+    monkeypatch.setenv('PATH', '/opt/cann/bin')
+    manifest = local_session._local_manifest({'env': {'CUSTOM': 'kept'}})
+    assert manifest['env'] == {
+        'CUSTOM': 'kept',
+        'ASCEND_HOME_PATH': '/opt/cann',
+        'PYTHONPATH': '/opt/cann/python',
+        'LD_LIBRARY_PATH': '/opt/cann/lib64',
+        'PATH': '/opt/cann/bin',
+    }
+
+
 def test_start_stop_start_and_duplicate_delivery(tmp_path, monkeypatch):
     manager = SimpleNamespace(store=Store(tmp_path), processes={}, active=None)
     starts, stops = [], []
