@@ -15,7 +15,13 @@ _EXECUTION_ENV_KEYS = (
 
 def _local_manifest(existing=None):
     """Register the environment needed by isolated execution runners."""
-    manifest = dict(existing or {}, id='local', name='local', python=sys.executable)
+    manifest = dict(existing or {})
+    # A local session runs inside the control interpreter, but an existing
+    # registered environment may point at an isolated execution interpreter.
+    # Preserve that selection: replacing it with the control venv prevents
+    # NPU discovery and worker startup after a control-only upgrade.
+    manifest.setdefault('python', sys.executable)
+    manifest.update(id='local', name='local')
     env = dict(manifest.get('env') or {})
     env.update({key: os.environ[key] for key in _EXECUTION_ENV_KEYS if os.environ.get(key)})
     manifest['env'] = env
