@@ -14,19 +14,19 @@ import tempfile
 import time
 import uuid
 
-from autofusex.execution.scheduling.stages import Case, StageTask, BackendSession, Kind, Requirements
-from autofusex.execution.scheduling.pool import Pool, discover
+from autofusex.workloads.fuzz.scheduling.stages import Case, StageTask, BackendSession, Kind, Requirements
+from autofusex.workloads.fuzz.scheduling.pool import Pool, discover
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 from autofusex.contracts.serialization import fingerprint
 from autofusex.execution.storage.lifecycle import stamp
 
 
 def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
-    from autofusex.execution.scheduling.supervisor import _bind_results, _reconcile, _tasks, _validate_task
+    from autofusex.workloads.fuzz.scheduling.supervisor import _bind_results, _reconcile, _tasks, _validate_task
     from autofusex.execution.scheduling.ownership import own_queue
     from autofusex.execution.scheduling.budgets import read_policy, Budget, group_rss, scratch_size
     from autofusex.execution.scheduling.placement import candidates
-    from autofusex.execution.scheduling.campaign import refill
+    from autofusex.workloads.fuzz.scheduling.campaign import refill
     database = Path(database).resolve()
     budget = read_policy(ledger) or Budget()
     ownership = own_queue(ledger) if _owned_fd is None else nullcontext(_owned_fd)
@@ -311,7 +311,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 if control == 'upgrade' and not cases:
                     break
                 if control == 'force-stop':
-                    from autofusex.execution.scheduling.campaign import stop
+                    from autofusex.workloads.fuzz.scheduling.campaign import stop
                     stop(ledger)
                 if control in {'pause', 'stop', 'force-stop'} and not cases:
                     if control == 'pause':
@@ -319,7 +319,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                         atomic(ledger.path.parent / 'state.json', {'state': 'paused'})
                         time.sleep(.2)
                         continue
-                    from autofusex.execution.scheduling.campaign import stop
+                    from autofusex.workloads.fuzz.scheduling.campaign import stop
                     stop(ledger)
                     break
                 if control == 'run' and control_path.exists() and (ledger.path.parent / 'state.json').exists() and json.loads((ledger.path.parent / 'state.json').read_text()).get('state') == 'paused':
@@ -455,7 +455,7 @@ def replay(args):
     """
     from autofusex.client.paths import data_home, load_config, results_database
     from autofusex.execution.resources import adaptive_defaults
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     from autofusex.execution.scheduling.budgets import Budget, write_policy
     from autofusex.workloads.fuzz.contracts import Seed
     home=data_home();home.mkdir(parents=True,exist_ok=True)
@@ -474,7 +474,7 @@ def replay(args):
         except (OSError, ValueError):
             status = None
         if status in {'starting', 'running'}:
-            from autofusex.execution.scheduling.ledger import TaskLedger
+            from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
             ledger = TaskLedger(managed_ledger)
             batch = str(uuid.uuid4()); seed = Seed.parse(args.seed)
             backends = [args.backend] if args.backend else ['cpu', 'af-mlir']

@@ -15,7 +15,7 @@ def test_top_level_is_small(capsys):
 
 
 def test_stop_defaults_to_all_tasks(tmp_path,monkeypatch):
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     monkeypatch.setenv('AUTOFUSEX_HOME',str(tmp_path))
     ledger=TaskLedger(tmp_path/'tasks/tasks.sqlite')
@@ -54,7 +54,7 @@ def test_run_defaults_to_infinite_unsaved_and_save_is_per_task(tmp_path, monkeyp
     def launch(ledger, database, specifications, **kwargs):
         observed.append(kwargs)
         return {'state': 'test'}
-    monkeypatch.setattr('autofusex.execution.scheduling.hosting.launch', launch)
+    monkeypatch.setattr('autofusex.workloads.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
     configs, evaluation, count, devices, excluded, sampling, ops, budget = observed[-1]['campaign']
     assert ops is None and budget['worker_max_tasks'] == 16
@@ -72,7 +72,7 @@ def test_continue_reuses_the_saved_campaign_without_retyping_flags(tmp_path, mon
     # generation/backend/device/budget flags a multi-hour campaign had been started with,
     # and retyping from memory would have silently fallen back to CLI defaults for anything
     # forgotten. --continue must reconstruct everything from what was actually persisted.
-    from autofusex.execution.scheduling.campaign import initialize as initialize_campaign
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize as initialize_campaign
     monkeypatch.setattr('autofusex.workloads.fuzz.generation.runtime.source_evidence', lambda: {})
     monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
     monkeypatch.setattr('autofusex.execution.scheduling.devices.select_devices', lambda _: ['npu:0', 'npu:1'])
@@ -82,7 +82,7 @@ def test_continue_reuses_the_saved_campaign_without_retyping_flags(tmp_path, mon
             initialize_campaign(ledger, *kwargs['campaign'])
         observed.append(kwargs)
         return {'state': 'test'}
-    monkeypatch.setattr('autofusex.execution.scheduling.hosting.launch', launch)
+    monkeypatch.setattr('autofusex.workloads.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg', '--backend', 'af-legacy', '--tensor-scale', 'small', '--worker-max-tasks', '4']) == 0
     assert 'note: replacing' not in capsys.readouterr().err  # nothing saved yet on the first launch
     first = observed[-1]['campaign']
@@ -128,7 +128,7 @@ def test_run_resource_policy_recomputes_and_honors_overrides(tmp_path, monkeypat
     def launch(ledger, database, specifications, **kwargs):
         observed.append(kwargs['budget'])
         return {'state': 'test'}
-    monkeypatch.setattr('autofusex.execution.scheduling.hosting.launch', launch)
+    monkeypatch.setattr('autofusex.workloads.fuzz.scheduling.hosting.launch', launch)
     assert main(['run']) == 0
     result = json.loads(capsys.readouterr().out)
     assert result['resource_plan']['selected'] == {'cpu_workers':4,'compile_threads':8}
@@ -154,7 +154,7 @@ def test_foreground_plan_is_emitted_before_launch(tmp_path, monkeypatch, capsys)
         assert plan['selected']['cpu_workers'] == kwargs['budget'].cpu_workers
         assert all(c.compile_threads == kwargs['budget'].compile_threads for c in kwargs['campaign'][0])
         return {'state': 'test'}
-    monkeypatch.setattr('autofusex.execution.scheduling.hosting.launch', launch)
+    monkeypatch.setattr('autofusex.workloads.fuzz.scheduling.hosting.launch', launch)
     assert main(['run', '--fg']) == 0
     assert 'resource_plan' in json.loads(capsys.readouterr().out)
 
@@ -167,7 +167,7 @@ def test_auto_explicit_override_conflicts_never_launch(tmp_path, monkeypatch, ca
     monkeypatch.setenv('AUTOFUSEX_HOME', str(tmp_path))
     monkeypatch.setattr('autofusex.workloads.fuzz.generation.runtime.source_evidence', lambda: {})
     monkeypatch.setattr('autofusex.execution.scheduling.devices.select_devices', lambda _: ['npu:0'])
-    monkeypatch.setattr('autofusex.execution.scheduling.hosting.launch', lambda *a, **kw: pytest.fail('launched'))
+    monkeypatch.setattr('autofusex.workloads.fuzz.scheduling.hosting.launch', lambda *a, **kw: pytest.fail('launched'))
     assert main(['run', *flags]) == 2
     assert 'cannot be combined' in capsys.readouterr().err
 

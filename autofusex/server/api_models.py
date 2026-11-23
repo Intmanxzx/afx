@@ -237,3 +237,32 @@ class Error(BaseModel):
     schema_version: Literal[1] = 1
     ok: Literal[False] = False
     error: ErrorDetail
+
+
+class SourceBundle(Payload):
+    case: dict[str, Any]
+    files: dict[str, str]
+
+
+class SourceJob(RequestKey):
+    spec: dict[str, Any]
+
+
+class SourceClaim(Payload):
+    machine_id: str = Field(min_length=1, max_length=128)
+
+
+class SourceReceipt(Payload):
+    lease_id: str
+    result: dict[str, Any]
+
+
+class SourceResult(Payload):
+    spec: dict[str, Any]
+    result: dict[str, Any]
+
+
+class SourceArtifact(Payload):
+    lease_id: str
+    path: str
+    data: str

@@ -184,7 +184,7 @@ def create_app(store: Store) -> FastAPI:
             if length is not None and not length.isdigit():
                 raise HTTPError(400, 'invalid', 'invalid Content-Length')
             path = request.url.path
-            limit = (MAX_UPLOAD_BODY if path == '/api/client/executions' else
+            limit = (MAX_UPLOAD_BODY if path in {'/api/client/executions','/api/source-cases','/api/source-results'} or path.startswith('/api/source-jobs/') else
                      MAX_HEARTBEAT_BODY if path == '/api/client/heartbeat' else MAX_BODY)
             if length is not None and int(length) > limit:
                 raise HTTPError(413, 'too_large', f'body exceeds {limit} bytes')
@@ -241,6 +241,18 @@ def create_app(store: Store) -> FastAPI:
         return JSONResponse(_error(exc.code, str(exc)), exc.status)
     for error_type in (UploadError, issues.IssueError, search.SearchError):
         app.add_exception_handler(error_type, business_error)
+
+    @app.exception_handler(ValueError)
+    async def value_error(request, exc):
+        return JSONResponse(_error('invalid', str(exc)), 400)
+
+    @app.exception_handler(PermissionError)
+    async def permission_error(request, exc):
+        return JSONResponse(_error('forbidden', str(exc)), 403)
+
+    @app.exception_handler(LookupError)
+    async def lookup_error(request, exc):
+        return JSONResponse(_error('not_found', str(exc)), 404)
 
     @app.exception_handler(queries.QueryError)
     async def query_error(request, exc):
@@ -381,6 +393,54 @@ def create_app(store: Store) -> FastAPI:
     @route('/api/ops/efficiency')
     def efficiency(client_id: Optional[int] = None, principal=Depends(identity)):
         return _success(ops.efficiency(store, client_id))
+
+    @route('/api/source-cases', 'POST')
+    def source_case(body: m.SourceBundle, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.register(store, principal, data(body)))
+
+    @route('/api/source-jobs', 'POST')
+    def source_submit(body: m.SourceJob, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.submit(store, principal, data(body)))
+
+    @route('/api/source-jobs/claim', 'POST')
+    def source_claim(body: m.SourceClaim, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.claim(store, principal, body.machine_id))
+
+    @route('/api/source-jobs')
+    def source_list(principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.list_jobs(store, principal))
+
+    @route('/api/source-results', 'POST')
+    def source_result(body: m.SourceResult, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.record_result(store, principal, data(body)))
+
+    @route('/api/source-jobs/{job_id}')
+    def source_get(job_id: str, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.get(store, principal, job_id))
+
+    @route('/api/source-jobs/{job_id}/artifacts', 'POST')
+    def source_artifact_put(job_id: str, body: m.SourceArtifact, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.artifact(store, principal, job_id, data(body)))
+
+    @app.get('/api/source-jobs/{job_id}/artifact')
+    def source_artifact_get(job_id: str, path: str, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        raw=source_jobs.artifact(store, principal, job_id, path=path)
+        return Response(raw, media_type='application/octet-stream', headers={
+            'Content-Disposition':'attachment; filename="artifact"',
+            'Content-Security-Policy':"default-src 'none'; sandbox"})
+
+    @route('/api/source-jobs/{job_id}/complete', 'POST')
+    def source_complete(job_id: str, body: m.SourceReceipt, principal=Depends(writer)):
+        from autofusex.server import source_jobs
+        return _success(source_jobs.complete(store, principal, job_id, data(body)))
 
     @route('/api/client/heartbeat', 'POST')
     def heartbeat(body: m.Heartbeat, principal=Depends(writer)):

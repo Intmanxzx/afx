@@ -1,7 +1,7 @@
 import json
 from autofusex.client.store import Store
 from autofusex.client.retest_queue import submit
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.budgets import Budget, write_policy
 from autofusex.execution.scheduling.placement import candidates
 

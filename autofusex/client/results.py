@@ -13,6 +13,16 @@ def read(home, run, *, limit=50, after=0, status=None, seed=None, attempt=None):
     directory = (root / run['id']).resolve()
     if directory.parent != root:
         raise ValueError('invalid run directory')
+    if run['spec']['spec']['kind'] != 'fuzz_task':
+        import json
+        if seed is not None:
+            raise ValueError('seed filtering is only available for fuzz results')
+        path = directory / 'result.json'
+        result = json.loads(path.read_text()) if path.exists() else None
+        if attempt and (not result or result['execution_id'] != attempt):
+            raise LookupError('attempt not found')
+        return dict(run_id=run['id'], run_state=run['state'], saved=run['spec']['spec']['results']['save'],
+                    available=path.exists(), unit='execution', items=[result] if result and not after else [], next_cursor=None)
     database = directory / 'results.sqlite'
     if database.is_symlink():
         raise ValueError('result database must not be a symlink')

@@ -11,9 +11,9 @@ import time
 import pytest
 
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.ownership import own_queue
-from autofusex.execution.scheduling import supervisor
+from autofusex.workloads.fuzz.scheduling import supervisor
 from autofusex.execution.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED, SECOND_CURRENT_SEED
 
@@ -154,7 +154,7 @@ def test_inherited_lock_survives_supervisor_death(tmp_path):
     pidfile = tmp_path/'worker.pid'
     code = '''
 import os,pathlib,subprocess,sys,time
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.ownership import own_queue
 with own_queue(TaskLedger(sys.argv[1])) as fd:
  p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],pass_fds=(fd,),start_new_session=True)
@@ -195,7 +195,7 @@ def test_worker_commits_then_crashes_before_parent_ack(tmp_path, monkeypatch):
     ledger, identity, database = setup(tmp_path)
     code = '''
 import os,sys
-from autofusex.execution.scheduling.worker import run
+from autofusex.workloads.fuzz.scheduling.worker import run
 run(*sys.argv[1:])
 os._exit(82)
 '''
@@ -223,8 +223,8 @@ def test_keyboard_interrupt_cleans_worker_and_leaves_explicit_resume(tmp_path):
     pidfile = tmp_path/'worker.pid'
     code = '''
 import pathlib,sys
-from autofusex.execution.scheduling import supervisor
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling import supervisor
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 worker="import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(120)"
 supervisor._worker_command=lambda *a:[sys.executable,'-c',worker,sys.argv[3]]
 try:

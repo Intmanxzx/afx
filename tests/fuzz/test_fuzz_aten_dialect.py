@@ -102,8 +102,8 @@ def test_current_protocol_roundtrip_and_catalog(runtime):
 
 
 def test_retired_campaign_is_stopped_not_migrated(tmp_path):
-    from autofusex.execution.scheduling.campaign import initialize,refill
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize,refill
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     l=TaskLedger(tmp_path/'queue')
     initialize(l,[ExecutionConfig('cpu','cpu')],EvaluationConfig(),2)

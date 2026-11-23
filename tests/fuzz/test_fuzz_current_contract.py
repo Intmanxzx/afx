@@ -43,7 +43,7 @@ def build_spec(count=3,nodes=1,extent=6,weight=True):
 def test_dynamic_counts_weight_dimensions_and_outside_initial_range(count):
     from autofusex.workloads.fuzz.generation.nnsmith_dynamic import variants
     from autofusex.workloads.fuzz.generation.nnsmith_sampled import materialize_spec
-    from autofusex.execution.backends.torch import TorchAdapter
+    from autofusex.workloads.fuzz.torch_backend import TorchAdapter
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     from autofusex.workloads.fuzz.case_spec import encode,decode
     from autofusex.workloads.fuzz.generation.torch_dialect import execute_graph
@@ -73,7 +73,7 @@ def test_64_nodes_survive_artifacts_database_snapshot(tmp_path):
     from autofusex.workloads.fuzz.generation.nnsmith_dynamic import variants
     from autofusex.workloads.fuzz.generation.nnsmith_sampled import materialize_spec
     from autofusex.workloads.fuzz.generation import workload_id
-    from autofusex.execution.scheduling.artifacts import write_bundle,bundle_from
+    from autofusex.workloads.fuzz.scheduling.artifacts import write_bundle,bundle_from
     from autofusex.workloads.fuzz.case_spec import encode,decode
     from autofusex.execution.storage import ResultRepository
     from autofusex.execution.storage.transfer import restore

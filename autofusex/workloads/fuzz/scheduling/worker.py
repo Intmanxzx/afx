@@ -8,7 +8,7 @@ import sys
 
 
 def run(queue, database, identity, claim):
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     from autofusex.workloads.fuzz.generation import materialize
     from autofusex.execution.backends import create_backend
@@ -22,7 +22,7 @@ def run(queue, database, identity, claim):
         append(database, task['attempt_id'], 'started')
     config = ExecutionConfig(**json.loads(task['execution']))
     evaluation = EvaluationConfig(**json.loads(task['evaluation']))
-    from autofusex.execution.scheduling.supervisor import _validate_task
+    from autofusex.workloads.fuzz.scheduling.supervisor import _validate_task
     _validate_task(task)
     import time
     generation_start=time.perf_counter_ns()

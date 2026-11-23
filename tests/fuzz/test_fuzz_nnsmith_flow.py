@@ -35,13 +35,13 @@ assert main(['doctor'])==0
 def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
     pytest.importorskip('nnsmith');pytest.importorskip('torch')
     from autofusex.workloads.fuzz.cli import main
-    from autofusex.execution.scheduling import hosting
-    from autofusex.execution.scheduling.campaign import initialize,refill
+    from autofusex.workloads.fuzz.scheduling import hosting
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize,refill
     from autofusex.workloads.fuzz.generation import materialize
     from autofusex.workloads.fuzz.contracts import Seed
     from autofusex.execution.storage.queries import ResultQueries
     monkeypatch.setenv('AUTOFUSEX_HOME',str(tmp_path))
-    monkeypatch.setattr('autofusex.execution.scheduling.campaign.secrets.randbelow',lambda _:42)
+    monkeypatch.setattr('autofusex.workloads.fuzz.scheduling.campaign.secrets.randbelow',lambda _:42)
     def launch(ledger,database,specifications,**kw):
         initialize(ledger,*kw['campaign']);refill(ledger)
         tasks=ledger.page()['items']
@@ -64,8 +64,8 @@ def test_run_campaign_and_replay_use_nnsmith(tmp_path, monkeypatch, capsys):
 
 def test_real_supervisor_worker_uses_nnsmith(tmp_path):
     pytest.importorskip('nnsmith');pytest.importorskip('torch')
-    from autofusex.execution.scheduling.ledger import TaskLedger
-    from autofusex.execution.scheduling.supervisor import drain
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.supervisor import drain
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     from autofusex.execution.storage import ResultRepository
     ledger=TaskLedger(tmp_path/'tasks.sqlite');database=tmp_path/'results.sqlite'

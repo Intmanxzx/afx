@@ -6,7 +6,7 @@ import pytest
 from autofusex.client import tasks
 from autofusex.client.artifacts import atomic
 from autofusex.contracts.configuration import canonical
-from autofusex.workloads.fuzz.configuration import validate
+from autofusex.client.configuration import validate
 from autofusex.client.store import Store
 
 

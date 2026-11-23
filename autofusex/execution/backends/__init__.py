@@ -10,5 +10,5 @@ def create_backend(config):
     if config.backend not in BACKEND_NAMES:
         from autofusex.execution.backends.base import UnsupportedBackend
         raise UnsupportedBackend(f'unknown backend: {config.backend}')
-    from autofusex.execution.backends.torch import TorchAdapter
+    from autofusex.workloads.fuzz.torch_backend import TorchAdapter
     return TorchAdapter(config)

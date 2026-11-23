@@ -9,8 +9,9 @@ import pytest
 from autofusex.client.paths import setup
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 from autofusex.execution.scheduling.budgets import Budget, group_rss, scratch_size, write_policy, read_policy
-from autofusex.execution.scheduling.ledger import TaskLedger
-from autofusex.execution.scheduling import supervisor, hosting, budgets
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling import supervisor, hosting
+from autofusex.execution.scheduling import budgets
 from fuzz_fixtures import CURRENT_SEED
 
 EX, EV = ExecutionConfig('cpu','cpu',1), EvaluationConfig()

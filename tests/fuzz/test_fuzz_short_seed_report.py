@@ -61,7 +61,7 @@ def test_report_endpoint_csp_and_html_escapes_errors(tmp_path):
         try:
             with urlopen(server.viewer_url+'report?seed=B16') as response:
                 page=response.read()
-                assert response.status==200 and b'charts.js' in page
+                assert response.status==200 and b'bootstrap.js' in page
                 assert "script-src 'self'" in response.headers['Content-Security-Policy']
                 assert b'<script>alert(1)</script>' not in page
         finally: server.shutdown();thread.join()

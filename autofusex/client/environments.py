@@ -9,7 +9,7 @@ import uuid
 
 from autofusex.client.artifacts import atomic, command, confined, download, expand, profile, sha256, trusted
 from autofusex.contracts.configuration import canonical, fingerprint
-from autofusex.workloads.fuzz.configuration import validate
+from autofusex.client.configuration import validate
 
 
 def plan(store, spec):

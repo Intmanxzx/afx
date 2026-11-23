@@ -60,8 +60,8 @@ def test_real_integer_and_complex_input_distributions():
 
 
 def test_current_campaign_embeds_all_factors(tmp_path):
-    from autofusex.execution.scheduling.ledger import TaskLedger
-    from autofusex.execution.scheduling.campaign import initialize,refill
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize,refill
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     from dataclasses import asdict
     config=SamplingConfig.profile('small',dynamic_variants=8,method='symbolic')

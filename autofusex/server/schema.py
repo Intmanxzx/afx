@@ -509,6 +509,15 @@ ALTER TABLE clients ADD COLUMN update_status TEXT;
 ALTER TABLE clients ADD COLUMN daemon_state TEXT;
 ALTER TABLE clients ADD COLUMN daemon_state_at INTEGER;
 """),
+    (17, """
+CREATE TABLE source_cases(case_key TEXT PRIMARY KEY, revision TEXT NOT NULL, owner TEXT NOT NULL,
+  workload TEXT NOT NULL, bundle TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE source_jobs(job_id TEXT PRIMARY KEY, owner TEXT NOT NULL, case_key TEXT NOT NULL,
+  spec TEXT NOT NULL, state TEXT NOT NULL, machine_id TEXT, lease_id TEXT, lease_until INTEGER,
+  result TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE INDEX source_jobs_pending ON source_jobs(state, created_at);
+CREATE TABLE source_artifacts(job_id TEXT NOT NULL,path TEXT NOT NULL,content_id INTEGER NOT NULL,PRIMARY KEY(job_id,path));
+"""),
 ]
 
 CONTENT = [

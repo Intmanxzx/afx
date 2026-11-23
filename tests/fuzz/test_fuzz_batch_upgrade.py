@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
-from autofusex.execution.scheduling.ledger import TaskLedger, DDL, APPLICATION_ID
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger, DDL, APPLICATION_ID
 
 EX, EV = ExecutionConfig('cpu','cpu',1), EvaluationConfig()
 

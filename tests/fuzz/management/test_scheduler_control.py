@@ -7,8 +7,8 @@ import threading
 import time
 from autofusex.client.artifacts import atomic
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
-from autofusex.execution.scheduling import staged
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling import staged
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.budgets import Budget,write_policy
 
 

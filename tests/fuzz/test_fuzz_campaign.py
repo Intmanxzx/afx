@@ -3,8 +3,8 @@ CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='floa
 from dataclasses import asdict
 import json
 import pytest
-from autofusex.execution.scheduling.ledger import TaskLedger
-from autofusex.execution.scheduling.campaign import initialize,read,refill,stop
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.campaign import initialize,read,refill,stop
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 
 
@@ -95,8 +95,8 @@ def test_native_core_log_is_bounded_and_redacted():
 
 def test_campaign_capacity_is_enforced(tmp_path):
     import pytest
-    from autofusex.execution.scheduling.ledger import TaskLedger
-    from autofusex.execution.scheduling.campaign import initialize
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     with pytest.raises(ValueError, match='capacity'):
         initialize(TaskLedger(tmp_path/'queue', max_active=1),
@@ -106,7 +106,7 @@ def test_campaign_capacity_is_enforced(tmp_path):
 
 def test_torch_cpu_reference_and_error_metrics():
     pytest.importorskip("torch")
-    from autofusex.execution.backends.torch import TorchAdapter
+    from autofusex.workloads.fuzz.torch_backend import TorchAdapter
     from fuzz_fixtures import bundle as materialize
     from autofusex.workloads.fuzz.generation import materialize
     adapter=TorchAdapter(ExecutionConfig('cpu','cpu'))

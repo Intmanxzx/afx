@@ -8,8 +8,8 @@ import time
 import pytest
 
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
-from autofusex.execution.scheduling.ledger import TaskLedger
-from autofusex.execution.scheduling import supervisor, campaign
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling import supervisor, campaign
 from autofusex.execution.scheduling.budgets import Budget, write_policy
 from autofusex.execution.storage.lifecycle import append
 from autofusex.execution.storage import ResultRepository

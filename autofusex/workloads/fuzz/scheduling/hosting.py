@@ -17,9 +17,9 @@ import tempfile
 import threading
 import uuid
 
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.ownership import own_queue
-from autofusex.execution.scheduling.supervisor import _bind_results, _tasks, _validate_task, drain
+from autofusex.workloads.fuzz.scheduling.supervisor import _bind_results, _tasks, _validate_task, drain
 
 
 def _status_path(ledger):
@@ -73,7 +73,7 @@ def _receive(sock):
 
 
 def _command(ledger, database, timeout, fd, connection, run_id):
-    return [sys.executable, '-m', 'autofusex.execution.scheduling.hosting',
+    return [sys.executable, '-m', 'autofusex.workloads.fuzz.scheduling.hosting',
             str(ledger.path), str(database), str(timeout), str(fd), str(connection), run_id]
 
 
@@ -108,7 +108,7 @@ def launch(ledger, database, specifications, *, timeout=120, foreground=False, s
                 _validate_task(task)
                 effective_budget.admit(ledger.path.parent, task)
         write_policy(ledger, effective_budget)
-        from autofusex.execution.scheduling.campaign import initialize
+        from autofusex.workloads.fuzz.scheduling.campaign import initialize
         if campaign is not None:
             initialize(ledger, *campaign)
         elif not preserve_campaign:

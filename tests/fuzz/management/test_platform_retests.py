@@ -53,7 +53,7 @@ def test_claim_journal_resumes_without_claiming_again(tmp_path):
 
 
 def test_standalone_replay_reaches_scheduler(tmp_path, monkeypatch):
-    from autofusex.execution.scheduling import staged
+    from autofusex.workloads.fuzz.scheduling import staged
     from autofusex.client import paths as config
     from autofusex.execution.scheduling.budgets import Budget
     from autofusex.workloads.fuzz.contracts import Seed

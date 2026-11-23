@@ -15,7 +15,7 @@ import tempfile
 import time
 import uuid
 
-from autofusex.execution.scheduling.stage_worker import send, receive
+from autofusex.workloads.fuzz.scheduling.stage_worker import send, receive
 
 
 @dataclass
@@ -98,7 +98,7 @@ class Pool:
         return lease
 
     def _retire(self, worker):
-        from autofusex.execution.scheduling.supervisor import _terminate_group
+        from autofusex.workloads.fuzz.scheduling.supervisor import _terminate_group
         try:
             worker['socket'].close()
             _terminate_group(worker['child'])
@@ -131,7 +131,7 @@ class Pool:
                    TORCHINDUCTOR_COMPILE_THREADS=str(self.budget.compile_threads),
                    TMPDIR=scratch.name, TORCHINDUCTOR_CACHE_DIR=scratch.name+'/inductor',
                    TRITON_CACHE_DIR=scratch.name+'/triton', AUTOFUSE_DFX_FLAGS=';'.join(dfx_flags))
-        child = subprocess.Popen([sys.executable,'-m','autofusex.execution.scheduling.stage_worker',str(b.fileno())],
+        child = subprocess.Popen([sys.executable,'-m','autofusex.workloads.fuzz.scheduling.stage_worker',str(b.fileno())],
             pass_fds=(self.fd,b.fileno()),start_new_session=True,stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env)
         b.close()
@@ -208,7 +208,7 @@ class Pool:
                         self._count_recycle('crashed')
                         log = self._retire(worker); self.workers.remove(worker)
             if job['kind']=='record' and job.get('save'):
-                from autofusex.execution.scheduling.supervisor import _has_result
+                from autofusex.workloads.fuzz.scheduling.supervisor import _has_result
                 if _has_result(Path(job['database']),job['task']):
                     return {'ok':True,'value':{'saved':True,'status':job['result']['status']},'finished':time.monotonic_ns()}
             if log and isinstance(exc, Exception):

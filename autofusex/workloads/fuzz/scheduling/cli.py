@@ -2,7 +2,7 @@
 from autofusex.client.paths import data_home, load_config, results_database
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 from autofusex.workloads.fuzz.contracts import Seed
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 
 
 def register(sub, maintenance):
@@ -78,7 +78,7 @@ def _continue_campaign(args, ledger, database):
         raise ValueError('--continue reuses the saved campaign exactly; it takes no seeds and no other '
                           'generation/backend/device/resource flag (set: ' +
                           ', '.join((['seeds'] if args.seeds else []) + changed) + ')')
-    from autofusex.execution.scheduling.campaign import read as read_campaign
+    from autofusex.workloads.fuzz.scheduling.campaign import read as read_campaign
     saved = read_campaign(ledger)
     if saved is None:
         raise ValueError('no saved campaign in this queue to continue (--queue/--data-dir ' + str(ledger.path) +
@@ -90,7 +90,7 @@ def _continue_campaign(args, ledger, database):
     from autofusex.contracts.serialization import canonical_json
     from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
     from autofusex.workloads.fuzz.generation.runtime import source_evidence
-    from autofusex.execution.scheduling.supervisor import _validate_task
+    from autofusex.workloads.fuzz.scheduling.supervisor import _validate_task
     source_evidence()
     configs = [ExecutionConfig(**{**c, 'batch_id': str(uuid.uuid4())}) for c in saved['configs']]
     evaluation = EvaluationConfig(**saved['evaluation'])
@@ -110,7 +110,7 @@ def _continue_campaign(args, ledger, database):
               'worker/compile-thread settings, not necessarily the ones it actually ran with', file=sys.stderr)
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
-    from autofusex.execution.scheduling.hosting import launch
+    from autofusex.workloads.fuzz.scheduling.hosting import launch
     return launch(ledger, database, [], timeout=args.timeout, foreground=args.foreground, budget=budget, devices=devices,
                   campaign=(configs, evaluation, saved['remaining'], devices, exclude_ops, asdict(sampling), ops, asdict(budget)))
 
@@ -121,14 +121,14 @@ def dispatch(args):
     if args.command == 'status':
         if args.task:
             return ledger.get(args.task)
-        from autofusex.execution.scheduling.hosting import status
-        from autofusex.execution.scheduling.campaign import read as read_campaign
+        from autofusex.workloads.fuzz.scheduling.hosting import status
+        from autofusex.workloads.fuzz.scheduling.campaign import read as read_campaign
         return dict(ledger.page(limit=args.limit, after=args.after), supervisor=status(ledger), campaign=read_campaign(ledger))
     if args.command == 'stop':
         if args.task:
             ledger.stop(args.task)
             return ledger.get(args.task)
-        from autofusex.execution.scheduling.campaign import stop
+        from autofusex.workloads.fuzz.scheduling.campaign import stop
         stop(ledger)
         return {'state':'stop_requested'}
     managed_lock = home / 'managed-task.lock'
@@ -140,7 +140,7 @@ def dispatch(args):
             except BlockingIOError:
                 raise ValueError('a managed campaign owns this device; control it through task CLI/Web') from None
     database = results_database(home, args.database)
-    from autofusex.execution.scheduling.supervisor import resume, _validate_task
+    from autofusex.workloads.fuzz.scheduling.supervisor import resume, _validate_task
     if args.command == 'resume':
         return resume(ledger, database, args.task)
     from dataclasses import asdict
@@ -204,7 +204,7 @@ def dispatch(args):
                for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})
-    from autofusex.execution.scheduling.hosting import launch
+    from autofusex.workloads.fuzz.scheduling.hosting import launch
     if resource_plan is not None and args.foreground:
         # Continuous foreground runs may never return. Explain the plan before
         # entering launch, on stderr so stdout retains its final JSON contract.
@@ -212,7 +212,7 @@ def dispatch(args):
         import sys
         print(json.dumps({'resource_plan': resource_plan}), file=sys.stderr, flush=True)
     if not seeds or ops:
-        from autofusex.execution.scheduling.campaign import read as read_campaign
+        from autofusex.workloads.fuzz.scheduling.campaign import read as read_campaign
         previous = read_campaign(ledger)
         if previous is not None and not previous['stopped']:
             # Silent clobbering of a still-live campaign is exactly the footgun `--continue` exists to

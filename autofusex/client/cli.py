@@ -18,7 +18,7 @@ import time
 import uuid
 
 from autofusex.contracts.configuration import canonical, parse
-from autofusex.workloads.fuzz.configuration import validate
+from autofusex.client.configuration import validate
 from autofusex.client.daemon import Manager, request
 from autofusex.client.store import TERMINAL
 

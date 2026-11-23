@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.storage.transfer import check_database
 
 
@@ -95,7 +95,7 @@ def test_process_crash_does_not_reclaim_until_explicit_recovery(tmp_path):
     identity = ledger.enqueue('14615016373650978276328604632813839116929039597610', EX, EV)
     code = '''
 import os,sys
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 TaskLedger(sys.argv[1]).claim()
 os._exit(79)
 '''
@@ -117,7 +117,7 @@ def test_cross_process_claim_is_unique(tmp_path):
     ledger.enqueue('14615016373650978276328604632813839116929039597610', EX, EV)
     code = '''
 import json,sys
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 print(json.dumps(TaskLedger(sys.argv[1]).claim()))
 '''
     children = [subprocess.Popen([sys.executable, '-c', code, str(ledger.path)], stdout=subprocess.PIPE, text=True)
@@ -140,7 +140,7 @@ def test_resume_cancelled_task_respects_capacity(tmp_path):
 def test_scheduler_import_has_no_execution_dependency():
     code = '''
 import sys
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 assert not set(sys.modules) & {'torch','numpy','nnsmith','torch_npu'}
 assert 'autofusex.workloads.fuzz.execution' not in sys.modules
 assert 'autofusex.execution.backends' not in sys.modules

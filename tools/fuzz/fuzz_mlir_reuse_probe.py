@@ -13,9 +13,9 @@ from pathlib import Path
 
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 from autofusex.workloads.fuzz.contracts import Seed
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.budgets import Budget, write_policy
-from autofusex.execution.scheduling.staged import drain
+from autofusex.workloads.fuzz.scheduling.staged import drain
 from autofusex.execution.storage.queries import ResultQueries
 
 

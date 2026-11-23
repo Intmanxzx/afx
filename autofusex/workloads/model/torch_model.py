@@ -1258,10 +1258,13 @@ def run_torch_model(
     atol: float | None = None,
     save_elementwise_data: bool = False,
     fullgraph: bool | None = None,
+    dynamic: bool | None = None,
     rewrite_device_hints: bool = False,
     with_cpu: bool = False,
 ) -> dict[str, Any]:
     case = load_torch_case(script, entry)
+    if dynamic is not None:
+        case = replace(case, dynamic=dynamic)
     if fullgraph is not None:
         case = replace(case, fullgraph=fullgraph)
     if rewrite_device_hints:

@@ -3,7 +3,7 @@ import pytest
 from autofusex.client.modern_cli import run
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 
 
 def test_init_is_isolated_and_local_even_with_endpoint(tmp_path, monkeypatch):
@@ -43,7 +43,7 @@ def test_invalid_priority_does_not_enqueue(tmp_path):
 
 def test_shape_mode_is_encoded_in_generated_seeds(tmp_path):
     from dataclasses import asdict
-    from autofusex.execution.scheduling.campaign import initialize, refill
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize, refill
     for mode, dynamic in [('static',False),('dynamic',True)]:
         ledger=TaskLedger(tmp_path/(mode+'.sqlite'))
         initialize(ledger,[ExecutionConfig('cpu','cpu',1)],EvaluationConfig(),1,

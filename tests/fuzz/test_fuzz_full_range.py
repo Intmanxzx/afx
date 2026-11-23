@@ -52,8 +52,8 @@ def test_all_target_publish_barrier(tmp_path, monkeypatch, late_kind):
     """A fast peer must not commit before a slow peer's skip verdict."""
     import time
     from concurrent.futures import ThreadPoolExecutor
-    from autofusex.execution.scheduling import staged
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling import staged
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     from autofusex.execution.scheduling.budgets import Budget, write_policy
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     recorded = []
@@ -101,7 +101,7 @@ def test_all_target_publish_barrier(tmp_path, monkeypatch, late_kind):
 
 def test_generation_failure_reuses_worker(tmp_path):
     pytest.importorskip('nnsmith')
-    from autofusex.execution.scheduling.stage_worker import perform
+    from autofusex.workloads.fuzz.scheduling.stage_worker import perform
     from autofusex.workloads.fuzz.generation import materialize
     from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
     config = SamplingConfig.profile('small', dtype_mode='float32', max_nodes=3)
@@ -168,7 +168,7 @@ def test_skips_have_bounded_audit_without_attempts(tmp_path):
     import sqlite3
     from autofusex.execution.storage.stage_facts import save_case
     from autofusex.execution.storage.lifecycle import stamp
-    from autofusex.execution.scheduling.stages import Case, StageTask, Kind
+    from autofusex.workloads.fuzz.scheduling.stages import Case, StageTask, Kind
     from autofusex.contracts.execution import ExecutionConfig
     case = Case('id', 'C16', stamp(), [{'attempt_id':'not-saved', 'execution':json.dumps(asdict(ExecutionConfig('cpu','cpu',1)))}], str(tmp_path))
     case.skip_reason = 'cpu_reference_failed'; case.skip_finalized = True

@@ -35,8 +35,8 @@ def test_dynamic_no_legal_extent_is_not_silently_static():
 
 
 def test_campaign_mix_and_round_robin(tmp_path,monkeypatch):
-    from autofusex.execution.scheduling import campaign
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling import campaign
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     ledger=TaskLedger(tmp_path/'queue')
     configs=[ExecutionConfig('cpu','cpu',1),ExecutionConfig('af-mlir','npu:0',1)]
     campaign.initialize(ledger,configs,EvaluationConfig(),2,['npu:0','npu:1'])
@@ -50,8 +50,8 @@ def test_campaign_mix_and_round_robin(tmp_path,monkeypatch):
 
 
 def test_parallel_cpu_and_distinct_devices_not_same_device(tmp_path,monkeypatch):
-    from autofusex.execution.scheduling import supervisor
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling import supervisor
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     from autofusex.execution.scheduling.budgets import Budget,write_policy
     ledger=TaskLedger(tmp_path/'queue')
     configs=[ExecutionConfig('cpu','cpu',1,save_results=False),
@@ -92,9 +92,9 @@ def test_canonical_values_repeat_exactly():
 
 
 def test_generation_failure_is_completed_without_regeneration(tmp_path,monkeypatch):
-    from autofusex.execution.scheduling.ledger import TaskLedger
-    from autofusex.execution.scheduling.worker import run
-    from autofusex.execution.scheduling.supervisor import _has_result
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.worker import run
+    from autofusex.workloads.fuzz.scheduling.supervisor import _has_result
     ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1),EvaluationConfig())
     task=ledger.claim();db=tmp_path/'results'
     def failed(*a):raise ValueError('no legal dynamic shapes')

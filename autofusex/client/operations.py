@@ -3,7 +3,7 @@ import json
 import platform
 import sys
 import re
-from autofusex.workloads.fuzz.configuration import validate
+from autofusex.client.configuration import validate
 
 KINDS={'environment.plan','environment.apply','environment.inspect','build.submit','task.validate','task.submit','task.action','config.apply','tool.stage','tool.activate','client.update','task.reconfigure','daemon.control','operation.cancel'}
 
@@ -43,7 +43,7 @@ def validate_operation(kind,payload):
     if kind in {'environment.plan','task.validate','task.submit','config.apply'}:
         value=validate(payload)
         expected='environment' if kind.startswith('environment.') else 'client_policy' if kind=='config.apply' else 'fuzz_task'
-        if value['kind']!=expected: raise ValueError('wrong specification kind')
+        if value['kind'] not in ({'fuzz_task','imported_task','model_task'} if expected=='fuzz_task' else {expected}): raise ValueError('wrong specification kind')
         return value
     fields={'environment.apply':{'plan_id'},'environment.inspect':set(),'build.submit':{'source_dir','profile','mode','jobs'},'task.action':{'run_id','action'}}[kind]
     if set(payload)-fields: raise ValueError('unknown operation field')

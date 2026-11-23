@@ -1,6 +1,6 @@
 # AFX 统一平台重构设计
 
-更新日期：2026-11-23。目标架构已确认；配置与 API 第一轮清理已在工作区实现，其他内容待分阶段实施。
+更新日期：2026-11-23。目标架构、目录与 CLI 迁移已落地，导入与整网中心任务已接入；最终依赖边界及回归验收正在收尾。
 
 ## 1. 目标与现状
 
@@ -55,7 +55,7 @@ AFX 是统一的 Autofuse 开发与验证平台，支持自动泛化、人工导
 
 client 调用 workloads，workloads 使用 execution；各层通过 contracts 交换公共数据。server 通过 HTTP 与 client 交互，不导入客户端管理实现。contracts 不依赖 Torch、NNSmith、数据库或服务器业务。
 
-只有 fuzz 解释 seed 和 NNSmith 规格。server 可以保存来源元数据，不负责重建图。execution 通过注册接口调用处理器，不静态依赖具体 workload。现有服务端引用客户端配置定义的依赖应迁入 contracts。
+只有 fuzz 解释 seed 和 NNSmith 规格。server 可以保存来源元数据，不负责重建图。目标是 execution 通过适配器调用具体 workload；当前后端工厂与历史查询仍保留显式 fuzz 适配，新 imported/model 不经过 seed 队列。现有服务端引用客户端配置定义的依赖应迁入 contracts。
 
 ### 2.3 supervisor、daemon 与 worker
 
@@ -193,12 +193,12 @@ AFX 默认作为客户端，init/start/stop/restart/status 是正式顶层命令
 
 | 目标命令 | 功能 | 状态 |
 |---|---|---|
-| case import PATH | 固定用例导入，适配 Baize、脚本或用例包 | 待实现 |
-| case list/inspect | 查询身份、来源、版本和运行规格 | 待实现 |
-| case run CASE_KEY | 执行指定版本的固定用例 | 待实现 |
-| doctor | 公共客户端与执行环境诊断 | 待整合 |
+| case import PATH | 固定用例导入，适配 Baize、脚本或用例包 | 已实现 |
+| case list/inspect | 查询身份、来源、版本和运行规格 | 已实现 |
+| case run CASE_KEY | 执行指定版本的固定用例 | 已实现 |
+| doctor | 公共客户端与执行环境诊断 | 已整合 |
 
-导入默认登记本地，提交中心需明确选项。model 本地运行已有基础，但平台派发和报告管理仍待实现。
+导入默认登记本地；case run CASE_KEY 执行本地登记版本，case run CASE_KEY --submit 提交中心派发。--upload 控制本地任务完成后的结果同步。中心页面列出导入与整网任务并提供已上传报告下载。
 
 ## 6. API 与内部协议清理
 
@@ -226,7 +226,7 @@ AFX 默认作为客户端，init/start/stop/restart/status 是正式顶层命令
 
 已在工作区实现：统一 config；删除旧 policy 用户入口、management trust/status、trust/effective IPC；删除 501 占位路由；更新文档、页面提示及测试。
 
-未实施：目录迁移、supervisor 部署拆分、其余 CLI 改名、viewer 共用前端迁移、来源无关执行协议、人工导入和整网平台闭环。
+已实施：目录迁移、supervisor 固定快照、CLI 收敛、server/static 共享、人工导入与整网任务执行和中心派发。当前验收结果及保留边界见第 13 节；早期阶段记录按时间保留。
 
 上一轮在 mlir 独立临时目录验证：客户端 13 项、平台 33 项、OpenAPI 4 项通过。平台测试使用临时 SQLite 和测试依赖，未修改服务运行环境；不是 NPU 执行验证。
 
@@ -284,3 +284,26 @@ CLI 第二阶段已实现 server 与 sync/retest 的职责分离：server 不再
 - supervisor 首次启动安装固定源码快照到 HOME/supervisor/v1，普通客户端更新不覆盖。快照只含监督与状态协议所需模块，不导入 daemon、workload 或 YAML。维护更新需单独流程；目标客户端仍通过独立 Python 子进程启动。
 
 验证：mlir CLI/模型/结果相关 173 passed；共享资源与管理流程首轮 160 passed，修正遗留命令调用和 wheel 夹具后定向 68 passed，另 1 项缺失数据库错误处理复测通过。新增 supervisor 冻结包测试覆盖重复安装不替换与隔离导入。当前仍未完成非 fuzz 平台任务接入，不应宣称全部重构完成。
+
+
+## 13. 导入、整网与最终边界验收
+
+固定用例通过 case import 登记不可变源码包，不在导入时执行代码。人工脚本、Baize PyTorch/TF 来源保存在来源字段中；imported 与 model 分别使用 I: 和 M: 内容摘要身份，修改内容产生新 revision。case list/inspect 查询来源与版本；case run 支持指定环境、设备、CPU 对照、fullgraph、dynamic、误差阈值和脚本参数。
+
+imported_task/model_task 与 fuzz_task 由 client/configuration 分派校验；环境及本机策略 schema 属于 contracts/control_configuration。固定任务规格不包含 seed、NNSmith 图或 fuzz DAG。client 复用持久化 operation、任务锁、环境解析和资源准入，execution/source_task 负责子进程组、停止、超时与内存约束；workloads/model/task 复用已有脚本和模型 runner，生成版本、软件环境、结果及产物摘要。
+
+中心 schema 17 新增 source_cases/source_jobs/source_artifacts，不修改历史 fuzz 表及指纹。source API 实现登记、提交、领取、完成及产物上传下载，按用户隔离；重复领取与结果回执幂等。客户端将领取转为持久化 task.submit，重启后可以恢复；已有任务占用时排队。租约不自动跨机器抢占，避免旧 worker 仍执行时产生重复运行。报告文件按摘要校验，目前上传文本报告、JSON、CSV、SVG，单文件上限 1 MiB；原始大 tensor 仍保留本地。
+
+seed ledger、campaign、staged worker/pool、队列 supervisor 和图制品适配归 workloads/fuzz/scheduling，NNSmith TorchAdapter 归 workloads/fuzz/torch_backend。execution 保留公共资源、设备锁、预算和执行事实；历史结果查询/报告中仍有 fuzz seed 适配，以维持旧数据库查询和展示，不要求 imported/model 使用该格式。
+
+验证记录：
+
+- mlir imported 在 npu:0、model 在 npu:1 的真实执行均通过，分别产生 52 和 48 个产物；既有 fuzz 任务未停止。
+- 两张 NPU 均检查为 Health OK。
+- 中心及本地 viewer 的浏览器检查均无页面错误，统一使用 server/static；wheel 包含共享资源和 supervisor，不包含旧 viewer/static。
+- 新 source HTTP/任务/协议/管理与升级定向回归 26 passed，包含报告上传下载和未认证拒绝。
+- 全量回归 1388 passed、5 failed、2 skipped。两项为已确认基线问题（旧状态期望、golden fingerprint）；共享入口断言已更新，其余两项 worker 时序失败继续定向核查。最终边界迁移之后的回归仍在执行。
+
+这里记录的是源码与验证进度，未表示中心生产部署已完成。
+
+补充验证：Manager.tick 领取任务到 operation 执行、停止结果回传的集成回归 5 passed。worker 超时起点修正为子进程启动之后，避免数据库初始化消耗执行预算；超时进程组清理及键盘中断两项定向复测通过。最终 wheel 构建及目录检查通过。

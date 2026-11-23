@@ -8,7 +8,7 @@ from autofusex.client.store import Store
 from autofusex.client.artifacts import atomic
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 from autofusex.workloads.fuzz.contracts import Seed
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.budgets import read_policy
 from autofusex.client.paths import retest_directory
 

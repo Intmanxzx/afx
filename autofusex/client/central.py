@@ -7,7 +7,7 @@ import sqlite3
 import time
 import uuid
 from autofusex.contracts.configuration import canonical, fingerprint
-from autofusex.workloads.fuzz.configuration import validate
+from autofusex.client.configuration import validate
 
 
 class Conflict(ValueError):

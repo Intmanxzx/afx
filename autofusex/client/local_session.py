@@ -4,7 +4,7 @@ import sys
 import uuid
 import os
 from autofusex.contracts.configuration import canonical
-from autofusex.workloads.fuzz.configuration import load, validate
+from autofusex.client.configuration import load, validate
 from autofusex.execution.resources import resource_inventory
 
 

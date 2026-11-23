@@ -38,7 +38,7 @@ def send(sock, value):
 
 
 def perform(job):
-    from autofusex.execution.scheduling.artifacts import bundle_from, write_arrays, read_arrays, write_bundle
+    from autofusex.workloads.fuzz.scheduling.artifacts import bundle_from, write_arrays, read_arrays, write_bundle
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     from autofusex.execution.backends import create_backend
     from autofusex.workloads.fuzz.execution import execute

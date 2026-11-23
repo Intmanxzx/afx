@@ -7,9 +7,9 @@ from contextlib import closing
 
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 from autofusex.workloads.fuzz.contracts import Seed
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.budgets import read_policy
-from autofusex.workloads.fuzz.configuration import validate
+from autofusex.client.configuration import validate
 
 
 def submit(store, seeds, processes):

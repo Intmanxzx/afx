@@ -9,9 +9,9 @@ import time
 import pytest
 
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.ownership import own_queue
-from autofusex.execution.scheduling import hosting
+from autofusex.workloads.fuzz.scheduling import hosting
 from autofusex.execution.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED
 
@@ -114,7 +114,7 @@ def test_background_sigterm_cleans_active_worker(tmp_path, monkeypatch):
     # Injection exists only in this test's child process, not a production CLI hook.
     code = '''
 import sys
-from autofusex.execution.scheduling import hosting,supervisor
+from autofusex.workloads.fuzz.scheduling import hosting, supervisor
 worker="import pathlib,os,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)"
 supervisor._worker_command=lambda *a:[sys.executable,'-c',worker,sys.argv[-1]]
 sys.exit(hosting._child(*sys.argv[1:-1]))
@@ -167,7 +167,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
 
 
 def test_background_infinite_campaign_stops_without_refilling(tmp_path):
-    from autofusex.execution.scheduling.campaign import stop
+    from autofusex.workloads.fuzz.scheduling.campaign import stop
     ledger = TaskLedger(tmp_path/'queue')
     hosting.launch(ledger, tmp_path/'results', [], campaign=([EX], EV, None))
     deadline = time.monotonic() + 20

@@ -7,7 +7,7 @@ import time
 import uuid
 from autofusex.client.artifacts import atomic
 from autofusex.contracts.configuration import canonical, fingerprint, quantity
-from autofusex.workloads.fuzz.configuration import validate
+from autofusex.client.configuration import validate
 from autofusex.client.environments import resolve
 
 
@@ -27,7 +27,10 @@ def _expand_devices(devices):
 
 def prepare(store, spec):
     spec=validate(spec)
-    if spec['kind']!='fuzz_task': raise ValueError('task required')
+    if spec['kind'] not in {'fuzz_task', 'imported_task', 'model_task'}: raise ValueError('task required')
+    if spec['kind'] != 'fuzz_task':
+        from autofusex.workloads.imported.registry import inspect
+        inspect(store.home, spec['workload']['case_key'], spec['workload']['revision'])
     manifest=resolve(store,spec['environment'])
     from autofusex.client.artifacts import trusted
     local=trusted(store.home).get('resource_limits',{})
@@ -90,8 +93,8 @@ def start(store,spec,operation_id,processes,resume_run=None):
         if resources.get('policy') == 'auto' and any(k in resources for k in ('workers', 'compile_threads')):
             resources['policy'] = 'manual'
     prepared=prepare(store,spec)
-    from autofusex.execution.scheduling.hosting import status
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.hosting import status
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     standalone=store.home/'tasks/tasks.sqlite'
     if standalone.exists() and status(TaskLedger(standalone)).get('ownership')=='owned_by_supervisor_or_worker':
         raise ValueError('standalone fuzz/retest supervisor owns the shared device')
@@ -142,6 +145,9 @@ def action(store,identity,action,processes):
     with store.connect() as db:
         row=db.execute('SELECT * FROM runs WHERE id=?',(identity,)).fetchone()
         if not row: raise LookupError('task not found')
+        spec = json.loads(row['spec']).get('spec', {})
+        if spec.get('kind', 'fuzz_task') != 'fuzz_task' and action in {'pause','resume'}:
+            raise ValueError('this workload supports stop and force-stop; pause/resume are unavailable')
         if identity not in processes:
             if row['state']!='needs_attention' or action not in {'stop','force-stop'}:
                 raise ValueError('task ownership not held; only cooperative stop of interrupted task is permitted')

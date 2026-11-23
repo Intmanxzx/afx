@@ -560,7 +560,7 @@ def root_help():
         ('task', 'submit and control tasks'), ('operation', 'inspect asynchronous operations'),
         ('build', 'build execution environments'), ('update', 'upgrade the client'),
         ('release', 'manage signed releases'), ('device', 'manage device registration'),
-        ('fuzz', 'generate and replay fuzz cases'), ('model', 'run and normalize whole models'),
+        ('case', 'import and run fixed cases'), ('fuzz', 'generate and replay fuzz cases'), ('model', 'run and normalize whole models'),
         ('analyze', 'compare tensors and render reports'), ('debug', 'capture commands and inspect simulators'),
         ('results', 'query, compare, snapshot and maintain result databases'),
         ('view', 'open a local read-only viewer'), ('doctor', 'inspect execution capabilities'),
@@ -575,6 +575,9 @@ def main(argv: list[str] | None = None) -> int:
     if not raw_argv or raw_argv in (["-h"], ["--help"]):
         root_help().print_help()
         return 0
+    if raw_argv[0] == 'case':
+        from autofusex.workloads.imported.cli import main as case_main
+        return case_main(raw_argv[1:])
     if raw_argv[0] == 'results':
         from autofusex.execution.results_cli import main as results_main
         return results_main(raw_argv[1:])

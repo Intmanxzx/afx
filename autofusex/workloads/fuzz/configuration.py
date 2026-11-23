@@ -10,21 +10,7 @@ from autofusex.contracts.configuration import (
     DEVICES, RESOURCE, PACKAGE,
 )
 
-CANN = dict(oneOf=[
-    obj(dict(source=enum('existing'), path=TEXT), ('source', 'path')),
-    obj(dict(source=enum('download'), install_root=TEXT,
-             packages=dict(type='array', items=PACKAGE, minItems=1, maxItems=8)), ('source', 'packages')),
-    obj(dict(source=enum('build'), install_root=TEXT,
-             build=obj(dict(source_dir=TEXT, profile=NAME, mode=enum('incremental', 'snapshot'), jobs=POSITIVE),
-                       ('source_dir', 'profile'))), ('source', 'build'))])
 SCHEMAS = {
-    'client_policy': obj(dict(schema_version=enum(1), kind=enum('client_policy'),
-        resources=obj(dict(allowed_devices=DEVICES, max_workers=POSITIVE, max_compile_threads=POSITIVE, memory_budget=MEMORY)),
-        sync=obj(dict(interval=DURATION)), updates=obj(dict(tool_policy=enum('manual', 'when_idle')))), ('schema_version', 'kind')),
-    'environment': obj(dict(schema_version=enum(1), kind=enum('environment'), name=NAME, python=dict(type='string', pattern=r'^3\.[0-9]+$'),
-        compatibility_profile=NAME, cann=CANN,
-        packages=obj(dict(torch=TEXT, torch_npu=TEXT, nnsmith=TEXT), ('torch', 'torch_npu', 'nnsmith'))),
-        ('schema_version', 'kind', 'name', 'python', 'compatibility_profile', 'cann', 'packages')),
     'fuzz_task': obj(dict(schema_version=enum(1), kind=enum('fuzz_task'), name=TEXT, environment=NAME,
         workload=dict(oneOf=[obj(dict(mode=enum('replay'), seeds=dict(type='array', minItems=1, maxItems=1000, items=TEXT)), ('mode', 'seeds')),
             obj(dict(mode=enum('generate'), generation=obj(dict(tensor_scale=enum('small', 'medium', 'large', '16k', '32k', '64k', '128k', 'default'),
@@ -43,9 +29,6 @@ SCHEMAS = {
 
 
 DEFAULTS = {
-    'client_policy': dict(resources=dict(allowed_devices=['npu:0'], max_workers=1, max_compile_threads=1),
-                          sync=dict(interval='30s'), updates=dict(tool_policy='manual')),
-    'environment': {},
     'fuzz_task': dict(workload=dict(mode='generate', generation=dict(tensor_scale='128k', dtype_mode='all', max_nodes=10)),
                       execution=dict(backends=['cpu', 'af-legacy', 'af-mlir'], devices=['all'], scheduling='staged', static_only=False,
                       timeout='120s', resources=dict(policy='auto', worker_max_tasks=100)),
@@ -89,8 +72,6 @@ def validate(value):
             raise ValueError('replay terminates after the seed list; omit termination')
         if result['workload']['mode'] == 'generate' and 'termination' not in result:
             result['termination'] = dict(mode='finite', max_cases=100)
-    if kind == 'client_policy' and not 1 <= quantity(result['sync']['interval']) <= 86400:
-        raise ValueError('sync interval must be between 1s and 24h')
     return result
 
 

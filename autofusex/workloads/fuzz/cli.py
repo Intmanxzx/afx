@@ -47,12 +47,12 @@ def main(argv=None):
     compare.add_argument("actual")
     for child, command in [(seed, 'seed'), (compare, 'diagnose')]:
         child.set_defaults(command=command)
-    from autofusex.execution.scheduling.cli import register
+    from autofusex.workloads.fuzz.scheduling.cli import register
     register(sub, maintenance)
     args = parser.parse_args(argv)
     try:
         if args.command in {"run", "status", "stop", "resume"}:
-            from autofusex.execution.scheduling.cli import dispatch
+            from autofusex.workloads.fuzz.scheduling.cli import dispatch
             result = dispatch(args)
         elif args.command == "seed":
             from autofusex.workloads.fuzz.generation import materialize, content_manifest, workload_id
@@ -93,7 +93,7 @@ def replay(argv):
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     if getattr(args,'scheduling','combined')=='staged':
-        from autofusex.execution.scheduling.staged import replay as staged_replay
+        from autofusex.workloads.fuzz.scheduling.staged import replay as staged_replay
         return staged_replay(args)
     if args.backend is None:
         # Normal replay includes both mandatory standards. Explicit --backend

@@ -52,7 +52,7 @@ def test_parent_tail_preserves_verdict_across_noisy_crash():
 
 def test_pool_timeout_keeps_native_log(tmp_path, monkeypatch):
     import socket
-    from autofusex.execution.scheduling.pool import Pool
+    from autofusex.workloads.fuzz.scheduling.pool import Pool
     from autofusex.execution.scheduling.budgets import Budget
     pool = Pool(Budget(cpu_workers=1), tmp_path, 0, [])
     left, right = socket.socketpair()

@@ -6,6 +6,20 @@ import traceback
 
 
 def main(path):
+    prepared = json.loads(Path(path).read_text())
+    if prepared['spec'].get('kind', 'fuzz_task') != 'fuzz_task':
+        if prepared.get('resume_queue') and (Path(prepared['directory'])/'result.json').exists():
+            from autofusex.client.artifacts import atomic
+            import autofusex
+            atomic(Path(prepared['directory'])/'worker-version.json',dict(python=sys.executable,version=autofusex.__version__))
+            result=json.loads((Path(prepared['directory'])/'result.json').read_text())
+            atomic(Path(prepared['directory'])/'state.json',dict(state='completed',result=result))
+            return 0 if result['status'] in {'passed','accuracy_failed'} else 1
+        from autofusex.execution.source_task import run
+        from autofusex.client.artifacts import atomic
+        import autofusex
+        atomic(Path(prepared['directory'])/'worker-version.json', dict(python=sys.executable, version=autofusex.__version__))
+        return run(path, prepared, int(sys.argv[2]) if len(sys.argv)>2 else None)
     from dataclasses import replace
     from autofusex.client.artifacts import atomic
     from autofusex.contracts.configuration import quantity
@@ -14,8 +28,8 @@ def main(path):
     from autofusex.workloads.fuzz.generation.runtime import source_evidence
     from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
     from autofusex.execution.scheduling.budgets import Budget
-    from autofusex.execution.scheduling.hosting import launch
-    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.hosting import launch
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
     prepared=json.loads(Path(path).read_text());spec=prepared['spec'];directory=Path(prepared['directory'])
     state=directory/'state.json'
     import autofusex

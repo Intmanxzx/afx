@@ -83,12 +83,26 @@ def synchronize(manager, client):
         state = beat['daemon_state']
         atomic(control_path, {'state': state, 'request_id': beat.get('daemon_request_id')})
         store.put('shutdown_when_idle', False)
+    from autofusex.client.source_jobs import synchronize as source_jobs
+    source_jobs(manager, api, identity[:128])
     with store.connect() as db:
         runs=list(db.execute('SELECT id,spec FROM runs'))
     for run in runs:
         spec=json.loads(run['spec'])['spec']
         if not spec['results']['upload']: continue
         directory=store.home/'runs'/run['id']
+        if spec['kind'] != 'fuzz_task':
+            result_file=directory/'result.json'
+            receipt=directory/'source-upload.json'
+            if result_file.exists() and not receipt.exists():
+                from autofusex.workloads.imported.registry import export
+                api.call('POST','/api/source-cases',export(store.home,spec['workload']['case_key']))
+                uploaded=api.call('POST','/api/source-results',dict(spec=spec,result=json.loads(result_file.read_text())))
+                from autofusex.client.source_jobs import upload_artifacts
+                job=api.call('GET','/api/source-jobs/'+uploaded['job_id'])
+                upload_artifacts(api,directory,job['job_id'],job['lease_id'],json.loads(result_file.read_text()))
+                atomic(receipt,uploaded)
+            continue
         if not (directory/'results.sqlite').exists():continue
         uploader=Client(api,str(directory/'results.sqlite'),directory/'upload.sqlite')
         try:uploader.upload_once()

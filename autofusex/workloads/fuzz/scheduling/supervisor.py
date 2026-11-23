@@ -148,7 +148,7 @@ def _terminate_group(child):
 
 
 def _worker_command(ledger, database, task):
-    return [sys.executable, '-m', 'autofusex.execution.scheduling.worker',
+    return [sys.executable, '-m', 'autofusex.workloads.fuzz.scheduling.worker',
             str(ledger.path), str(database), task['id'], task['claim']]
 
 
@@ -186,7 +186,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
     if 'staged' in staged_tasks:
         if any(x != 'staged' for x in staged_tasks):
             raise ValueError('cannot mix staged and combined queued tasks; drain or stop existing queue first')
-        from autofusex.execution.scheduling.staged import drain as drain_staged
+        from autofusex.workloads.fuzz.scheduling.staged import drain as drain_staged
         return drain_staged(ledger,database,timeout=timeout,_owned_fd=_owned_fd,_ready=_ready)
     database = Path(database).expanduser().resolve()
     if database == ledger.path:
@@ -234,7 +234,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     if future.done():
                         summary[future.result()] += 1
                         del finalizing[identity]
-                from autofusex.execution.scheduling.campaign import refill
+                from autofusex.workloads.fuzz.scheduling.campaign import refill
                 for _ in range(budget.cpu_workers):
                     if not refill(ledger, target_pending=budget.cpu_workers): break
                 busy={json.loads(state['task']['execution'])['device'] for state in list(active.values()) + [s for s, _ in finalizing.values()]}
@@ -274,6 +274,9 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                                AUTOFUSE_DFX_FLAGS=';'.join(dfx_flags))
                     state['child']=subprocess.Popen(_worker_command(ledger,database,task),start_new_session=True,
                         pass_fds=(fd,),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+                    # Archive initialization and dispatch bookkeeping precede
+                    # execution. Give the launched worker its full time budget.
+                    state['deadline'] = time.monotonic() + timeout
                     from autofusex.execution.core_logs import ProcessTail
                     state['tail']=ProcessTail(state['child'].stdout)
                     busy.add(device)

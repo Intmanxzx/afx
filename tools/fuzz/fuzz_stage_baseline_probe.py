@@ -9,9 +9,9 @@ from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import json,sys,time
 from pathlib import Path
 from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
-from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 from autofusex.execution.scheduling.budgets import Budget,write_policy
-from autofusex.execution.scheduling import supervisor
+from autofusex.workloads.fuzz.scheduling import supervisor
 from autofusex.execution.storage.queries import ResultQueries
 root=Path(sys.argv[1]);root.mkdir(parents=True,exist_ok=False)
 workers=int(sys.argv[2]);backend=sys.argv[3]
