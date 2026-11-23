@@ -75,3 +75,20 @@ afx config edit task.yaml
 - afx config export：stdout 输出纯任务 JSON，可保存后交给 edit 或 validate。
 
 旧 config effective/apply、management trust/status 和 trust/effective 本地 IPC 接口已移除。底层资源约束仍保留供任务执行与高级安装使用。
+
+## 固定用例与整网任务
+
+导入只登记源码并计算版本，不执行脚本：
+
+    afx case import ./case.py
+    afx case import ./model-package --script model.py --entry create_case --workload model
+    afx case list
+    afx case inspect CASE_KEY
+    afx case run CASE_KEY --device npu:0
+    afx case run CASE_KEY --submit
+
+CASE_KEY 使用导入输出的 I: 或 M: 标识。默认执行本地登记版本；--submit 提交已配置的中心，由客户端领取执行。--upload 将本地执行的结果同步到中心。已有任务占用时，中心任务排队等待，不抢占正在运行的任务。
+
+脚本参数用 --script-arg 逐项传入；以短横线开头的参数可写为 --script-arg=--batch-size。--fullgraph、--dynamic、--with-cpu、--rtol 和 --atol 控制对应执行选项。工厂入口模型未指定 fullgraph/dynamic 时保留工厂定义。执行规格和结果保存在 runs/RUN_ID；中心“导入与整网”页面提供版本复测与报告下载。
+
+本地包最大 256 MiB；中心可传输源码包当前限制为 512 KiB。报告上传支持不超过 1 MiB 的 HTML、JSON、TXT、CSV、SVG 文件，大型张量产物保留在执行机器。

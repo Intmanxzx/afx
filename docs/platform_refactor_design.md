@@ -1,6 +1,6 @@
 # AFX 统一平台重构设计
 
-更新日期：2026-11-23。目标架构、目录与 CLI 迁移已落地，导入与整网中心任务已接入；最终依赖边界及回归验收正在收尾。
+更新日期：2026-11-23。目标架构、目录与 CLI 迁移已落地，导入与整网中心任务已接入；源码重构及迁移回归验收已完成；生产部署未执行。
 
 ## 1. 目标与现状
 
@@ -283,7 +283,7 @@ CLI 第二阶段已实现 server 与 sync/retest 的职责分离：server 不再
 - viewer 不再有 static 目录；同一 server/static/index.html 和 bootstrap.js 按服务端能力信息加载中心模块或本地模块。统计与详情暂保留各自的数据适配和渲染模块，以保留原有功能；共享组件的进一步合并仍可继续。接口继续拒绝本地写入。
 - supervisor 首次启动安装固定源码快照到 HOME/supervisor/v1，普通客户端更新不覆盖。快照只含监督与状态协议所需模块，不导入 daemon、workload 或 YAML。维护更新需单独流程；目标客户端仍通过独立 Python 子进程启动。
 
-验证：mlir CLI/模型/结果相关 173 passed；共享资源与管理流程首轮 160 passed，修正遗留命令调用和 wheel 夹具后定向 68 passed，另 1 项缺失数据库错误处理复测通过。新增 supervisor 冻结包测试覆盖重复安装不替换与隔离导入。当前仍未完成非 fuzz 平台任务接入，不应宣称全部重构完成。
+验证：mlir CLI/模型/结果相关 173 passed；共享资源与管理流程首轮 160 passed，修正遗留命令调用和 wheel 夹具后定向 68 passed，另 1 项缺失数据库错误处理复测通过。新增 supervisor 冻结包测试覆盖重复安装不替换与隔离导入。此阶段尚未接入非 fuzz 平台任务，后续实现及验收见第 13 节。
 
 
 ## 13. 导入、整网与最终边界验收
@@ -307,3 +307,14 @@ seed ledger、campaign、staged worker/pool、队列 supervisor 和图制品适�
 这里记录的是源码与验证进度，未表示中心生产部署已完成。
 
 补充验证：Manager.tick 领取任务到 operation 执行、停止结果回传的集成回归 5 passed。worker 超时起点修正为子进程启动之后，避免数据库初始化消耗执行预算；超时进程组清理及键盘中断两项定向复测通过。最终 wheel 构建及目录检查通过。
+
+
+### 最终验收汇总
+
+源码提交：127b01c 完成 imported/model 中心闭环和 fuzz 调度归位；906f419 补齐固定源码入口校验。此前 1ff7642、8498119、6fef085、d2a9430、99148de 分别覆盖配置、协议、目录、服务命令、共享 UI 与稳定 supervisor。
+
+最后一批大范围回归为 1118 passed、8 failed、2 skipped。失败逐项闭环：两项缺失文档夹具和一项后台任务等待超时，在补齐临时测试目录后 3 passed；共享入口断言在后续组合回归通过；TorchAdapter 测试导入路径修正后阶段执行引擎 32 passed、2 skipped。worker 超时与键盘中断在修正计时起点后 2 passed。固定源码入口校验在 mlir 4 passed。没有重新修改历史 golden 来制造全绿。
+
+最终保留两项基线失败：test_legacy_cpu_only_hidden_but_terminal_target_unknown_visible 的状态预期与现有 environment_failed 分类不一致；test_current_golden_fingerprints 与已有生成行为不一致。它们已在迁移前基线复现。本次未改变生成算法来掩盖差异。上述计数属于不同测试快照和定向复测，不能合并宣称最终单次全量全绿。
+
+最终检查两张 NPU 均 Health OK；未停止既有业务任务。wheel 构建、共享静态资源与新模块归属检查通过。生产中心和已有客户端尚未部署此版本，部署仍需一致性备份及线上验证。
