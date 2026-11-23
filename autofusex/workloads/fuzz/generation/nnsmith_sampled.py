@@ -26,7 +26,6 @@ def plan(token):
     if pinned_ops.__MAX_RANK__ != 5:
         raise ValueError('E/F requires default NNSMITH_MAX_RANK=5; environment must not alter replay')
     from nnsmith.abstract.dtype import DType
-    import torch
     from nnsmith.graph_gen import model_gen
     import random
     import z3
@@ -102,7 +101,10 @@ def plan(token):
                  'outputs': [t.name for t in outputs], 'reduce_axis': None,
                  'generator': evidence['generator'], 'source_sha256': SOURCE_SHA256,
                  'z3': Z3_VERSION, 'aten_rules': 'elementwise-comparison-reduce-view/v1',
-                 'torch': str(torch.__version__)}
+                 # Historical E/F wire marker, not the executing Torch version.
+                 # Keep it frozen so existing case identities remain unchanged;
+                 # actual software versions belong to execution.environment.
+                 'torch': '2.10.0+cpu'}
         spec = CaseSpec(seed, canonical_json(graph), tuple(inputs), tuple(weights), (tuple(inputs),), (outputs,))
         if seed.dynamic:
             from autofusex.workloads.fuzz.generation.nnsmith_dynamic import variants

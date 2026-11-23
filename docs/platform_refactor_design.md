@@ -318,3 +318,5 @@ seed ledger、campaign、staged worker/pool、队列 supervisor 和图制品适�
 最终保留两项基线失败：test_legacy_cpu_only_hidden_but_terminal_target_unknown_visible 的状态预期与现有 environment_failed 分类不一致；test_current_golden_fingerprints 与已有生成行为不一致。它们已在迁移前基线复现。本次未改变生成算法来掩盖差异。上述计数属于不同测试快照和定向复测，不能合并宣称最终单次全量全绿。
 
 最终检查两张 NPU 均 Health OK；未停止既有业务任务。wheel 构建、共享静态资源与新模块归属检查通过。生产中心和已有客户端尚未部署此版本，部署仍需一致性备份及线上验证。
+
+2026-11-23 补充：golden 失败已进一步定位并修复测试输入。测试隐式使用变化后的默认分布，实际生成了不同 seed；四个相同历史 seed 的完整 manifest 和旧 golden 均复现一致。同时修复实际 Torch 版本写入用例身份的问题，保留历史 wire 标记。详见 [seed 身份与分类边界核查](seed_identity_audit.md)。分类规则仍是本地与中心两套实现，统一前端不表示统一分类。

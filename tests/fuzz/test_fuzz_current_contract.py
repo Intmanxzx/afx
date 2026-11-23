@@ -163,13 +163,15 @@ def test_current_golden_fingerprints():
     # does not undo the drift it already caused for workload_ids computed before
     # it on any production database -- those are unaffected and unrecoverable by
     # this test; it only stops the *next* unrelated change from going unnoticed.
-    expected=[(False,3,0,3,'81105c13c3dc953c34d8f81cc1cd695e9a3ea92e8748634e251f286a675f9cac'),
-              (False,3,1,3,'ec11059a04f6dca93375b3ed2f0e29fa998f03606f95d960f4e1376838b68ca2'),
-              (True,2,3,1,'8cae18ec587d71dbec5caaf138f3a932d2aea3445cf9d1104128ec6e6dfcab51'),
-              (True,8,3,1,'b2b00bbc2a98eb14a92f98e32141de7790da51b50503205a94f6d8f03d2ae04a')]
-    for dynamic,count,entropy,nodes,digest in expected:
-        config=SamplingConfig.profile('small',max_nodes=nodes,dtype_mode='float32',dynamic_variants=count)
-        assert workload_id(materialize(config.seed(entropy,dynamic)))==digest
+    # Full seeds freeze all parameters; changes to CLI defaults must not affect this test.
+    expected = [
+        ('14615016373650975031143068048546571285368833835008', '81105c13c3dc953c34d8f81cc1cd695e9a3ea92e8748634e251f286a675f9cac'),
+        ('14615016373650975031143068048546571285368833835009', 'ec11059a04f6dca93375b3ed2f0e29fa998f03606f95d960f4e1376838b68ca2'),
+        ('16076518010641594284351599784092572564968915861507', '8cae18ec587d71dbec5caaf138f3a932d2aea3445cf9d1104128ec6e6dfcab51'),
+        ('16076518012683288485877230564872820209559525130243', 'b2b00bbc2a98eb14a92f98e32141de7790da51b50503205a94f6d8f03d2ae04a'),
+    ]
+    for seed, digest in expected:
+        assert workload_id(materialize(seed)) == digest
 
 
 def test_persisted_materializer_identity_survives_package_migration():
@@ -179,3 +181,21 @@ def test_persisted_materializer_identity_survives_package_migration():
     Operator.__module__ = 'autofusex.workloads.fuzz.nnsmith.aten_dialect'
     Operator.__name__ = 'Aten_add_Tensor'
     assert key(Operator) == 'autofusex.fuzz.client.nnsmith.aten_dialect.Aten_add_Tensor'
+
+
+def test_case_identity_ignores_execution_environment(monkeypatch):
+    import torch
+    from autofusex.workloads.fuzz.generation import materialize, content_manifest
+    from autofusex.workloads.fuzz.generation.nnsmith_sampled import plan
+    seed = '14615016373650975031143068048546571285368833835008'
+    plan.cache_clear()
+    expected = content_manifest(materialize(seed))
+    try:
+        for version, platform in [('2.10.0+vendor', 'A2'), ('3.0.0+test', 'A3'), ('9.9.9', 'A5')]:
+            monkeypatch.setattr(torch, '__version__', version)
+            monkeypatch.setenv('ASCEND_HOME_PATH', '/unavailable/' + platform)
+            monkeypatch.setenv('ASCEND_OPP_PATH', '/unavailable/' + version)
+            plan.cache_clear()
+            assert content_manifest(materialize(seed)) == expected
+    finally:
+        plan.cache_clear()
