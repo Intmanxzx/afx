@@ -20,6 +20,10 @@ _NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 _VERSION = re.compile(r"^[A-Za-z0-9_.+-]{1,64}$")
 
 
+def is_online(last_heartbeat_at, now):
+    return last_heartbeat_at is not None and now - last_heartbeat_at <= ONLINE_MS
+
+
 def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
     principal.require_write()
     machine_id = body.get("machine_id")
@@ -62,7 +66,7 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
             "machine_id": machine_id, "client_home": body.get("client_home"), "hostname": body.get("hostname"), "npu_arch": body.get("npu_arch"),
             "afx_version": body.get("afx_version")})
         conn.execute("UPDATE clients SET backend_versions=COALESCE(?, backend_versions), last_heartbeat_at=?, "
-                     "busy=?, pending_uploads=? WHERE client_id=?",
+                     "busy=?, pending_uploads=?, deleted_at=NULL WHERE client_id=?",
                      (json.dumps(versions, sort_keys=True) if versions else None, now, int(bool(body.get("busy"))),
                       pending, client_id))
         if "devices" in body:
@@ -169,7 +173,7 @@ def delete_client(store: Store, principal: Principal, client_id: int):
         row = conn.execute("SELECT client_id, display_name, last_heartbeat_at FROM clients WHERE client_id=? AND deleted_at IS NULL", (client_id,)).fetchone()
         if row is None:
             raise IssueError("not_found", "client not found", 404)
-        if row[2] is not None and now_ms() - row[2] <= ONLINE_MS:
+        if is_online(row[2], now_ms()):
             raise IssueError("online", "online clients cannot be deleted", 409)
         now = now_ms()
         conn.execute("UPDATE clients SET deleted_at=?, runtime=NULL, runtime_at=NULL WHERE client_id=?", (now, client_id))
@@ -206,8 +210,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
         mine = see_all or (viewer is not None and item["user_id"] == viewer)
         item["runtime"] = json.loads(item["runtime"]) if item["runtime"] and mine else []
         item["mine"] = viewer is not None and item["user_id"] == viewer
-        seen = max(item["last_heartbeat_at"] or 0, item["last_seen_at"] or 0)
-        item["online"] = now - seen <= ONLINE_MS
+        item["online"] = is_online(item["last_heartbeat_at"], now)
         totals = conn.execute(
             f"SELECT {', '.join(f'COALESCE(SUM({n}),0) AS {n}' for n in COUNTERS)} FROM metric_rollups "
             "WHERE client_id=? AND hour>?", (item["client_id"], hour - 24)).fetchone()

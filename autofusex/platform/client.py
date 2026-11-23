@@ -684,18 +684,8 @@ class Client:
             self.state.conn.executemany("DELETE FROM rejected WHERE attempt_id=?", [(a,) for a in done])
 
     def identity(self) -> dict:
-        """Machine id, chip and afx version as recorded in the newest local result, so uploads and
-        heartbeats describe the same client; falls back to the live environment."""
-        env = dict(self.environment())
-        if Path(self.results_db).exists():
-            mapper = Mapper(self.results_db)
-            row = mapper.conn.execute("SELECT environment_id FROM attempts WHERE backend<>'cpu' "
-                                      "ORDER BY rowid DESC LIMIT 1").fetchone()
-            if row is not None:
-                recorded = mapper.context(row[0])
-                for key in ("installation_id", "device_model", "package_version"):
-                    env[key] = recorded.get(key) or env.get(key)
-        return env
+        """Control identity belongs to this installation, never an archived result."""
+        return dict(self.environment())
 
     def heartbeat(self) -> dict:
         env = self.identity()

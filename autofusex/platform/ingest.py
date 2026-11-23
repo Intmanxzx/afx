@@ -290,7 +290,7 @@ class Ingestor:
         if row is not None and row['last_heartbeat_at'] is not None:
             # Execution provenance can lag behind the independently upgraded
             # control agent. Only heartbeat owns the fleet control version.
-            client = dict(client, afx_version=None)
+            client = dict(client, afx_version=None, hostname=None, npu_arch=None, client_home=None)
         return upsert_client(conn, user_id, client)
 
     def _run(self, conn, user_id, client_id, run) -> int:
@@ -510,7 +510,7 @@ def upsert_client(conn, user_id: str, client: dict) -> int:
         "INSERT INTO clients(user_id, machine_id, client_home, hostname, npu_arch, afx_version, first_seen_at, last_seen_at) "
         "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id, machine_id) DO UPDATE SET "
         "client_home=COALESCE(excluded.client_home, client_home), hostname=COALESCE(excluded.hostname, hostname), npu_arch=COALESCE(excluded.npu_arch, npu_arch), "
-        "afx_version=COALESCE(excluded.afx_version, afx_version), last_seen_at=excluded.last_seen_at, deleted_at=NULL",
+        "afx_version=COALESCE(excluded.afx_version, afx_version), last_seen_at=excluded.last_seen_at",
         (user_id, client["machine_id"], client.get("client_home"), client.get("hostname"), client.get("npu_arch"), client.get("afx_version"),
          now, now))
     return conn.execute("SELECT client_id FROM clients WHERE user_id=? AND machine_id=?",

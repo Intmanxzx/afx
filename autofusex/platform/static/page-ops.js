@@ -19,7 +19,7 @@ PAGES.ops = async root => {
     try { const r = await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [...selected], version: version.value.trim() } }); alert(`已通知 ${r.requested} 个客户端，下一次心跳时更新`); render(); }
     catch (err) { alert(err.message); } } }, "一键更新");
   const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "操作", "最后心跳"].map(t => el("th", {}, t)))),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "操作", "最后心跳", "最后活动"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => { e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id); if (selected.size) clientsPanel.dataset.custom = "1"; else delete clientsPanel.dataset.custom; } }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
@@ -29,7 +29,8 @@ PAGES.ops = async root => {
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
         el("td", {}, clientControls(c)),
-        el("td", { class: "small" }, time(c.last_heartbeat_at || c.last_seen_at))))))));
+        el("td", { class: "small" }, c.last_heartbeat_at ? time(c.last_heartbeat_at) : "未收到心跳"),
+        el("td", { class: "small", "data-tooltip": "最近心跳或数据请求；不用于判定在线" }, time(c.last_seen_at))))))));
   root.append(clientsPanel);
   const efficiencyData = await api("/api/ops/efficiency");
   const efficiencyUsers = new Map((efficiencyData.users || []).map(u => [u.user_id, u]));

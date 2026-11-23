@@ -10,7 +10,13 @@ import sys
 
 def collect(home=None):
     from .config import load_config
-    config = load_config(home) or {}
+    # Managed queues live under home/runs/<id>, not directly under home.
+    # Their descendants inherit the installation home from the task launcher.
+    task_home = os.environ.get('AFX_TASK_HOME')
+    config = load_config(task_home or home)
+    if task_home and config is None:
+        raise ValueError('managed task installation configuration is missing: ' + task_home)
+    config = config or {}
     identity = config.get('identity', {})
     result = {'python': platform.python_version(), 'platform': sys.platform,
               'machine': platform.machine(), 'device_name': identity.get('display_name'),

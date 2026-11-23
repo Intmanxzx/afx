@@ -22,6 +22,9 @@ def main(path):
     try:
         if not {'execution', 'evaluation', 'workload'} <= spec.keys() or 'policy' not in prepared:
             raise KeyError('incomplete task spec')
+        # Fail before scheduling work if the installation identity was lost.
+        from ...client.environment import collect
+        collect()
         source_evidence()
         ex=spec['execution'];resources=ex['resources'];limits=prepared['policy']['resources']
         budget=Budget(cpu_workers=resources.get('workers',limits['max_workers']),

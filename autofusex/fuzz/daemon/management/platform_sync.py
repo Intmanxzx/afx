@@ -16,7 +16,9 @@ def synchronize(manager, client):
     from autofusex.fuzz.client.environment import collect
     env = collect(store.home)
     home = str(store.home.resolve())
-    identity = (env.get('installation_id') or socket.gethostname())[:128]
+    identity = env.get('installation_id')
+    if not identity:
+        raise ValueError('managed client installation configuration is missing')
     store.put('machine_id', identity[:128])
     active_path=store.home/'active-client.json'
     version=importlib.metadata.version('autofusex')
