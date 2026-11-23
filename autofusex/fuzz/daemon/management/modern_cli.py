@@ -94,7 +94,8 @@ def run(argv=None):
         # persisted configuration so the normal CLI never asks users for
         # database paths or polling knobs.
         results = (home / "results" / "results.sqlite").expanduser()
-        state = (home / "platform-sync.sqlite").expanduser()
+        from ...client.config import sync_directory
+        state = sync_directory(home) / "platform-sync.sqlite"
         client = {"version": 1, "mode": "managed" if managed else "local"}
         if args.device:
             if any(d != "all" and not __import__('re').fullmatch(r"npu:[0-9]+", d) for d in args.device):

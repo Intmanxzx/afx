@@ -82,6 +82,29 @@ def retest_directory(home=None):
     return directory
 
 
+def debug_directory(home=None):
+    """Return the directory for compiler and backend diagnostics."""
+    directory = data_home(home) / 'debug' / 'autofuse_compile'
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    legacy = data_home(home) / 'autofuse_compile_debug'
+    if legacy.exists() and not any(directory.iterdir()):
+        for item in legacy.iterdir():
+            item.rename(directory / item.name)
+        legacy.rmdir()
+    return directory
+
+
+def sync_directory(home=None):
+    """Return the directory for platform synchronization state."""
+    directory = data_home(home) / 'sync'
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    legacy = data_home(home) / 'platform-sync.sqlite'
+    target = directory / 'platform-sync.sqlite'
+    if legacy.exists() and not target.exists():
+        shutil.move(str(legacy), str(target))
+    return directory
+
+
 def validate_config(config):
     if not isinstance(config, dict) or type(config.get("version")) is not int or config["version"] != 1:
         raise ValueError("unsupported or damaged configuration; refusing to replace it")
