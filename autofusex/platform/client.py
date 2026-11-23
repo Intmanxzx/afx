@@ -652,7 +652,9 @@ class Client:
         self.state = State(state_path)
         self.counters = Counters()
         self.devices = list(devices)
-        self.retest_db = retest_db or str(Path(state_path).with_name("retest-results.sqlite"))
+        default_retest_dir = Path(state_path).parent / 'retest'
+        default_retest_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.retest_db = retest_db or str(default_retest_dir / "results.sqlite")
         self.afx = afx_command or [sys.executable, "-m", "afx"]
         self.stop = threading.Event()
         self.env = None

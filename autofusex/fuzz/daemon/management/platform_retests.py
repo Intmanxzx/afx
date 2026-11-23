@@ -5,6 +5,7 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+from ...client.config import retest_directory
 
 
 def stop(manager):
@@ -22,6 +23,7 @@ def stop(manager):
 
 def tick(manager):
     store = manager.store
+    retest_dir = retest_directory(store.home)
     path = store.home / 'client.json'
     if not path.exists():
         return
@@ -53,7 +55,7 @@ def tick(manager):
     env.update(manifest['env'])
     env['AUTOFUSEX_HOME'] = str(store.home)
     env['AFX_TASK_HOME'] = str(store.home)
-    with (store.home / 'retest-runner.log').open('ab') as log:
+    with (retest_dir / 'runner.log').open('ab') as log:
         manager._retest_process = subprocess.Popen(
             [manifest['python'], '-c',
              "import runpy,sys; path=sys.argv.pop(1); sys.path.pop(0); runpy.run_path(path,run_name='__main__')",
@@ -100,7 +102,8 @@ def run(home):
     from autofusex.fuzz.client.scheduling.devices import device_inventory_info
     logging.basicConfig(level=logging.INFO)
     home = Path(home)
-    with (home / 'retest-runner.lock').open('a') as lock:
+    retest_dir = retest_directory(home)
+    with (retest_dir / 'runner.lock').open('a') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -114,9 +117,9 @@ def run(home):
         trust = json.loads((home / 'trust.json').read_text())
         allowed = trust.get('resource_limits', {}).get('allowed_devices', [])
         devices = [d for d in devices if d in allowed or 'all' in allowed]
-        api = JournalAPI(API(config['endpoint'], config['token'], timeout=15), home/'retest-claims.json')
+        api = JournalAPI(API(config['endpoint'], config['token'], timeout=15), retest_dir/'claims.json')
         from autofusex.fuzz.client.config import results_database
-        client = Client(api, str(results_database(home)), home/'retest-upload.sqlite', devices=devices)
+        client = Client(api, str(results_database(home)), retest_dir/'upload.sqlite', devices=devices)
         client.env = collect(home)
         client.env['device_model'] = available['model']
         # Do not borrow an identity from an unrelated historical results database.

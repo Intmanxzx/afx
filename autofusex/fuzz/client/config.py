@@ -6,6 +6,7 @@ import stat
 import sys
 import tempfile
 import uuid
+import shutil
 
 
 def default_home():
@@ -55,6 +56,30 @@ def results_database(home=None, override=None):
     configured = json.loads(path.read_text()).get('platform', {}).get('results') if path.exists() else None
     result = Path(configured).expanduser() if configured else home / 'results' / 'results.sqlite'
     return (result if result.is_absolute() else home / result).resolve()
+
+
+def retest_directory(home=None):
+    """Return the private directory for platform retest state and artifacts."""
+    directory = data_home(home) / 'retest'
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Keep upgrades from losing leases or upload state created by older clients.
+    legacy = data_home(home)
+    names = ('retest-claims.json', 'retest-upload.sqlite', 'retest-results.sqlite',
+             'retest-runner.log', 'retest-runner.lock')
+    for name in names:
+        source = legacy / name
+        target = directory / {'retest-claims.json': 'claims.json',
+                              'retest-upload.sqlite': 'upload.sqlite',
+                              'retest-results.sqlite': 'results.sqlite',
+                              'retest-runner.log': 'runner.log',
+                              'retest-runner.lock': 'runner.lock'}[name]
+        if source.exists() and not target.exists():
+            shutil.move(str(source), str(target))
+    for source in legacy.glob('retest-*.json'):
+        target = directory / ('task-' + source.name.removeprefix('retest-'))
+        if not target.exists():
+            shutil.move(str(source), str(target))
+    return directory
 
 
 def validate_config(config):
