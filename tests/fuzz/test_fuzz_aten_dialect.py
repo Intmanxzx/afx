@@ -4,7 +4,7 @@ import random
 from pathlib import Path
 import pytest
 
-from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
+from autofusex.workloads.fuzz.nnsmith.aten_catalog import RULES
 
 
 def test_documented_aten_list_matches_catalog():
@@ -19,7 +19,7 @@ def test_documented_aten_list_matches_catalog():
 def runtime():
     torch = pytest.importorskip('torch')
     pytest.importorskip('nnsmith')
-    from autofusex.fuzz.client.nnsmith.aten_dialect import classes, validate_runtime
+    from autofusex.workloads.fuzz.nnsmith.aten_dialect import classes, validate_runtime
     validate_runtime()
     torch.set_num_threads(1)
     return torch, {c.rule.target: c for c in classes()}
@@ -30,8 +30,8 @@ def test_every_overload_cpu_signatures(runtime, rule):
     torch, registry = runtime
     import z3
     from nnsmith.abstract.tensor import AbsTensor
-    from autofusex.fuzz.client.nnsmith.aten_dialect import materialize
-    from autofusex.fuzz.client.generation.torch_dialect import capture, decode
+    from autofusex.workloads.fuzz.nnsmith.aten_dialect import materialize
+    from autofusex.workloads.fuzz.generation.torch_dialect import capture, decode
     cls = registry[rule.target]
     successful = 0
     for signature in cls.in_dtypes:
@@ -87,9 +87,9 @@ def test_every_overload_cpu_signatures(runtime, rule):
 
 
 def test_current_protocol_roundtrip_and_catalog(runtime):
-    from autofusex.fuzz.client.contracts import Seed
-    from autofusex.fuzz.client.generation.sampling import SamplingConfig,decode
-    from autofusex.fuzz.client.generation.torch_dialect import classes
+    from autofusex.workloads.fuzz.contracts import Seed
+    from autofusex.workloads.fuzz.generation.sampling import SamplingConfig,decode
+    from autofusex.workloads.fuzz.generation.torch_dialect import classes
     assert len(classes()) == len(RULES) == 368
     for dynamic in [False,True]:
         s=SamplingConfig.profile('small').seed(42,dynamic=dynamic)
@@ -102,9 +102,9 @@ def test_current_protocol_roundtrip_and_catalog(runtime):
 
 
 def test_retired_campaign_is_stopped_not_migrated(tmp_path):
-    from autofusex.fuzz.client.scheduling.campaign import initialize,refill
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
+    from autofusex.execution.scheduling.campaign import initialize,refill
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     l=TaskLedger(tmp_path/'queue')
     initialize(l,[ExecutionConfig('cpu','cpu')],EvaluationConfig(),2)
     with l._connection() as db:
@@ -117,7 +117,7 @@ def test_retired_campaign_is_stopped_not_migrated(tmp_path):
 
 
 def test_exact_and_family_post_filter():
-    from autofusex.fuzz.client.generation.operator_catalog import normalize_ops,matches_ops
+    from autofusex.workloads.fuzz.generation.operator_catalog import normalize_ops,matches_ops
     assert normalize_ops('aten.ge.Tensor,ge')==('aten.ge.Tensor','ge')
     assert matches_ops('aten.add.Tensor',{'add'})
     assert matches_ops('aten.transpose.int',{'transpose'})
@@ -125,12 +125,12 @@ def test_exact_and_family_post_filter():
 
 
 def test_random_graph_replay_cpu_and_multiple_outputs(runtime):
-    from autofusex.fuzz.client.generation import materialize,nnsmith_sampled,workload_id
-    from autofusex.fuzz.client.generation.sampling import SamplingConfig
-    from autofusex.fuzz.client.backends import create_backend
-    from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
-    from autofusex.fuzz.client.execution import execute
-    from autofusex.fuzz.client.case_spec import encode,decode
+    from autofusex.workloads.fuzz.generation import materialize,nnsmith_sampled,workload_id
+    from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
+    from autofusex.execution.backends import create_backend
+    from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+    from autofusex.workloads.fuzz.execution import execute
+    from autofusex.workloads.fuzz.case_spec import encode,decode
     config=SamplingConfig.profile('small',dtype_mode='float32',max_nodes=4)
     successes=0
     for entropy in range(12):
@@ -165,7 +165,7 @@ def test_invalid_symbolic_shapes_are_rejected(runtime):
 
 def test_functional_pointwise_tensor_catalog_has_no_silent_gaps(runtime):
     torch,_ = runtime
-    from autofusex.fuzz.client.nnsmith.aten_catalog import BY_TARGET,inventory
+    from autofusex.workloads.fuzz.nnsmith.aten_catalog import BY_TARGET,inventory
     gaps=[]
     for name in sorted({s.name[6:] for s in torch._C._jit_get_all_schemas() if s.name.startswith('aten::')}):
         try: packet=getattr(torch.ops.aten,name)
@@ -184,12 +184,12 @@ def test_functional_pointwise_tensor_catalog_has_no_silent_gaps(runtime):
 
 
 def test_tuple_results_feed_downstream_nodes_and_repository(runtime,tmp_path):
-    from autofusex.fuzz.client.generation import materialize,workload_id
-    from autofusex.fuzz.client.generation.sampling import SamplingConfig
-    from autofusex.fuzz.client.backends import create_backend
-    from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
-    from autofusex.fuzz.client.execution import execute
-    from autofusex.fuzz.client.storage import ResultRepository
+    from autofusex.workloads.fuzz.generation import materialize,workload_id
+    from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
+    from autofusex.execution.backends import create_backend
+    from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+    from autofusex.workloads.fuzz.execution import execute
+    from autofusex.execution.storage import ResultRepository
     config=SamplingConfig.profile('small',max_nodes=5,dtype_mode='all')
     bundle=materialize(config.seed(6))
     graph=json.loads(bundle.spec.graph_json)
@@ -199,8 +199,8 @@ def test_tuple_results_feed_downstream_nodes_and_repository(runtime,tmp_path):
     from copy import deepcopy
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.abstract.dtype import DType
-    from autofusex.fuzz.client.generation.torch_dialect import capture,execute_graph
-    from autofusex.fuzz.client.nnsmith.aten_dialect import classes
+    from autofusex.workloads.fuzz.generation.torch_dialect import capture,execute_graph
+    from autofusex.workloads.fuzz.nnsmith.aten_dialect import classes
     original=deepcopy(graph)
     index=multi[-1]['outputs'][1]
     cls=next(c for c in classes() if c.rule.target=='aten.add.Tensor')
@@ -238,11 +238,11 @@ def test_tuple_results_feed_downstream_nodes_and_repository(runtime,tmp_path):
 
 
 def test_j_dynamic_variants_execute_and_replay(runtime):
-    from autofusex.fuzz.client.generation import materialize,nnsmith_sampled
-    from autofusex.fuzz.client.generation.sampling import SamplingConfig
-    from autofusex.fuzz.client.backends import create_backend
-    from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
-    from autofusex.fuzz.client.execution import execute
+    from autofusex.workloads.fuzz.generation import materialize,nnsmith_sampled
+    from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
+    from autofusex.execution.backends import create_backend
+    from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+    from autofusex.workloads.fuzz.execution import execute
     config=SamplingConfig.profile('small',max_nodes=3,dtype_mode='float32')
     # Deterministic selection; a generation failure must not silently fall back
     # to a static graph. Specific qualified seeds are pinned after validation.
@@ -263,7 +263,7 @@ def test_j_dynamic_variants_execute_and_replay(runtime):
 
 def test_aten_reporting_categories():
     from types import SimpleNamespace
-    from autofusex.fuzz.client.generation.categories import categories,OP_CATEGORY
+    from autofusex.workloads.fuzz.generation.categories import categories,OP_CATEGORY
     assert set(r.target for r in RULES)<=set(OP_CATEGORY)
     graph={'nodes':[{'op':t} for t in ('aten.add.Tensor','aten.topk.default',
                                      'aten.permute.default','aten.reshape.default')]}

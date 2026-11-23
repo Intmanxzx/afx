@@ -26,4 +26,4 @@ include = ["afx*", "autofusex*"]
 
 [tool.setuptools.package-data]
 # Offline and cloud viewers share these prebuilt assets.
-autofusex = ["fuzz/server/view/static/*", "platform/static/*"]
+autofusex = ["viewer/static/*", "server/static/*"]

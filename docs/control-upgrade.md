@@ -24,7 +24,7 @@ Legacy 0.2.2–0.2.2.6 launchers cannot acquire these semantics from a wheel upd
 Install the new control build separately, stop existing tasks, load the site's
 working CANN environment and run:
 
-    NEW_CONTROL_PYTHON -m autofusex.fuzz.daemon.management.migrate \
+    NEW_CONTROL_PYTHON -m autofusex.client.migrate \
       --data-dir EXISTING_DATA_HOME --execution-python EXISTING_EXECUTION_PYTHON
 
 The command probes the execution stack before changing state, creates a private

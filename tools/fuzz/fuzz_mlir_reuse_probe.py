@@ -5,17 +5,18 @@ Run with the installed NPU Python environment:
 Run baseline and candidate separately, with no competing managed NPU jobs.
 Timings include compilation/dispatch and are NOT kernel-only measurements.
 """
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import argparse
 import json
 import time
 from pathlib import Path
 
-from autofusex.fuzz.client.contracts import Seed, ExecutionConfig, EvaluationConfig
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.budgets import Budget, write_policy
-from autofusex.fuzz.client.scheduling.staged import drain
-from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.workloads.fuzz.contracts import Seed
+from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.execution.scheduling.budgets import Budget, write_policy
+from autofusex.execution.scheduling.staged import drain
+from autofusex.execution.storage.queries import ResultQueries
 
 
 def main():

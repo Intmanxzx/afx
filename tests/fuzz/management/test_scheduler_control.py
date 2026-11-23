@@ -1,15 +1,15 @@
 """Exercise real staged admission/pause boundaries without Torch, CANN or NPU."""
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 CURRENT_SEED = str(SamplingConfig.profile("small", max_nodes=1).seed(3))
 import json
 from pathlib import Path
 import threading
 import time
-from autofusex.fuzz.daemon.management.artifacts import atomic
-from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
-from autofusex.fuzz.client.scheduling import staged
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.budgets import Budget,write_policy
+from autofusex.client.artifacts import atomic
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.execution.scheduling import staged
+from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.execution.scheduling.budgets import Budget,write_policy
 
 
 def test_paused_queue_does_not_claim_and_graceful_stop_cancels_pending(tmp_path,monkeypatch):

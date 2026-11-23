@@ -10,7 +10,7 @@ def test_browser_session_lifecycle():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/fuzz/server/view/static/session.js').read_text()
+    source = Path('autofusex/viewer/static/session.js').read_text()
     script = r'''
 const assert=require('assert').strict;
 class E {

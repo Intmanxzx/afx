@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from autofusex.graph import build_manifest
+from autofusex.execution.graph import build_manifest
 
 
 def test_build_manifest_extracts_edges(tmp_path: Path) -> None:

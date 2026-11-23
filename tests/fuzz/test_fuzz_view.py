@@ -11,9 +11,9 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.server.view.server import create_server
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.viewer.server import create_server
 
 
 def record(seed='14615016373650978276328604632813839116929039597610', status='ok'):
@@ -127,7 +127,7 @@ def test_invalid_databases_fail_before_listening(tmp_path, kind):
         with sqlite3.connect(path) as conn:
             conn.execute('PRAGMA user_version=999')
             if kind == 'unknown':
-                from autofusex.fuzz.client.storage.schema import APPLICATION_ID
+                from autofusex.execution.storage.schema import APPLICATION_ID
                 conn.execute(f'PRAGMA application_id={APPLICATION_ID}')
     before = path.read_bytes() if path.exists() else None
     with pytest.raises((ValueError, sqlite3.Error, OSError)):
@@ -144,9 +144,9 @@ def test_invalid_port(database, port):
 def test_view_import_and_help_are_lightweight():
     code = """
 import sys
-from autofusex.fuzz.server.view.server import create_server
+from autofusex.viewer.server import create_server
 assert not set(sys.modules) & {'torch', 'torch_npu', 'nnsmith', 'numpy'}
-from autofusex.fuzz.client.cli import main
+from autofusex.workloads.fuzz.cli import main
 main(['view', '--help'])
 """
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
@@ -172,8 +172,8 @@ def test_untrusted_text_is_data_and_never_a_replay_command(database):
 
 
 def test_cli_dispatch_and_missing_database(tmp_path, monkeypatch, capsys):
-    from autofusex.fuzz.client.cli import main
-    from autofusex.fuzz.server.view import server
+    from autofusex.workloads.fuzz.cli import main
+    from autofusex.viewer import server
     calls = []
     monkeypatch.setattr(server, 'serve', lambda *a, **kw: calls.append((a, kw)) or 0)
     assert main(['view', 'example.sqlite', '--no-browser', '--port', '12345']) == 0

@@ -3,8 +3,8 @@ import json
 import threading
 
 from openapi_spec_validator import validate
-from autofusex.platform.server import PlatformServer, create_app
-from autofusex.platform.store import Store
+from autofusex.server.server import PlatformServer, create_app
+from autofusex.server.store import Store
 
 
 def test_discovery_contract(tmp_path):
@@ -51,7 +51,7 @@ def test_public_openapi_http(tmp_path):
 
 def test_runtime_and_schema_share_validation(tmp_path):
     from fastapi.testclient import TestClient
-    from autofusex.platform import auth
+    from autofusex.server import auth
     store = Store(tmp_path)
     auth.add_user(store, 'dev', 'developer')
     token = auth.issue_token(store, 'dev')
@@ -79,7 +79,7 @@ def test_runtime_and_schema_share_validation(tmp_path):
 
 def test_transport_limits_and_raw_export(tmp_path):
     from fastapi.testclient import TestClient
-    from autofusex.platform.server import MAX_BODY
+    from autofusex.server.server import MAX_BODY
     app = create_app(Store(tmp_path))
     with TestClient(app) as client:
         response = client.post('/api/registration/apply', content=b'x' * (MAX_BODY + 1))

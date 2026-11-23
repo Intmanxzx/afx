@@ -48,7 +48,7 @@ packages:
   nnsmith: "实际版本"
 ~~~
 
-trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../../autofusex/fuzz/daemon/management/environments.py) 和 [artifacts.py](../../autofusex/fuzz/daemon/management/artifacts.py)。普通 init/start 流程会准备当前环境的基础资源授权；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
+trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../../autofusex/client/environments.py) 和 [artifacts.py](../../autofusex/client/artifacts.py)。普通 init/start 流程会准备当前环境的基础资源授权；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
 
 多卡或更高并发通过任务配置设置，仍不得超过本机 trust 的资源上限；内部执行策略由客户端维护，不提供独立 policy 命令。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
 
@@ -69,7 +69,7 @@ afx fuzz maintenance check-db /path/to/results.sqlite
 
 升级先做一致性备份，在新虚拟环境 `pip install autofusex==VERSION` 固定版本，用数据库副本验证启动/查询后切换服务，保留旧环境和有效配置。旧 Python 进程不会自动加载新模块，客户端切换后须重启相关进程。
 
-平台服务端（`autofusex/platform/`）的身份、token、备份与恢复，见 [deploy/platform/README.md](../../deploy/platform/README.md)。
+平台服务端（`autofusex/server/`）的身份、token、备份与恢复，见 [deploy/platform/README.md](../../deploy/platform/README.md)。
 
 ## 构建与发布
 
@@ -117,6 +117,6 @@ git push origin refs/tags/v0.2.1
 
 发布成功后使用 `python -m pip install autofusex==0.2.1` 安装，运行 `afx --help` 验证。PyPI 同版本文件不能覆盖；上传失败可从 GitHub Actions 重跑对应发布任务，代码或依赖需要改变时升版本。
 
-流水线只运行 `tests/test_release_wheel.py`。`tests/fuzz` 仍有若干用例引用 `c6feaac`（refactor fuzz into client daemon server modules）重构前的模块路径（如 `autofusex.fuzz.resources`、`autofusex.fuzz.runtime`、`autofusex.fuzz.failure_details`），修复前不能作为发布门禁。
+流水线只运行 `tests/test_release_wheel.py`。`tests/fuzz` 仍有若干用例引用 `c6feaac`（refactor fuzz into client daemon server modules）重构前的模块路径（如 `autofusex.workloads.fuzz.resources`、`autofusex.workloads.fuzz.runtime`、`autofusex.workloads.fuzz.failure_details`），修复前不能作为发布门禁。
 
 GitCode 侧已移除自动发布工作流，避免同一 Tag 同时从两处向 PyPI 上传。

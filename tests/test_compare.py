@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from autofusex.compare import (
+from autofusex.execution.compare import (
     TensorRef,
     _metrics,
     compare_manifests,

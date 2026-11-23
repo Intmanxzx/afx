@@ -48,7 +48,7 @@ def test_config_export_is_directly_importable(tmp_path):
 
 
 def test_removed_local_control_actions(tmp_path):
-    from autofusex.fuzz.daemon.runtime import Manager
+    from autofusex.client.daemon import Manager
     manager = Manager(tmp_path)
     try:
         for action in ('trust', 'effective'):

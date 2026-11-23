@@ -29,9 +29,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from autofusex.platform import auth, queries  # noqa: E402
-from autofusex.platform.ingest import Ingestor  # noqa: E402
-from autofusex.platform.store import Store  # noqa: E402
+from autofusex.server import auth, queries  # noqa: E402
+from autofusex.server.ingest import Ingestor  # noqa: E402
+from autofusex.server.store import Store  # noqa: E402
 
 BACKENDS = ("af-mlir", "af-legacy", "triton-npu")
 CATEGORIES = ("elementwise", "reduce", "broadcast", "view", "compare", "cast")

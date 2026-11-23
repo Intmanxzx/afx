@@ -1,11 +1,11 @@
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import json,sys,time,sqlite3
 from pathlib import Path
-from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.budgets import Budget,write_policy
-from autofusex.fuzz.client.scheduling.supervisor import drain
-from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.execution.scheduling.budgets import Budget,write_policy
+from autofusex.execution.scheduling.supervisor import drain
+from autofusex.execution.storage.queries import ResultQueries
 root=Path(sys.argv[1]);root.mkdir(exist_ok=False)
 mode=sys.argv[2];workers=int(sys.argv[3]);reuse=int(sys.argv[4]);backend=sys.argv[5]
 l=TaskLedger(root/'tasks');write_policy(l,Budget(cpu_workers=workers,compile_threads=1,worker_max_tasks=reuse))
@@ -16,7 +16,7 @@ a=time.monotonic();summary=drain(l,root/'results',timeout=120);duration=time.mon
 q=ResultQueries(root/'results');rows=[q.detail(r['id']) for r in q.page()['items']]
 report={'scheduling':mode,'workers':workers,'worker_max_tasks':reuse,'backend':backend,'wall_seconds':duration,'summary':summary,'attempts':[{'backend':r['backend'],'seed':r['seed_short'],'status':r['status'],'shapes':len(r['shape_results'])} for r in rows]}
 try:
- from autofusex.fuzz.server.reporting.statistics import statistics
+ from autofusex.execution.reporting.statistics import statistics
  report['windows']=statistics(root/'results')['tool_efficiency']['windows']
 except KeyError:pass
 (root/'report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report),flush=True)

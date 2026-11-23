@@ -1,6 +1,6 @@
 import pytest
 
-from autofusex.fuzz.client.failure_details import diagnostic_view, error_summary
+from autofusex.execution.failure_details import diagnostic_view, error_summary
 
 
 @pytest.mark.parametrize('cause', [

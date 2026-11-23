@@ -11,7 +11,7 @@ afx platform --data DIR serve --host 127.0.0.1 --port 8100
 
 路由、路径和查询参数、请求模型及鉴权依赖在实际 FastAPI 接口中声明；OpenAPI
 由框架自动生成，不再维护第二份路径清单。新增接口时使用同一注册方式和 Pydantic
-模型即可自动更新文档。注册入口在 autofusex/platform/server.py，请求模型在
+模型即可自动更新文档。注册入口在 autofusex/server/server.py，请求模型在
 api_models.py。业务函数继续负责数据库状态、租约和幂等性等校验。
 
 错误仍使用平台 envelope 和原有 HTTP 状态码，参数校验错误返回 400。

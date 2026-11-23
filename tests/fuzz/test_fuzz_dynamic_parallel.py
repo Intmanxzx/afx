@@ -5,11 +5,12 @@ from dataclasses import replace
 
 import pytest
 
-from autofusex.fuzz.client.contracts import Seed, ExecutionConfig, EvaluationConfig
-from autofusex.fuzz.client.generation.nnsmith_dynamic import variants, output_shapes
-from autofusex.fuzz.client.generation.nnsmith_sampled import materialize_spec
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.workloads.fuzz.contracts import Seed
+from autofusex.workloads.fuzz.generation.nnsmith_dynamic import variants, output_shapes
+from autofusex.workloads.fuzz.generation.nnsmith_sampled import materialize_spec
 from test_fuzz_current_contract import build_spec
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import random
 CURRENT_SEED=str(SamplingConfig.profile("small").seed(3))
 
@@ -34,8 +35,8 @@ def test_dynamic_no_legal_extent_is_not_silently_static():
 
 
 def test_campaign_mix_and_round_robin(tmp_path,monkeypatch):
-    from autofusex.fuzz.client.scheduling import campaign
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling import campaign
+    from autofusex.execution.scheduling.ledger import TaskLedger
     ledger=TaskLedger(tmp_path/'queue')
     configs=[ExecutionConfig('cpu','cpu',1),ExecutionConfig('af-mlir','npu:0',1)]
     campaign.initialize(ledger,configs,EvaluationConfig(),2,['npu:0','npu:1'])
@@ -49,9 +50,9 @@ def test_campaign_mix_and_round_robin(tmp_path,monkeypatch):
 
 
 def test_parallel_cpu_and_distinct_devices_not_same_device(tmp_path,monkeypatch):
-    from autofusex.fuzz.client.scheduling import supervisor
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.budgets import Budget,write_policy
+    from autofusex.execution.scheduling import supervisor
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling.budgets import Budget,write_policy
     ledger=TaskLedger(tmp_path/'queue')
     configs=[ExecutionConfig('cpu','cpu',1,save_results=False),
              ExecutionConfig('af-mlir','npu:0',1,save_results=False),
@@ -77,7 +78,7 @@ def test_parallel_cpu_and_distinct_devices_not_same_device(tmp_path,monkeypatch)
 
 
 def test_device_discovery_honors_logical_count(monkeypatch):
-    from autofusex.fuzz.client.scheduling.devices import select_devices
+    from autofusex.execution.scheduling.devices import select_devices
     from types import SimpleNamespace
     monkeypatch.setattr('subprocess.run',lambda *a,**kw:SimpleNamespace(returncode=0,stdout='warning\n{"count":2}\n'))
     assert select_devices()==['npu:0','npu:1']
@@ -91,12 +92,12 @@ def test_canonical_values_repeat_exactly():
 
 
 def test_generation_failure_is_completed_without_regeneration(tmp_path,monkeypatch):
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.worker import run
-    from autofusex.fuzz.client.scheduling.supervisor import _has_result
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling.worker import run
+    from autofusex.execution.scheduling.supervisor import _has_result
     ledger=TaskLedger(tmp_path/'queue');identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1),EvaluationConfig())
     task=ledger.claim();db=tmp_path/'results'
     def failed(*a):raise ValueError('no legal dynamic shapes')
-    monkeypatch.setattr('autofusex.fuzz.client.generation.materialize',failed)
+    monkeypatch.setattr('autofusex.workloads.fuzz.generation.materialize',failed)
     assert run(ledger.path,db,identity,task['claim'])==0
     assert _has_result(db,task)

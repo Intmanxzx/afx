@@ -10,13 +10,13 @@ import time
 
 import pytest
 
-from autofusex.fuzz.daemon.management import cli
+from autofusex.client import cli
 from autofusex.contracts.configuration import canonical
-from autofusex.fuzz.daemon.runtime import request
-from autofusex.fuzz.daemon.management.results import read
-from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.client.daemon import request
+from autofusex.client.results import read
+from autofusex.client.store import Store
+from autofusex.execution.storage import ResultRepository
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 
 
 def spec():

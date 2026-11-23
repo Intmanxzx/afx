@@ -1,9 +1,9 @@
 from types import SimpleNamespace
-from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.daemon.management.artifacts import atomic
-from autofusex.fuzz.daemon.management.session_control import reconcile
-from autofusex.fuzz.daemon.management import local_session, tasks
-from autofusex.fuzz.client.config import debug_directory, sync_directory
+from autofusex.client.store import Store
+from autofusex.client.artifacts import atomic
+from autofusex.client.session_control import reconcile
+from autofusex.client import local_session, tasks
+from autofusex.client.paths import debug_directory, sync_directory
 
 
 def test_debug_directory_migrates_legacy_dumps(tmp_path):
@@ -26,6 +26,8 @@ def test_sync_directory_migrates_legacy_state(tmp_path):
 
 
 def test_local_manifest_preserves_execution_environment(monkeypatch):
+    monkeypatch.delenv('ASCEND_TOOLKIT_HOME', raising=False)
+    monkeypatch.delenv('ASCEND_OPP_PATH', raising=False)
     monkeypatch.setenv('ASCEND_HOME_PATH', '/opt/cann')
     monkeypatch.setenv('PYTHONPATH', '/opt/cann/python')
     monkeypatch.setenv('LD_LIBRARY_PATH', '/opt/cann/lib64')

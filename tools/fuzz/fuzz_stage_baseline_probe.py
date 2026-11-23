@@ -5,14 +5,14 @@ Never uses production homes or uploader credentials. Run old/new source from
 separate directories with identical runtime paths; each invocation starts fresh
 workers, not a warm-session benchmark. Wall spans are not kernel measurements.
 """
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import json,sys,time
 from pathlib import Path
-from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.budgets import Budget,write_policy
-from autofusex.fuzz.client.scheduling import supervisor
-from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.execution.scheduling.ledger import TaskLedger
+from autofusex.execution.scheduling.budgets import Budget,write_policy
+from autofusex.execution.scheduling import supervisor
+from autofusex.execution.storage.queries import ResultQueries
 root=Path(sys.argv[1]);root.mkdir(parents=True,exist_ok=False)
 workers=int(sys.argv[2]);backend=sys.argv[3]
 ledger=TaskLedger(root/'tasks');db=root/'results'

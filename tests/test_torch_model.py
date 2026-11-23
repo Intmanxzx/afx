@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import autofusex.torch_model as torch_model
+import autofusex.workloads.model.torch_model as torch_model
 from autofusex.cli import build_parser
-from autofusex.artifact_io import tensor_to_numpy
+from autofusex.execution.artifact_io import tensor_to_numpy
 
-from autofusex.torch_model import (
+from autofusex.workloads.model.torch_model import (
     TorchCase,
     _execution_context,
     _model_device_hints,
@@ -302,7 +302,8 @@ def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
         return {"passed": True, "summary": {"status": "PASS", "passed": 0, "total": 0}}
 
     monkeypatch.chdir(tmp_path)
-    from autofusex import script_runner, torch_model
+    from autofusex.workloads.model import script_runner
+    from autofusex.workloads.model import torch_model
     monkeypatch.setattr(script_runner, "run_framework_script", fake_run_framework_script)
     monkeypatch.setattr(torch_model, "format_run_summary", lambda summary: "summary")
 
@@ -310,7 +311,7 @@ def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
     assert received["script"] == script.resolve()
     assert received["script_args"] == ("--device", "npu", "--custom-flag")
     assert received["out_dir"] == tmp_path / "model_autofusex"
-    assert received["html_path"] == tmp_path / "model_autofusex.html"
+    assert received["html_path"] == tmp_path / "model_autofusex.viewer.report"
 
 
 def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None:

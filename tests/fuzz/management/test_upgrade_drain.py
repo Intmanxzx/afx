@@ -1,5 +1,5 @@
-from autofusex.fuzz.daemon.management import upgrade_drain
-from autofusex.fuzz.daemon.management.store import Store
+from autofusex.client import upgrade_drain
+from autofusex.client.store import Store
 
 
 def test_quiet_window_restarts_when_descendant_reappears(tmp_path, monkeypatch):
@@ -14,7 +14,7 @@ def test_quiet_window_restarts_when_descendant_reappears(tmp_path, monkeypatch):
 
 def test_activation_restores_execution_environment_on_rollback(tmp_path):
     import json
-    from autofusex.fuzz.daemon.management.activation import select, finish
+    from autofusex.client.activation import select, finish
     store = Store(tmp_path)
     old = dict(id='local', python='/old/python', env={})
     new = dict(old, python='/new/python')

@@ -52,7 +52,7 @@ def _add_with_cpu_option(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_make_manifest(args: argparse.Namespace) -> int:
-    from autofusex.graph import build_manifest
+    from autofusex.execution.graph import build_manifest
 
     manifest = build_manifest(
         side=args.side,
@@ -68,9 +68,9 @@ def cmd_make_manifest(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    from autofusex.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
-    from autofusex.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
-    from autofusex.html import write_report_html, write_report_html_from_json
+    from autofusex.workloads.model.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
+    from autofusex.execution.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
+    from autofusex.viewer.report import write_report_html, write_report_html_from_json
 
     report = compare_manifests(
         args.cpu_manifest,
@@ -94,9 +94,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_compare_three(args: argparse.Namespace) -> int:
-    from autofusex.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
-    from autofusex.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
-    from autofusex.html import write_report_html, write_report_html_from_json
+    from autofusex.workloads.model.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
+    from autofusex.execution.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
+    from autofusex.viewer.report import write_report_html, write_report_html_from_json
     from autofusex.progress import progress_stage
 
     with progress_stage("Three-way tensor comparison", detail="existing manifests"):
@@ -135,12 +135,12 @@ def cmd_compare_three(args: argparse.Namespace) -> int:
 
 
 def cmd_compare_npy(args: argparse.Namespace) -> int:
-    from autofusex.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
-    from autofusex.html import write_report_html, write_report_html_from_json
+    from autofusex.execution.compare import compare_manifests, compare_pair, compare_three_manifests, format_summary, save_report
+    from autofusex.viewer.report import write_report_html, write_report_html_from_json
 
     from pathlib import Path
 
-    from autofusex.compare import TensorRef
+    from autofusex.execution.compare import TensorRef
 
     cpu = TensorRef("golden", 0, Path(args.golden), args.golden_format, "")
     npu = TensorRef("actual", 0, Path(args.actual), args.actual_format, "")
@@ -174,7 +174,7 @@ def cmd_compare_npy(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from autofusex.runner import run_camodel_command, run_command, run_debug_cpu_command
+    from autofusex.execution.runner import run_camodel_command, run_command, run_debug_cpu_command
 
     ret = run_command(args.command, args.out_dir, args.env)
     print(f"command exited with {ret}; logs: {args.out_dir}/run.stdout, {args.out_dir}/run.stderr")
@@ -182,7 +182,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_run_debug_cpu(args: argparse.Namespace) -> int:
-    from autofusex.runner import run_camodel_command, run_command, run_debug_cpu_command
+    from autofusex.execution.runner import run_camodel_command, run_command, run_debug_cpu_command
 
     ret = run_debug_cpu_command(args.command, args.out_dir, args.env)
     print(f"debug-cpu command exited with {ret}; logs: {args.out_dir}/run.stdout, {args.out_dir}/run.stderr")
@@ -190,14 +190,14 @@ def cmd_run_debug_cpu(args: argparse.Namespace) -> int:
 
 
 def cmd_camodel_info(args: argparse.Namespace) -> int:
-    from autofusex.camodel import camodel_info, format_info
+    from autofusex.execution.camodel import camodel_info, format_info
 
     print(format_info(camodel_info(args.cann_root)))
     return 0
 
 
 def cmd_run_camodel(args: argparse.Namespace) -> int:
-    from autofusex.runner import run_camodel_command, run_command, run_debug_cpu_command
+    from autofusex.execution.runner import run_camodel_command, run_command, run_debug_cpu_command
 
     ret = run_camodel_command(args.command, args.out_dir, args.cann_root, args.soc, args.env)
     print(f"camodel command exited with {ret}; logs: {args.out_dir}/run.stdout, {args.out_dir}/run.stderr")
@@ -205,7 +205,7 @@ def cmd_run_camodel(args: argparse.Namespace) -> int:
 
 
 def cmd_report_html(args: argparse.Namespace) -> int:
-    from autofusex.html import write_report_html, write_report_html_from_json
+    from autofusex.viewer.report import write_report_html, write_report_html_from_json
 
     write_report_html_from_json(args.report, args.out, args.title)
     print(f"wrote {args.out}")
@@ -213,7 +213,7 @@ def cmd_report_html(args: argparse.Namespace) -> int:
 
 
 def cmd_normalize_script(args: argparse.Namespace) -> int:
-    from autofusex.agent import AgentConfig
+    from autofusex.workloads.model.agent import AgentConfig
 
     script_args = tuple(args.script_args)
     if script_args[:1] == ("--",):
@@ -224,7 +224,7 @@ def cmd_normalize_script(args: argparse.Namespace) -> int:
         if args.out
         else Path.cwd() / f"{script.stem}_autofusex" / "agent_normalization.json"
     )
-    from autofusex.normalization import normalize_script
+    from autofusex.workloads.model.normalization import normalize_script
 
     framework = args.framework
     if framework == "auto":
@@ -252,9 +252,9 @@ def cmd_normalize_script(args: argparse.Namespace) -> int:
 
 
 def cmd_run_torch_model(args: argparse.Namespace) -> int:
-    from autofusex.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
-    from autofusex.torch_model import format_run_summary as format_torch_run_summary
-    from autofusex.torch_model import run_torch_model
+    from autofusex.workloads.model.autofuse_graph import attach_autofuse_graphs, enable_autofuse_graph_dump
+    from autofusex.workloads.model.torch_model import format_run_summary as format_torch_run_summary
+    from autofusex.workloads.model.torch_model import run_torch_model
 
     enable_autofuse_graph_dump(Path(args.out_dir).resolve() / "autofuse_dump")
     summary = run_torch_model(
@@ -276,18 +276,18 @@ def cmd_run_torch_model(args: argparse.Namespace) -> int:
 
 
 def cmd_run_script(args: argparse.Namespace) -> int:
-    from autofusex.script_runner import (
+    from autofusex.workloads.model.script_runner import (
         default_direct_output_paths,
         parse_python_script_invocation,
         run_framework_script,
     )
-    from autofusex.shell_entry import (
+    from autofusex.workloads.model.shell_entry import (
         apply_env_overrides,
         apply_plan_env,
         is_shell_script_invocation,
         parse_shell_script,
     )
-    from autofusex.torch_model import format_run_summary as format_torch_run_summary
+    from autofusex.workloads.model.torch_model import format_run_summary as format_torch_run_summary
 
     script_args = tuple(args.script_args)
     if script_args[:1] == ("--",):
@@ -327,7 +327,7 @@ def cmd_run_script(args: argparse.Namespace) -> int:
 
 
 def cmd_run_direct_shell(argv: list[str]) -> int:
-    from autofusex.shell_entry import (
+    from autofusex.workloads.model.shell_entry import (
         apply_env_overrides,
         apply_plan_env,
         is_shell_script_invocation,
@@ -353,12 +353,12 @@ def cmd_run_direct_shell(argv: list[str]) -> int:
 
 
 def cmd_run_direct(script: Path, script_args: tuple[str, ...]) -> int:
-    from autofusex.script_runner import (
+    from autofusex.workloads.model.script_runner import (
         default_direct_output_paths,
         parse_python_script_invocation,
         run_framework_script,
     )
-    from autofusex.torch_model import format_run_summary as format_torch_run_summary
+    from autofusex.workloads.model.torch_model import format_run_summary as format_torch_run_summary
 
     out_dir, html_path = default_direct_output_paths(script)
     print(f"AutofuseX direct mode: script={script}")
@@ -380,7 +380,7 @@ def cmd_run_direct(script: Path, script_args: tuple[str, ...]) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from autofusex.adapters import backend_names, framework_names
+    from autofusex.workloads.model.adapters import backend_names, framework_names
 
     parser = argparse.ArgumentParser(
         prog="afx",
@@ -569,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
     modern = raw_argv and raw_argv[0] in {"init", "start", "status", "stop", "restart", "replay", "env", "-h", "--help", "-v", "--version"}
     modern = modern or (raw_argv and raw_argv[0] == "config")
     if modern:
-        from autofusex.fuzz.daemon.management.modern_cli import main as modern_main
+        from autofusex.client.modern_cli import main as modern_main
         # Accept the repository-wide convention of placing --data-dir at the
         # end as well as before the subcommand.
         if "--data-dir" in raw_argv[1:]:
@@ -579,20 +579,20 @@ def main(argv: list[str] | None = None) -> int:
             raw_argv = ["--data-dir", raw_argv[index + 1], *raw_argv[:index], *raw_argv[index + 2:]]
         return modern_main(raw_argv)
     if raw_argv and raw_argv[0] in {"daemon", "device", "environment", "task", "operation", "build", "tool"}:
-        from autofusex.fuzz.daemon.management.cli import main as management_main
+        from autofusex.client.cli import main as management_main
         return management_main(raw_argv)
     if raw_argv and raw_argv[0] == "fuzz":
-        from autofusex.fuzz.client.cli import main as fuzz_main
+        from autofusex.workloads.fuzz.cli import main as fuzz_main
         return fuzz_main(raw_argv[1:])
     if raw_argv and raw_argv[0] == "platform":
-        from autofusex.platform.cli import main as platform_main
+        from autofusex.server.cli import main as platform_main
         return platform_main(raw_argv[1:])
-    from autofusex.script_runner import (
+    from autofusex.workloads.model.script_runner import (
         default_direct_output_paths,
         parse_python_script_invocation,
         run_framework_script,
     )
-    from autofusex.shell_entry import (
+    from autofusex.workloads.model.shell_entry import (
         apply_env_overrides,
         apply_plan_env,
         is_shell_script_invocation,

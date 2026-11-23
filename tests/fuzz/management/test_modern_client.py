@@ -1,9 +1,9 @@
 import json
 import pytest
-from autofusex.fuzz.daemon.management.modern_cli import run
-from autofusex.fuzz.client.contracts import ExecutionConfig, EvaluationConfig
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+from autofusex.client.modern_cli import run
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
+from autofusex.execution.scheduling.ledger import TaskLedger
 
 
 def test_init_is_isolated_and_local_even_with_endpoint(tmp_path, monkeypatch):
@@ -43,22 +43,22 @@ def test_invalid_priority_does_not_enqueue(tmp_path):
 
 def test_shape_mode_is_encoded_in_generated_seeds(tmp_path):
     from dataclasses import asdict
-    from autofusex.fuzz.client.scheduling.campaign import initialize, refill
+    from autofusex.execution.scheduling.campaign import initialize, refill
     for mode, dynamic in [('static',False),('dynamic',True)]:
         ledger=TaskLedger(tmp_path/(mode+'.sqlite'))
         initialize(ledger,[ExecutionConfig('cpu','cpu',1)],EvaluationConfig(),1,
                    sampling=asdict(SamplingConfig()),shape_mode=mode)
         assert refill(ledger)
-        from autofusex.fuzz.client.contracts import Seed
+        from autofusex.workloads.fuzz.contracts import Seed
         assert Seed.parse(ledger.claim()['seed']).dynamic is dynamic
 
 
 def test_replay_uses_history_and_enqueues_before_generation(tmp_path):
     import sqlite3
-    from autofusex.fuzz.daemon.management.store import Store
-    from autofusex.fuzz.daemon.management.replay import submit
-    from autofusex.fuzz.daemon.management.modern_cli import _default_task
-    from autofusex.fuzz.client.scheduling.budgets import Budget, write_policy
+    from autofusex.client.store import Store
+    from autofusex.client.replay import submit
+    from autofusex.client.modern_cli import _default_task
+    from autofusex.execution.scheduling.budgets import Budget, write_policy
     store=Store(tmp_path)
     spec=_default_task();spec['execution']['backends']=['cpu']
     prepared={'spec':spec,'environment':{'id':'local'}}
@@ -95,8 +95,8 @@ def test_config_roundtrip_and_reset(tmp_path):
 
 
 def test_managed_config_export_and_validation(tmp_path, monkeypatch):
-    from autofusex.platform.client import API
-    from autofusex.fuzz.daemon.management.modern_cli import _default_task
+    from autofusex.client.platform_transport import API
+    from autofusex.client.modern_cli import _default_task
     prefix = ['--data-dir', str(tmp_path / 'client')]
     run([*prefix, 'init', '--token', 'test-token'])
     spec = _default_task()

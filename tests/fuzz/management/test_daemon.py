@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 import pytest
-from autofusex.fuzz.daemon.runtime import request
+from autofusex.client.daemon import request
 
 
 def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
@@ -36,7 +36,7 @@ def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
 
 
 def test_management_import_is_lightweight():
-    script='import sys; import autofusex.fuzz.daemon.management.cli; assert not any(x in sys.modules for x in ("torch","numpy","nnsmith","torch_npu"))'
+    script='import sys; import autofusex.client.cli; assert not any(x in sys.modules for x in ("torch","numpy","nnsmith","torch_npu"))'
     subprocess.run([sys.executable,'-c',script],check=True)
 
 
@@ -46,7 +46,7 @@ def test_task_worker_persists_failure_message_and_traceback(tmp_path):
     # An incomplete manifest fails before any execution dependency is loaded.
     spec.write_text(json.dumps({'directory': str(run_dir), 'spec': {}}))
     process = subprocess.run([sys.executable, '-m',
-                              'autofusex.fuzz.daemon.management.task_worker',
+                              'autofusex.client.task_worker',
                               str(spec), '0'], capture_output=True, text=True)
     assert process.returncode == 1
     state = json.loads((run_dir / 'state.json').read_text())

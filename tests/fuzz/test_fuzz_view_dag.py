@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from autofusex.fuzz.server.reporting.report import spec_metadata
+from autofusex.execution.reporting.report import spec_metadata
 from fuzz_fixtures import bundle
 
 
@@ -18,7 +18,7 @@ def dag():
     version = subprocess.check_output([node, '--version'], text=True)
     if int(version.lstrip('v').split('.')[0]) < 16:
         pytest.skip('DAG tests need Node.js 16+; viewer runs in modern browsers')
-    source = (Path(__file__).parents[2]/'autofusex/fuzz/server/view/static/app.js').read_text()
+    source = (Path(__file__).parents[2]/'autofusex/viewer/static/app.js').read_text()
     transform = source[source.index('function caseDag('):source.index('function renderCaseDag(')]
 
     def run(result):
@@ -79,7 +79,7 @@ def test_compact_lifecycle_and_stage_labels():
     if not node:pytest.skip('Node needed')
     if int(subprocess.check_output([node,'--version'],text=True).lstrip('v').split('.')[0])<16:
         pytest.skip('viewer tests need Node.js 16+')
-    source=(Path(__file__).parents[2]/'autofusex/fuzz/server/view/static/app.js').read_text()
+    source=(Path(__file__).parents[2]/'autofusex/viewer/static/app.js').read_text()
     helpers=source[source.index('function lifecycleTime('):]
     name=source[source.index('function stageName('):].split('\n')[0]
     script=name+'\n'+helpers+"\nconsole.log(JSON.stringify([lifecycleTime('2026-11-10T12:42:30.803558+00:00'),stageLabel({kind:'reference'}),stageLabel({kind:'compare'}),stageLabel({kind:'first_call_combined',lease:{device_uuid:'u'}})]));"

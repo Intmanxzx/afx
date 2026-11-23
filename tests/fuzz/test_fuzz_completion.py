@@ -2,15 +2,15 @@
 import json
 import pytest
 from test_fuzz_shape_cases import record
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.server.reporting.statistics import statistics
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.execution.reporting.statistics import statistics
 
 
 @pytest.mark.parametrize('order', [('cpu','af-mlir','eager-npu'), ('af-mlir','eager-npu','cpu')])
 def test_all_backends_required_in_any_arrival_order(tmp_path, order):
     repo = ResultRepository(tmp_path/'results')
-    from autofusex.fuzz.server.reporting.incremental import IncrementalStatistics
+    from autofusex.execution.reporting.incremental import IncrementalStatistics
     inc = IncrementalStatistics(repo.path)
     for i, backend in enumerate(order):
         value = record(backend, ['pass','error','pass'])
@@ -44,7 +44,7 @@ def test_legacy_cpu_only_hidden_but_terminal_target_unknown_visible(tmp_path):
 
 
 def test_manifest_normalization_sorts_expected_backends(tmp_path):
-    from autofusex.fuzz.client.storage.records import normalize
+    from autofusex.execution.storage.records import normalize
     value = record('cpu', ['pass'])
     value['execution']['expected_backends'] = '["cpu","af-mlir"]'
     normalized = normalize(value, {})
@@ -57,6 +57,6 @@ def test_refresh_includes_later_pages():
     node = shutil.which('node')
     if not node: pytest.skip('node unavailable')
     from importlib.resources import files
-    source = files('autofusex.fuzz.server.view').joinpath('static/app.js').read_text()
+    source = files('autofusex.viewer').joinpath('static/app.js').read_text()
     body = source[source.index('function refreshVisible('):source.index('function cell(')]
     subprocess.run([node, '-e', "const assert=require('node:assert/strict');let page=2,calls=[];const activePage=()=> 'records';const load=(...args)=>calls.push(args);const loadCharts=()=>{};" + body + "refreshVisible(true);assert.deepEqual(calls,[[true,true]]);"], check=True)

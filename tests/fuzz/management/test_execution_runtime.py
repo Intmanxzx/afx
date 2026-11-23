@@ -2,8 +2,8 @@ import json
 import sys
 from types import SimpleNamespace
 
-from autofusex.fuzz.daemon.management import execution_runtime
-from autofusex.fuzz.daemon.management.store import Store
+from autofusex.client import execution_runtime
+from autofusex.client.store import Store
 
 
 def test_facts_uses_registered_pythonpath_not_control_path(tmp_path, monkeypatch):

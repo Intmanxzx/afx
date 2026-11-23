@@ -1,12 +1,12 @@
 import json
 from types import SimpleNamespace
-from autofusex.fuzz.daemon.management import platform_sync
-from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.daemon.management.modern_cli import run
+from autofusex.client import platform_sync
+from autofusex.client.store import Store
+from autofusex.client.modern_cli import run
 
 
 def test_new_homes_have_distinct_persistent_identities(tmp_path):
-    from autofusex.fuzz.client.config import load_config
+    from autofusex.client.paths import load_config
     homes = [tmp_path/'one', tmp_path/'two']
     for home in homes:
         run(['--data-dir', str(home), 'init', '--local'])
@@ -20,8 +20,8 @@ def test_new_homes_have_distinct_persistent_identities(tmp_path):
 
 
 def test_active_version_and_update_request_retry(tmp_path, monkeypatch):
-    from autofusex.fuzz.client import environment
-    from autofusex.fuzz.client.scheduling import devices
+    from autofusex.execution import environment
+    from autofusex.execution.scheduling import devices
     monkeypatch.setattr(environment, 'collect', lambda home: {'installation_id':'test', 'package_version':'0.2.2'})
     monkeypatch.setattr(devices, 'device_inventory_info', lambda: {'devices': [], 'model': None})
     store = Store(tmp_path)

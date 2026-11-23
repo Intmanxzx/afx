@@ -2,8 +2,8 @@ import json
 import time
 import uuid
 import pytest
-from autofusex.fuzz.daemon.management.central import ControlStore, Conflict
-from autofusex.fuzz.daemon.management.store import Store
+from autofusex.client.central import ControlStore, Conflict
+from autofusex.client.store import Store
 
 
 def create_user(path, display_name):
@@ -94,7 +94,7 @@ def test_pairing_exchange_retries_without_plaintext_secret(control):
 
 
 def test_cancel_queued_and_running_operations(tmp_path):
-    from autofusex.fuzz.daemon.management.operations import execute
+    from autofusex.client.operations import execute
     store=Store(tmp_path/'home');target=store.submit('environment.inspect',{},'target')
     cancel=store.submit('operation.cancel',dict(operation_id=target['id']),'cancel')
     execute(store,cancel,{})

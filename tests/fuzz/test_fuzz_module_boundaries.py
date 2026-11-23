@@ -2,14 +2,16 @@ from pathlib import Path
 
 
 def test_three_runtime_facades_are_importable_without_crossing_roles():
-    from autofusex.fuzz import client, daemon, server
+    from autofusex.workloads.fuzz import generation as client
+    import autofusex.client as daemon
+    from autofusex.viewer import server
     assert callable(client.materialize)
     assert callable(daemon.request)
     assert callable(server.serve)
 
 
 def test_catalog_has_short_display_names_and_every_rule_is_individual():
-    from autofusex.fuzz.client.nnsmith.aten_catalog import RULES, BY_TARGET
+    from autofusex.workloads.fuzz.nnsmith.aten_catalog import RULES, BY_TARGET
     assert len(RULES) == len(BY_TARGET)
     assert all(rule.display_name and len(rule.display_name) < len(rule.target) for rule in RULES)
     assert any(rule.display_name == 'reducesum' for rule in RULES)
@@ -17,13 +19,13 @@ def test_catalog_has_short_display_names_and_every_rule_is_individual():
 
 
 def test_sampling_default_node_budget_is_ten():
-    from autofusex.fuzz.client.generation.sampling import SamplingConfig
+    from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
     assert SamplingConfig().max_nodes == 10
 
 
 def test_ops_display_groups_and_categories_select_all_overloads():
-    from autofusex.fuzz.client.generation.operator_catalog import normalize_ops, matches_ops
-    from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
+    from autofusex.workloads.fuzz.generation.operator_catalog import normalize_ops, matches_ops
+    from autofusex.workloads.fuzz.nnsmith.aten_catalog import RULES
     expected = {
         'broadcast': {'aten.broadcast_to.default', 'aten.broadcast_tensors.default'},
         'permute': {'aten.transpose.int', 'aten.permute.default', 'aten.transpose_copy.int'},
@@ -48,7 +50,7 @@ def test_ops_display_groups_and_categories_select_all_overloads():
 
 
 def test_documented_operator_metadata_matches_catalog():
-    from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
+    from autofusex.workloads.fuzz.nnsmith.aten_catalog import RULES
     path = Path(__file__).parents[2] / 'docs/fuzz/aten_op_list.md'
     rows = [line.split('|') for line in path.read_text().splitlines() if line.startswith('| ') and 'aten.' in line]
     assert len(rows) == len(RULES)
@@ -59,9 +61,9 @@ def test_documented_operator_metadata_matches_catalog():
 
 def test_renamed_display_labels_keep_stored_cases_readable():
     import json
-    from autofusex.fuzz.client.contracts import canonical_json
-    from autofusex.fuzz.client.case_spec import decode
-    from autofusex.fuzz.server.reporting.report import spec_metadata
+    from autofusex.workloads.fuzz.contracts import canonical_json
+    from autofusex.workloads.fuzz.case_spec import decode
+    from autofusex.execution.reporting.report import spec_metadata
     path = Path(__file__).parent / 'fixtures/current-query.json'
     value = json.loads(path.read_text())
     graph = json.loads(value['graph_json'])

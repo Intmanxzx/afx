@@ -41,7 +41,7 @@ fi
 chmod -R u+rwX,go+rX "$VENV"
 (cd / && "$VENV/bin/python" -I -c 'import autofusex, importlib.metadata as m; print(autofusex.__file__, m.version("autofusex"))')
 # Prove the new code opens (and migrates) the data directory before switching the service.
-"$VENV/bin/python" -I -c 'import sys; from autofusex.platform.server import create_server; s=create_server(sys.argv[1], port=0); s.server_close()' "$ROOT/data"
+"$VENV/bin/python" -I -c 'import sys; from autofusex.server.server import create_server; s=create_server(sys.argv[1], port=0); s.server_close()' "$ROOT/data"
 cat > "$ROOT/bin/afx" <<EOF
 #!/usr/bin/env bash
 exec "$VENV/bin/python" -I -m afx "\$@"

@@ -7,10 +7,10 @@ from argparse import Namespace
 
 import pytest
 
-from autofusex.platform import auth
-from autofusex.platform.client import setup
-from autofusex.platform.server import PlatformServer
-from autofusex.platform.store import Store
+from autofusex.server import auth
+from autofusex.client.platform_transport import setup
+from autofusex.server.server import PlatformServer
+from autofusex.server.store import Store
 
 
 @pytest.fixture

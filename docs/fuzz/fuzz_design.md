@@ -1,8 +1,8 @@
 # Fuzz 整体架构
 
-Fuzz 由客户端管理进程和执行引擎组成，NPU 客户端执行任务、本地保存结果。代码集中在 [autofusex/fuzz](../../autofusex/fuzz/)，NNSmith fork 是独立执行依赖。
+Fuzz 由客户端管理进程和执行引擎组成，NPU 客户端执行任务、本地保存结果。代码集中在 [autofusex/workloads/fuzz](../../autofusex/workloads/fuzz/)，NNSmith fork 是独立执行依赖。
 
-本文档只覆盖这一套 fuzz 测试引擎（daemon/client，`autofusex/fuzz`）。结果上报、问题闭环、知识库等产品层功能由独立的平台服务 [autofusex/platform](../../autofusex/platform/) 提供，有自己的 schema 和 API，见[平台业务与数据设计](platform_v3_design.md)。`autofusex/fuzz/server/` 只提供结果的只读/离线能力（`view/` 离线查看器、`reporting/` 统计与索引），不承载写入或远程管理的服务进程。
+本文档只覆盖这一套 fuzz 测试引擎（daemon/client，`autofusex/workloads/fuzz`）。结果上报、问题闭环、知识库等产品层功能由独立的平台服务 [autofusex/server](../../autofusex/server/) 提供，有自己的 schema 和 API，见[平台业务与数据设计](platform_v3_design.md)。`autofusex/workloads/fuzz/server/` 只提供结果的只读/离线能力（`view/` 离线查看器、`reporting/` 统计与索引），不承载写入或远程管理的服务进程。
 
 ## 运行模块
 
@@ -28,9 +28,9 @@ flowchart TD
     NPU --> Compare
     Compare --> DB[本地结果与执行事实]
     DB --> Sync[daemon 平台同步]
-    Sync --> Platform[平台服务 autofusex/platform]
+    Sync --> Platform[平台服务 autofusex/server]
     DB --> PlatformClient[独立 platform client]
-    PlatformClient --> Platform[平台服务 autofusex/platform]
+    PlatformClient --> Platform[平台服务 autofusex/server]
     View[afx fuzz view / 离线查看器] --> DB
 ~~~
 
@@ -65,7 +65,7 @@ flowchart TD
 - Autofuse 覆盖依据运行时编译候选事件与调度汇总；进入 Autofuse 后的 lowering、schedule、codegen 或精度失败仍保留。
 - NNSmith fork 由 [pyproject.toml](../../pyproject.toml) 固定，执行时校验源码和依赖，缺失或不匹配直接失败，没有备用手写图生成器。
 
-[limits.py](../../autofusex/fuzz/client/limits.py) 统一维护预算：当前最多 64 个计算节点、8 组 Shape、每组 256 个张量，CaseSpec 512 KiB、执行 context 768 KiB。生成时检查序列化大小；上传单请求上限 2 MiB，按实际编码大小分批。
+[limits.py](../../autofusex/workloads/fuzz/limits.py) 统一维护预算：当前最多 64 个计算节点、8 组 Shape、每组 256 个张量，CaseSpec 512 KiB、执行 context 768 KiB。生成时检查序列化大小；上传单请求上限 2 MiB，按实际编码大小分批。
 
 ## 执行与资源
 
@@ -77,7 +77,7 @@ flowchart TD
 
 直接 fuzz run 的自动资源策略在启动时按有效 CPU、RAM 和设备数计算，编译并发起点上限为 8，workers × compile_threads 不超过有效 CPU；这是启发式，不是在线最优调参。托管任务还受 trust 和 client policy 上限约束，默认策略仅允许 npu:0、1 worker、1 编译线程，不能套用直接 run 的多卡默认值。
 
-精度以 CPU 为准，浮点容差由 [compare.py](../../autofusex/compare.py) 按 dtype 决定，整数/布尔精确比较；NaN 不通过，同符号 Inf 可通过。CPU 不与自身比较。精度失败直接保留，不自动追加 eager-npu 复核；人工 replay 产生独立记录。
+精度以 CPU 为准，浮点容差由 [compare.py](../../autofusex/execution/compare.py) 按 dtype 决定，整数/布尔精确比较；NaN 不通过，同符号 Inf 可通过。CPU 不与自身比较。精度失败直接保留，不自动追加 eager-npu 复核；人工 replay 产生独立记录。
 
 ## 数据与统计
 
@@ -99,4 +99,4 @@ shape_processing 是 Shape 处理墙钟时间；端到端、排队、工具吞�
 
 ## 上传、复测与问题闭环
 
-结果上传、复测任务领取、问题归类与认领、Agent 修复闭环由 `autofusex/platform/` 负责，不是这套 fuzz 引擎自己的职责；完整协议和数据模型见[平台业务与数据设计](platform_v3_design.md)，客户端用法见[使用说明](fuzz_usage.md)。
+结果上传、复测任务领取、问题归类与认领、Agent 修复闭环由 `autofusex/server/` 负责，不是这套 fuzz 引擎自己的职责；完整协议和数据模型见[平台业务与数据设计](platform_v3_design.md)，客户端用法见[使用说明](fuzz_usage.md)。

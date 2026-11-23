@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.execution.storage import ResultRepository
 
 
 def result():
@@ -132,7 +132,7 @@ class Block(importlib.abc.MetaPathFinder):
  def find_spec(self,name,*args):
   if name.split('.')[0] in {'torch','numpy','nnsmith','torch_npu'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-from autofusex.fuzz.client.cli import main
+from autofusex.workloads.fuzz.cli import main
 assert main(['maintenance', 'results',sys.argv[1]])==0
 '''
     out = subprocess.run([sys.executable,'-c',code,str(repo.path)],capture_output=True,text=True)

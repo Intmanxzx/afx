@@ -1,9 +1,9 @@
 import sqlite3
 import uuid
 
-from autofusex.fuzz import daemon
-from autofusex.fuzz.daemon import runtime
-from autofusex.fuzz.daemon.management.central import ControlStore
+import autofusex.client as daemon
+from autofusex.client import daemon as runtime
+from autofusex.client.central import ControlStore
 
 
 def create_user(path, display_name):

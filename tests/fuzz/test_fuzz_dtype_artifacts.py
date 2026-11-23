@@ -3,7 +3,7 @@ import pytest
 
 def test_bfloat16_stage_artifact_roundtrip(tmp_path):
     torch = pytest.importorskip('torch')
-    from autofusex.fuzz.client.scheduling.artifacts import write_arrays, read_arrays
+    from autofusex.execution.scheduling.artifacts import write_arrays, read_arrays
     samples = [(torch.tensor([1., -2., 0.], dtype=torch.bfloat16),
                 torch.tensor([1 + 2j], dtype=torch.complex64)),
                (torch.tensor(3, dtype=torch.int64),)]
@@ -16,8 +16,8 @@ def test_bfloat16_stage_artifact_roundtrip(tmp_path):
 
 @pytest.fixture
 def torch_adapter():
-    from autofusex.fuzz.client.backends.torch import TorchAdapter
-    from autofusex.fuzz.client.contracts import ExecutionConfig
+    from autofusex.execution.backends.torch import TorchAdapter
+    from autofusex.contracts.execution import ExecutionConfig
     adapter = TorchAdapter(ExecutionConfig('cpu', 'cpu'))
     adapter.torch = pytest.importorskip('torch')
     return adapter

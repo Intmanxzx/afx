@@ -6,8 +6,8 @@ import sqlite3
 import statistics
 import time
 from pathlib import Path
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.server.reporting.statistics import statistics as charts
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.execution.reporting.statistics import statistics as charts
 
 p = argparse.ArgumentParser()
 p.add_argument('database', type=Path)

@@ -1,7 +1,7 @@
 import json
 import sqlite3
 
-from autofusex.fuzz.client.storage.stage_facts import initialize, timeline
+from autofusex.execution.storage.stage_facts import initialize, timeline
 
 
 def test_timeline_uses_case_index_and_preserves_shared_and_attempt_stages():

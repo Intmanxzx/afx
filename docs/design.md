@@ -231,10 +231,10 @@ afx run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [-
 
 当前不修改 Graph-autofusion 仓内子模块。新增独立目录：
 
-- `autofusex/graph.py`：GE dump 图解析和 manifest 生成。
-- `autofusex/compare.py`：精度比较核心。
-- `autofusex/camodel.py`：CANN simulator/CAModel 目录发现与环境变量构造。
-- `autofusex/runner.py`：外部命令执行封装。
+- `autofusex/execution/graph.py`：GE dump 图解析和 manifest 生成。
+- `autofusex/execution/compare.py`：精度比较核心。
+- `autofusex/execution/camodel.py`：CANN simulator/CAModel 目录发现与环境变量构造。
+- `autofusex/execution/runner.py`：外部命令执行封装。
 - `docs/`：设计与 manifest 文档。
 - `tests/`：最小 pytest。
 

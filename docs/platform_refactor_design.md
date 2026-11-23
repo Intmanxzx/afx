@@ -262,3 +262,13 @@ AFX 默认作为客户端，init/start/stop/restart/status 是正式顶层命令
 验证在 mlir 临时目录执行：公共协议隔离、配置、客户端、平台相关测试共 60 项最终通过。首次传输包含 macOS 元数据文件导致架构扫描失败，清理临时目录中的元数据后复测；架构检查显式记录四个现有平台客户端适配入口，待 platform/client.py 迁移时移除该过渡例外。
 
 本批未变更执行算法、部署服务或升级运行中的客户端。
+
+## 11. 目录迁移验证记录（2026-11-23）
+
+本批迁移 server、client、execution、workloads/fuzz、workloads/model 和 viewer 的源码归属，更新内部导入、子进程模块入口、部署检查及 wheel 资源路径。公共 ExecutionConfig、EvaluationConfig、ShapeResult、IPC 与确定性 JSON 编码归 contracts。历史 CaseSpec 内的 materializer 类名仍使用原 wire namespace，不随 Python 包路径变化；历史身份与生成指纹不能因移动文件改变。
+
+这是目录迁移阶段，尚未达到最终依赖边界：execution 的现有队列与统计仍有 fuzz 专用逻辑，supervisor 尚需部署隔离，viewer 尚有独立前端资源，CLI 收敛和 imported/model 平台接入继续实施。不能把空目录或移动源码计为新增业务完成。
+
+mlir 独立临时目录全量回归结果为 1371 passed、7 failed、2 skipped（474 秒）。失败项均在迁移前基线复现：历史 CPU-only 状态期望、生成 golden fingerprints、已删除 session.js 的遗留测试，以及四项独立同步 setup 测试。同步 setup 的实际缺陷是未创建状态数据库父目录，本批修复；其余失败保留记录，不能通过重写历史指纹掩盖。全量中的后台执行测试已通过。加载项目环境后检查两个 NPU 芯片均为 Health OK；未部署或替换现有客户端。
+
+同步初始化修复与序列化抽取后的定向回归：32 passed（96.75 秒），覆盖 contracts 隔离、架构边界、同步 setup、任务队列及后台执行。

@@ -4,8 +4,8 @@ import json
 
 def test_retired_sampled_metadata_cannot_be_attached_to_current_seed():
     from dataclasses import replace, asdict
-    from autofusex.fuzz.client.case_spec import decode, encode
-    from autofusex.fuzz.client.generation.sampling import SamplingConfig
+    from autofusex.workloads.fuzz.case_spec import decode, encode
+    from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
     from fuzz_fixtures import three_shapes_spec
     import pytest
     spec=three_shapes_spec();config=SamplingConfig();graph=json.loads(spec.graph_json)

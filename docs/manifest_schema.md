@@ -82,4 +82,4 @@ native NPU Autofuse graph node 还可能包含以下映射诊断字段：
 | `NC1HWC0` | `NHWC` / `ND` |
 | `NDC1HWC0` | `NDHWC` / `ND` |
 
-后续如需要支持 FRACTAL、NZ 等格式，应在 `autofusex/compare.py` 中补充确定的布局转换函数，并添加测试。
+后续如需要支持 FRACTAL、NZ 等格式，应在 `autofusex/execution/compare.py` 中补充确定的布局转换函数，并添加测试。

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autofusex.runner import run_debug_cpu_command
+from autofusex.execution.runner import run_debug_cpu_command
 
 
 def test_run_debug_cpu_sets_environment(tmp_path: Path) -> None:

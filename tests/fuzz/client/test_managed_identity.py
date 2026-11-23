@@ -4,7 +4,7 @@ import sys
 import uuid
 
 import pytest
-from autofusex.fuzz.client.environment import collect
+from autofusex.execution.environment import collect
 
 
 def test_managed_worker_uses_installation_home_in_child_process(tmp_path, monkeypatch):
@@ -14,7 +14,7 @@ def test_managed_worker_uses_installation_home_in_child_process(tmp_path, monkey
     identity = str(uuid.uuid4())
     (home / 'config.json').write_text(json.dumps(dict(version=1, source_id=identity, cpu_workers=1)))
     monkeypatch.setenv('AFX_TASK_HOME', str(home))
-    script = 'from autofusex.fuzz.client.environment import collect; import sys; print(collect(sys.argv[1])["installation_id"])'
+    script = 'from autofusex.execution.environment import collect; import sys; print(collect(sys.argv[1])["installation_id"])'
     result = subprocess.run([sys.executable, '-c', script, str(queue_home)], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == identity
 

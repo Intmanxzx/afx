@@ -1,4 +1,4 @@
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 """Stage scheduling, independent fact sync and bounded artifact regressions."""
 import json
@@ -9,10 +9,10 @@ import uuid
 from pathlib import Path
 from dataclasses import asdict
 import pytest
-from autofusex.fuzz.client.scheduling.stages import StageTask,Kind,Requirements
-from autofusex.fuzz.client.scheduling.pool import Pool,Device
-from autofusex.fuzz.client.scheduling.budgets import Budget
-from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
+from autofusex.execution.scheduling.stages import StageTask,Kind,Requirements
+from autofusex.execution.scheduling.pool import Pool,Device
+from autofusex.execution.scheduling.budgets import Budget
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 
 
 def test_dag_waits_for_both_branches():
@@ -32,10 +32,10 @@ def test_upgrade_finishes_whole_case_and_preserves_next_case(tmp_path, monkeypat
         import os
         if os.environ.get('AFX_TEST_UPGRADE_NPU') != '1':
             pytest.skip('requires explicit NPU validation environment')
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.staged import drain
-    from autofusex.fuzz.client.scheduling.budgets import write_policy
-    from autofusex.fuzz.daemon.management.artifacts import atomic
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling.staged import drain
+    from autofusex.execution.scheduling.budgets import write_policy
+    from autofusex.client.artifacts import atomic
     ledger=TaskLedger(tmp_path/'tasks.sqlite')
     first=[]; second=[]
     for batch, ids in [('first', first), ('second', second)]:
@@ -77,14 +77,14 @@ def test_atomic_resources_do_not_hold_cpu_waiting_for_device(tmp_path):
 def test_contract_staged_does_not_enable_compile_split():
     assert ExecutionConfig('cpu','cpu',1,scheduling='staged').scheduling=='staged'
     with pytest.raises(ValueError):ExecutionConfig('cpu','cpu',1,scheduling='split')
-    from autofusex.fuzz.client.backends.torch import TorchAdapter
+    from autofusex.execution.backends.torch import TorchAdapter
     assert not TorchAdapter.capabilities.independent_compile
     assert not TorchAdapter.capabilities.transferable_compilation
 
 
 def test_safe_host_artifact_digest(tmp_path):
     torch=pytest.importorskip('torch')
-    from autofusex.fuzz.client.scheduling.artifacts import write_arrays,read_arrays
+    from autofusex.execution.scheduling.artifacts import write_arrays,read_arrays
     ref=write_arrays(tmp_path/'out.npz',[(torch.arange(3),)])
     assert torch.equal(read_arrays(tmp_path,ref)[0][0],torch.arange(3))
     (tmp_path/'out.npz').write_bytes(b'changed')
@@ -93,7 +93,7 @@ def test_safe_host_artifact_digest(tmp_path):
 
 
 def test_interval_union_and_percentiles():
-    from autofusex.fuzz.server.reporting.efficiency import union,percentile
+    from autofusex.execution.reporting.efficiency import union,percentile
     assert union([(1,5),(3,7),(10,12)])==8
     assert percentile([1,2,3,4],.95)==4
     assert percentile([],.5) is None
@@ -102,9 +102,9 @@ def test_interval_union_and_percentiles():
 @pytest.mark.skipif(sys.platform!='linux',reason='Linux managed runtime')
 def test_real_staged_cpu_shared_generation_and_runtime(tmp_path):
     pytest.importorskip('torch')
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.supervisor import drain
-    from autofusex.fuzz.client.scheduling.budgets import write_policy
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling.supervisor import drain
+    from autofusex.execution.scheduling.budgets import write_policy
     ledger=TaskLedger(tmp_path/'tasks')
     for backend in ['cpu','cpu-compile']:
         ledger.enqueue(CURRENT_SEED,ExecutionConfig(backend,'cpu',1,scheduling='staged',static_only=True,batch_id='test'),EvaluationConfig())
@@ -123,10 +123,10 @@ def test_real_staged_cpu_shared_generation_and_runtime(tmp_path):
 def test_staged_cancel_reaps_workers_and_preserves_retry(tmp_path,monkeypatch):
     import threading
     from concurrent.futures import ThreadPoolExecutor
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.supervisor import drain
-    from autofusex.fuzz.client.scheduling.budgets import write_policy
-    from autofusex.fuzz.client.scheduling import pool as module
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling.supervisor import drain
+    from autofusex.execution.scheduling.budgets import write_policy
+    from autofusex.execution.scheduling import pool as module
     ledger=TaskLedger(tmp_path/'tasks')
     identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=1))
@@ -149,10 +149,10 @@ def test_staged_cancel_reaps_workers_and_preserves_retry(tmp_path,monkeypatch):
 
 @pytest.mark.skipif(sys.platform!='linux',reason='Linux managed runtime')
 def test_staged_worker_timeout_no_shape_and_no_auto_retry(tmp_path,monkeypatch):
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.supervisor import drain
-    from autofusex.fuzz.client.scheduling.budgets import write_policy
-    from autofusex.fuzz.client.scheduling import pool as module
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling.supervisor import drain
+    from autofusex.execution.scheduling.budgets import write_policy
+    from autofusex.execution.scheduling import pool as module
     ledger=TaskLedger(tmp_path/'tasks');ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=1))
     original=module.subprocess.Popen;count=0
@@ -173,10 +173,10 @@ def test_staged_worker_timeout_no_shape_and_no_auto_retry(tmp_path,monkeypatch):
 
 
 def test_snapshot_keeps_lifecycle_but_not_private_fact_outbox(tmp_path):
-    from autofusex.fuzz.client.storage import ResultRepository
+    from autofusex.execution.storage import ResultRepository
     from test_fuzz_precise_metrics import Adapter
     from fuzz_fixtures import bundle
-    from autofusex.fuzz.client.execution import execute
+    from autofusex.workloads.fuzz.execution import execute
     repo=ResultRepository(tmp_path/'db');identity=repo.save(execute(bundle('C16'),Adapter(),EvaluationConfig()))
     repo.snapshot(tmp_path/'copy')
     assert ResultRepository(tmp_path/'copy').detail(identity)['lifecycle']
@@ -186,10 +186,10 @@ def test_snapshot_keeps_lifecycle_but_not_private_fact_outbox(tmp_path):
 
 @pytest.mark.skipif(sys.platform!='linux',reason='Linux managed runtime')
 def test_record_failure_is_resumable_not_fake_success(tmp_path,monkeypatch):
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.supervisor import drain
-    from autofusex.fuzz.client.scheduling.budgets import write_policy
-    from autofusex.fuzz.client.scheduling.pool import Pool
+    from autofusex.execution.scheduling.ledger import TaskLedger
+    from autofusex.execution.scheduling.supervisor import drain
+    from autofusex.execution.scheduling.budgets import write_policy
+    from autofusex.execution.scheduling.pool import Pool
     ledger=TaskLedger(tmp_path/'tasks')
     identity=ledger.enqueue(CURRENT_SEED,ExecutionConfig('cpu','cpu',1,scheduling='staged'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=2))
@@ -217,16 +217,16 @@ def test_oversized_device_request_fails_instead_of_hanging(tmp_path):
 
 def test_shared_bundle_reuses_exact_input_bytes_without_regeneration(tmp_path,monkeypatch):
     from fuzz_fixtures import bundle
-    from autofusex.fuzz.client.scheduling.artifacts import write_bundle,bundle_from
+    from autofusex.execution.scheduling.artifacts import write_bundle,bundle_from
     case=bundle('C16');ref=write_bundle(tmp_path,case)
-    monkeypatch.setattr('autofusex.fuzz.client.generation.nnsmith_sampled.materialize_spec',lambda *a:pytest.fail('must not regenerate input bytes'))
+    monkeypatch.setattr('autofusex.workloads.fuzz.generation.nnsmith_sampled.materialize_spec',lambda *a:pytest.fail('must not regenerate input bytes'))
     assert bundle_from(ref,tmp_path)==case
     (tmp_path/'inputs.bin').write_bytes(b'corrupt')
     with pytest.raises(ValueError,match='digest'):bundle_from(ref,tmp_path)
 
 
 def test_scratch_sampling_tolerates_concurrent_retirement(tmp_path,monkeypatch):
-    from autofusex.fuzz.client.scheduling.budgets import scratch_size
+    from autofusex.execution.scheduling.budgets import scratch_size
     import os
     def vanished(root,followlinks,onerror):
         onerror(FileNotFoundError('retired cache'))
@@ -239,9 +239,9 @@ def test_scratch_sampling_tolerates_concurrent_retirement(tmp_path,monkeypatch):
 def test_reference_is_once_per_shape_without_self_comparison(tmp_path, monkeypatch, samples):
     torch = pytest.importorskip('torch')
     from fuzz_fixtures import bundle
-    from autofusex.fuzz.client.scheduling import artifacts
-    from autofusex.fuzz.client.scheduling.stage_worker import perform
-    from autofusex.fuzz.client.backends import torch as backend
+    from autofusex.execution.scheduling import artifacts
+    from autofusex.execution.scheduling.stage_worker import perform
+    from autofusex.execution.backends import torch as backend
     calls = []
     original = backend.TorchAdapter.invoke
 
@@ -256,7 +256,7 @@ def test_reference_is_once_per_shape_without_self_comparison(tmp_path, monkeypat
     monkeypatch.setattr(backend.TorchAdapter, 'cpu_reference', forbidden)
     monkeypatch.setattr(backend.TorchAdapter, 'compare', forbidden)
     from dataclasses import replace
-    from autofusex.fuzz.client.generation import materialize
+    from autofusex.workloads.fuzz.generation import materialize
     shared = materialize(CURRENT_SEED)
     shared = replace(shared, spec=replace(shared.spec, shape_samples=shared.spec.shape_samples*samples,
                                           output_samples=shared.spec.output_samples*samples))
@@ -289,7 +289,7 @@ def test_compressed_artifact_bound_checked_before_loading(tmp_path, monkeypatch)
     import hashlib
     import zipfile
     import numpy as np
-    from autofusex.fuzz.client.scheduling import artifacts
+    from autofusex.execution.scheduling import artifacts
     path = tmp_path/'out.npz'
     with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr('s0_0.npy', b'x'*4096)
@@ -302,8 +302,8 @@ def test_compressed_artifact_bound_checked_before_loading(tmp_path, monkeypatch)
 
 def test_ops_whitelist_filters_generated_graph_without_changing_seed(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
-    from autofusex.fuzz.client import generation
-    from autofusex.fuzz.client.scheduling.stage_worker import perform
+    from autofusex.workloads.fuzz import generation
+    from autofusex.execution.scheduling.stage_worker import perform
     monkeypatch.setattr(generation, 'materialize', lambda _: bundle())
     # C16 contains relu/amin/add/mul/amax/transpose; an add-only whitelist
     # must skip it after generation, not alter the generated graph.
@@ -314,8 +314,8 @@ def test_ops_whitelist_filters_generated_graph_without_changing_seed(tmp_path, m
 
 def test_excluded_graph_never_runs_backend(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
-    from autofusex.fuzz.client import generation
-    from autofusex.fuzz.client.scheduling.stage_worker import perform
+    from autofusex.workloads.fuzz import generation
+    from autofusex.execution.scheduling.stage_worker import perform
     monkeypatch.setattr(generation, 'materialize', lambda _: bundle())
     assert perform({'kind':'generate','seed':'C16','directory':str(tmp_path),
                     'exclude_ops':['transpose']}) == {'excluded':True}
@@ -323,7 +323,7 @@ def test_excluded_graph_never_runs_backend(tmp_path, monkeypatch):
 
 
 def test_npu_first_resource_budget_respects_limits(monkeypatch):
-    from autofusex.fuzz.client import resources
+    from autofusex.execution import resources
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling':40,'effective_memory_bytes':200*1024**3})
     monkeypatch.setattr(sys, 'platform', 'linux')
@@ -332,7 +332,7 @@ def test_npu_first_resource_budget_respects_limits(monkeypatch):
 
 
 def test_mlir_runtime_reuse_is_explicit_and_not_compile_split():
-    from autofusex.fuzz.client.backends.torch import TorchAdapter
+    from autofusex.execution.backends.torch import TorchAdapter
     for backend, reusable in [('cpu', True), ('eager-npu', True), ('af-mlir', True),
                               ('af-legacy', True), ('triton-npu', True)]:
         adapter = TorchAdapter(ExecutionConfig(backend, 'cpu' if backend == 'cpu' else 'npu:0', 1))
@@ -355,7 +355,7 @@ def test_mlir_runtime_reuse_is_explicit_and_not_compile_split():
 def test_compiled_runtime_reuse_preserves_recycling_guards(tmp_path, monkeypatch,
         reusable, status, count, rss, device_bytes, cache_bytes, retired):
     from types import SimpleNamespace
-    from autofusex.fuzz.client.scheduling import pool as module, budgets
+    from autofusex.execution.scheduling import pool as module, budgets
     pool = Pool(Budget(cpu_workers=1), tmp_path, 0, [])
     worker = dict(socket=SimpleNamespace(settimeout=lambda _: None), identity='worker',
                   child=SimpleNamespace(pid=123), count=count, rss_floor=1024,

@@ -68,18 +68,18 @@ def validate(value):
             raise ValueError('auto resources conflict with manual worker/thread values')
         if result['results']['upload'] and not result['results']['save']:
             raise ValueError('upload requires saved results')
-        from autofusex.fuzz.client.contracts import Seed
+        from autofusex.workloads.fuzz.contracts import Seed
         if result['workload']['mode'] == 'replay':
             result['workload'].pop('generation', None)
             result.pop('termination', None)
             for seed in result['workload']['seeds']: Seed.parse(seed)
         else:
-            from autofusex.fuzz.client.generation.sampling import SamplingConfig
+            from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
             generation = result['workload'].get('generation', {})
             seconds = quantity(generation['timeout']) if generation.get('timeout') else None
             if seconds is not None and (seconds != int(seconds) or seconds > 511):
                 raise ValueError('generation timeout must be whole seconds <= 511')
-            from autofusex.fuzz.client.generation.operator_catalog import normalize_ops
+            from autofusex.workloads.fuzz.generation.operator_catalog import normalize_ops
             if generation.get('ops'): normalize_ops(generation['ops'])
             SamplingConfig.profile(generation.get('tensor_scale', 'default'),
                 **{k:generation[k] for k in ('dim_min','dim_max','dim_dist_mode','value_dist_mode','dtype_mode','dynamic_variants','method') if k in generation},

@@ -8,8 +8,8 @@ def probe(paths, succeeds):
     code = f'''
 import sys
 sys.path[:0] = {list(map(str, paths))!r}
-from autofusex.fuzz.client.backends.mlir_capability import verify_compile_adapter
-from autofusex.fuzz.client.backends.base import UnsupportedBackend
+from autofusex.execution.backends.mlir_capability import verify_compile_adapter
+from autofusex.execution.backends.base import UnsupportedBackend
 try:
     result = verify_compile_adapter()
 except UnsupportedBackend as exc:

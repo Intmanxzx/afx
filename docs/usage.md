@@ -53,7 +53,7 @@ afx python3 sasrec.py --device npu --device_id 0
 
 ```text
 ./model_autofusex/       # dump、图、manifest、JSON/CSV 等中间产物
-./model_autofusex.html   # 最终 HTML 报告
+./model_autofusex.viewer.report   # 最终 HTML 报告
 ```
 
 再次执行会清理并重新生成同名中间产物目录，同时覆盖同名 HTML。快捷模式会先静态扫描脚本的

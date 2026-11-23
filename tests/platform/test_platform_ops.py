@@ -12,13 +12,18 @@ def _short(n):
 
 import pytest
 
-from autofusex.platform import auth, ops, profile, queries, retests, search
-from autofusex.platform.client import af_error_line, function_status
-from autofusex.platform.ingest import Ingestor
-from autofusex.platform.failure_attribution import classify as classify_failure
-from autofusex.platform.issues import IssueError
-from autofusex.platform.server import PlatformServer
-from autofusex.platform.store import Store, now_ms
+from autofusex.server import auth
+from autofusex.server import ops
+from autofusex.server import profile
+from autofusex.server import queries
+from autofusex.server import retests
+from autofusex.server import search
+from autofusex.client.platform_transport import af_error_line, function_status
+from autofusex.server.ingest import Ingestor
+from autofusex.server.failure_attribution import classify as classify_failure
+from autofusex.server.issues import IssueError
+from autofusex.server.server import PlatformServer
+from autofusex.server.store import Store, now_ms
 
 ENV = {"cann": "8.2", "backend_version": "0.3.0"}
 
@@ -216,7 +221,7 @@ def test_profile_points_patterns_and_drafts(world):
     drafts = profile.create_drafts(store, admin, {"request_key": "p1", "x": "af-mlir", "y": "triton-npu",
                                                   "npu_arch": "910b"})
     assert len(drafts["created"]) == 2
-    from autofusex.platform import knowledge
+    from autofusex.server import knowledge
     entry = knowledge.get(store.reader(), drafts["created"][0], include_unpublished=True)
     assert entry["confidence"] == "measured" and entry["status"] == "draft"
     assert not knowledge.search(store.reader())["items"]  # drafts are hidden until published
@@ -311,7 +316,7 @@ def test_keep_alive_survives_rejected_bodies(world):
 
 def test_mapper_context_cache_survives_eviction(tmp_path):
     import sqlite3
-    from autofusex.platform.client import Mapper
+    from autofusex.client.platform_transport import Mapper
     db = tmp_path / "results.sqlite"
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE contexts(id TEXT PRIMARY KEY, kind TEXT, payload TEXT)")
@@ -323,7 +328,7 @@ def test_mapper_context_cache_survives_eviction(tmp_path):
 
 
 def test_summary_line_skips_wrappers():
-    from autofusex.platform.client import summary_line
+    from autofusex.client.platform_transport import summary_line
     text = ("BackendCompilerFailed: backend='inductor' raised:\nTraceback (most recent call last):\n"
             "  File \"x.py\", line 1\nTypeError: int_noop() got an unexpected keyword argument 'decimals'\n"
             "Set TORCH_LOGS=\"+dynamo\" and TORCHDYNAMO_VERBOSE=1 for more information")
@@ -412,7 +417,7 @@ def test_display_names_history_spec_and_windows(tmp_path):
 
 
 def test_client_retries_transient_errors(monkeypatch):
-    from autofusex.platform import client as platform_client
+    from autofusex.client import platform_transport as platform_client
     calls = []
 
     def flaky(self, method, path, body=None):
@@ -457,7 +462,7 @@ def test_negated_stage_keeps_rows_without_stage(world):
 
 
 def test_schedule_stage_from_optimize_module_logs():
-    from autofusex.platform.client import function_status
+    from autofusex.client.platform_transport import function_status
     ge = ("InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir\n"
           "[ERROR] GE(12345,python3):2026-11-17-18:00:00.123.456 [./autofuse/optimize/autoschedule/autoschedule.cpp:812]12345 GenTilingGroup: "
           "[AUTOFUSE]tiling group gen failed for node reduce_0.\n Codegen generate kernel failed or abort")
@@ -479,7 +484,7 @@ def test_schedule_stage_from_optimize_module_logs():
 
 def test_plog_errors_by_worker_pid_and_window(tmp_path):
     import time as _time
-    from autofusex.platform.client import attempt_window, plog_errors, function_status
+    from autofusex.client.platform_transport import attempt_window, plog_errors, function_status
     root = tmp_path / "plog"
     root.mkdir()
     base = _time.mktime((2026, 11, 18, 8, 56, 45, 0, 0, -1))
@@ -516,7 +521,7 @@ def datetime_iso(epoch):
 def test_environment_errors_are_not_uploaded(tmp_path):
     import sqlite3
     from pathlib import Path as _Path
-    from autofusex.platform.client import Mapper, State, Counters, upload_new
+    from autofusex.client.platform_transport import Mapper, State, Counters, upload_new
     db = tmp_path / "results.sqlite"
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE attempts(id TEXT PRIMARY KEY, seed TEXT, backend TEXT, status TEXT, error_summary TEXT, "
@@ -538,7 +543,7 @@ def test_environment_errors_are_not_uploaded(tmp_path):
 
 
 def test_task_configuration_inheritance_and_user_isolation(world):
-    from autofusex.platform import task_config
+    from autofusex.server import task_config
     store, dev, admin = world
     default=task_config.default()
     default['termination']={'mode':'continuous'}
@@ -556,7 +561,7 @@ def test_task_configuration_inheritance_and_user_isolation(world):
 
 
 def test_task_configuration_http(world):
-    from autofusex.platform.client import API
+    from autofusex.client.platform_transport import API
     store, dev, admin=world
     token=auth.issue_token(store,'dev')
     server=PlatformServer(store,('127.0.0.1',0))
@@ -589,7 +594,7 @@ def test_device_inventory_independent_of_runs(world):
 
 def test_upgrade_pre_attribution_database(tmp_path):
     import sqlite3
-    from autofusex.platform import schema
+    from autofusex.server import schema
     conn = sqlite3.connect(tmp_path / 'legacy.db', isolation_level=None)
     old = [(v, sql.replace('ALTER TABLE executions ADD COLUMN classifier_version INTEGER;', '')
             .replace('ALTER TABLE executions ADD COLUMN failure_owner TEXT;', ''))

@@ -507,7 +507,7 @@ knowledge_links(knowledge_id, target_kind, target_id)  -- issue | case | knowled
 
 ## 8. 服务端实现
 
-代码在 [autofusex/platform](../../autofusex/platform/)，测试在 [tests/platform](../../tests/platform/)，容量基准在 [tools/platform/bench_platform.py](../../tools/platform/bench_platform.py)。
+代码在 [autofusex/server](../../autofusex/server/)，测试在 [tests/platform](../../tests/platform/)，容量基准在 [tools/platform/bench_platform.py](../../tools/platform/bench_platform.py)。
 
 | 文件 | 内容 |
 |---|---|
