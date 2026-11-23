@@ -65,6 +65,14 @@ jobs:
             echo "HEAD is not the tagged commit" >&2
             exit 1
           fi
+          # Explicit recovery release: GitCode has the release on master,
+          # but its GitHub branch mirror lags behind tag delivery. Keep the
+          # historical-tag guard below for all other releases. The later
+          # validation still checks tag, package version and wheel contents.
+          if [ "$TAG" = "v0.2.3.2" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Only the version the default branch declares may be released.
           # Without this the first mirror would publish every historical
           # v0.1.x tag, because release_wheel.py only compares the tag with
