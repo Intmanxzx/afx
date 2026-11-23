@@ -12,23 +12,16 @@ PAGES.ops = async root => {
   root.append(el("div", { class: "tiles" }, [["在线客户端", fmt(data.online_clients)], ["近 24 小时执行", fmt(data.executions_24h), "按执行发生时间统计，不含 CPU 基线；含复测"], ["待上传", fmt(data.pending_uploads)],
     ["复测队列", `${fmt(data.retest_queue.pending || 0)} 等待 / ${fmt(data.retest_queue.leased || 0)} 执行中`], ["数据库", mb.toFixed(1) + " MB"]].map(([k, v, tip]) =>
     el("div", { class: "tile", "data-tooltip": tip }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))));
-  const selected = new Set();
-  const version = el("input", { placeholder: "目标 afx 版本，如 " + (data.latest_afx_version || "0.2.0"), style: { width: "220px" }, oninput: () => { clientsPanel.dataset.custom = "1"; } });
-  const updateBtn = el("button", { class: "primary", onclick: async () => {
-    if (!selected.size || !version.value.trim()) return alert("先选择客户端并填写版本");
-    try { const r = await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [...selected], version: version.value.trim() } }); alert(`已通知 ${r.requested} 个客户端，下一次心跳时更新`); render(); }
-    catch (err) { alert(err.message); } } }, "一键更新");
-  const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), isAdmin() ? version : null, isAdmin() ? updateBtn : null),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["", "状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "操作", "最后心跳", "最后活动"].map(t => el("th", {}, t)))),
+  const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), data.latest_afx_version ? el("span", { class: "small" }, "最新版本 " + data.latest_afx_version) : null),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "操作", "最后心跳", "最后活动"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
-        el("td", {}, isAdmin() ? el("input", { type: "checkbox", onchange: e => { e.target.checked ? selected.add(c.client_id) : selected.delete(c.client_id); if (selected.size) clientsPanel.dataset.custom = "1"; else delete clientsPanel.dataset.custom; } }) : ""),
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
         el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", style: { maxWidth: "280px", overflowWrap: "anywhere" }, "data-tooltip": c.client_home || "客户端尚未上报目录" }, c.client_home || "未上报"), el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中",succeeded:"升级完成",failed:"升级失败",needs_attention:"需要处理"})[c.update_status.state] || "") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
-        el("td", {}, clientControls(c)),
+        el("td", {}, clientControls(c, data.latest_afx_version)),
         el("td", { class: "small" }, c.last_heartbeat_at ? time(c.last_heartbeat_at) : "未收到心跳"),
         el("td", { class: "small", "data-tooltip": "最近心跳或数据请求；不用于判定在线" }, time(c.last_seen_at))))))));
   root.append(clientsPanel);
@@ -56,7 +49,7 @@ PAGES.ops = async root => {
   if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
-function clientControls(client) {
+function clientControls(client, latestVersion) {
   const fresh = client.online && client.daemon_state_at && Date.now() - client.daemon_state_at < 300000;
   const state = { running: "运行中", stopped: "已停止" }[client.daemon_state];
   const status = el("span", { class: "chip " + (fresh && client.daemon_state === "running" ? "ok" : "gray"),
@@ -75,9 +68,18 @@ function clientControls(client) {
     } }, text));
   }
   if (isAdmin() && !client.online) actions.append(el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${client.display_name || client.client_id}？`)) return; try { await api(`/api/admin/clients/${client.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除"));
+  if (isAdmin() && latestVersion && client.afx_version !== latestVersion && !client.target_afx_version && !client.update_status?.phase) actions.append(el("button", { class: "mini-btn", onclick: async event => {
+    const button = event.currentTarget;
+    if (!confirm(`将客户端 ${client.display_name || client.client_id} 停止后升级到 ${latestVersion}，继续吗？`)) return;
+    button.disabled = true;
+    try { await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [client.client_id] } }); render(); }
+    catch (err) { button.disabled = false; alert(err.message); }
+  } }, "升级"));
   const pending = { running: "启动中（等待回执）", stopped: "停止中（等待回执）", restart: "重启中（等待回执）" }[client.target_daemon_state];
   const statuses = el("div", { style: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } },
-    status, pending ? el("span", { class: "chip info" }, pending) : null);
+    status, pending ? el("span", { class: "chip info" }, pending) : null,
+    client.update_status?.phase === "stop_timeout" ? el("span", { class: "chip danger" }, "停止失败") : null,
+    client.update_status?.phase === "upgrade_timeout" ? el("span", { class: "chip danger" }, "升级失败") : null);
   return el("div", {}, statuses, actions);
 }
 // One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).

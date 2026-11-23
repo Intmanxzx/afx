@@ -106,7 +106,7 @@ class Pins(RequestKey):
 
 class ClientUpdate(RequestKey):
     client_ids: list[int]
-    version: str
+    version: Optional[str] = None
 
 
 class ClientControl(RequestKey):

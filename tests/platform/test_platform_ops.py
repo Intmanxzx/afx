@@ -101,7 +101,11 @@ def test_heartbeat_rollups_and_update(world):
                                          "pending_uploads": 3})
     assert first["update_to"] is None
     ops.request_update(store, admin, {"request_key": "u1", "client_ids": [first["client_id"]], "version": "0.2.1"})
+    waiting = ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.0",
+                                            "counters": {"executions": 3}})
+    assert waiting["update_to"] is None and waiting["daemon_state"] == "stopped"
     assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.0",
+                                         "daemon_state": "stopped", "daemon_request_id": waiting["daemon_request_id"],
                                          "counters": {"executions": 3}})["update_to"] == "0.2.1"
     ack = ops.heartbeat(store, client, {"machine_id": "m1"})["update_request_id"]
     assert ops.heartbeat(store, client, {"machine_id": "m1", "afx_version": "0.2.1", "update_ack": ack})["update_to"] is None
@@ -626,6 +630,19 @@ def test_execution_upload_does_not_overwrite_control_version(world):
     with store.write() as conn:
         Ingestor(store)._client(conn, client.user_id, {'machine_id':'separate-runtime','afx_version':'0.2.2.5'})
         assert conn.execute('SELECT afx_version FROM clients WHERE client_id=?',(cid,)).fetchone()[0] == '0.2.2.9001'
+
+
+def test_update_requests_stop_before_releasing_package(world):
+    store, client, admin = world
+    cid = ops.heartbeat(store, client, {'machine_id': 'stop-before-update', 'afx_version': '0.2.0',
+                                        'daemon_state': 'running'})['client_id']
+    assert ops.request_update(store, admin, {'request_key': 'stop-first', 'client_ids': [cid],
+                                             'version': '0.2.3.2'})['requested'] == 1
+    waiting = ops.heartbeat(store, client, {'machine_id': 'stop-before-update', 'afx_version': '0.2.0'})
+    assert waiting['update_to'] is None and waiting['daemon_state'] == 'stopped'
+    ready = ops.heartbeat(store, client, {'machine_id': 'stop-before-update', 'afx_version': '0.2.0',
+                                          'daemon_state': 'stopped', 'daemon_request_id': waiting['daemon_request_id']})
+    assert ready['update_to'] == '0.2.3.2'
 
 
 def test_restart_requires_matching_running_ack_and_reports_upgrade_progress(world):
