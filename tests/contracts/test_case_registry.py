@@ -26,6 +26,9 @@ def test_package_rejects_escaping_entry_and_symlink(tmp_path):
     (source/'case.py').write_text('')
     (source/'link').symlink_to(tmp_path/'outside.py')
     with pytest.raises(ValueError, match='symlink'): register(tmp_path/'home', source)
+    with pytest.raises(ValueError, match='symlink'): register(tmp_path/'home', source/'link')
+    with pytest.raises(ValueError, match='included'):
+        register(tmp_path/'home', tmp_path/'outside.py', script='package/case.py')
 
 
 def test_fixed_task_contract_has_no_seed_dependency(tmp_path):

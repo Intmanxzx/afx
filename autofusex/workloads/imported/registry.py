@@ -12,7 +12,10 @@ MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 
 
 def register(home, source, *, script=None, entry=None, name=None, origin='manual', workload='imported'):
-    source = Path(source).expanduser().resolve(strict=True)
+    source = Path(source).expanduser()
+    if source.is_symlink():
+        raise ValueError('source package must not contain symlinks')
+    source = source.resolve(strict=True)
     if workload not in {'imported', 'model'} or origin not in {'manual', 'baize_torch', 'baize_tf', 'model'}:
         raise ValueError('unsupported case origin or workload')
     if entry is not None and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', entry):
@@ -36,6 +39,8 @@ def register(home, source, *, script=None, entry=None, name=None, origin='manual
             raise ValueError('source package exceeds import limits')
         files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     spec = dict(schema_version=1, workload=workload, origin=origin, script=script_path.relative_to(root).as_posix(), entry=entry, files=files)
+    if spec['script'] not in files:
+        raise ValueError('entry script must be included in the imported source package')
     revision = fingerprint(spec)
     key = ('M:' if workload == 'model' else 'I:') + revision
     record = dict(case_key=key, revision=revision, name=name or source.stem, spec=spec)
