@@ -3,7 +3,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 from autofusex.fuzz.daemon.management.artifacts import atomic
-from autofusex.fuzz.daemon.management.config import canonical
+from autofusex.contracts.configuration import canonical
 from autofusex.fuzz.daemon.management.updates import verify_manifest,activate
 from autofusex.fuzz.daemon.management.store import Store
 

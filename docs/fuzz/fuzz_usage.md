@@ -108,7 +108,7 @@ afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 | config show/edit/reset/validate/export | 查看、修改、重置、校验或导出任务配置 |
 | build submit FILE / tool stage FILE / tool activate RELEASE_ID | 本地受信构建与签名制品升级 |
 
-配置 schema 见 [management/config.py](../../autofusex/fuzz/daemon/management/config.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），资源还受 trust 和 policy 限制。
+配置 schema 见 [fuzz 配置协议](../../autofusex/workloads/fuzz/configuration.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），资源还受 trust 和 policy 限制。
 
 ## 方式二：临时运行与重放（afx fuzz，本机直接调试）
 

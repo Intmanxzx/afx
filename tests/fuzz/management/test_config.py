@@ -1,5 +1,6 @@
 import pytest
-from autofusex.fuzz.daemon.management.config import parse,validate,fingerprint,merge,quantity
+from autofusex.contracts.configuration import parse, fingerprint, merge, quantity
+from autofusex.workloads.fuzz.configuration import validate
 
 
 def task():

@@ -17,7 +17,8 @@ import sys
 import time
 import uuid
 
-from .config import canonical, parse, validate
+from autofusex.contracts.configuration import canonical, parse
+from autofusex.workloads.fuzz.configuration import validate
 from ..runtime import Manager, request
 from .store import TERMINAL
 

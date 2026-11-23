@@ -1,6 +1,7 @@
 """User task overrides, inheriting the administrator's default when absent."""
 import json
-from ..fuzz.daemon.management.config import validate, fingerprint
+from autofusex.contracts.configuration import fingerprint
+from autofusex.workloads.fuzz.configuration import validate
 from .store import now_ms
 
 

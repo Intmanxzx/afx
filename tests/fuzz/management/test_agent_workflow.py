@@ -11,7 +11,7 @@ import time
 import pytest
 
 from autofusex.fuzz.daemon.management import cli
-from autofusex.fuzz.daemon.management.config import canonical
+from autofusex.contracts.configuration import canonical
 from autofusex.fuzz.daemon.runtime import request
 from autofusex.fuzz.daemon.management.results import read
 from autofusex.fuzz.daemon.management.store import Store

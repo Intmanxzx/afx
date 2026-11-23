@@ -3,7 +3,7 @@ import json
 import platform
 import sys
 import re
-from .config import validate
+from autofusex.workloads.fuzz.configuration import validate
 
 KINDS={'environment.plan','environment.apply','environment.inspect','build.submit','task.validate','task.submit','task.action','config.apply','tool.stage','tool.activate','client.update','task.reconfigure','daemon.control','operation.cancel'}
 
@@ -104,7 +104,7 @@ def execute(store,operation,processes):
             if limits[key]>ceilings.get(key,1): raise PermissionError('policy exceeds locally authorized '+key)
         if not set(limits['allowed_devices'])<=set(ceilings.get('allowed_devices',[])):
             raise PermissionError('policy requests unauthorized devices')
-        from .config import quantity
+        from autofusex.contracts.configuration import quantity
         if limits.get('memory_budget') and ceilings.get('memory_budget') and quantity(limits['memory_budget'])>quantity(ceilings['memory_budget']):
             raise PermissionError('memory policy exceeds local authority')
         store.put('effective_policy',payload)

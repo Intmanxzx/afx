@@ -248,3 +248,17 @@ AFX 默认作为客户端，init/start/stop/restart/status 是正式顶层命令
 - [平台业务与数据设计](fuzz/platform_v3_design.md)：现有中心业务与复测协议。
 - [执行引擎架构](fuzz/fuzz_design.md)：重构前执行链路。
 - [客户端配置](fuzz/client_configuration.md)：当前可用行为。
+
+## 10. 第一批协议抽取进展
+
+阶段快照已提交为 1ff7642（配置/API 清理与设计文档）。随后开始配置协议拆分：
+
+- 新增 contracts/configuration.py：解析、规范化、摘要、合并、数量单位及共用字段定义；不导入 workload 或执行框架。
+- 新增 workloads/fuzz/configuration.py：保留现有配置 wire format、默认值及 fuzz 语义校验。
+- 删除旧 fuzz/daemon/management/config.py，迁移服务端、daemon 和测试的调用路径，不保留转发模块。
+- 服务端任务配置不再依赖 daemon 实现；当前仍明确调用 fuzz 配置校验，尚未成为三类 workload 的统一注册入口。
+- 环境与内部策略 schema 暂随旧配置验证器迁移，后续继续从 fuzz 配置中拆出；当前不是完整的来源无关任务协议。
+
+验证在 mlir 临时目录执行：公共协议隔离、配置、客户端、平台相关测试共 60 项最终通过。首次传输包含 macOS 元数据文件导致架构扫描失败，清理临时目录中的元数据后复测；架构检查显式记录四个现有平台客户端适配入口，待 platform/client.py 迁移时移除该过渡例外。
+
+本批未变更执行算法、部署服务或升级运行中的客户端。

@@ -16,6 +16,9 @@ def test_fuzz_dependencies_stay_within_module_boundaries():
     shared_imports = {
         ROOT / 'client/backends/torch.py': {'autofusex.compare'},
     }
+    # Existing transport bridges remain until platform/client.py moves into client.
+    for name in ('platform_sync.py', 'platform_retests.py', 'modern_cli.py', 'retest_queue.py'):
+        shared_imports[ROOT / 'daemon/management' / name] = {'autofusex.platform.client'}
     for path in ROOT.rglob("*.py"):
         allows_nnsmith = path in nnsmith_adapters or path == ROOT / 'client/nnsmith/aten_dialect.py'
         for node in ast.walk(ast.parse(path.read_text())):
@@ -24,7 +27,7 @@ def test_fuzz_dependencies_stay_within_module_boundaries():
                 module = node.module or ""
                 assert not module.startswith("nnsmith") or allows_nnsmith, path
                 if module.startswith("autofusex"):
-                    assert module.startswith("autofusex.fuzz") or module in shared_imports.get(path, set()), path
+                    assert module.startswith(("autofusex.fuzz", "autofusex.contracts", "autofusex.workloads.fuzz")) or module in shared_imports.get(path, set()), path
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     assert not alias.name.startswith("nnsmith") or allows_nnsmith, path

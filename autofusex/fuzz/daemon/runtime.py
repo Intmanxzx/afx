@@ -15,7 +15,7 @@ import hashlib
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.parse import urlsplit
 
-from .management.config import canonical, quantity
+from autofusex.contracts.configuration import canonical, quantity
 from .management.store import Store, TERMINAL
 from .management.operations import validate_operation, execute
 

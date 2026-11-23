@@ -9,7 +9,8 @@ import argparse
 import json
 from pathlib import Path
 
-from .config import canonical, validate
+from autofusex.contracts.configuration import canonical
+from autofusex.workloads.fuzz.configuration import validate
 from ...client.config import data_home
 
 
@@ -122,7 +123,8 @@ def run(argv=None):
     if args.command == "config":
         client_path=home/'client.json'
         client=json.loads(client_path.read_text()) if client_path.exists() else {}
-        from .config import load, parse, MAX_BYTES
+        from autofusex.contracts.configuration import parse, MAX_BYTES
+        from autofusex.workloads.fuzz.configuration import load
         spec = None
         if args.action in {'edit', 'validate'}:
             if not args.file:
@@ -159,7 +161,7 @@ def run(argv=None):
         elif args.action == "edit":
             if not args.file:
                 raise ValueError("config edit requires a JSON/YAML file path")
-            from .config import load
+            from autofusex.workloads.fuzz.configuration import load
             _write(task, spec)
         elif not task.exists():
             spec = _default_task()

@@ -8,7 +8,7 @@ from contextlib import closing
 from ...client.contracts import Seed, ExecutionConfig, EvaluationConfig
 from ...client.scheduling.ledger import TaskLedger
 from ...client.scheduling.budgets import read_policy
-from .config import validate
+from autofusex.workloads.fuzz.configuration import validate
 
 
 def submit(store, seeds, processes):

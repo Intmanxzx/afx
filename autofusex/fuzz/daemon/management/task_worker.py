@@ -8,7 +8,7 @@ import traceback
 def main(path):
     from dataclasses import replace
     from .artifacts import atomic
-    from .config import quantity
+    from autofusex.contracts.configuration import quantity
     from ...client.contracts import ExecutionConfig, EvaluationConfig, Seed
     from ...client.generation.runtime import source_evidence
     from ...client.generation.sampling import SamplingConfig

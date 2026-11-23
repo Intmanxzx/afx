@@ -11,7 +11,7 @@ import subprocess
 import time
 from urllib.parse import urlsplit, urljoin
 
-from .config import canonical, fingerprint
+from autofusex.contracts.configuration import canonical, fingerprint
 
 
 def atomic(path, value):

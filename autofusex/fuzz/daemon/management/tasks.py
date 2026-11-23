@@ -6,7 +6,8 @@ import subprocess
 import time
 import uuid
 from .artifacts import atomic
-from .config import canonical, fingerprint, quantity, validate
+from autofusex.contracts.configuration import canonical, fingerprint, quantity
+from autofusex.workloads.fuzz.configuration import validate
 from .environments import resolve
 
 

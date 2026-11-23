@@ -3,7 +3,8 @@ import json
 import sys
 import uuid
 import os
-from .config import load, canonical, validate
+from autofusex.contracts.configuration import canonical
+from autofusex.workloads.fuzz.configuration import load, validate
 from ...client.resources import resource_inventory
 
 

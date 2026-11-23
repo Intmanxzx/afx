@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import uuid
 from .artifacts import atomic, command, download, trusted
-from .config import canonical, fingerprint
+from autofusex.contracts.configuration import canonical, fingerprint
 
 
 def verify_manifest(home, envelope):
