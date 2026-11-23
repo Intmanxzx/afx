@@ -131,8 +131,7 @@ jobs:
             --repository "${{ github.repository }}"
 
       - name: Publish to the GitHub Release and PyPI
-        # v0.2.3.1 is published manually by the maintainer.
-        if: steps.gate.outputs.release == 'true' && steps.tag.outputs.tag != 'v0.2.3.1'
+        if: steps.gate.outputs.release == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
