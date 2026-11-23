@@ -13,17 +13,17 @@ PAGES.ops = async root => {
     ["复测队列", `${fmt(data.retest_queue.pending || 0)} 等待 / ${fmt(data.retest_queue.leased || 0)} 执行中`], ["数据库", mb.toFixed(1) + " MB"]].map(([k, v, tip]) =>
     el("div", { class: "tile", "data-tooltip": tip }, el("div", { class: "v" }, v), el("div", { class: "k" }, k)))));
   const clientsPanel = el("section", { class: "panel" }, el("h2", {}, "客户端", el("span", { class: "spacer" }), data.latest_afx_version ? el("span", { class: "small" }, "最新版本 " + data.latest_afx_version) : null),
-    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["状态", "节点", "用户", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "操作", "最后心跳", "最后活动"].map(t => el("th", {}, t)))),
+    el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["状态", "节点", "客户端目录", "芯片", "可见 NPU 数", "afx", "后端版本", "操作", "最后心跳", "最后活动"].map(t => el("th", {}, t)))),
       el("tbody", {}, data.clients.map(c => el("tr", {},
         el("td", {}, el("span", { class: "chip " + (c.online ? "ok" : "gray") }, c.online ? (c.busy ? "复测中" : "在线") : "离线")),
-        el("td", {}, el("b", {}, c.display_name || "—")), el("td", {}, c.user_id), el("td", { class: "small", style: { maxWidth: "280px", overflowWrap: "anywhere" }, "data-tooltip": c.client_home || "客户端尚未上报目录" }, c.client_home || "未上报"), el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
+        el("td", {}, el("b", {}, c.display_name || "—")), el("td", { class: "small", style: { maxWidth: "280px", overflowWrap: "anywhere" }, "data-tooltip": c.client_home || "客户端尚未上报目录" }, c.client_home || "未上报"), el("td", {}, archLabel(c.npu_arch)), el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
         el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
           c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中",succeeded:"升级完成",failed:"升级失败",needs_attention:"需要处理"})[c.update_status.state] || "") : null,
           c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
         el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
         el("td", {}, clientControls(c, data.latest_afx_version)),
-        el("td", { class: "small" }, c.last_heartbeat_at ? time(c.last_heartbeat_at) : "未收到心跳"),
-        el("td", { class: "small", "data-tooltip": "最近心跳或数据请求；不用于判定在线" }, time(c.last_seen_at))))))));
+        el("td", { class: "small", "data-tooltip": "客户端主动上报的心跳时间；在线状态按此字段判断" }, c.last_heartbeat_at ? time(c.last_heartbeat_at) : "未收到心跳"),
+        el("td", { class: "small", "data-tooltip": "客户端最近一次被平台看到的时间，可能来自数据上传或其他请求；不用于判定在线" }, c.last_seen_at ? time(c.last_seen_at) : "未记录"))))))));
   root.append(clientsPanel);
   const efficiencyData = await api("/api/ops/efficiency");
   const efficiencyUsers = new Map((efficiencyData.users || []).map(u => [u.user_id, u]));
