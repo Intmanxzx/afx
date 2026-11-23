@@ -57,6 +57,6 @@ def test_refresh_includes_later_pages():
     node = shutil.which('node')
     if not node: pytest.skip('node unavailable')
     from importlib.resources import files
-    source = files('autofusex.viewer').joinpath('static/app.js').read_text()
+    source = files('autofusex.server').joinpath('static/local.js').read_text()
     body = source[source.index('function refreshVisible('):source.index('function cell(')]
     subprocess.run([node, '-e', "const assert=require('node:assert/strict');let page=2,calls=[];const activePage=()=> 'records';const load=(...args)=>calls.push(args);const loadCharts=()=>{};" + body + "refreshVisible(true);assert.deepEqual(calls,[[true,true]]);"], check=True)

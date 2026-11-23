@@ -10,9 +10,13 @@ import webbrowser
 
 from autofusex.execution.storage.queries import ResultQueries
 
-ASSETS = {'favicon.svg': ('favicon.svg', 'image/svg+xml'), 'runtime.js': ('runtime.js', 'text/javascript; charset=utf-8'), 'report': ('index.html', 'text/html; charset=utf-8'), 'charts.js': ('charts.js', 'text/javascript; charset=utf-8'), '': ('index.html', 'text/html; charset=utf-8'),
-          'app.js': ('app.js', 'text/javascript; charset=utf-8'),
-          'style.css': ('style.css', 'text/css; charset=utf-8')}
+ASSETS = {name: (name, mime) for suffix, mime in (
+    ('.html', 'text/html; charset=utf-8'), ('.js', 'text/javascript; charset=utf-8'),
+    ('.css', 'text/css; charset=utf-8'), ('.svg', 'image/svg+xml'))
+    for name in ('index.html', 'bootstrap.js', 'app.js', 'app.css', 'local.html',
+                 'local.js', 'local.css', 'charts.js', 'runtime.js', 'favicon.svg')
+    if name.endswith(suffix)}
+ASSETS.update({'': ASSETS['index.html'], 'report': ASSETS['index.html']})
 
 
 class ViewerServer(ThreadingHTTPServer):
@@ -61,9 +65,12 @@ def create_server(database, *, port=0):
                 self.respond(404, {'error': 'not found'}); return
             route = url.path[len(prefix):]
             try:
+                if route == 'api/capabilities':
+                    self.respond(200, {'mode': 'local', 'read_only': True})
+                    return
                 if route in ASSETS:
                     name, mime = ASSETS[route]
-                    data = resources.files('autofusex.viewer').joinpath('static').joinpath(name).read_bytes()
+                    data = resources.files('autofusex.server').joinpath('static').joinpath(name).read_bytes()
                     self.respond(200, data, mime); return
                 raw = parse_qs(url.query, keep_blank_values=True, max_num_fields=8)
                 if any(len(v) != 1 for v in raw.values()):

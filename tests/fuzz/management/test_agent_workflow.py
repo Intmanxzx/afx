@@ -42,7 +42,7 @@ def daemon():
                        ('fixture', 'fixture', canonical(dict(id='fixture', python=sys.executable, env={})), 'ready'))
         (home/'trust.json').write_text(canonical(dict(resource_limits=dict(allowed_devices=['npu:0'], max_workers=1, max_compile_threads=1))))
         (home/'trust.json').chmod(0o600)
-        child = subprocess.Popen([sys.executable, '-m', 'autofusex', 'daemon', 'run', '--data-dir', path],
+        child = subprocess.Popen([sys.executable, '-m', 'autofusex.client', 'daemon', 'run', '--data-dir', path],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             for _ in range(100):

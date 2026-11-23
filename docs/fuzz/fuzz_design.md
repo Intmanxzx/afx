@@ -31,7 +31,7 @@ flowchart TD
     Sync --> Platform[平台服务 autofusex/server]
     DB --> PlatformClient[独立 platform client]
     PlatformClient --> Platform[平台服务 autofusex/server]
-    View[afx fuzz view / 离线查看器] --> DB
+    View[afx view / 离线查看器] --> DB
 ~~~
 
 | 模块 | 职责 |

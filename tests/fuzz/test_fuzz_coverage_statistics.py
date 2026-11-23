@@ -106,7 +106,7 @@ def test_numeric_chart_order_not_lexicographic():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/viewer/static/charts.js').read_text()
+    source = Path('autofusex/server/static/charts.js').read_text()
     helpers = source[source.index('const SHAPE_BUCKET_ORDER'):source.index('const legendHidden')]
     subprocess.run([node, '-e', "const assert=require('assert'); const STATUS_KEYS=['gen_failed','gen_error','mlir_failed','fail','pass','unknown'];\n"+helpers+"""
 for (const id of ['ShapeDim','ShapeElem']) {
@@ -122,4 +122,4 @@ for (const id of ['ShapeDim','ShapeElem']) {
     assert 'return orderChartRows([...groups.values()],id)' in source
 
     assert 'displayChartRows(convert(result[key],id),id)' in source
-    assert '独立区间，K=1024' in Path('autofusex/viewer/static/index.html').read_text()
+    assert '独立区间，K=1024' in Path('autofusex/server/static/local.html').read_text()

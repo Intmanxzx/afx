@@ -24,7 +24,7 @@ afx stop
 ~~~sh
 python -m pip install 'autofusex[execution]'
 # 再按架构装匹配的 Torch 2.10.0+cpu、torch_npu 和 CANN toolkit（无通用 pip 包，手工装）
-afx fuzz maintenance doctor        # 校验环境
+afx doctor --workload fuzz        # 校验环境
 afx fuzz run --count 100 --save
 afx fuzz status
 ~~~
@@ -63,8 +63,8 @@ python -m pip install -e '.[execution]'
 先查询可用环境，填入 task.yaml 的 environment：
 
 ~~~sh
-afx daemon start
-afx environment list
+afx start
+afx env list
 ~~~
 
 ~~~yaml
@@ -129,7 +129,7 @@ afx fuzz replay SEED --save
 | 人工 eager-npu 复核 | afx fuzz replay SEED --backend eager-npu --save |
 | 过滤算子 | afx fuzz run --ops add,ge,sum,reshape --save |
 | 双卡指定资源 | afx fuzz run --device npu:0 --device npu:1 --workers 4 --compile-threads 1 --save |
-| 检查环境 | afx fuzz maintenance doctor |
+| 检查环境 | afx doctor --workload fuzz |
 
 run --backend 增加被测后端，replay --backend 只执行指定后端；不要与同一 home 的活动托管任务同时运行。
 
@@ -140,8 +140,8 @@ run --backend 增加被测后端，replay --backend 只执行指定后端；不�
 本地结果可导出快照后离线查看：
 
 ~~~sh
-afx fuzz maintenance snapshot /path/results.sqlite ./results.snapshot.sqlite
-afx fuzz view ./results.snapshot.sqlite --no-browser
+afx results snapshot /path/results.sqlite ./results.snapshot.sqlite
+afx view ./results.snapshot.sqlite --no-browser
 ~~~
 
 ## 设备管理

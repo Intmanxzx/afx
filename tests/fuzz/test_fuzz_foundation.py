@@ -25,8 +25,8 @@ sys.meta_path.insert(0, Block())
 before = dict(os.environ)
 import autofusex
 import autofusex.cli
-from autofusex.workloads.fuzz.cli import main
-assert main(['maintenance', 'doctor']) == 0
+from autofusex.cli import main
+assert main(['doctor']) == 0
 from autofusex.client.paths import setup
 setup(sys.argv[1])
 from autofusex.workloads.fuzz.cli import replay_parser

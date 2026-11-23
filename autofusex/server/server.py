@@ -66,7 +66,7 @@ _INDEX_CACHE: dict = {}
 # app.js imports its submodules (router.js, page-*.js, ...) by plain relative path from inside
 # its own source text, which this function never touches, so those files keep a stable URL and
 # must stay revalidate-on-every-request or a browser could run stale code after a deploy.
-_HASHED_ASSETS = ("app.js", "app.css", "favicon.svg")
+_HASHED_ASSETS = ("bootstrap.js", "app.css", "favicon.svg")
 
 
 def _versioned_index(html: bytes) -> bytes:
@@ -558,6 +558,10 @@ def create_app(store: Store) -> FastAPI:
     @route('/api/admin/profile/drafts', 'POST')
     def drafts(body: m.Drafts, principal=Depends(administrator)):
         return _success(profile.create_drafts(store, principal, data(body)))
+
+    @app.get('/api/capabilities', include_in_schema=False)
+    def capabilities():
+        return {'mode': 'server', 'read_only': False}
 
     @route('/healthz', include_in_schema=False)
     def health():

@@ -100,7 +100,7 @@ export AUTOFUSEX_AGENT_MODEL=default
 ## 单独归一化
 
 ```bash
-afx normalize-script \
+afx model normalize \
     --script /path/to/model.py \
     --framework pytorch \
     --out /tmp/model_accuracy/agent_normalization.json \
@@ -122,7 +122,7 @@ afx normalize-script \
 ## 与模型执行联动
 
 ```bash
-afx run-script \
+afx model run \
     --framework auto \
     --backend inductor_autofuse \
     --script /path/to/model.py \

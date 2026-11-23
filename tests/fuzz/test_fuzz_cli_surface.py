@@ -25,8 +25,7 @@ def test_stop_defaults_to_all_tasks(tmp_path,monkeypatch):
 
 
 @pytest.mark.parametrize('args', [
-    ['run'], ['replay'], ['status'], ['stop'], ['view'],
-    ['maintenance'], ['maintenance', 'snapshot'], ['maintenance', 'restore'],
+    ['run'], ['replay'], ['status'], ['stop'], ['resume'], ['seed'], ['diagnose'],
 ])
 def test_documented_command_help_is_reachable(args, capsys):
     with pytest.raises(SystemExit) as exc:

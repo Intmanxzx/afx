@@ -65,7 +65,7 @@ def test_launcher_failed_release_rolls_back_without_database_restore(tmp_path):
     identity='a'*64;directory=home/'tools'/identity;directory.mkdir(parents=True)
     broken=directory/'broken-python';broken.write_text('#!/bin/sh\nexit 42\n');broken.chmod(0o700)
     atomic(directory/'ready.json',dict(id=identity,envelope=envelope,python=str(broken)))
-    child=subprocess.Popen([sys.executable,'-m','autofusex','daemon','supervise','--data-dir',str(home)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    child=subprocess.Popen([sys.executable,'-m','autofusex.client','daemon','supervise','--data-dir',str(home)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:
         for _ in range(100):
             try:request(home,dict(action='status'));break

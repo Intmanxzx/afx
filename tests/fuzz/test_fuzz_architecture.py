@@ -29,8 +29,8 @@ class Block(importlib.abc.MetaPathFinder):
  def find_spec(self,name,*args):
   if name.split('.')[0] in {'torch','numpy','torch_npu','nnsmith'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-sys.argv=['autofusex.workloads.fuzz','maintenance','doctor']
-runpy.run_module('autofusex.workloads.fuzz',run_name='__main__')
+sys.argv=['autofusex','doctor']
+runpy.run_module('autofusex',run_name='__main__')
 '''
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

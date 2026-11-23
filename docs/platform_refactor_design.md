@@ -274,3 +274,13 @@ mlir 独立临时目录全量回归结果为 1371 passed、7 failed、2 skipped�
 同步初始化修复与序列化抽取后的定向回归：32 passed（96.75 秒），覆盖 contracts 隔离、架构边界、同步 setup、任务队列及后台执行。
 
 CLI 第二阶段已实现 server 与 sync/retest 的职责分离：server 不再注册 client 子命令；sync 提供 setup/run/once/status，retest 提供 run/once（持续模式保留上传与心跳）。部署入口改用 server。mlir 路由和备份回归 10 passed；其他 CLI 分组仍待完成。
+
+## 12. CLI、共享资源与稳定 supervisor（2026-11-23）
+
+- model run/normalize、analyze manifest/compare/compare-three/compare-npy/report、debug run/camodel 已迁移；model run --entry 保留工厂入口的 fullgraph 默认值。
+- results list/compare/snapshot/restore/merge/check/rebuild-index 与 view、doctor 成为顶层命令；fuzz 保留 run/replay/status/stop/resume/seed/diagnose。根帮助列出完整用户入口。
+- update、release、env inspect 已路由；daemon 只通过内部 python -m autofusex.client 入口启动。
+- viewer 不再有 static 目录；同一 server/static/index.html 和 bootstrap.js 按服务端能力信息加载中心模块或本地模块。统计与详情暂保留各自的数据适配和渲染模块，以保留原有功能；共享组件的进一步合并仍可继续。接口继续拒绝本地写入。
+- supervisor 首次启动安装固定源码快照到 HOME/supervisor/v1，普通客户端更新不覆盖。快照只含监督与状态协议所需模块，不导入 daemon、workload 或 YAML。维护更新需单独流程；目标客户端仍通过独立 Python 子进程启动。
+
+验证：mlir CLI/模型/结果相关 173 passed；共享资源与管理流程首轮 160 passed，修正遗留命令调用和 wheel 夹具后定向 68 passed，另 1 项缺失数据库错误处理复测通过。新增 supervisor 冻结包测试覆盖重复安装不替换与隔离导入。当前仍未完成非 fuzz 平台任务接入，不应宣称全部重构完成。

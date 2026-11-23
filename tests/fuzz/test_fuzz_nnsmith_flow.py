@@ -26,8 +26,8 @@ class Block(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0,Block())
 from autofusex.execution.storage import ResultRepository
 from autofusex.viewer.server import create_server
-from autofusex.workloads.fuzz.cli import main
-assert main(['maintenance','doctor'])==0
+from autofusex.cli import main
+assert main(['doctor'])==0
 '''
     subprocess.run([sys.executable,'-c',code],check=True)
 

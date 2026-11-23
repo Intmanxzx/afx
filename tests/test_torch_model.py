@@ -226,7 +226,7 @@ def test_match_npu_to_cpu_chooses_lowest_error_candidate(tmp_path: Path) -> None
 
 def test_cli_has_run_torch_model() -> None:
     parser = build_parser()
-    args = parser.parse_args(["run-torch-model", "--script", "case.py", "--out-dir", "out"])
+    args = parser.parse_args(["model", "run", "--entry", "create_case", "--script", "case.py", "--out-dir", "out"])
     assert args.entry == "create_case"
     assert args.device == "npu:0"
     assert args.rtol is None
@@ -236,7 +236,7 @@ def test_cli_has_run_torch_model() -> None:
 
     explicit = parser.parse_args(
         [
-            "run-torch-model",
+            "model", "run", "--entry", "create_case",
             "--script",
             "case.py",
             "--out-dir",
@@ -253,7 +253,7 @@ def test_cli_has_run_script_with_script_arguments() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
-            "run-script",
+            "model", "run",
             "--script",
             "model.py",
             "--out-dir",
@@ -267,13 +267,13 @@ def test_cli_has_run_script_with_script_arguments() -> None:
     )
     assert args.backend == "inductor_autofuse"
     assert args.script_args == ["--", "--batch-size", "2"]
-    assert args.fullgraph is False
+    assert args.fullgraph is None
     assert args.rewrite_device_hints is False
     assert args.save_elementwise_data is False
 
     explicit = parser.parse_args(
         [
-            "run-script",
+            "model", "run",
             "--script",
             "model.py",
             "--out-dir",

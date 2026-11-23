@@ -34,7 +34,7 @@ def run(home):
                 store.put('normal_shutdown',False)
                 try:
                     LOG.info('daemon.start python=%s', python)
-                    child=subprocess.Popen([python,'-m','autofusex','daemon','run','--data-dir',str(store.home)],stdin=subprocess.DEVNULL)
+                    child=subprocess.Popen([python,'-m','autofusex.client','daemon','run','--data-dir',str(store.home)],stdin=subprocess.DEVNULL)
                 except OSError:
                     activation = store.get('client_switch', {})
                     if activation.get('state') != 'activating': raise

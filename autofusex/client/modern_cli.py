@@ -71,7 +71,7 @@ def parser():
     replay = sub.add_parser("replay")
     replay.add_argument("seeds", nargs="+")
     env = sub.add_parser("env")
-    env.add_argument("action", choices=("list", "status", "prepare", "apply"))
+    env.add_argument("action", choices=("list", "status", "inspect", "prepare", "apply"))
     env.add_argument("value", nargs="?")
     return root
 
@@ -216,7 +216,7 @@ def run(argv=None):
         from autofusex.client.daemon import request
         return request(home, {"action": "replay", "seeds": args.seeds})
     if args.command == "env":
-        mapping = {"list": ["environment", "list"], "status": ["environment", "status", args.value or "local"],
+        mapping = {"inspect": ["environment", "inspect"], "list": ["environment", "list"], "status": ["environment", "status", args.value or "local"],
                    "prepare": ["environment", "plan", args.value or "-"], "apply": ["environment", "apply", args.value or ""]}
         return _legacy([*mapping[args.action], "--data-dir", str(home)])
     raise ValueError("unsupported command")

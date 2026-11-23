@@ -79,7 +79,7 @@ def test_http_assets_api_and_read_only(database):
     before = Path(database).read_bytes()
     files = set(Path(database).parent.iterdir())
     with running(database) as url:
-        for asset, mime in [('', 'text/html'), ('app.js', 'text/javascript'), ('style.css', 'text/css')]:
+        for asset, mime in [('', 'text/html'), ('app.js', 'text/javascript'), ('local.css', 'text/css')]:
             status, headers, body = request(url, asset)
             assert status == 200 and headers['Content-Type'].startswith(mime) and body
             assert headers['Cache-Control'] == 'no-store'
@@ -146,7 +146,7 @@ def test_view_import_and_help_are_lightweight():
 import sys
 from autofusex.viewer.server import create_server
 assert not set(sys.modules) & {'torch', 'torch_npu', 'nnsmith', 'numpy'}
-from autofusex.workloads.fuzz.cli import main
+from autofusex.cli import main
 main(['view', '--help'])
 """
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
@@ -172,7 +172,7 @@ def test_untrusted_text_is_data_and_never_a_replay_command(database):
 
 
 def test_cli_dispatch_and_missing_database(tmp_path, monkeypatch, capsys):
-    from autofusex.workloads.fuzz.cli import main
+    from autofusex.cli import main
     from autofusex.viewer import server
     calls = []
     monkeypatch.setattr(server, 'serve', lambda *a, **kw: calls.append((a, kw)) or 0)
@@ -181,3 +181,17 @@ def test_cli_dispatch_and_missing_database(tmp_path, monkeypatch, capsys):
     monkeypatch.undo()
     assert main(['view', str(tmp_path/'missing.sqlite'), '--no-browser']) == 2
     assert 'ERROR:' in capsys.readouterr().err
+
+
+def test_shared_shell_and_capabilities(database):
+    from importlib.resources import files
+    with running(database) as url:
+        status, _, body = request(url)
+        assert status == 200
+        assert body == files('autofusex.server').joinpath('static/index.html').read_bytes()
+        status, _, body = request(url, 'api/capabilities')
+        assert status == 200
+        assert json.loads(body) == {'mode': 'local', 'read_only': True}
+        for asset in ('bootstrap.js', 'local.html', 'local.js', 'local.css', 'charts.js', 'runtime.js'):
+            assert request(url, asset)[0] == 200
+        assert request(url, 'api/capabilities', method='POST')[0] == 405

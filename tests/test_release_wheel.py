@@ -30,8 +30,8 @@ def artifact(tmp_path):
         archive.writestr('afx/__init__.py', 'from autofusex import __version__\n')
         archive.writestr('afx/__main__.py', 'from autofusex.cli import main\nraise SystemExit(main())\n')
         archive.writestr('autofusex/__init__.py','__version__ = "0.1.2"\n')
-        for asset in ['index.html','app.js','charts.js']:
-            archive.writestr('autofusex/viewer/static/'+asset,'content')
+        for asset in ['index.html', 'bootstrap.js', 'app.js', 'app.css', 'local.html', 'local.js', 'local.css', 'charts.js', 'runtime.js']:
+            archive.writestr('autofusex/server/static/'+asset,'content')
     return tmp_path, wheel
 
 

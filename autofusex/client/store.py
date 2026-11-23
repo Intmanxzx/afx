@@ -6,7 +6,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
-from autofusex.contracts.configuration import canonical, fingerprint
+from autofusex.contracts.serialization import canonical_json as canonical, fingerprint
 
 TERMINAL = {'succeeded', 'failed', 'cancelled', 'needs_attention'}
 

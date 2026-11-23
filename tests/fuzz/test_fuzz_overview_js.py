@@ -8,7 +8,7 @@ import pytest
 def test_overview_series_and_legend_defaults():
     node=shutil.which('node')
     if not node:pytest.skip('node unavailable')
-    source=Path('autofusex/viewer/static/charts.js').read_text()
+    source=Path('autofusex/server/static/charts.js').read_text()
     script=r'''
 const assert=require('node:assert/strict');
 class E {constructor(){this.children=[];this.style={};this.dataset={};this.textContent='';this.events={};}append(...x){this.children.push(...x)}replaceChildren(...x){this.children=x}setAttribute(k,v){this[k]=v}addEventListener(k,f){this.events[k]=f}}
@@ -50,7 +50,7 @@ for(const [key,id] of [['backend','Backend'],['category','Category'],['dtype','D
 
 '''
     subprocess.run([node,'-e',script],check=True,capture_output=True,text=True)
-    html=Path('autofusex/viewer/static/index.html').read_text()
+    html=Path('autofusex/server/static/local.html').read_text()
     assert 'failure-path-breakdown' not in html
     assert html.index('id="errors"') < html.index('id="mlir-errors"') < html.index('id="fail"') < html.index('id="ok"')
 
@@ -59,7 +59,7 @@ def test_dtype_chart_uses_short_labels_without_changing_source_data():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/viewer/static/charts.js').read_text()
+    source = Path('autofusex/server/static/charts.js').read_text()
     helpers = source[source.index('const SHAPE_BUCKET_ORDER'):source.index('const legendHidden')]
     script = "const assert=require('node:assert/strict');\n" + helpers + r"""
 const STATUS_KEYS=['gen_failed','gen_error','mlir_failed','fail','pass','unknown'];
@@ -82,7 +82,7 @@ assert.deepEqual(displayChartRows([],'Dtype'),[]);
 def test_summary_cards_split_function_and_mlir_counts():
     node=shutil.which('node')
     if not node:pytest.skip('node unavailable')
-    source=Path('autofusex/viewer/static/app.js').read_text()
+    source=Path('autofusex/server/static/local.js').read_text()
     start=source.index("  $('mlir-errors').textContent=")
     end=source.index('\n  return null;',start)
     script="""
@@ -95,14 +95,14 @@ assert.equal($('mlir-errors').textContent,(364).toLocaleString());
 assert.equal($('total').textContent,(5000).toLocaleString());
 """
     subprocess.run([node,'-e',script],check=True,capture_output=True,text=True)
-    css=Path('autofusex/viewer/static/style.css').read_text()
+    css=Path('autofusex/server/static/local.css').read_text()
     assert '.cards .kpi-mlir span,.cards .kpi-mlir strong{color:var(--viz-mlir-error)}' in css
     assert '#errors{color:var(--viz-function-error)}' in css
     assert '.cards .kpi-fail span,.cards .kpi-fail strong{color:var(--viz-function-error)}' in css
 
 
 def test_graph_failure_uses_shared_dark_gray_token():
-    css = Path('autofusex/viewer/static/style.css').read_text()
+    css = Path('autofusex/server/static/local.css').read_text()
     assert '--viz-graph-error:#4b5563;' in css
     assert '#gen-errors{color:var(--viz-graph-error)}' in css
     assert '.cards .kpi-graph span,.cards .kpi-graph strong{color:var(--viz-graph-error)}' in css
@@ -115,8 +115,8 @@ def test_kpi_navigation_applies_visible_filter_and_resets_pagination():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/viewer/static/app.js').read_text()
-    html = Path('autofusex/viewer/static/index.html').read_text()
+    source = Path('autofusex/server/static/local.js').read_text()
+    html = Path('autofusex/server/static/local.html').read_text()
     queries = re.findall(r'<button type="button" class="kpi [^"]+" data-case-query="([^"]*)">', html)
     assert len(queries) == 6
     assert queries == ['', "WHERE status = 'gen_failed'",
@@ -155,7 +155,7 @@ assert.equal(aborted,6);assert.equal(navigations,6);assert.equal(refreshes,6);
 
 
 def test_metric_and_record_hover_use_light_blue_without_overriding_status_colors():
-    css = Path('autofusex/viewer/static/style.css').read_text()
+    css = Path('autofusex/server/static/local.css').read_text()
     selector = '.cards>button.kpi:hover:not(:disabled),\n.case-table button:hover:not(:disabled)'
     rule = css.split(selector + '{', 1)[1].split('}', 1)[0]
     assert '--hover-blue:#eaf4ff;' in css
@@ -166,7 +166,7 @@ def test_metric_and_record_hover_use_light_blue_without_overriding_status_colors
 
 
 def test_clickable_metric_cards_keep_original_stacked_left_aligned_layout():
-    css = Path('autofusex/viewer/static/style.css').read_text()
+    css = Path('autofusex/server/static/local.css').read_text()
     rule = css.split('.cards>button.kpi{', 1)[1].split('}', 1)[0]
     assert 'display:block;' in rule  # Do not inherit the shared inline-flex button layout.
     assert 'text-align:left;' in rule
@@ -178,7 +178,7 @@ def test_record_row_opens_detail_without_filtering_or_overriding_history():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/viewer/static/app.js').read_text()
+    source = Path('autofusex/server/static/local.js').read_text()
     helpers = source[source.index('function recordAttempt('):source.index('function renderRecords(')]
     script = r'''const assert=require('node:assert/strict');
 const location={hash:''};let selection='';const window={getSelection:()=>({toString:()=>selection})};

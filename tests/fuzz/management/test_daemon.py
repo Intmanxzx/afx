@@ -10,7 +10,7 @@ from autofusex.client.daemon import request
 
 def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
     home=tmp_path/'home';home.mkdir()
-    child=subprocess.Popen([sys.executable,'-m','autofusex','daemon','run','--data-dir',str(home)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    child=subprocess.Popen([sys.executable,'-m','autofusex.client','daemon','run','--data-dir',str(home)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     try:
         for _ in range(100):
             if child.poll() is not None:raise AssertionError(child.communicate())
@@ -28,7 +28,7 @@ def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
         second=request(home,dict(action='submit',kind='environment.inspect',payload={},request_key='once'))
         assert second['id']==op['id']
         with pytest.raises(ValueError):request(home,dict(action='submit',kind='shell',payload={'command':'true'},request_key='bad'))
-        output=subprocess.check_output([sys.executable,'-m','autofusex','daemon','status','--data-dir',str(home),'--json'])
+        output=subprocess.check_output([sys.executable,'-m','autofusex.client','daemon','status','--data-dir',str(home),'--json'])
         assert json.loads(output)['ok']
         request(home,dict(action='shutdown'));assert child.wait(timeout=10)==0
     finally:

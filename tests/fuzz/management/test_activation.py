@@ -56,7 +56,7 @@ def test_supervisor_switches_real_process_and_rolls_back_failed_boot(tmp_path):
     import subprocess
     from autofusex.client.daemon import request
     s=Store(tmp_path)
-    child=subprocess.Popen([sys.executable,'-m','autofusex','daemon','supervise','--data-dir',str(tmp_path)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    child=subprocess.Popen([sys.executable,'-m','autofusex.client','daemon','supervise','--data-dir',str(tmp_path)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     def wait_for(fn):
         deadline=time.monotonic()+20
         while time.monotonic()<deadline:

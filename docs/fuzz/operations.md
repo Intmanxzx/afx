@@ -18,17 +18,17 @@ afx start
 
 本节是管理员手工安装受信环境的进阶流程；普通客户端使用上面的 `init/start` 即可。
 
-1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`），启动 afx daemon start。
+1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`），启动 afx start。
 2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。高级安装由管理员维护 home 下的 trust.json（0600），不提供 CLI 或 IPC 写入接口。trust 保存在 home 下私有文件，仅本地可修改。
 3. 需要远程管理或上传时，使用 afx device enroll --token-stdin 从私有凭据来源读取 token，或执行 afx device pair 后在网页批准。
 4. 准备 environment.yaml，提交计划并执行；成功后取环境 ID 填到任务规格。
 
 ~~~sh
-afx environment plan environment.yaml --request-key env-plan-001
+afx env prepare environment.yaml --request-key env-plan-001
 afx operation wait PLAN_OPERATION_ID
-afx environment apply PLAN_ID --request-key env-apply-001
+afx env apply PLAN_ID --request-key env-apply-001
 afx operation wait APPLY_OPERATION_ID
-afx environment list
+afx env list
 ~~~
 
 PLAN_ID 来自计划操作的 data.result.plan_id，两个 OPERATION_ID 均来自提交响应 data.id。环境规格示意（版本、路径、兼容配置名必须与本机 trust 一致）：
@@ -57,12 +57,12 @@ trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件�
 数据库恢复或替换后，不能沿用另一份库的旧统计侧文件。派生索引可重建，维护前备份，再按需要执行：
 
 ~~~sh
-afx fuzz maintenance index-results /path/to/results.sqlite
-afx fuzz maintenance index-cases /path/to/results.sqlite
+afx results rebuild-index --kind results /path/to/results.sqlite
+afx results rebuild-index --kind cases /path/to/results.sqlite
 ~~~
 
 ~~~sh
-afx fuzz maintenance check-db /path/to/results.sqlite
+afx results check /path/to/results.sqlite
 ~~~
 
 公开 maintenance snapshot 只导出允许分享的结果和观测事实，不是完整灾备；不要直接复制正在 WAL 写入的数据库主文件。

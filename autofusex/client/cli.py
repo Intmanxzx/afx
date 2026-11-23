@@ -240,7 +240,8 @@ def _run(args):
             except (OSError, ValueError):
                 log = (home / "manager-start.log").open("ab")
                 try:
-                    child = subprocess.Popen([sys.executable, "-m", "autofusex", "daemon", "supervise", "--data-dir", str(home)],
+                    from autofusex.client.supervisor.install import ensure
+                    child = subprocess.Popen(ensure(home),
                                              start_new_session=True, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
                 finally:
                     log.close()

@@ -38,57 +38,20 @@ def main(argv=None):
     parser = ScenarioParser(prog="afx fuzz")
     sub = parser.add_subparsers(dest="command", required=True, parser_class=argparse.ArgumentParser)
     sub.add_parser("replay", help="replay a self-contained short seed")
-    maintenance = sub.add_parser('maintenance', help='diagnostics and data maintenance').add_subparsers(dest='maintenance_command', required=True)
-    doctor_parser = maintenance.add_parser("doctor")
-    doctor_parser.set_defaults(command="doctor")
-    doctor_parser.add_argument("--data-dir")
+    maintenance = sub
     seed = maintenance.add_parser("seed", help="inspect a frozen short-seed case without execution")
     seed.add_argument("token")
     seed.add_argument("--show-spec", action="store_true")
     compare = maintenance.add_parser("diagnose", help="compare two opt-in generation traces")
     compare.add_argument("expected")
     compare.add_argument("actual")
-    pair = maintenance.add_parser("compare", help="compare two result attempts with explicit comparability checks")
-    pair.add_argument("database")
-    pair.add_argument("left")
-    pair.add_argument("right")
-    snapshot = maintenance.add_parser("snapshot", help="export a consistent lightweight SQLite snapshot")
-    snapshot.add_argument("source")
-    snapshot.add_argument("destination")
-    for command in ("restore", "import"):
-        transfer = maintenance.add_parser(command, help="restore to a new database" if command == "restore" else "merge into an existing database atomically")
-        transfer.set_defaults(command=command)
-        transfer.add_argument("source")
-        transfer.add_argument("destination")
-    check = maintenance.add_parser("check-db", help="audit a trusted result database without modification")
-    check.add_argument("database")
-    results = maintenance.add_parser("results", help="read lightweight results without model dependencies")
-    results.add_argument("database")
-    results.add_argument("--limit", type=int, default=50)
-    results.add_argument("--after", type=int)
-    results.add_argument("--seed")
-    results.add_argument("--attempt")
-    view = sub.add_parser("view", help="open an offline read-only SQLite viewer on this computer")
-    view.add_argument("database")
-    view.add_argument("--port", type=int, default=0, help="loopback port; default chooses a free port")
-    view.add_argument("--no-browser", action="store_true")
-    indexing = maintenance.add_parser('index-results', help='build additive SQLite reporting index after backup')
-    indexing.add_argument('database')
-    model = maintenance.add_parser('index-cases', help='rebuild structured case indexes after private backup')
-    model.add_argument('database')
-    for child, command in [(seed,'seed'),(compare,'diagnose'),(pair,'compare'),(snapshot,'snapshot'),(check,'check-db'),(results,'results'),(indexing,'index-results'),(model,'index-cases')]:
+    for child, command in [(seed, 'seed'), (compare, 'diagnose')]:
         child.set_defaults(command=command)
     from autofusex.execution.scheduling.cli import register
     register(sub, maintenance)
     args = parser.parse_args(argv)
     try:
-        if args.command == 'index-results':
-            from autofusex.execution.reporting.index import rebuild
-            result = rebuild(args.database)
-        elif args.command == 'index-cases':
-            from autofusex.execution.reporting.materialized import rebuild
-            result = rebuild(args.database)
-        elif args.command in {"run", "status", "stop", "resume"}:
+        if args.command in {"run", "status", "stop", "resume"}:
             from autofusex.execution.scheduling.cli import dispatch
             result = dispatch(args)
         elif args.command == "seed":
@@ -101,27 +64,6 @@ def main(argv=None):
                       "preview": True, "shape_count": len(bundle.spec.shape_samples)}
             if args.show_spec:
                 result["manifest"] = content_manifest(bundle)
-        elif args.command == "compare":
-            from autofusex.execution.storage.comparison import compare
-            result = compare(args.database, args.left, args.right)
-        elif args.command == "snapshot":
-            from autofusex.execution.storage import ResultRepository
-            result = {"snapshot": ResultRepository(args.source).snapshot(args.destination)}
-        elif args.command in {"restore", "import", "check-db"}:
-            from autofusex.execution.storage.transfer import restore, merge, check_database
-            if args.command == "check-db":
-                result = check_database(args.database)
-            else:
-                result = (restore if args.command == "restore" else merge)(args.source, args.destination)
-        elif args.command == "view":
-            from autofusex.viewer.server import serve
-            return serve(args.database, port=args.port, open_browser=not args.no_browser)
-        elif args.command == "results":
-            from autofusex.execution.storage import ResultRepository
-            repo = ResultRepository(args.database)
-            result = repo.detail(args.attempt) if args.attempt else repo.list(limit=args.limit, after=args.after, seed=args.seed)
-        elif args.command == "doctor":
-            result = doctor(args.data_dir)
         elif args.command == "diagnose":
             from pathlib import Path
             from autofusex.workloads.fuzz.diagnostics import first_divergence

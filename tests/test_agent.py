@@ -199,7 +199,7 @@ def test_cli_exposes_agent_normalization_and_recovery_options() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
-            "run-script",
+            "model", "run",
             "--script",
             "model.py",
             "--out-dir",

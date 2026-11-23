@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -275,6 +276,16 @@ def cmd_run_torch_model(args: argparse.Namespace) -> int:
     return 0 if summary["passed"] else 1
 
 
+def cmd_model_run(args: argparse.Namespace) -> int:
+    if args.entry is not None:
+        if args.script_args:
+            raise ValueError("factory entries do not accept script arguments")
+        return cmd_run_torch_model(args)
+    if args.fullgraph is None:
+        args.fullgraph = False
+    return cmd_run_script(args)
+
+
 def cmd_run_script(args: argparse.Namespace) -> int:
     from autofusex.workloads.model.script_runner import (
         default_direct_output_paths,
@@ -390,9 +401,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command_name", required=True)
 
-    sub.add_parser("fuzz", help="setup, doctor, replay and seed diagnostics; use fuzz --help")
-    sub.add_parser("server", help="server administration; use server --help")
-    make = sub.add_parser("make-manifest", help="build a manifest from graph JSON and an npy dump directory")
+    analyze = sub.add_parser("analyze", help="compare tensors and analyze reports").add_subparsers(dest="analysis", required=True)
+    model = sub.add_parser("model", help="run and normalize whole models").add_subparsers(dest="model_command", required=True)
+    debug = sub.add_parser("debug", help="capture commands and inspect simulators").add_subparsers(dest="debug_command", required=True)
+    simulator = debug.add_parser("camodel").add_subparsers(dest="camodel_command", required=True)
+    make = analyze.add_parser("manifest", help="build a manifest from graph JSON and an npy dump directory")
     make.add_argument(
         "--side",
         choices=[
@@ -411,7 +424,7 @@ def build_parser() -> argparse.ArgumentParser:
     make.add_argument("--model-name", default=None)
     make.set_defaults(func=cmd_make_manifest)
 
-    cmp_parser = sub.add_parser("compare", help="compare a reference and NPU manifest")
+    cmp_parser = analyze.add_parser("compare", help="compare a reference and NPU manifest")
     cmp_parser.add_argument("--cpu-manifest", required=True)
     cmp_parser.add_argument("--npu-manifest", required=True)
     cmp_parser.add_argument("--out", default=None)
@@ -426,7 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_elementwise_data_option(cmp_parser)
     cmp_parser.set_defaults(func=cmd_compare)
 
-    cmp_three = sub.add_parser(
+    cmp_three = analyze.add_parser(
         "compare-three", help="compare Inductor pre-fusion CPU, NPU eager, and NPU Autofuse manifests"
     )
     cmp_three.add_argument("--cpu-manifest", required=True)
@@ -440,7 +453,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_elementwise_data_option(cmp_three)
     cmp_three.set_defaults(func=cmd_compare_three)
 
-    npy = sub.add_parser("compare-npy", help="compare two npy files directly")
+    npy = analyze.add_parser("compare-npy", help="compare two npy files directly")
     npy.add_argument("--golden", required=True)
     npy.add_argument("--actual", required=True)
     npy.add_argument("--golden-format", default=None)
@@ -452,14 +465,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_elementwise_data_option(npy)
     npy.set_defaults(func=cmd_compare_npy)
 
-    html = sub.add_parser("report-html", help="render an existing report JSON with lazy tensor data")
+    html = analyze.add_parser("report", help="render an existing report JSON with lazy tensor data")
     html.add_argument("--report", required=True)
     html.add_argument("--out", required=True)
     html.add_argument("--title", default="Autofuse Accuracy Report")
     html.set_defaults(func=cmd_report_html)
 
-    normalize = sub.add_parser(
-        "normalize-script",
+    normalize = model.add_parser(
+        "normalize",
         help="use an Agent to analyze a model script and write a validated normalization JSON",
     )
     normalize.add_argument("--script", required=True, help="model script to analyze")
@@ -474,31 +487,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     normalize.set_defaults(func=cmd_normalize_script)
 
-    torch_model = sub.add_parser(
-        "run-torch-model", help="compare shared Inductor pre-fusion CPU/NPU eager with native Autofuse execution"
-    )
-    torch_model.add_argument("--script", required=True, help="python script defining create_case()")
-    torch_model.add_argument("--entry", default="create_case", help="case factory function name")
-    torch_model.add_argument("--out-dir", required=True)
-    torch_model.add_argument("--html", default=None, help="write HTML path; defaults to OUT_DIR/report.html")
-    torch_model.add_argument("--cann-root", default=None, help="CANN installation root")
-    torch_model.add_argument("--device", default="npu:0")
-    torch_graph_mode = torch_model.add_mutually_exclusive_group()
-    torch_graph_mode.add_argument("--fullgraph", action="store_const", const=True, help="override create_case and compile one full graph")
-    torch_graph_mode.add_argument("--allow-graph-breaks", dest="fullgraph", action="store_const", const=False, help=argparse.SUPPRESS)
-    torch_model.set_defaults(fullgraph=None)
-    torch_model.add_argument(
-        "--rewrite-device-hints",
-        action="store_true",
-        help="compatibility mode: temporarily rewrite model dev/device attributes for each target device",
-    )
-    _add_common_thresholds(torch_model)
-    _add_elementwise_data_option(torch_model)
-    _add_with_cpu_option(torch_model)
-    torch_model.set_defaults(func=cmd_run_torch_model)
-
-    script_runner = sub.add_parser(
-        "run-script", help="capture a framework model invocation and compare it with an NPU backend"
+    script_runner = model.add_parser(
+        "run", help="capture a framework model invocation and compare it with an NPU backend"
     )
     script_runner.add_argument("--script", required=True, help="model script that executes the target inference")
     script_runner.add_argument("--out-dir", required=True)
@@ -512,7 +502,7 @@ def build_parser() -> argparse.ArgumentParser:
     graph_mode = script_runner.add_mutually_exclusive_group()
     graph_mode.add_argument("--fullgraph", action="store_true", help="compile one full graph instead of allowing graph breaks")
     graph_mode.add_argument("--allow-graph-breaks", dest="fullgraph", action="store_false", help="compatibility alias; graph breaks are now the default")
-    script_runner.set_defaults(fullgraph=False)
+    script_runner.set_defaults(fullgraph=None)
     script_runner.add_argument("--dynamic", action="store_true")
     script_runner.add_argument(
         "--rewrite-device-hints",
@@ -533,25 +523,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_with_cpu_option(script_runner)
     _add_agent_options(script_runner)
     script_runner.add_argument("script_args", nargs=argparse.REMAINDER, help="arguments passed after -- to the script")
-    script_runner.set_defaults(func=cmd_run_script)
+    script_runner.add_argument("--entry", default=None, help="case factory function; omit to capture script inference")
+    script_runner.set_defaults(func=cmd_model_run)
 
-    run = sub.add_parser("run", help="run an external command and capture logs")
+    run = debug.add_parser("run", help="run an external command and capture logs")
     run.add_argument("--out-dir", required=True)
     run.add_argument("--command", required=True, help="shell command; supports {out_dir} placeholder")
     run.add_argument("--env", action="append", default=[], help="extra KEY=VALUE env, repeatable")
-    run.set_defaults(func=cmd_run)
+    run.add_argument("--mode", choices=("normal", "cpu"), default="normal")
+    run.set_defaults(func=lambda args: cmd_run_debug_cpu(args) if args.mode == "cpu" else cmd_run(args))
 
-    debug_cpu = sub.add_parser("run-debug-cpu", help="run a command with TORCHINDUCTOR_NPU_EXT_DEBUG=cpu")
-    debug_cpu.add_argument("--out-dir", required=True)
-    debug_cpu.add_argument("--command", required=True, help="shell command; supports {out_dir} placeholder")
-    debug_cpu.add_argument("--env", action="append", default=[], help="extra KEY=VALUE env, repeatable")
-    debug_cpu.set_defaults(func=cmd_run_debug_cpu)
-
-    info = sub.add_parser("camodel-info", help="inspect CANN simulator/CAModel directories")
+    info = simulator.add_parser("info", help="inspect CANN simulator/CAModel directories")
     info.add_argument("--cann-root", required=True, help="CANN root, e.g. /home/xingzhixiong/Ascend/cann-9.1.0")
     info.set_defaults(func=cmd_camodel_info)
 
-    camodel = sub.add_parser("run-camodel", help="run a command with CANN simulator/CAModel environment")
+    camodel = simulator.add_parser("run", help="run a command with CANN simulator/CAModel environment")
     camodel.add_argument("--cann-root", required=True)
     camodel.add_argument("--soc", default=None, help="simulator SoC directory name, e.g. dav_3510")
     camodel.add_argument("--out-dir", required=True)
@@ -562,8 +548,61 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def root_help():
+    parser = argparse.ArgumentParser(prog='afx', description='AFX unified testing platform')
+    parser.add_argument('-v', '--version', action='store_true', help='show installed version')
+    sub = parser.add_subparsers(title='commands')
+    for name, help_text in (
+        ('init', 'initialize a local or managed client'), ('start', 'start testing'),
+        ('stop', 'stop testing'), ('restart', 'restart client'), ('status', 'show client status'),
+        ('config', 'show, edit, reset, validate or export configuration'),
+        ('env', 'manage execution environments'), ('replay', 'replay using historical configuration'),
+        ('task', 'submit and control tasks'), ('operation', 'inspect asynchronous operations'),
+        ('build', 'build execution environments'), ('update', 'upgrade the client'),
+        ('release', 'manage signed releases'), ('device', 'manage device registration'),
+        ('fuzz', 'generate and replay fuzz cases'), ('model', 'run and normalize whole models'),
+        ('analyze', 'compare tensors and render reports'), ('debug', 'capture commands and inspect simulators'),
+        ('results', 'query, compare, snapshot and maintain result databases'),
+        ('view', 'open a local read-only viewer'), ('doctor', 'inspect execution capabilities'),
+        ('server', 'run and administer the central server'), ('sync', 'synchronize standalone results'),
+        ('retest', 'execute platform retests')):
+        sub.add_parser(name, help=help_text, add_help=False)
+    return parser
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if not raw_argv or raw_argv in (["-h"], ["--help"]):
+        root_help().print_help()
+        return 0
+    if raw_argv[0] == 'results':
+        from autofusex.execution.results_cli import main as results_main
+        return results_main(raw_argv[1:])
+    if raw_argv[0] == 'view':
+        parser = argparse.ArgumentParser(prog='afx view')
+        parser.add_argument('database')
+        parser.add_argument('--port', type=int, default=0)
+        parser.add_argument('--no-browser', action='store_true')
+        args = parser.parse_args(raw_argv[1:])
+        from autofusex.viewer.server import serve
+        try:
+            return serve(args.database, port=args.port, open_browser=not args.no_browser)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+    if raw_argv[0] == 'doctor':
+        parser = argparse.ArgumentParser(prog='afx doctor')
+        parser.add_argument('--workload', choices=('fuzz',), default='fuzz')
+        parser.add_argument('--data-dir')
+        args = parser.parse_args(raw_argv[1:])
+        from autofusex.workloads.fuzz.cli import doctor
+        import json
+        try:
+            print(json.dumps(doctor(args.data_dir), indent=2))
+            return 0
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
     # Compact client surface. The legacy management tree remains available
     # for compatibility and for administrator/maintenance workflows.
     modern = raw_argv and raw_argv[0] in {"init", "start", "status", "stop", "restart", "replay", "env", "-h", "--help", "-v", "--version"}
@@ -578,8 +617,12 @@ def main(argv: list[str] | None = None) -> int:
                 return modern_main(raw_argv)
             raw_argv = ["--data-dir", raw_argv[index + 1], *raw_argv[:index], *raw_argv[index + 2:]]
         return modern_main(raw_argv)
-    if raw_argv and raw_argv[0] in {"daemon", "device", "environment", "task", "operation", "build", "tool"}:
+    if raw_argv and raw_argv[0] in {"device", "task", "operation", "build", "release", "update"}:
         from autofusex.client.cli import main as management_main
+        if raw_argv[0] == "release":
+            raw_argv[0] = "tool"
+        elif raw_argv[0] == "update":
+            raw_argv = ["client", "update", *raw_argv[1:]]
         return management_main(raw_argv)
     if raw_argv and raw_argv[0] == "fuzz":
         from autofusex.workloads.fuzz.cli import main as fuzz_main
