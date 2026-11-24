@@ -76,4 +76,4 @@ worker 使用已登记的 Torch/CANN 解释器，通过 `PYTHONPATH` 优先加�
 | `results/view/analyze/debug/doctor` | 结果维护、查看、精度分析和诊断 |
 | `server/sync/retest` | 中心服务管理、独立结果同步与复测执行 |
 
-顶层 `replay` 从本机历史恢复配置并排队；`fuzz replay` 使用当前环境直接执行。内部 daemon 启动使用 `python -m autofusex.client`，不属于日常公开命令。HTTP 参数与鉴权以实际生成的 [OpenAPI](openapi.md) 为准。
+顶层 `replay` 从本机历史恢复配置并排队；`fuzz replay` 接受任意 seed 和显式 backend，默认先通过 daemon 将任务以 priority=100 加入当前活动 fuzz run 的队列，使用该 run 的执行环境和资源预算。它优先于普通任务，但不抢占正在执行的 stage。没有活动 run 时独立执行；显式 `--database` 或 `--scheduling combined` 使用独立执行路径。内部 daemon 启动使用 `python -m autofusex.client`，不属于日常公开命令。HTTP 参数与鉴权以实际生成的 [OpenAPI](openapi.md) 为准。
