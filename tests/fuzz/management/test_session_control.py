@@ -42,6 +42,12 @@ def test_local_manifest_preserves_execution_environment(monkeypatch):
     }
 
 
+def test_local_manifest_preserves_registered_interpreter(monkeypatch):
+    monkeypatch.setattr(local_session.sys, 'executable', '/control/bin/python')
+    manifest = local_session._local_manifest({'python': '/execution/bin/python'})
+    assert manifest['python'] == '/execution/bin/python'
+
+
 def test_start_stop_start_and_duplicate_delivery(tmp_path, monkeypatch):
     manager = SimpleNamespace(store=Store(tmp_path), processes={}, active=None)
     starts, stops = [], []

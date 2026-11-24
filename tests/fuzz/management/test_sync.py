@@ -44,3 +44,9 @@ def test_manager_center_flow_retries_lost_ack_without_duplicate_effect(tmp_path,
     result=center.operations(user['user_id'],credential['device_id'])[0]
     assert result['result']==dict(state='fixture-ok')
     manager.pool.shutdown()
+
+
+def test_platform_sync_module_imports():
+    from autofusex.client import platform_sync
+
+    assert callable(platform_sync.synchronize)
