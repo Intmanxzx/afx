@@ -26,5 +26,5 @@ class ScenarioParser(argparse.ArgumentParser):
   afx doctor --workload fuzz              检查环境和生成器版本
 
 使用 afx fuzz COMMAND -h 查看参数。
-完整说明：docs/fuzz/fuzz_usage.md
+完整说明：docs/client/advanced.md
 '''

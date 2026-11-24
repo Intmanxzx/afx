@@ -82,7 +82,7 @@ afx start
 afx status
 ```
 
-默认连接 `https://autofuse.online`，可在初始化时用 `--endpoint URL` 修改。daemon 自动同步配置、发送心跳并上传启用上传的任务结果。日常配置、设备选择和版本更新见[客户端配置与重放](../../docs/fuzz/client_configuration.md)。
+默认连接 `https://autofuse.online`，可在初始化时用 `--endpoint URL` 修改。daemon 自动同步配置、发送心跳并上传启用上传的任务结果。日常配置、设备选择和版本更新见[客户端配置与重放](../../docs/client/configuration.md)。
 
 ### 独立上传进程
 
