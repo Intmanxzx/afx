@@ -98,16 +98,6 @@ def execute(store,operation,processes):
     if kind=='task.reconfigure': return tasks.reconfigure(store,payload['run_id'],payload['spec'],processes)
     if kind=='task.action': return tasks.action(store,payload['run_id'],payload['action'],processes)
     if kind=='config.apply':
-        from autofusex.client.artifacts import trusted
-        ceilings=trusted(store.home).get('resource_limits',{})
-        limits=payload['resources']
-        for key in ('max_workers','max_compile_threads'):
-            if limits[key]>ceilings.get(key,1): raise PermissionError('policy exceeds locally authorized '+key)
-        if not set(limits['allowed_devices'])<=set(ceilings.get('allowed_devices',[])):
-            raise PermissionError('policy requests unauthorized devices')
-        from autofusex.contracts.configuration import quantity
-        if limits.get('memory_budget') and ceilings.get('memory_budget') and quantity(limits['memory_budget'])>quantity(ceilings['memory_budget']):
-            raise PermissionError('memory policy exceeds local authority')
         store.put('effective_policy',payload)
-        return dict(applied=True,scope='new_tasks',existing_tasks_unchanged=True)
+        return dict(applied=True,scope='sync',existing_tasks_unchanged=True)
     raise ValueError('unsupported operation')

@@ -1,8 +1,28 @@
 import json
+import pytest
 from types import SimpleNamespace
 from unittest.mock import Mock
 from autofusex.client import platform_retests as retests
 from autofusex.client.store import Store
+
+
+@pytest.mark.parametrize('selection, expected', [(['npu:1'], ['npu:1']), (['all'], ['npu:0','npu:1'])])
+def test_retests_use_task_devices_without_trust(tmp_path, monkeypatch, selection, expected):
+    from autofusex.client import platform_transport, retest_queue
+    from autofusex.execution import environment
+    from autofusex.execution.scheduling import devices
+    (tmp_path/'client.json').write_text(json.dumps(dict(endpoint='https://fixture.invalid', token='fixture')))
+    (tmp_path/'task.json').write_text(json.dumps(dict(execution=dict(devices=selection))))
+    client=Mock()
+    create=Mock(return_value=client)
+    monkeypatch.setattr(platform_transport, 'Client', create)
+    monkeypatch.setattr(devices, 'device_inventory_info', lambda: dict(devices=['npu:0','npu:1'], model='fixture'))
+    monkeypatch.setattr(environment, 'collect', lambda *args: {})
+    monkeypatch.setattr(retest_queue, 'synchronize', lambda *args: 0)
+    retests.run(tmp_path)
+    assert create.call_args.kwargs['devices']==expected
+    assert not (tmp_path/'trust.json').exists()
+    client.state.conn.close.assert_called_once()
 
 
 def test_runner_uses_execution_environment_and_does_not_duplicate(tmp_path, monkeypatch):

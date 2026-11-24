@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 import pytest
 from autofusex.client.artifacts import atomic
-from autofusex.client.configuration import validate
 from autofusex.client.store import Store
 from autofusex.client import tasks
 from autofusex.workloads.imported.registry import register
@@ -16,8 +15,6 @@ def fixture(tmp_path):
     case=register(store.home,script)
     with store.connect() as db:
         db.execute('INSERT INTO environments VALUES (?,?,?,?)',('local','local',json.dumps(dict(id='local',name='local',python=sys.executable,env={})), 'ready'))
-    atomic(store.home/'trust.json', dict(resource_limits=dict(allowed_devices=['npu:0'],max_workers=1,max_compile_threads=1)))
-    store.put('effective_policy',validate(dict(schema_version=1,kind='client_policy')))
     spec=dict(schema_version=1,kind='imported_task',environment='local',
         workload=dict(case_key=case['case_key'],revision=case['revision']),
         execution=dict(devices=['npu:0']),results=dict(save=True,upload=False))

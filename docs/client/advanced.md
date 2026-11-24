@@ -45,7 +45,7 @@ python -m pip install autofusex
 python -m pip install -e '.[execution]'
 ~~~
 
-数据目录用 AUTOFUSEX_HOME 或命令末尾的 `--data-dir DIR` 指定。管理 CLI 需要 daemon 已启动、执行环境已登记为 ready、设备已获本地授权；首次准备见[运维说明](../operations.md)。
+数据目录用 AUTOFUSEX_HOME 或命令末尾的 `--data-dir DIR` 指定。管理 CLI 需要 daemon 已启动、执行环境已登记为 ready；任务的设备和资源直接使用任务配置，首次准备见[运维说明](../operations.md)。
 
 ## 方式一：本地管理 CLI（afx，NPU 客户端机器）
 
@@ -107,7 +107,7 @@ afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 | config show/edit/reset/validate/export | 查看、修改、重置、校验或导出任务配置 |
 | build submit FILE / release stage FILE / release activate RELEASE_ID | 本地受信构建与签名制品升级 |
 
-配置 schema 见 [fuzz 配置协议](../../autofusex/workloads/fuzz/configuration.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），资源还受 trust 和 policy 限制。
+配置 schema 见 [fuzz 配置协议](../../autofusex/workloads/fuzz/configuration.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），设备和资源按本次任务配置执行。
 
 ## 方式二：临时运行与重放（afx fuzz，本机直接调试）
 

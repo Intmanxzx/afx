@@ -12,14 +12,14 @@ afx init
 afx start
 ~~~
 
-接入平台时，首次初始化改用 `afx init --token YOUR_TOKEN`。`start` 自动启动 daemon、登记当前 Python 环境并准备基础资源授权。配置、设备选择和重放见[客户端配置与重放](client/configuration.md)。`init` 不安装 Torch/CANN。已有客户端无需重新初始化；更换运行环境或安装包后使用 `afx restart`。
+接入平台时，首次初始化改用 `afx init --token YOUR_TOKEN`。`start` 自动启动 daemon 并登记当前 Python 环境，任务按拉取的配置执行。配置、设备选择和重放见[客户端配置与重放](client/configuration.md)。`init` 不安装 Torch/CANN。已有客户端无需重新初始化；更换运行环境或安装包后使用 `afx restart`。
 
 ## 托管客户端首次准备
 
 本节是管理员手工安装受信环境的进阶流程；普通客户端使用上面的 `init/start` 即可。
 
 1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`）。
-2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。高级安装由管理员维护 home 下的 trust.json（0600），不提供 CLI 或 IPC 写入接口。trust 保存在 home 下私有文件，仅本地可修改。
+2. 准备高级安装所需的本机 trust：CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。高级安装由管理员维护 home 下的 trust.json（0600），不提供 CLI 或 IPC 写入接口。该文件只用于安装配方和签名发布校验，不参与普通任务的设备或资源选择。
 3. 新客户端需要接入平台时，使用 `afx init --token YOUR_TOKEN`，然后 `afx start`；已初始化目录保持现有身份和配置。
 4. 准备 environment.yaml，提交计划并执行；成功后取环境 ID 填到任务规格。
 
@@ -48,9 +48,9 @@ packages:
   nnsmith: "实际版本"
 ~~~
 
-trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../autofusex/client/environments.py) 和 [artifacts.py](../autofusex/client/artifacts.py)。普通 init/start 流程会准备当前环境的基础资源授权；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
+trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径。读取字段见 [environments.py](../autofusex/client/environments.py) 和 [artifacts.py](../autofusex/client/artifacts.py)。普通 init/start 不需要 trust.json；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
 
-多卡或更高并发通过任务配置设置，仍不得超过本机 trust 的资源上限；内部执行策略由客户端维护，不提供独立 policy 命令。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
+多卡或更高并发通过任务配置设置；内部执行策略由客户端维护，不提供独立 policy 命令。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
 
 ## 结果数据库维护
 

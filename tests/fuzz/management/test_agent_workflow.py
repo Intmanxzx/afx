@@ -21,7 +21,7 @@ from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 
 def spec():
     return dict(schema_version=1, kind='fuzz_task', environment='fixture',
-                workload=dict(mode='generate'), results=dict(save=True, upload=False))
+                workload=dict(mode='generate'), execution=dict(devices=['npu:0']), results=dict(save=True, upload=False))
 
 
 def invoke(home, *args, input=None):
@@ -40,8 +40,6 @@ def daemon():
         with store.connect() as db:
             db.execute('INSERT INTO environments VALUES (?,?,?,?)',
                        ('fixture', 'fixture', canonical(dict(id='fixture', python=sys.executable, env={})), 'ready'))
-        (home/'trust.json').write_text(canonical(dict(resource_limits=dict(allowed_devices=['npu:0'], max_workers=1, max_compile_threads=1))))
-        (home/'trust.json').chmod(0o600)
         child = subprocess.Popen([sys.executable, '-m', 'autofusex.client', 'daemon', 'run', '--data-dir', path],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
