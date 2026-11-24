@@ -37,7 +37,7 @@ def test_arbitrary_seed_joins_active_run_with_priority(active, backend, expected
     normal = ledger.enqueue(seed, ExecutionConfig('cpu', 'cpu', 1), EvaluationConfig())
     result = manager.dispatch({'action': 'fuzz_replay', 'options': {
         'seed': seed, 'backend': backend, 'performance': True, 'static_only': True,
-        'warmup_steps': 1, 'measured_steps': 2}})
+        'warmup_steps': 1, 'measured_steps': 2, 'dump': True}})
     assert result['queue'] == str(ledger.path)
     assert not (manager.store.home / 'tasks').exists()
     assert not (ledger.path.parent / 'results.sqlite').exists()  # no history needed
@@ -46,7 +46,7 @@ def test_arbitrary_seed_joins_active_run_with_priority(active, backend, expected
     configs = [json.loads(r['execution']) for r in rows]
     assert [c['backend'] for c in configs] == expected
     assert all(c['device'] == ('cpu' if c['backend'] == 'cpu' else 'npu:1') for c in configs)
-    assert all(c['compile_threads'] == 2 and c['static_only'] for c in configs)
+    assert all(c['compile_threads'] == 2 and c['static_only'] and c['dump'] for c in configs)
     assert all(json.loads(r['evaluation'])['performance'] for r in rows)
     assert ledger.claim()['id'] == normal
 

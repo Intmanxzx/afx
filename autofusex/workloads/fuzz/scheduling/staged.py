@@ -467,7 +467,7 @@ def replay(args):
         try:
             queued = request(home, {'action': 'fuzz_replay', 'options': {
                 key: getattr(args, key) for key in ('seed', 'backend', 'device',
-                    'compile_threads', 'static_only', 'performance', 'warmup_steps', 'measured_steps')}})
+                    'compile_threads', 'static_only', 'performance', 'warmup_steps', 'measured_steps', 'dump')}})
         except (FileNotFoundError, ConnectionRefusedError):
             queued = None
         if queued is not None:

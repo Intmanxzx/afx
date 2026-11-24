@@ -119,6 +119,6 @@ def submit_fuzz(store, options, processes):
     batch = str(uuid.uuid4())
     tasks = [(seed, ExecutionConfig(b, 'cpu' if b == 'cpu' else device, threads,
                 scheduling='staged', static_only=options.get('static_only', False) or not seed.dynamic,
-                batch_id=batch, save_results=True), evaluation, None) for b in backends]
+                batch_id=batch, save_results=True, dump=options.get('dump', False)), evaluation, None) for b in backends]
     ids = ledger.enqueue_many(tasks, priority=100)
     return dict(run_id=identity, task_ids=ids, priority=100, state='queued', queue=str(path))
