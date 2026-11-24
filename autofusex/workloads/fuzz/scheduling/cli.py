@@ -45,6 +45,7 @@ def register(sub, maintenance):
             parser.add_argument('--scheduling', choices=('combined','staged'), default='staged', help='stage DAG or rollback to combined whole-worker execution')
             parser.add_argument('--workers', type=int, help='maximum concurrent workers (CPU and NPU combined)')
             parser.add_argument('--compile-threads', type=int, help=__import__('argparse').SUPPRESS)
+            parser.add_argument('--dump', action='store_true', help='enable compiler debug dumps (default: off); independent of --save')
             parser.add_argument('--static-only', action='store_true')
             parser.add_argument('--perf', dest='performance', action='store_true')
             parser.add_argument('--save', action='store_true', help='save results to the local database; default: neither')
@@ -68,7 +69,7 @@ _CONTINUE_CONFLICTS = {
     'dynamic_variants': None, 'method': None, 'exclude_op': None, 'ops': None, 'backend': None,
     'device': None, 'auto_resources': None, 'count': None, 'static_only': False, 'performance': False,
     'worker_max_tasks': 16, 'workers': None, 'compile_threads': None, 'device_memory_bytes': None,
-    'scheduling': 'staged', 'save': False,
+    'scheduling': 'staged', 'save': False, 'dump': False,
 }
 
 
@@ -200,7 +201,7 @@ def dispatch(args):
         budget = replace(budget, **resource_plan['selected'], **resource_plan['budget_limits'])
     import uuid
     batch_id = str(uuid.uuid4())
-    configs = [ExecutionConfig(backend, devices[0] if backend in {'eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, scheduling=getattr(args,'scheduling','staged'), static_only=args.static_only, batch_id=batch_id, save_results=args.save)
+    configs = [ExecutionConfig(backend, devices[0] if backend in {'eager-npu','triton-npu','af-legacy','af-mlir'} else 'cpu', budget.compile_threads, scheduling=getattr(args,'scheduling','staged'), static_only=args.static_only, batch_id=batch_id, save_results=args.save, dump=getattr(args,'dump',False))
                for backend in dict.fromkeys(['cpu','af-mlir']+(args.backend or []))]
     for config in configs:
         _validate_task({'execution': canonical_json(asdict(config)), 'evaluation': canonical_json(asdict(evaluation))})

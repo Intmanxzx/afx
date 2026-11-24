@@ -45,13 +45,13 @@ class Manager:
             return dict(runs=begin(self.store, self.processes))
         if action=='start_session':
             from autofusex.client.local_session import start
-            return start(self)
+            return start(self, dump=body.get('dump'))
         if action=='platform_retest':
             from autofusex.client.retest_queue import submit
             return submit(self.store.home, body['task'])
         if action=='replay':
             from autofusex.client.replay import submit
-            return submit(self.store, body['seeds'], self.processes)
+            return submit(self.store, body['seeds'], self.processes, dump=body.get('dump',False))
         if action=='status': return self.snapshot()
         if action=='stop_session':
             from autofusex.client.tasks import action as task_action

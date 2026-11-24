@@ -152,21 +152,25 @@ def _worker_command(ledger, database, task):
             str(ledger.path), str(database), task['id'], task['claim']]
 
 
-def _debug_env(base, scratch, debug_dir, backend=None):
-    """Keep compiler and graph diagnostics in the managed task directory."""
+def _debug_env(base, scratch, debug_dir=None, backend=None, dump=False):
+    """Apply explicit dump policy before Torch/compiler imports in a worker."""
     env = dict(base)
+    for key in ('TORCH_COMPILE_DEBUG_DIR', 'DUMP_GE_GRAPH', 'DUMP_GRAPH_LEVEL', 'DUMP_GRAPH_PATH'):
+        env.pop(key, None)
+    env['TORCH_COMPILE_DEBUG'] = '1' if dump else '0'
     dfx_flags = [item.strip() for item in env.get('AUTOFUSE_DFX_FLAGS', '').split(';')
                  if item.strip() and item.strip().lstrip('-').split('=', 1)[0]
                  not in {'debug_dir', 'codegen_compile_debug'}]
     if backend in {'af-legacy', 'af-mlir'}:
-        dfx_flags.append('--codegen_compile_debug=true')
-    if backend in {'af-legacy', 'af-mlir'}:
-        dfx_flags.append(f'--debug_dir={debug_dir}')
-    if backend in {'af-legacy', 'af-mlir'}:
+        dfx_flags.append('--codegen_compile_debug=' + ('true' if dump else 'false'))
+        if dump:
+            dfx_flags.append(f'--debug_dir={debug_dir}')
+    if dfx_flags or 'AUTOFUSE_DFX_FLAGS' in env:
         env['AUTOFUSE_DFX_FLAGS'] = ';'.join(dfx_flags)
-    if backend in {'af-legacy', 'af-mlir', 'triton-npu', 'eager-npu'}:
-        env.update(TORCH_COMPILE_DEBUG='1', TORCH_COMPILE_DEBUG_DIR=str(debug_dir))
-    env.update(TORCHINDUCTOR_CACHE_DIR=str(Path(scratch) / 'inductor'))
+    if dump:
+        if debug_dir is None: raise ValueError('dump directory required')
+        env['TORCH_COMPILE_DEBUG_DIR'] = str(debug_dir)
+    env['TORCHINDUCTOR_CACHE_DIR'] = str(Path(scratch) / 'inductor')
     return env
 
 
@@ -281,14 +285,17 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                         append(database, task['attempt_id'], 'dispatched')
                     env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
                     from autofusex.client.cleanup import debug_worker
-                    debug_dir, state['debug_lease'] = debug_worker(os.environ.get('AFX_TASK_HOME', ledger.path.parent))
+                    dump = execution.get('dump',False)
+                    debug_dir = None
+                    if dump:
+                        debug_dir, state['debug_lease'] = debug_worker(os.environ.get('AFX_TASK_HOME', ledger.path.parent.parent))
                     env.update(TMPDIR=scratch.name,
                                TRITON_CACHE_DIR=str(Path(scratch.name)/'triton'),
                                TORCHINDUCTOR_COMPILE_THREADS=str(execution['compile_threads']),
                                )
-                    env = _debug_env(env, scratch.name, debug_dir, execution.get('backend'))
+                    env = _debug_env(env, scratch.name, debug_dir, execution.get('backend'), dump)
                     state['child']=subprocess.Popen(_worker_command(ledger,database,task),start_new_session=True,
-                        pass_fds=(fd,state['debug_lease'].fileno()),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+                        pass_fds=(fd,)+((state['debug_lease'].fileno(),) if state.get('debug_lease') else ()),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                     # Archive initialization and dispatch bookkeeping precede
                     # execution. Give the launched worker its full time budget.
                     state['deadline'] = time.monotonic() + timeout

@@ -93,6 +93,24 @@ CASE_KEY 使用导入输出的 I: 或 M: 标识。默认执行本地登记版本
 
 本地包最大 256 MiB；中心可传输源码包当前限制为 512 KiB。报告上传支持不超过 1 MiB 的 HTML、JSON、TXT、CSV、SVG 文件，大型张量产物保留在执行机器。
 
+## 手动开启编译调试 dump
+
+Fuzz 默认关闭 Torch 编译诊断和 Autofuse 编译 debug dump。需要排查编译问题时，给本次启动或重放增加 --dump：
+
+~~~sh
+afx start --dump
+afx restart --dump
+afx replay SEED --dump
+~~~
+
+--dump 只覆盖本次任务，不会修改服务端或本地保存的配置。已有任务正在运行时，start 不会切换 dump 模式；使用 restart --dump 启动开启 dump 的新任务。恢复默认关闭可用 afx restart（任务配置未显式开启 dump 时）。已有保存的 campaign 通过 --continue 或升级恢复时沿用其记录的模式。
+
+需要把开关保存在任务规格中，可通过 afx config edit FILE 设置 execution.dump: true；缺省为 false。服务端下发的任务配置和本地任务规格遵守同一字段，修改任务规格在下次启动生效。显式 --dump 优先开启，afx replay 每次须显式传入 --dump，不继承历史任务的 dump 开关。
+
+调试文件保存在客户端数据目录 debug/autofuse_compile/worker-*，受自动清理策略管理。--dump 与 --save（保存结果数据库）独立，关闭 dump 仍保留正常任务日志和已启用保存的执行结果。继承环境中的 TORCH_COMPILE_DEBUG、编译 debug_dir/codegen_compile_debug 和图 dump 环境项由本次开关统一控制。
+
+临时运行也支持 afx fuzz run --dump 和 afx fuzz replay SEED --dump；进阶命令列表见[进阶命令](advanced.md)。本开关用于 Fuzz 调试输出，模型分析命令生成报告所需的图和张量采集按模型分析流程执行。
+
 ## 自动清理客户端目录
 
 服务端“测试任务配置 → 客户端自动清理”可分别设置 Debug 和 Runs 保留天数。个人配置覆盖管理员默认配置；没有个人配置时继承管理员默认值。两项默认均为 2 天，设为 0 关闭对应清理，可选范围为 0～3650 天。任务配置对应字段为 cleanup.debug_days 和 cleanup.runs_days。
@@ -105,4 +123,4 @@ Runs 只清理 completed、failed、stopped、cancelled 且结束时间超过保
 
 清理删除 runs 下的结果数据库、日志和产物，保留 manager.sqlite 中的任务规格、结束摘要、结果条数及 cleanup 标记。清理后无法从该本地目录查看报告，按 seed 自动检索本地结果的 replay 也无法使用该目录；显式使用 task replay --from-run 仍可读取保留的任务规格；已上传的中心数据仍可查询。afx daemon status --json 可查看最近检查的时间、策略、删除数量、回收字节和错误类别，afx task list/inspect 可查询历史摘要。任务结束后上传仍失败的目录可能持续保留，应先解决上传问题。
 
-本功能需要支持 cleanup-v1 的新版客户端；0.3.0 客户端继续收到兼容的任务配置，不会自动执行清理。dump 的开启行为本次保持原状。
+本功能需要支持 cleanup-v1 的新版客户端；0.3.0 客户端继续收到兼容的任务配置，不会自动执行清理。编译调试 dump 默认关闭，按上面的 --dump 说明手动开启。

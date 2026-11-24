@@ -31,6 +31,8 @@ def put(store, principal, body, *, administrator=False):
     raw=body.get('config')
     if raw is not None and 'cleanup' not in raw:
         raw=dict(raw, cleanup=get(store,principal,administrator=administrator)['config']['cleanup'])
+    if raw is not None and 'dump' not in raw.get('execution',{}):
+        raw=dict(raw, execution=dict(raw.get('execution',{}), dump=get(store,principal,administrator=administrator)['config']['execution'].get('dump',False)))
     spec=validate(raw) if raw is not None else None
     if spec and (spec['kind']!='fuzz_task' or spec['workload']['mode']!='generate'):
         raise ValueError('task profile must describe generation')
@@ -44,10 +46,13 @@ def put(store, principal, body, *, administrator=False):
 
 
 def for_client(result, capabilities):
-    """Old clients reject unknown task fields; send retention only on opt-in."""
-    if 'cleanup-v1' in capabilities.split(','):
-        return result
+    """Old clients reject unknown task fields; negotiate optional controls."""
+    supported = {item.strip() for item in capabilities.split(',')}
     result = dict(result, config=dict(result['config']))
-    result['config'].pop('cleanup', None)
+    if 'cleanup-v1' not in supported:
+        result['config'].pop('cleanup', None)
+    if 'dump-v1' not in supported:
+        result['config']['execution'] = dict(result['config']['execution'])
+        result['config']['execution'].pop('dump', None)
     result['revision'] = fingerprint(result['config'])
     return result

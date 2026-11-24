@@ -29,9 +29,12 @@ def _local_manifest(existing=None):
     return manifest
 
 
-def start(manager):
+def start(manager, dump=None):
     store=manager.store
     spec=load(store.home/'task.json')
+    if dump is not None:
+        if type(dump) is not bool: raise ValueError('dump must be boolean')
+        spec['execution']['dump']=dump
     client=json.loads((store.home/'client.json').read_text())
     if client['mode']=='local' and spec['results']['upload']:
         raise ValueError('local mode cannot upload results')
@@ -47,6 +50,11 @@ def start(manager):
         with store.connect() as db:
             db.execute("INSERT OR REPLACE INTO environments VALUES (?,?,?,'ready')",('local','local',canonical(manifest)))
     if manager.processes:
+        if dump is not None:
+            with store.connect() as db:
+                current = [json.loads(row['spec'])['spec']['execution'].get('dump',False) for row in db.execute("SELECT spec FROM runs WHERE state IN ('running','preparing','paused','pausing')")]
+            if any(value != dump for value in current):
+                raise ValueError('dump mode differs from active task; use afx restart --dump')
         return dict(state='running',run_ids=list(manager.processes))
     from autofusex.client.artifacts import atomic
     inventory=resource_inventory(store.home)

@@ -19,7 +19,7 @@ def test_backend_dfx_flag_adds_route_without_dropping_dump_options():
 
 
 def test_autofuse_debug_environment_is_local_and_backend_scoped(tmp_path):
-    env = _debug_env({"AUTOFUSE_DFX_FLAGS": "--existing=1"}, tmp_path / "scratch", tmp_path / "debug", "af-mlir")
+    env = _debug_env({"AUTOFUSE_DFX_FLAGS": "--existing=1"}, tmp_path / "scratch", tmp_path / "debug", "af-mlir", dump=True)
     assert "DUMP_GE_GRAPH" not in env
     assert "DUMP_GRAPH_LEVEL" not in env
     assert "DUMP_GRAPH_PATH" not in env
@@ -33,4 +33,4 @@ def test_autofuse_debug_environment_is_local_and_backend_scoped(tmp_path):
 def test_cpu_debug_environment_does_not_enable_npu_graph_dump(tmp_path):
     env = _debug_env({}, tmp_path / "scratch", tmp_path / "debug", "cpu")
     assert "DUMP_GE_GRAPH" not in env
-    assert "TORCH_COMPILE_DEBUG" not in env
+    assert env["TORCH_COMPILE_DEBUG"] == "0"

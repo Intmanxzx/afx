@@ -396,7 +396,10 @@ def test_worker_key_includes_compile_threads(tmp_path, monkeypatch):
         for threads in (1, 2):
             pool.submit(stage, {'kind': 'first_call_combined',
                 'config': {'backend': 'af-mlir', 'compile_threads': threads}}, 30)
-        assert keys == [('af-mlir', 'npu:1', 1), ('af-mlir', 'npu:1', 2)]
+        assert keys == [('af-mlir', 'npu:1', 1, False), ('af-mlir', 'npu:1', 2, False)]
+        pool.submit(stage, {'kind': 'first_call_combined',
+            'config': {'backend': 'af-mlir', 'compile_threads': 2, 'dump': True}}, 30)
+        assert keys[-1] == ('af-mlir', 'npu:1', 2, True)
     finally:
         pool.leases.clear()
         pool.close()

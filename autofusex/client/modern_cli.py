@@ -62,14 +62,18 @@ def parser():
     init.add_argument("--local", action="store_true")
     init.add_argument("--device", action="append", default=None, help="NPU device (repeatable, e.g. npu:0)")
     for name in ("start", "status", "stop", "restart"):
-        sub.add_parser(name, help={"start": "start the configured client", "status": "show client status",
+        child = sub.add_parser(name, help={"start": "start the configured client", "status": "show client status",
                                    "stop": "stop the client", "restart": "restart after environment/package changes"}[name])
+
+        if name in {'start','restart'}:
+            child.add_argument('--dump', action='store_true', default=None, help='enable compiler debug dumps for this session (default: off)')
 
     cfg = sub.add_parser("config")
     cfg.add_argument("action", choices=("show", "edit", "reset", "validate", "export"), nargs="?", default="show")
     cfg.add_argument("file", nargs="?")
     replay = sub.add_parser("replay")
     replay.add_argument("seeds", nargs="+")
+    replay.add_argument('--dump', action='store_true', help='enable compiler debug dumps for this replay (default: off)')
     env = sub.add_parser("env")
     env.add_argument("action", choices=("list", "status", "inspect", "prepare", "apply"))
     env.add_argument("value", nargs="?")
@@ -184,7 +188,7 @@ def run(argv=None):
             if client.get('devices'):
                 config.setdefault('execution', {})['devices'] = client['devices']
             atomic(home/'task.json', config)
-        return request(home, {"action": "start_session"})
+        return request(home, {"action": "start_session", "dump": args.dump})
     if args.command == "status":
         result = _legacy(["daemon", "status", "--data-dir", str(home)])
         client = json.loads((home / "client.json").read_text()) if (home / "client.json").exists() else {}
@@ -210,11 +214,11 @@ def run(argv=None):
         # Stop the supervisor as well so a restarted execution process cannot
         # retain modules loaded from the previous CANN installation.
         _legacy(["daemon", "stop", "--data-dir", str(home)])
-        return run(["--data-dir", str(home), "start"])
+        return run(["--data-dir", str(home), "start", *(["--dump"] if args.dump else [])])
     if args.command == "replay":
         _legacy(["daemon", "start", "--data-dir", str(home)])
         from autofusex.client.daemon import request
-        return request(home, {"action": "replay", "seeds": args.seeds})
+        return request(home, {"action": "replay", "seeds": args.seeds, "dump": args.dump})
     if args.command == "env":
         mapping = {"inspect": ["environment", "inspect"], "list": ["environment", "list"], "status": ["environment", "status", args.value or "local"],
                    "prepare": ["environment", "plan", args.value or "-"], "apply": ["environment", "apply", args.value or ""]}

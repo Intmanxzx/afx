@@ -52,11 +52,12 @@ print(json.dumps(out))'''
 
 
 class Pool:
-    def __init__(self, budget, directory, inherited_fd, devices, *, max_tasks=16):
+    def __init__(self, budget, directory, inherited_fd, devices, *, max_tasks=16, debug_home=None):
         from autofusex.execution.resources import resource_inventory
         inventory = resource_inventory(directory)
         self.budget = budget
         self.directory = Path(directory)
+        self.debug_home = Path(debug_home or os.environ.get('AFX_TASK_HOME', self.directory))
         self.fd = inherited_fd
         self.devices = devices
         self.cpu_capacity = budget.cpu_workers * budget.compile_threads
@@ -105,7 +106,7 @@ class Pool:
             return worker['tail'].finish()
         finally:
             worker['scratch'].cleanup()
-            worker['debug_lease'].close()
+            if worker.get('debug_lease'): worker['debug_lease'].close()
 
     def _worker(self, key):
         for worker in self.workers:
@@ -122,18 +123,20 @@ class Pool:
         scratch = tempfile.TemporaryDirectory(prefix='runtime-', dir=self.directory)
         a, b = socket.socketpair()
         from autofusex.client.cleanup import debug_worker
-        debug_dir, debug_lease = debug_worker(os.environ.get('AFX_TASK_HOME', self.directory))
+        dump = bool(len(key)>3 and key[3])
+        debug_dir, debug_lease = debug_worker(self.debug_home) if dump else (None,None)
         env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                    TORCHINDUCTOR_COMPILE_THREADS=str(self.budget.compile_threads),
                    TMPDIR=scratch.name, TRITON_CACHE_DIR=scratch.name+'/triton')
         from autofusex.workloads.fuzz.scheduling.supervisor import _debug_env
-        env = _debug_env(env, scratch.name, debug_dir, key[0] if isinstance(key, tuple) else None)
+        env = _debug_env(env, scratch.name, debug_dir, key[0] if isinstance(key, tuple) else None, dump)
         try:
             child = subprocess.Popen([sys.executable,'-m','autofusex.workloads.fuzz.scheduling.stage_worker',str(b.fileno())],
-                pass_fds=(self.fd,b.fileno(),debug_lease.fileno()),start_new_session=True,stdin=subprocess.DEVNULL,
+                pass_fds=(self.fd,b.fileno())+((debug_lease.fileno(),) if debug_lease else ()),start_new_session=True,stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env)
         except BaseException:
-            a.close(); b.close(); debug_lease.close(); scratch.cleanup()
+            a.close(); b.close(); scratch.cleanup()
+            if debug_lease: debug_lease.close()
             raise
         b.close()
         from autofusex.execution.core_logs import ProcessTail
@@ -151,7 +154,8 @@ class Pool:
         # cannot block the supervisor's timeout/cancellation loop.
         lease = self.leases[stage.identity]
         key = (job.get('config',{}).get('backend','cpu') if job['kind']=='first_call_combined' else 'cpu',
-               lease['device'], job.get('config',{}).get('compile_threads', self.budget.compile_threads))
+               lease['device'], job.get('config',{}).get('compile_threads', self.budget.compile_threads),
+               bool(job.get('config',{}).get('dump',False)) if job['kind']=='first_call_combined' else False)
         return self.executor.submit(self._run, stage.identity, key, job, timeout)
 
     def _run(self, identity, key, job, timeout):

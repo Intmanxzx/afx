@@ -50,7 +50,7 @@ def main(path):
         performance=spec['evaluation']['performance']
         evaluation=EvaluationConfig(performance=performance['enabled'],warmup_steps=performance['warmup_steps'],measured_steps=performance['measured_steps'])
         configs=[ExecutionConfig(backend,'cpu' if backend=='cpu' else ex['devices'][0],budget.compile_threads,
-                                 scheduling='staged',static_only=ex['static_only'],batch_id=prepared['run_id']+':'+str(prepared.get('epoch',0)),save_results=spec['results']['save']) for backend in ex['backends']]
+                                 scheduling='staged',static_only=ex['static_only'],batch_id=prepared['run_id']+':'+str(prepared.get('epoch',0)),save_results=spec['results']['save'],dump=ex.get('dump',False)) for backend in ex['backends']]
         workload=spec['workload'];campaign=None;tasks=[]
         if workload['mode']=='replay':
             tasks=[(str(Seed.parse(seed)),replace(config,static_only=ex['static_only'] or Seed.parse(seed).version in {3,5}),evaluation,None)
