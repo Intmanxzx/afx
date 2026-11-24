@@ -116,9 +116,6 @@ def run(home):
         available = device_inventory_info()
         if 'all' in devices:
             devices = available['devices']
-        trust = json.loads((home / 'trust.json').read_text())
-        allowed = trust.get('resource_limits', {}).get('allowed_devices', [])
-        devices = [d for d in devices if d in allowed or 'all' in allowed]
         api = JournalAPI(API(config['endpoint'], config['token'], timeout=15), retest_dir/'claims.json')
         from autofusex.client.paths import results_database
         client = Client(api, str(results_database(home)), retest_dir/'upload.sqlite', devices=devices)

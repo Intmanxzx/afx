@@ -48,6 +48,24 @@ def test_local_manifest_preserves_registered_interpreter(monkeypatch):
     assert manifest['python'] == '/execution/bin/python'
 
 
+def test_session_switches_devices_without_creating_trust(tmp_path, monkeypatch):
+    from autofusex.client import execution_runtime
+    manager=SimpleNamespace(store=Store(tmp_path), processes={})
+    atomic(tmp_path/'client.json', dict(mode='managed'))
+    monkeypatch.setattr(execution_runtime, 'facts', lambda *args: {'inventory': {'devices': ['npu:0','npu:1']}})
+    resolved=[]
+    def start(store, spec, operation, processes):
+        resolved.append(tasks.prepare(store, spec)['spec'])
+        return {'run_id':str(len(resolved))}
+    monkeypatch.setattr(tasks, 'start', start)
+    for selection in [['npu:0'], ['all'], ['npu:1']]:
+        atomic(tmp_path/'task.json', dict(schema_version=1,kind='fuzz_task',environment='local',
+            workload=dict(mode='generate'), execution=dict(devices=selection,resources=dict(policy='manual',workers=1,compile_threads=1))))
+        local_session.start(manager)
+    assert [s['execution']['devices'] for s in resolved]==[['npu:0'], ['npu:0','npu:1'], ['npu:1']]
+    assert not (tmp_path/'trust.json').exists()
+
+
 def test_start_stop_start_and_duplicate_delivery(tmp_path, monkeypatch):
     manager = SimpleNamespace(store=Store(tmp_path), processes={}, active=None)
     starts, stops = [], []

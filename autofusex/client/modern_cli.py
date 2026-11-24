@@ -181,8 +181,6 @@ def run(argv=None):
             from autofusex.client.artifacts import atomic
             effective = API(client['endpoint'], client['token']).call('GET','/api/config/me')
             config = effective['config']
-            if client.get('devices'):
-                config.setdefault('execution', {})['devices'] = client['devices']
             atomic(home/'task.json', config)
         return request(home, {"action": "start_session"})
     if args.command == "status":
