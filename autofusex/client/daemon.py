@@ -28,7 +28,7 @@ class Manager:
 
     def dispatch(self,body):
         action=body.get('action')
-        if action in {'start_session','replay','platform_retest'} and self.store.get('client_switch', {}).get('state') in {'draining','staging','requested','stage_failed'}:
+        if action in {'start_session','replay','fuzz_replay','platform_retest'} and self.store.get('client_switch', {}).get('state') in {'draining','staging','requested','stage_failed'}:
             raise ValueError('client upgrade blocks task admission')
         if action=='resume_upgrade':
             from autofusex.client.tasks import start
@@ -49,6 +49,9 @@ class Manager:
         if action=='platform_retest':
             from autofusex.client.retest_queue import submit
             return submit(self.store.home, body['task'])
+        if action=='fuzz_replay':
+            from autofusex.client.replay import submit_fuzz
+            return submit_fuzz(self.store, body['options'], self.processes)
         if action=='replay':
             from autofusex.client.replay import submit
             return submit(self.store, body['seeds'], self.processes, dump=body.get('dump',False))

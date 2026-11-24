@@ -74,3 +74,51 @@ def submit(store, seeds, processes, *, dump=False):
     # Preserve each snapshot; the daemon serializes their task submissions.
     operations=[store.submit('task.submit',spec,'replay:'+str(uuid.uuid4())) for spec in specs]
     return dict(operation_ids=[op['id'] for op in operations],priority=100,state='queued')
+
+
+def submit_fuzz(store, options, processes):
+    """Admit arbitrary fuzz seeds through the daemon's active run owner."""
+    if not processes:
+        return None
+    if len(processes) != 1:
+        raise ValueError('multiple active runs; cannot choose replay owner')
+    identity = next(iter(processes))
+    directory = store.home / 'runs' / identity
+    control = directory / 'control.json'
+    if not control.exists() or json.loads(control.read_text()).get('action') != 'run':
+        raise ValueError('active run is stopping or reconfiguring')
+    with store.connect() as db:
+        row = db.execute('SELECT spec FROM runs WHERE id=?', (identity,)).fetchone()
+    current = json.loads(row['spec'])['spec']
+    if current['kind'] != 'fuzz_task':
+        raise ValueError('active run does not support fuzz replay')
+    path = directory / 'tasks.sqlite'
+    if not path.exists():
+        raise ValueError('run is preparing; retry replay once running')
+    ledger = TaskLedger(path)
+    budget = read_policy(ledger)
+    if budget is None:
+        raise ValueError('run is preparing; retry replay once running')
+    threads = options.get('compile_threads')
+    if threads is None:
+        threads = budget.compile_threads
+    if type(threads) is not int or not 1 <= threads <= budget.compile_threads:
+        raise ValueError('CLI compile threads exceed active run budget')
+    from autofusex.execution.backends import BACKEND_NAMES
+    backend = options.get('backend')
+    if backend is not None and backend not in BACKEND_NAMES:
+        raise ValueError('unknown replay backend')
+    backends = [backend] if backend else ['cpu', 'af-mlir']
+    devices = current['execution']['devices']
+    device = options.get('device') or devices[0]
+    if any(b != 'cpu' for b in backends) and device not in devices:
+        raise ValueError('replay device unavailable in active run')
+    seed = Seed.parse(options['seed'])
+    evaluation = EvaluationConfig(performance=options.get('performance', False),
+        warmup_steps=options.get('warmup_steps', 3), measured_steps=options.get('measured_steps', 10))
+    batch = str(uuid.uuid4())
+    tasks = [(seed, ExecutionConfig(b, 'cpu' if b == 'cpu' else device, threads,
+                scheduling='staged', static_only=options.get('static_only', False) or not seed.dynamic,
+                batch_id=batch, save_results=True, dump=options.get('dump', False)), evaluation, None) for b in backends]
+    ids = ledger.enqueue_many(tasks, priority=100)
+    return dict(run_id=identity, task_ids=ids, priority=100, state='queued', queue=str(path))

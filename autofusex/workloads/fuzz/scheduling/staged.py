@@ -461,6 +461,17 @@ def replay(args):
     from autofusex.execution.scheduling.budgets import Budget, write_policy
     from autofusex.workloads.fuzz.contracts import Seed
     home=data_home();home.mkdir(parents=True,exist_ok=True)
+    # The daemon resolves its active run; do not guess its ledger path here.
+    if not args.database:
+        from autofusex.contracts.ipc import request
+        try:
+            queued = request(home, {'action': 'fuzz_replay', 'options': {
+                key: getattr(args, key) for key in ('seed', 'backend', 'device',
+                    'compile_threads', 'static_only', 'performance', 'warmup_steps', 'measured_steps', 'dump')}})
+        except (FileNotFoundError, ConnectionRefusedError):
+            queued = None
+        if queued is not None:
+            return _wait_replay(TaskLedger(Path(queued['queue'])), queued['task_ids'])
     budget=Budget.configured(load_config(home) or adaptive_defaults(home),args.compile_threads)
     from autofusex.execution.scheduling.devices import select_replay_device
     replay_device = select_replay_device(args.device) if args.backend != 'cpu' else None
@@ -489,21 +500,7 @@ def replay(args):
                         batch_id=batch, save_results=True, dump=getattr(args,'dump',False)), evaluation, None)
                      for backend in backends]
             ids = ledger.enqueue_many(tasks, priority=100)
-            # Keep the CLI synchronous: the existing supervisor performs the
-            # work, while this process only waits on the durable task states.
-            deadline = time.monotonic() + 120
-            while time.monotonic() < deadline:
-                rows = [ledger.get(identity) for identity in ids]
-                if all(row['state'] in {'completed', 'cancelled', 'interrupted'} for row in rows):
-                    result = {'queued': len(ids), 'priority': 100, 'task_ids': ids,
-                              'states': [row['state'] for row in rows],
-                              'queue': str(managed_ledger)}
-                    print(json.dumps(result))
-                    return 0 if all(row['state'] == 'completed' for row in rows) else 1
-                time.sleep(0.25)
-            print(json.dumps({'queued': len(ids), 'priority': 100, 'task_ids': ids,
-                              'state': 'running', 'queue': str(managed_ledger)}))
-            return 1
+            return _wait_replay(ledger, ids)
     with tempfile.TemporaryDirectory(prefix='.replay-stages-',dir=home) as directory:
         ledger=TaskLedger(Path(directory)/'tasks.sqlite')
         database=results_database(home, args.database) if args.database or args.save else Path(directory)/'results.sqlite'
@@ -522,3 +519,20 @@ def replay(args):
             print(json.dumps({'attempts':[{'attempt_id':r['id'],'status':r['status'],'shape_count':len(r['shape_results'])} for r in results]}))
             return 0 if results and all(r['status']=='ok' for r in results) else 1
         return 0 if not result['interrupted'] and not result.get('failed',0) else 1
+
+
+def _wait_replay(ledger, ids):
+    """Wait on durable tasks without starting a second supervisor."""
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        rows = [ledger.get(identity) for identity in ids]
+        if all(row['state'] in {'completed', 'cancelled', 'interrupted'} for row in rows):
+            result = {'queued': len(ids), 'priority': 100, 'task_ids': ids,
+                      'states': [row['state'] for row in rows],
+                      'queue': str(ledger.path)}
+            print(json.dumps(result))
+            return 0 if all(row['state'] == 'completed' for row in rows) else 1
+        time.sleep(0.25)
+    print(json.dumps({'queued': len(ids), 'priority': 100, 'task_ids': ids,
+                      'state': 'running', 'queue': str(ledger.path)}))
+    return 1
