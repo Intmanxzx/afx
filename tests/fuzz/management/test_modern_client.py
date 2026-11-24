@@ -22,7 +22,8 @@ def test_init_device_sets_initial_local_task(tmp_path):
     assert task['execution']['devices'] == ['npu:1', 'npu:0']
 
 
-def test_managed_start_uses_fetched_configuration(tmp_path, monkeypatch):
+@pytest.mark.parametrize('dump', [False, True])
+def test_managed_start_uses_fetched_configuration(tmp_path, monkeypatch, dump):
     from autofusex.client import modern_cli, daemon
     from autofusex.client.platform_transport import API
     prefix = ['--data-dir', str(tmp_path/'client')]
@@ -33,11 +34,11 @@ def test_managed_start_uses_fetched_configuration(tmp_path, monkeypatch):
     monkeypatch.setattr(API, 'call', lambda *args: {'config': config})
     monkeypatch.setattr(modern_cli, '_legacy', lambda *args: {})
     def request(home, body):
-        assert body == {'action': 'start_session'}
+        assert body == {'action': 'start_session', 'dump': True if dump else None}
         assert json.loads((home/'task.json').read_text()) == config
         return {'state': 'preparing'}
     monkeypatch.setattr(daemon, 'request', request)
-    assert run([*prefix, 'start']) == {'state': 'preparing'}
+    assert run([*prefix, 'start', *(['--dump'] if dump else [])]) == {'state': 'preparing'}
 
 
 def test_replay_priority_survives_restart_and_is_fifo(tmp_path):
