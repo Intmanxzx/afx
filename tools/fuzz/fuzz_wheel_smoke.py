@@ -26,10 +26,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix='afx-cli-smoke-') as cwd:
         for command in ([str(executable)], [sys.executable, '-I', '-m', 'afx'],
                         [sys.executable, '-I', '-m', 'autofusex']):
-            for args in (['--help'], ['fuzz', '--help'], ['fuzz', 'replay', '--help'], ['daemon', '--help']):
+            for args in (['--help'], ['fuzz', '--help'], ['fuzz', 'replay', '--help'],
+                         ['start', '--help'], ['server', '--help']):
                 result = subprocess.run([*command, *args], cwd=cwd, capture_output=True, text=True)
                 assert result.returncode == 0, result.stderr
                 assert 'usage: afx' in result.stdout, result.stdout
+            result = subprocess.run([*command, '--version'], cwd=cwd, capture_output=True, text=True)
+            assert result.returncode == 0, result.stderr
+            assert autofusex.__version__ in result.stdout, result.stdout
     print('Installed wheel: autofusex metadata, afx console command and python -m afx passed')
     for name in ('torch', 'numpy', 'torch_npu', 'nnsmith'):
         if importlib.util.find_spec(name) is not None:
@@ -48,8 +52,9 @@ def main():
             try:
                 url = getattr(server, 'viewer_url', f'http://127.0.0.1:{server.server_port}/')
                 with urlopen(url, timeout=10) as response:
-                    assert b'charts.js' in response.read()
-                for asset in ('app.js', 'charts.js', 'style.css'):
+                    assert b'bootstrap.js' in response.read()
+                for asset in ('bootstrap.js', 'app.js', 'app.css', 'local.js', 'local.css',
+                              'charts.js', 'runtime.js'):
                     with urlopen(url + asset, timeout=10) as response:
                         assert response.status == 200 and len(response.read()) > 100
             finally:
