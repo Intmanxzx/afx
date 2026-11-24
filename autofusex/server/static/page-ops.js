@@ -50,6 +50,7 @@ PAGES.ops = async root => {
       el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
   });
   const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
+    el("p", { class: "muted small" }, "Shape 和 Case 错误指标与 24 小时执行采用相同范围：最近 24 小时的非 CPU 执行（含复测），不含已删除客户端。完成 Shape = 成功 + 失败；成功要求功能通过且精度未失败，失败包含执行错误和精度失败。Case 错误指未产生 Shape 明细的失败执行。Shape 按后端和运行计数，动态用例可包含多个 Shape。成功 Shape/min 按本窗口首条执行至今的时间计算。"),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" },
       el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "可见 NPU 数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "上传失败（24h）", "待上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
       el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 15, class: "empty" }, "暂无用户运行数据"))]))));
