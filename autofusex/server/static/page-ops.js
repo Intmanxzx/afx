@@ -39,21 +39,20 @@ PAGES.ops = async root => {
   const overviewRows = (data.users || []).map(u => {
     const e = efficiencyUsers.get(u.user_id) || {};
     const clients = data.clients.filter(c => c.user_id === u.user_id);
-    const uploadErrors = clients.reduce((sum, c) => sum + (c.last_24h.upload_errors || 0), 0);
     const pendingUploads = clients.reduce((sum, c) => sum + (c.pending_uploads || 0), 0);
     return el("tr", {},
-      el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)),
-      el("td", {}, u.card_count == null ? "未上报" : fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)),
+      el("td", {}, u.user_id), el("td", {}, fmt(u.online_clients) + "/" + fmt(u.clients)),
+      el("td", {}, u.npu_total == null ? "未上报" : fmt(u.npu_used) + "/" + fmt(u.npu_total)), el("td", {}, fmt(u.executions_10m)),
       el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)),
-      el("td", {}, fmt(u.uploads_24h)), el("td", {}, fmt(uploadErrors)), el("td", {}, fmt(pendingUploads)), el("td", {}, fmt(e.success)),
+      el("td", {}, fmt(u.executions_24h) + "/" + fmt(u.uploads_24h)), el("td", {}, fmt(pendingUploads)), el("td", {}, fmt(e.success)),
       el("td", {}, fmt(e.completed)), el("td", {}, fmt(e.failed)), el("td", {}, fmt(e.case_errors)),
       el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
   });
   const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
-    el("p", { class: "muted small" }, "Shape 和 Case 错误指标与 24 小时执行采用相同范围：最近 24 小时的非 CPU 执行（含复测），不含已删除客户端。完成 Shape = 成功 + 失败；成功要求功能通过且精度未失败，失败包含执行错误和精度失败。Case 错误指未产生 Shape 明细的失败执行。Shape 按后端和运行计数，动态用例可包含多个 Shape。成功 Shape/min 按本窗口首条执行至今的时间计算。"),
+    el("p", { class: "muted small" }, "用例指标按总览页面口径：同一 case 在不同后端或重复执行只计 1 个唯一用例；近 10 分钟用例按最近执行过的唯一 case 计数。客户端显示在线数/总数，NPU 显示当前运行任务使用数/机器总数。24 小时执行/上传中的执行和上传均为最近 24 小时累计。完成 Shape = 成功 + 失败；成功要求功能通过且精度未失败，Shape 按后端和运行计数，动态用例可包含多个 Shape。Case 错误指唯一用例在统计窗口内没有任何 Shape 明细且至少一次执行失败。"),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" },
-      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "可见 NPU 数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "上传失败（24h）", "待上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
-      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 15, class: "empty" }, "暂无用户运行数据"))]))));
+      el("thead", {}, el("tr", {}, ["用户", "客户端（在线/总数）", "NPU 使用/总数", "近 10 分钟用例", "用例/分钟", "24 小时执行/上传", "待上传", "成功 Shape", "完成 Shape", "失败 Shape", "错误用例", "成功 Shape/min"].map(t => el("th", {}, t)))),
+      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 12, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
   if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }

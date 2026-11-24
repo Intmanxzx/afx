@@ -185,6 +185,22 @@ def test_efficiency_counts_recent_shapes_independently_of_windows(world, monkeyp
     assert next(u for u in summary['users'] if u['user_id']=='dev')['executions_24h'] == user['executions_24h']
 
 
+def test_summary_uses_unique_cases_and_reports_active_npu_usage(world):
+    store, client, admin = world
+    now = now_ms()
+    with store.write() as conn:
+        conn.execute("UPDATE executions SET created_at=?", (now,))
+    ops.heartbeat(store, client, {
+        "machine_id": "m1",
+        "devices": ["npu:0", "npu:1"],
+        "runtime": [{"run_id": "r1", "state": "running", "devices": [
+            {"uuid": "card-0", "logical": "npu:0", "busy": True}]}],
+    })
+    user = next(u for u in ops.summary(store, admin, "all")["users"] if u["user_id"] == "dev")
+    assert user["executions_10m"] == 40
+    assert user["npu_used"] == 1 and user["npu_total"] == 2
+
+
 def test_admin_can_delete_offline_client_and_heartbeat_restores_it(world):
     store, client, admin = world
     created = ops.heartbeat(store, client, {"machine_id": "delete-me"})

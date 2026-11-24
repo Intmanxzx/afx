@@ -3,9 +3,42 @@ import importlib.metadata
 import json
 import socket
 import time
+import sqlite3
 from autofusex.client.artifacts import atomic
 from autofusex.client.paths import retest_directory
 from autofusex.client.platform_transport import API, Client
+
+
+def pending_uploads(store) -> int:
+    """Count local fuzz attempts after each run's persisted upload cursor."""
+    total = 0
+    with store.connect() as db:
+        runs = list(db.execute("SELECT id, spec FROM runs"))
+    for run in runs:
+        try:
+            spec = json.loads(run["spec"])["spec"]
+        except (TypeError, ValueError, KeyError):
+            continue
+        if spec.get("kind") != "fuzz_task" or not spec.get("results", {}).get("upload"):
+            continue
+        directory = store.home / "runs" / run["id"]
+        results = directory / "results.sqlite"
+        progress = directory / "upload.sqlite"
+        if not results.exists():
+            continue
+        try:
+            source = sqlite3.connect(results)
+            cursor = 0
+            if progress.exists():
+                state = sqlite3.connect(progress)
+                row = state.execute("SELECT value FROM progress WHERE key='fuzz:cursor'").fetchone()
+                cursor = int(row[0]) if row else 0
+                state.close()
+            total += source.execute("SELECT COUNT(*) FROM attempts WHERE rowid>?", (cursor,)).fetchone()[0]
+            source.close()
+        except (OSError, sqlite3.Error, ValueError, TypeError):
+            continue
+    return total
 
 
 def synchronize(manager, client):
@@ -60,7 +93,7 @@ def synchronize(manager, client):
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".
         busy=bool(claims_path.exists() and json.loads(claims_path.read_text()).get('tasks')),
-        pending_uploads=0,
+        pending_uploads=pending_uploads(store),
         runtime=[]
     )
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
