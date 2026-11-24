@@ -155,9 +155,10 @@ def _worker_command(ledger, database, task):
 def _debug_env(base, scratch, debug_dir, backend=None):
     """Keep compiler and graph diagnostics in the managed task directory."""
     env = dict(base)
-    dfx_flags = [item for item in env.get('AUTOFUSE_DFX_FLAGS', '').split(';')
-                 if item and not item.startswith('--debug_dir=')]
-    if backend in {'af-legacy', 'af-mlir'} and '--codegen_compile_debug=true' not in dfx_flags:
+    dfx_flags = [item.strip() for item in env.get('AUTOFUSE_DFX_FLAGS', '').split(';')
+                 if item.strip() and item.strip().lstrip('-').split('=', 1)[0]
+                 not in {'debug_dir', 'codegen_compile_debug'}]
+    if backend in {'af-legacy', 'af-mlir'}:
         dfx_flags.append('--codegen_compile_debug=true')
     if backend in {'af-legacy', 'af-mlir'}:
         dfx_flags.append(f'--debug_dir={debug_dir}')
