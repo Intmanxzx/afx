@@ -37,7 +37,7 @@ def send(sock, value):
     sock.sendall(struct.pack('!I', len(raw))+raw)
 
 
-def perform(job):
+def perform(job, device_transition=None):
     from autofusex.workloads.fuzz.scheduling.artifacts import bundle_from, write_arrays, read_arrays, write_bundle
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     from autofusex.execution.backends import create_backend
@@ -86,6 +86,8 @@ def perform(job):
     adapter = create_backend(config)
     adapter.device_lease_wait=job.get('device_lease_wait',0)
     adapter.validated_shared_case = True
+    if job.get('compile_overlap'):
+        adapter.device_transition = device_transition
     if kind == 'compare':
         import torch
         adapter.torch = torch
@@ -177,7 +179,11 @@ def main(fd):
             return
         started = time.monotonic_ns()
         try:
-            result = perform(job)
+            def transition(event):
+                send(sock, {'event': event})
+                if receive(sock) != {'granted': event}:
+                    raise RuntimeError('invalid device transition acknowledgement')
+            result = perform(job, transition)
             response = {'ok': True, 'value': result}
         except Exception as exc:
             from autofusex.execution.failure_details import excerpt

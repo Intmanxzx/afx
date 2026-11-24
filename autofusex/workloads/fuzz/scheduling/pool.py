@@ -71,10 +71,16 @@ class Pool:
         self.executor = ThreadPoolExecutor(max_workers=budget.cpu_workers, thread_name_prefix='stage-io')
         import threading
         self.lock = threading.Lock()
+        self.resources = threading.Condition(threading.RLock())
+        self.device_waiters = []
         self.cancelled = set()
         self.closing = False
 
     def reserve(self, stage):
+        with self.resources:
+            return self._reserve(stage)
+
+    def _reserve(self, stage):
         r = stage.requirements
         if r.cpu_tokens>self.cpu_capacity or r.memory_bytes>self.memory_capacity or r.cache_bytes>self.cache_capacity:
             raise ValueError('stage resource request exceeds total capacity')
@@ -88,13 +94,20 @@ class Pool:
             return None
         if sum(x['cache_bytes'] for x in self.leases.values())+r.cache_bytes > self.cache_capacity:
             return None
-        busy = {x['device_uuid'] for x in self.leases.values()}
-        device = next((d for d in self.devices if d.logical in r.devices and d.uuid not in busy and d.capacity >= r.device_bytes), None)
+        busy = {x['device_uuid'] for x in self.leases.values() if x.get('device_held', True)}
+        # Ready-to-execute sessions take priority over new compilation. Suspended
+        # sessions keep their tensors, so their device memory stays reserved.
+        waiting = {self.leases[i]['device_uuid'] for i in self.device_waiters if i in self.leases}
+        device = next((d for d in self.devices if d.logical in r.devices and d.uuid not in busy | waiting
+                       and d.capacity >= r.device_bytes + sum(x['device_bytes'] for x in self.leases.values() if x['device_uuid'] == d.uuid)), None)
         if r.devices and device is None:
             return None
         lease = {'cpu_tokens': r.cpu_tokens, 'memory_bytes': r.memory_bytes, 'cache_bytes': r.cache_bytes,
                  'device_uuid': device.uuid if device else None, 'device': device.logical if device else 'cpu',
-                 'device_bytes': r.device_bytes, 'acquired': time.monotonic_ns()}
+                 'device_bytes': r.device_bytes, 'acquired': time.monotonic_ns(),
+                 'device_held': device is not None, 'device_intervals': []}
+        if device:
+            lease['device_since'] = lease['acquired']
         self.leases[stage.identity] = lease
         return lease
 
@@ -153,6 +166,8 @@ class Pool:
         # Runs in an I/O thread: startup, socket IO, termination, log cleanup
         # cannot block the supervisor's timeout/cancellation loop.
         lease = self.leases[stage.identity]
+        job = dict(job, compile_overlap=(job['kind']=='first_call_combined' and
+                   job.get('config',{}).get('backend') in {'af-mlir','af-legacy'}))
         key = (job.get('config',{}).get('backend','cpu') if job['kind']=='first_call_combined' else 'cpu',
                lease['device'], job.get('config',{}).get('compile_threads', self.budget.compile_threads),
                bool(job.get('config',{}).get('dump',False)) if job['kind']=='first_call_combined' else False)
@@ -176,7 +191,13 @@ class Pool:
                 raise RuntimeError('stage cancelled during worker startup')
             worker['socket'].settimeout(timeout)
             send(worker['socket'],job)
+            deadline = time.monotonic() + timeout
             response = receive(worker['socket'])
+            while 'event' in response:
+                self._device_transition(identity, response['event'], deadline)
+                worker['socket'].settimeout(max(.001, deadline-time.monotonic()))
+                send(worker['socket'], {'granted': response['event']})
+                response = receive(worker['socket'])
             response['worker_id'] = worker['identity']
             worker['count'] += 1
             from autofusex.execution.scheduling.budgets import group_rss, scratch_size
@@ -222,19 +243,59 @@ class Pool:
                 raise RuntimeError(message + '\nWorker log:\n' + log[:1200]) from None
             raise
 
+    def _device_transition(self, identity, event, deadline):
+        with self.resources:
+            lease = self.leases[identity]
+            if not lease['device_uuid']:
+                raise RuntimeError('device transition on CPU stage')
+            if event == 'compile_wait':
+                if not lease['device_held']:
+                    raise RuntimeError('device already suspended')
+                lease['device_intervals'].append([lease.pop('device_since'), time.monotonic_ns()])
+                lease['device_held'] = False
+                self.resources.notify_all()
+                return
+            if event != 'device_resume' or lease['device_held']:
+                raise RuntimeError('invalid device transition')
+            self.device_waiters.append(identity)
+            try:
+                while True:
+                    if self.closing or identity in self.cancelled:
+                        raise RuntimeError('stage cancelled waiting for device')
+                    remaining = deadline-time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError('device resume deadline exceeded')
+                    occupied = any(x.get('device_held', True) and x['device_uuid']==lease['device_uuid']
+                                   for i,x in self.leases.items() if i!=identity)
+                    first = next(i for i in self.device_waiters if self.leases[i]['device_uuid']==lease['device_uuid'])
+                    if not occupied and first == identity:
+                        lease['device_held'] = True
+                        lease['device_since'] = time.monotonic_ns()
+                        return
+                    self.resources.wait(min(.1, remaining))
+            finally:
+                self.device_waiters.remove(identity)
+
     def cancel(self, identity):
         # SIGKILL the entire group; I/O thread reaps it and publishes completion.
         import signal
-        self.cancelled.add(identity)
+        with self.resources:
+            self.cancelled.add(identity)
+            self.resources.notify_all()
         for worker in list(self.workers):
             if worker.get('stage')==identity and worker['busy']:
                 try: os.killpg(worker['child'].pid,signal.SIGKILL)
                 except ProcessLookupError: pass
 
     def release(self, identity):
-        lease = self.leases.pop(identity)
-        self.cancelled.discard(identity)
-        return dict(lease,released=time.monotonic_ns())
+        with self.resources:
+            lease = self.leases.pop(identity)
+            now = time.monotonic_ns()
+            if lease.get('device_since') is not None:
+                lease['device_intervals'].append([lease.pop('device_since'), now])
+            self.cancelled.discard(identity)
+            self.resources.notify_all()
+            return dict(lease,released=now)
 
     def close(self):
         self.closing = True
