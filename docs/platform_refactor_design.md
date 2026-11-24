@@ -139,7 +139,7 @@ AFX 默认作为客户端，init/start/stop/restart/status 是正式顶层命令
 | daemon start/status | start/status | 目标，迁移调用方后删除重复入口 |
 | daemon run/supervise | 内部启动入口 | 目标，供 supervisor 或系统服务使用 |
 | daemon stop | supervisor stop（维护） | 目标，先实现受控停机，不能仅改名 |
-| device enroll/pair/status/revoke | 本轮暂留，整体迁移后收敛 | runtime 仍消费旧凭据和配对状态，不能单删入口 |
+| device enroll/pair/status/revoke | 删除公开入口 | CLI 验收确认 /api/manage 服务端已删除；保留内部旧凭据兼容，普通用户使用 init |
 
 ### 5.3 泛化、结果与查看
 

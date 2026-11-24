@@ -559,7 +559,7 @@ def root_help():
         ('env', 'manage execution environments'), ('replay', 'replay using historical configuration'),
         ('task', 'submit and control tasks'), ('operation', 'inspect asynchronous operations'),
         ('build', 'build execution environments'), ('update', 'upgrade the client'),
-        ('release', 'manage signed releases'), ('device', 'manage device registration'),
+        ('release', 'manage signed releases'),
         ('case', 'import and run fixed cases'), ('fuzz', 'generate and replay fuzz cases'), ('model', 'run and normalize whole models'),
         ('analyze', 'compare tensors and render reports'), ('debug', 'capture commands and inspect simulators'),
         ('results', 'query, compare, snapshot and maintain result databases'),
@@ -620,7 +620,7 @@ def main(argv: list[str] | None = None) -> int:
                 return modern_main(raw_argv)
             raw_argv = ["--data-dir", raw_argv[index + 1], *raw_argv[:index], *raw_argv[index + 2:]]
         return modern_main(raw_argv)
-    if raw_argv and raw_argv[0] in {"device", "task", "operation", "build", "release", "update"}:
+    if raw_argv and raw_argv[0] in {"task", "operation", "build", "release", "update"}:
         from autofusex.client.cli import main as management_main
         if raw_argv[0] == "release":
             raw_argv[0] = "tool"

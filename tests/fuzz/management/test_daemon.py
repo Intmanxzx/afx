@@ -49,6 +49,11 @@ def test_old_installer_probe_and_private_launch_are_compatible():
     help_text = subprocess.check_output(
         [sys.executable, '-m', 'autofusex', '--help'], text=True)
     assert 'daemon' not in help_text
+    assert 'device' not in help_text
+    rejected = subprocess.run([sys.executable, '-m', 'autofusex', 'device', 'pair'],
+                              capture_output=True, text=True)
+    assert rejected.returncode == 2
+    assert 'invalid choice' in rejected.stderr
 
 
 def test_task_worker_persists_failure_message_and_traceback(tmp_path):
