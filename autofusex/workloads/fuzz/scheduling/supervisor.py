@@ -161,7 +161,6 @@ def _debug_env(base, scratch, debug_dir, backend=None):
         dfx_flags.append('--codegen_compile_debug=true')
     if backend in {'af-legacy', 'af-mlir'}:
         dfx_flags.append(f'--debug_dir={debug_dir}')
-        env.update(DUMP_GE_GRAPH='2', DUMP_GRAPH_LEVEL='1', DUMP_GRAPH_PATH=str(debug_dir))
     if backend in {'af-legacy', 'af-mlir'}:
         env['AUTOFUSE_DFX_FLAGS'] = ';'.join(dfx_flags)
     if backend in {'af-legacy', 'af-mlir', 'triton-npu', 'eager-npu'}:

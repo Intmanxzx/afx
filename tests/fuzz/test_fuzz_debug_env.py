@@ -5,9 +5,9 @@ from autofusex.workloads.fuzz.scheduling.supervisor import _debug_env
 
 def test_autofuse_debug_environment_is_local_and_backend_scoped(tmp_path):
     env = _debug_env({"AUTOFUSE_DFX_FLAGS": "--existing=1"}, tmp_path / "scratch", tmp_path / "debug", "af-mlir")
-    assert env["DUMP_GE_GRAPH"] == "2"
-    assert env["DUMP_GRAPH_LEVEL"] == "1"
-    assert env["DUMP_GRAPH_PATH"] == str(tmp_path / "debug")
+    assert "DUMP_GE_GRAPH" not in env
+    assert "DUMP_GRAPH_LEVEL" not in env
+    assert "DUMP_GRAPH_PATH" not in env
     assert env["TORCH_COMPILE_DEBUG"] == "1"
     assert env["TORCH_COMPILE_DEBUG_DIR"] == str(tmp_path / "debug")
     assert "--codegen_compile_debug=true" in env["AUTOFUSE_DFX_FLAGS"]
