@@ -344,50 +344,48 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
 
 
 def efficiency(store: Store, client_id=None, limit: int = 100) -> dict:
-    """Finished stage windows reported by clients (same rows the old tool-efficiency page used)."""
+    """24-hour shape totals from execution detail; windows are diagnostic only."""
     conn = store.reader()
+    now = now_ms()
+    since = now - 86_400_000
     sql = ("SELECT w.client_id, c.user_id, c.display_name, w.window_id, w.received_at, w.payload FROM efficiency_windows w "
-           "JOIN clients c ON c.client_id=w.client_id")
-    args = []
+           "JOIN clients c ON c.client_id=w.client_id WHERE c.deleted_at IS NULL AND w.received_at>=?")
+    args = [since]
     if client_id is not None:
-        sql += " WHERE w.client_id=?"
+        sql += " AND w.client_id=?"
         args.append(client_id)
     windows = []
     for row in conn.execute(sql + " ORDER BY w.received_at DESC LIMIT ?", args + [min(limit, 200)]):
         windows.append({"client_id": row["client_id"], "user_id": row["user_id"], "client_name": row["display_name"],
                         "window_id": row["window_id"], "received_at": row["received_at"],
                         "rows": json.loads(row["payload"])})
-    users = {}
-    for window in windows:
-        user = users.setdefault(window["user_id"], {"user_id": window["user_id"], "windows": 0, "clients": set(), "seconds": 0.0, "success": 0, "completed": 0, "failed": 0, "case_errors": 0})
-        user["windows"] += 1; user["clients"].add(window["client_id"])
-        for row in window["rows"]:
-            user["seconds"] += float(row.get("window_seconds") or 0)
-            for key in ("success", "completed", "failed", "case_errors"):
-                user[key] += int(row.get(key) or 0)
-    for user in users.values():
-        user["clients"] = len(user["clients"]); user["success_per_minute"] = round(user["success"] * 60 / user["seconds"], 2) if user["seconds"] else None
-    # A client may not have finished a stage window yet. Keep the efficiency
-    # panel useful by deriving a recent per-user throughput fallback directly
-    # from stored non-CPU executions.
-    since = now_ms() - 86_400_000
-    where = "e.created_at>=? AND e.backend<>'cpu'"
+    where = "c.deleted_at IS NULL AND e.created_at>=? AND e.backend<>'cpu'"
     args = [since]
     if client_id is not None:
         where += " AND e.client_id=?"; args.append(client_id)
-    for row in conn.execute("SELECT e.user_id, COUNT(*) AS completed,"
-                            "SUM(e.function_status='pass') AS success,"
-                            "SUM(e.function_status<>'pass') AS failed,"
-                            "COUNT(DISTINCT e.client_id) AS clients,"
-                            "MIN(e.created_at) AS first_at, MAX(e.created_at) AS last_at "
-                            f"FROM executions e WHERE {where} GROUP BY e.user_id", args):
-        user = users.setdefault(row["user_id"], {"user_id": row["user_id"], "windows": 0, "clients": 0, "seconds": 0.0, "success": 0, "completed": 0, "failed": 0, "case_errors": 0})
-        if not user["windows"]:
-            user.update(completed=row["completed"], success=row["success"] or 0, failed=row["failed"] or 0, clients=row["clients"],
-                        executions_24h=row["completed"], first_at=row["first_at"], last_at=row["last_at"], fallback=True)
-            span = max(60.0, ((row["last_at"] or row["first_at"]) - (row["first_at"] or row["last_at"])) / 1000)
-            user["success_per_minute"] = round((row["success"] or 0) * 60 / span, 2)
-    return {"windows": windows, "users": list(users.values())}
+    # Aggregate each execution first so dynamic shapes do not multiply execution
+    # counts. Runs that fail before producing any shapes remain Case errors.
+    rows = conn.execute(
+        "WITH per_execution AS ("
+        "SELECT e.exec_id, e.user_id, e.client_id, e.created_at, e.function_status, "
+        "COUNT(s.exec_id) AS completed, "
+        "SUM(CASE WHEN s.function_status='pass' AND COALESCE(s.accuracy_status,'skipped')<>'fail' "
+        "THEN 1 ELSE 0 END) AS success "
+        "FROM executions e JOIN clients c ON c.client_id=e.client_id "
+        "LEFT JOIN execution_shapes s ON s.exec_id=e.exec_id "
+        f"WHERE {where} GROUP BY e.exec_id) "
+        "SELECT user_id, COUNT(*) AS executions_24h, COUNT(DISTINCT client_id) AS clients, "
+        "SUM(completed) AS completed, SUM(success) AS success, SUM(completed-success) AS failed, "
+        "SUM(completed=0 AND function_status<>'pass') AS case_errors, "
+        "MIN(created_at) AS first_at, MAX(created_at) AS last_at "
+        "FROM per_execution GROUP BY user_id", args)
+    users = []
+    for row in rows:
+        user = dict(row)
+        user['seconds'] = max(60.0, (now - row['first_at']) / 1000)
+        user['success_per_minute'] = round(row['success'] * 60 / user['seconds'], 2)
+        users.append(user)
+    return {"windows": windows, "users": users}
 
 
 def _version_key(version: str):

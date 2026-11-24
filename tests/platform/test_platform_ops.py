@@ -140,6 +140,51 @@ def test_daemon_control_is_owner_scoped_and_idempotent(world):
     assert ops.request_daemon_state(store, admin, {"request_key": "daemon-start", "client_id": created["client_id"], "state": "running"})["state"] == "running"
 
 
+def test_efficiency_counts_recent_shapes_independently_of_windows(world, monkeypatch):
+    store, client, admin = world
+    now = now_ms()
+    monkeypatch.setattr(ops, 'now_ms', lambda: now)
+    # A deleted installation and an old window must not shadow the current run.
+    old = ops.heartbeat(store, client, {"machine_id": "old", "windows": [
+        {"window_id": "old-window", "rows": [{"success": 9999, "completed": 9999}]}]})['client_id']
+    current = ops.heartbeat(store, client, {"machine_id": "m1", "windows": [
+        {"window_id": "stale-window", "rows": [{"success": 8888}]},
+        {"window_id": "recent-window", "rows": [{"success": 7777}]}]})['client_id']
+    ingestor = Ingestor(store)
+    records = []
+    for n, backend, status, shapes in [
+            (101, 'af-mlir', 'pass', [('pass', 'pass'), ('pass', 'fail'), ('runtime_fail', None)]),
+            (102, 'af-mlir', 'compile_fail', []),
+            (103, 'cpu', 'pass', [('pass', 'pass')]),
+            (104, 'af-mlir', 'pass', [('pass', 'pass')]),
+            (105, 'af-mlir', 'pass', [('pass', None)]),
+            (106, 'af-mlir', 'pass', [])]:
+        record = item(f'eff-exec-{n}', n, backend=backend, status=status)
+        record['created_at'] = now - 120_000
+        record['case'].update(is_dynamic=len(shapes)>1, shape_count=max(1,len(shapes)))
+        record['shapes'] = [dict(function_status=f, accuracy_status=a) for f,a in shapes]
+        records.append(record)
+    body = {"request_key": "eff-upload", "client": {"machine_id": "m1"},
+            "run": {"run_uuid": "eff-retest", "kind": "retest"}, "items": records}
+    assert ingestor.upload(client, body, json.dumps(body).encode())['accepted'] == len(records)
+    with store.write() as conn:
+        conn.execute("UPDATE clients SET deleted_at=? WHERE client_id=?", (now, old))
+        conn.execute("UPDATE efficiency_windows SET received_at=? WHERE window_id='stale-window'", (now-86_400_001,))
+        conn.execute("UPDATE executions SET created_at=? WHERE exec_uuid='eff-exec-104'", (now-86_400_001,))
+        # Recent execution from a deleted client must also be excluded.
+        conn.execute("UPDATE executions SET client_id=?,created_at=? WHERE exec_uuid='exec-a0001'", (old, now))
+    result = ops.efficiency(store, limit=1)
+    user = next(u for u in result['users'] if u['user_id']=='dev')
+    assert {k:user[k] for k in ('executions_24h','clients','success','completed','failed','case_errors')} == dict(
+        executions_24h=4, clients=1, success=2, completed=4, failed=2, case_errors=1)
+    assert user['success_per_minute'] == 1.0
+    assert [w['window_id'] for w in ops.efficiency(store)['windows']] == ['recent-window']
+    assert ops.efficiency(store, client_id=old)['users'] == []
+    assert ops.efficiency(store, client_id=current, limit=0)['users'] == result['users']
+    summary = ops.summary(store, admin, 'all')
+    assert next(u for u in summary['users'] if u['user_id']=='dev')['executions_24h'] == user['executions_24h']
+
+
 def test_admin_can_delete_offline_client_and_heartbeat_restores_it(world):
     store, client, admin = world
     created = ops.heartbeat(store, client, {"machine_id": "delete-me"})
