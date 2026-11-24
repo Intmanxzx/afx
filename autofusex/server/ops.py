@@ -317,7 +317,7 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
                     identity = device
                 if identity:
                     active_devices.add(str(identity))
-        item["npu_used"] = len(active_devices) if mine else None
+        item["npu_used"] = len(active_devices) if mine and devices is not None else None
         item["npu_total"] = len(devices) if mine and devices is not None else None
         clients.append(item)
     users = []
@@ -399,8 +399,9 @@ def efficiency(store: Store, client_id=None, limit: int = 100) -> dict:
         "SELECT user_id, case_id, SUM(completed) AS completed, SUM(success) AS success, "
         "MAX(function_status<>'pass') AS has_failure, MIN(created_at) AS first_at, MAX(created_at) AS last_at "
         "FROM per_execution GROUP BY user_id, case_id), user_clients AS ("
-        "SELECT user_id, COUNT(DISTINCT client_id) AS clients FROM per_execution GROUP BY user_id) "
-        "SELECT p.user_id, COUNT(*) AS executions_24h, c.clients, "
+        "SELECT user_id, COUNT(DISTINCT client_id) AS clients, COUNT(*) AS executions_24h "
+        "FROM per_execution GROUP BY user_id) "
+        "SELECT p.user_id, c.executions_24h, c.clients, "
         "SUM(p.completed) AS completed, SUM(p.success) AS success, SUM(p.completed-p.success) AS failed, "
         "SUM(p.completed=0 AND p.has_failure=1) AS case_errors, "
         "MIN(p.first_at) AS first_at, MAX(p.last_at) AS last_at "

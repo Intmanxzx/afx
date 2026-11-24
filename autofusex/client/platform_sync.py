@@ -4,9 +4,32 @@ import json
 import socket
 import time
 import sqlite3
+from pathlib import Path
 from autofusex.client.artifacts import atomic
 from autofusex.client.paths import retest_directory
 from autofusex.client.platform_transport import API, Client
+
+
+def runtime_snapshots(home) -> list:
+    """Read current task snapshots published by the local execution reporter."""
+    try:
+        boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except OSError:
+        boot = 'unknown'
+    now = time.monotonic()
+    runs = []
+    for path in sorted((home / 'runtime').glob('*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[:64]:
+        try:
+            saved = json.loads(path.read_text())
+            age = now - saved['monotonic']
+            if saved['boot'] != boot or age < 0 or age > 86400:
+                continue
+            runs.append(dict(saved['sample'], age=age))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if len(runs) >= 32:
+            break
+    return runs
 
 
 def pending_uploads(store) -> int:
@@ -94,7 +117,7 @@ def synchronize(manager, client):
         # fleet view; otherwise the UI incorrectly labels it "复测中".
         busy=bool(claims_path.exists() and json.loads(claims_path.read_text()).get('tasks')),
         pending_uploads=pending_uploads(store),
-        runtime=[]
+        runtime=runtime_snapshots(store.home),
     )
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)

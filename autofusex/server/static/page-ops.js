@@ -43,7 +43,7 @@ PAGES.ops = async root => {
     return el("tr", {},
       el("td", {}, u.user_id), el("td", {}, fmt(u.online_clients) + "/" + fmt(u.clients)),
       el("td", {}, u.npu_total == null ? "未上报" : fmt(u.npu_used) + "/" + fmt(u.npu_total)), el("td", {}, fmt(u.executions_10m)),
-      el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)),
+      el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)),
       el("td", {}, fmt(u.executions_24h) + "/" + fmt(u.uploads_24h)), el("td", {}, fmt(pendingUploads)), el("td", {}, fmt(e.success)),
       el("td", {}, fmt(e.completed)), el("td", {}, fmt(e.failed)), el("td", {}, fmt(e.case_errors)),
       el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
