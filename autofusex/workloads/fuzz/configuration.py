@@ -10,6 +10,8 @@ from autofusex.contracts.configuration import (
     DEVICES, RESOURCE, PACKAGE,
 )
 
+from autofusex.contracts.retention import CLEANUP, DEFAULT_CLEANUP
+
 SCHEMAS = {
     'fuzz_task': obj(dict(schema_version=enum(1), kind=enum('fuzz_task'), name=TEXT, environment=NAME,
         workload=dict(oneOf=[obj(dict(mode=enum('replay'), seeds=dict(type='array', minItems=1, maxItems=1000, items=TEXT)), ('mode', 'seeds')),
@@ -25,7 +27,7 @@ SCHEMAS = {
         evaluation=obj(dict(performance=obj(dict(enabled=BOOL, warmup_steps=dict(type='integer',minimum=0,maximum=10000), measured_steps=POSITIVE)))),
         termination=dict(oneOf=[obj(dict(mode=enum('finite'), max_cases=POSITIVE), ('mode', 'max_cases')),
                                obj(dict(mode=enum('continuous')), ('mode',))]),
-        results=obj(dict(save=BOOL, upload=BOOL))), ('schema_version', 'kind', 'environment', 'workload'))}
+        cleanup=CLEANUP, results=obj(dict(save=BOOL, upload=BOOL))), ('schema_version', 'kind', 'environment', 'workload'))}
 
 
 DEFAULTS = {
@@ -33,7 +35,7 @@ DEFAULTS = {
                       execution=dict(backends=['cpu', 'af-legacy', 'af-mlir'], devices=['all'], scheduling='staged', static_only=False,
                       timeout='120s', resources=dict(policy='auto', worker_max_tasks=100)),
                       evaluation=dict(performance=dict(enabled=False, warmup_steps=3, measured_steps=50)),
-                      results=dict(save=True, upload=True), termination=dict(mode='continuous'))}
+                      cleanup=DEFAULT_CLEANUP, results=dict(save=True, upload=True), termination=dict(mode='continuous'))}
 
 
 def validate(value):

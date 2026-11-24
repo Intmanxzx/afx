@@ -83,7 +83,7 @@ export let quietRefresh = false;
 export function setQuietRefresh(v) { quietRefresh = v; }
 export class ApiError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
 export async function api(path, { method = "GET", body, raw = false } = {}) {
-  const headers = {};
+  const headers = {"X-AFX-Capabilities": "cleanup-v1"};
   if (token()) headers["Authorization"] = "Bearer " + token();
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });

@@ -3,12 +3,23 @@ from pathlib import Path
 
 
 def read(home, run, *, limit=50, after=0, status=None, seed=None, attempt=None):
+    from autofusex.client.cleanup import access
+    with access(home):
+        return _read(home, run, limit=limit, after=after, status=status, seed=seed, attempt=attempt)
+
+
+def _read(home, run, *, limit=50, after=0, status=None, seed=None, attempt=None):
     from autofusex.execution.storage.queries import ResultQueries, filters
     if type(limit) is not int or not 1 <= limit <= 200 or type(after) is not int or not 0 <= after < 2**63:
         raise ValueError('invalid pagination')
     filters(seed=seed, status=status)
     if attempt and (seed is not None or status is not None or after != 0):
         raise ValueError('--attempt cannot be combined with filters or a cursor')
+    cleanup = (run.get('result') or {}).get('cleanup')
+    if cleanup:
+        if attempt: raise LookupError('local artifacts were cleaned; inspect the central result')
+        return dict(run_id=run['id'], run_state=run['state'], saved=True, available=False,
+                    cleanup=cleanup, items=[], next_cursor=None)
     root = (Path(home) / 'runs').resolve()
     directory = (root / run['id']).resolve()
     if directory.parent != root:

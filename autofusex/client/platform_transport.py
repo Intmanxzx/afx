@@ -81,7 +81,7 @@ class API:
         data = json.dumps(body).encode() if body is not None else None
         request = urllib.request.Request(self.endpoint + path, data=data, method=method, headers={
             "Authorization": "Bearer " + self.token, "Content-Type": "application/json",
-            "User-Agent": "afx-platform-client"})
+            "User-Agent": "afx-platform-client", "X-AFX-Capabilities": "cleanup-v1"})
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 payload = json.loads(response.read())

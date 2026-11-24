@@ -1,4 +1,5 @@
 """Resolve replay settings from history and enqueue atomically ahead of generation."""
+from autofusex.client.cleanup import reader
 import copy
 import json
 import sqlite3
@@ -12,6 +13,7 @@ from autofusex.execution.scheduling.budgets import read_policy
 from autofusex.client.configuration import validate
 
 
+@reader
 def submit(store, seeds, processes):
     seeds = [str(Seed.parse(seed)) for seed in seeds]
     if not 1 <= len(seeds) <= 1000:

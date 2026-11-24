@@ -1,4 +1,5 @@
 """Managed task admission; execution remains in the existing staged scheduler."""
+from autofusex.client.cleanup import reader
 import json
 import os
 from pathlib import Path
@@ -79,6 +80,7 @@ def prepare(store, spec):
     return dict(spec=spec,environment=manifest,policy=policy,hash=fingerprint(spec))
 
 
+@reader
 def start(store,spec,operation_id,processes,resume_run=None):
     if store.get('client_switch', {}).get('state') in {'draining', 'staging', 'requested', 'stage_failed'}:
         raise ValueError('client upgrade blocks task admission')
@@ -184,7 +186,7 @@ def refresh(store,processes):
         if code is not None:
             requested=json.loads((directory/'control.json').read_text()).get('action')
             terminal='cancelled' if requested=='force-stop' else 'stopped' if requested=='stop' else 'completed' if code==0 else 'failed'
-            state=dict(state=terminal,exit_code=code,detail=state)
+            state=dict(state=terminal,exit_code=code,detail=state,ended_at=time.time())
             processes.pop(identity)
         if (directory/'spec.json').exists():
             with store.connect() as db:db.execute('UPDATE runs SET spec=? WHERE id=?',((directory/'spec.json').read_text(),identity))

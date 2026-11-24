@@ -156,6 +156,7 @@ async function taskConfigurationPanel() {
       const [result, catalog] = await Promise.all([api("/api/config/"+target.value),api("/api/config/operators")]);
       config = result.config;
       const gen = config.workload.generation ||= {};
+      const cleanup = config.cleanup ||= {debug_days:2, runs_days:2};
       const controls = [];
       const common = el("div", {class:"config-grid"});
       const details = el("details", {class:"config-advanced"}, el("summary", {}, "高级参数：生成范围、超时和性能"));
@@ -215,6 +216,11 @@ async function taskConfigurationPanel() {
       advanced.append(el("label",{class:"config-field"},el("span",{class:"config-label"},"保存本地结果"),el("span",{class:"config-help"},help["保存本地结果"]),save)); controls.push(()=>config.results.save=save.value==="true");
       help["预热次数"] = "每个 Shape 先执行的预热次数，结果不计入性能统计。"; field(advanced,"预热次数",config.evaluation.performance,"warmup_steps",null,3);
       help["测量次数"] = "预热后正式测量的次数；默认是预热 3 次、测量 50 次。"; field(advanced,"测量次数",config.evaluation.performance,"measured_steps",null,50);
+      const retention = el("div", {class:"config-grid"});
+      for (const [title, key] of [["Debug 保留天数", "debug_days"], ["Runs 保留天数", "runs_days"]]) {
+        help[title] = "默认保留最近 2 天；0 关闭清理。同步后生效，每小时检查。使用中的目录和未完成上传的任务会保留。";
+        const input = field(retention,title,cleanup,key,null,2); input.min="0"; input.max="3650"; input.step="1";
+      }
       const presets={small:[1,64,65536,10,"uniform"],medium:[8,4096,1048576,30,"uniform"],large:[8,8192,16777216,60,"uniform"],"16k":[8,16384,65536,90,"log_normal"],"32k":[8,32768,131072,120,"log_normal"],"64k":[8,65536,262144,180,"log_normal"],"128k":[8,131072,524288,300,"log_normal"],default:[1,131072,524288,300,"half_normal"]};
       scale.addEventListener("change",()=>{
         const values=presets[scale.value];
@@ -224,12 +230,12 @@ async function taskConfigurationPanel() {
         }
       });
       collect=()=>{controls.forEach(fn=>fn());if(term.mode==='continuous')delete term.max_cases;return config;};
-      body.replaceChildren(common,details); notice.textContent=result.source==='personal' ? "使用个人配置":"继承管理员默认配置";
+      body.replaceChildren(common,el("h3", {}, "客户端自动清理"),retention,details); notice.textContent=result.source==='personal' ? "使用个人配置":"继承管理员默认配置";
     } catch(err) {notice.textContent=err.message;}
   }
   target.addEventListener("change",load);
   const actions = el("div", {class:"config-actions"}, el("label", {class:"config-target"}, el("span", {}, "配置来源"), target),
-    el("button",{class:"primary",onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:collect()}});notice.textContent="已保存，下次启动使用新配置";}catch(err){notice.textContent=err.message;}}},"保存配置"),
+    el("button",{class:"primary",onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:collect()}});notice.textContent="已保存：清理配置同步后生效，任务参数下次启动生效";}catch(err){notice.textContent=err.message;}}},"保存配置"),
     el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:null}});await load();}catch(err){notice.textContent=err.message;}}},"恢复默认"));
   panel.append(actions,body,notice);
   await load();return panel;

@@ -105,6 +105,7 @@ class Pool:
             return worker['tail'].finish()
         finally:
             worker['scratch'].cleanup()
+            worker['debug_lease'].close()
 
     def _worker(self, key):
         for worker in self.workers:
@@ -120,20 +121,24 @@ class Pool:
                 break
         scratch = tempfile.TemporaryDirectory(prefix='runtime-', dir=self.directory)
         a, b = socket.socketpair()
-        from autofusex.client.paths import debug_directory
-        debug_dir = debug_directory(os.environ.get('AFX_TASK_HOME', self.directory))
+        from autofusex.client.cleanup import debug_worker
+        debug_dir, debug_lease = debug_worker(os.environ.get('AFX_TASK_HOME', self.directory))
         env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                    TORCHINDUCTOR_COMPILE_THREADS=str(self.budget.compile_threads),
                    TMPDIR=scratch.name, TRITON_CACHE_DIR=scratch.name+'/triton')
         from autofusex.workloads.fuzz.scheduling.supervisor import _debug_env
         env = _debug_env(env, scratch.name, debug_dir, key[0] if isinstance(key, tuple) else None)
-        child = subprocess.Popen([sys.executable,'-m','autofusex.workloads.fuzz.scheduling.stage_worker',str(b.fileno())],
-            pass_fds=(self.fd,b.fileno()),start_new_session=True,stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env)
+        try:
+            child = subprocess.Popen([sys.executable,'-m','autofusex.workloads.fuzz.scheduling.stage_worker',str(b.fileno())],
+                pass_fds=(self.fd,b.fileno(),debug_lease.fileno()),start_new_session=True,stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env)
+        except BaseException:
+            a.close(); b.close(); debug_lease.close(); scratch.cleanup()
+            raise
         b.close()
         from autofusex.execution.core_logs import ProcessTail
         worker = {'key':key,'child':child,'socket':a,'scratch':scratch,'tail':ProcessTail(child.stdout),
-                  'busy':False,'count':0,'identity':str(uuid.uuid4()),'rss_floor':None}
+                  'debug_lease':debug_lease,'busy':False,'count':0,'identity':str(uuid.uuid4()),'rss_floor':None}
         self.workers.append(worker)
         self.stats['spawned'] += 1
         return worker

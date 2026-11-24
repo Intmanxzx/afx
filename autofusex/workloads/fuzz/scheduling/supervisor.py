@@ -237,6 +237,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
             if child is not None: _terminate_group(child)
             log=state['tail'].finish() if state['tail'] is not None else ''
             state['scratch'].cleanup()
+            if state.get('debug_lease'): state['debug_lease'].close()
             ephemeral_done=(not json.loads(task['execution'])['save_results']
                             and reason=='worker_exit:0:without_result')
             if ephemeral_done or _has_result(database,task):
@@ -279,15 +280,15 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                             append(database, task['attempt_id'], 'ready', observed)
                         append(database, task['attempt_id'], 'dispatched')
                     env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
-                    from autofusex.client.paths import debug_directory
-                    debug_dir = debug_directory(os.environ.get('AFX_TASK_HOME', ledger.path.parent))
+                    from autofusex.client.cleanup import debug_worker
+                    debug_dir, state['debug_lease'] = debug_worker(os.environ.get('AFX_TASK_HOME', ledger.path.parent))
                     env.update(TMPDIR=scratch.name,
                                TRITON_CACHE_DIR=str(Path(scratch.name)/'triton'),
                                TORCHINDUCTOR_COMPILE_THREADS=str(execution['compile_threads']),
                                )
                     env = _debug_env(env, scratch.name, debug_dir, execution.get('backend'))
                     state['child']=subprocess.Popen(_worker_command(ledger,database,task),start_new_session=True,
-                        pass_fds=(fd,),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+                        pass_fds=(fd,state['debug_lease'].fileno()),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                     # Archive initialization and dispatch bookkeeping precede
                     # execution. Give the launched worker its full time budget.
                     state['deadline'] = time.monotonic() + timeout
