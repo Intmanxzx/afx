@@ -1,0 +1,1 @@
+"""AFX workloads/model capabilities."""

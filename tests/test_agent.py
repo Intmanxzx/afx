@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-import autofusex.agent as agent
-import autofusex.script_runner as script_runner
-from autofusex.agent import AgentClient, AgentConfig, AgentError
-from autofusex.adapters import CapturedInvocation
+import autofusex.workloads.model.agent as agent
+import autofusex.workloads.model.script_runner as script_runner
+from autofusex.workloads.model.agent import AgentClient, AgentConfig, AgentError
+from autofusex.workloads.model.adapters import CapturedInvocation
 from autofusex.cli import build_parser
-from autofusex.normalization import (
+from autofusex.workloads.model.normalization import (
     NORMALIZATION_SCHEMA,
     RECOVERY_SCHEMA,
     normalize_script,
@@ -199,7 +199,7 @@ def test_cli_exposes_agent_normalization_and_recovery_options() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
-            "run-script",
+            "model", "run",
             "--script",
             "model.py",
             "--out-dir",

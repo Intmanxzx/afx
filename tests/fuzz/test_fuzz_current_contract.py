@@ -3,17 +3,17 @@ import json
 import random
 from dataclasses import replace,asdict
 import pytest
-from autofusex.fuzz.client.contracts import TensorSpec,CaseSpec,canonical_json
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.contracts import TensorSpec,CaseSpec,canonical_json
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 
 
 def build_spec(count=3,nodes=1,extent=6,weight=True):
     """Independent valid Add chain; bypass search to exercise full boundary size."""
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.abstract.dtype import DType
-    from autofusex.fuzz.client.nnsmith.aten_dialect import classes
-    from autofusex.fuzz.client.generation.torch_dialect import capture
-    from autofusex.fuzz.client.generation.runtime import SOURCE_SHA256,Z3_VERSION
+    from autofusex.workloads.fuzz.nnsmith.aten_dialect import classes
+    from autofusex.workloads.fuzz.generation.torch_dialect import capture
+    from autofusex.workloads.fuzz.generation.runtime import SOURCE_SHA256,Z3_VERSION
     cls=next(c for c in classes() if c.rule.target=='aten.add.Tensor')
     ins=TensorSpec('x','float32',(extent,),(1,),alias_group=0)
     # Weight has the same numeric extent but only reduces to a scalar. Equal
@@ -41,12 +41,12 @@ def build_spec(count=3,nodes=1,extent=6,weight=True):
 
 @pytest.mark.parametrize('count',range(2,9))
 def test_dynamic_counts_weight_dimensions_and_outside_initial_range(count):
-    from autofusex.fuzz.client.generation.nnsmith_dynamic import variants
-    from autofusex.fuzz.client.generation.nnsmith_sampled import materialize_spec
-    from autofusex.fuzz.client.backends.torch import TorchAdapter
-    from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
-    from autofusex.fuzz.client.case_spec import encode,decode
-    from autofusex.fuzz.client.generation.torch_dialect import execute_graph
+    from autofusex.workloads.fuzz.generation.nnsmith_dynamic import variants
+    from autofusex.workloads.fuzz.generation.nnsmith_sampled import materialize_spec
+    from autofusex.workloads.fuzz.torch_backend import TorchAdapter
+    from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+    from autofusex.workloads.fuzz.case_spec import encode,decode
+    from autofusex.workloads.fuzz.generation.torch_dialect import execute_graph
     import torch
     spec=build_spec(count)
     expanded=variants(spec,65536,count,random.Random(123))
@@ -70,14 +70,14 @@ def test_dynamic_counts_weight_dimensions_and_outside_initial_range(count):
 
 
 def test_64_nodes_survive_artifacts_database_snapshot(tmp_path):
-    from autofusex.fuzz.client.generation.nnsmith_dynamic import variants
-    from autofusex.fuzz.client.generation.nnsmith_sampled import materialize_spec
-    from autofusex.fuzz.client.generation import workload_id
-    from autofusex.fuzz.client.scheduling.artifacts import write_bundle,bundle_from
-    from autofusex.fuzz.client.case_spec import encode,decode
-    from autofusex.fuzz.client.storage import ResultRepository
-    from autofusex.fuzz.client.storage.transfer import restore
-    from autofusex.fuzz.client.storage.queries import ResultQueries
+    from autofusex.workloads.fuzz.generation.nnsmith_dynamic import variants
+    from autofusex.workloads.fuzz.generation.nnsmith_sampled import materialize_spec
+    from autofusex.workloads.fuzz.generation import workload_id
+    from autofusex.workloads.fuzz.scheduling.artifacts import write_bundle,bundle_from
+    from autofusex.workloads.fuzz.case_spec import encode,decode
+    from autofusex.execution.storage import ResultRepository
+    from autofusex.execution.storage.transfer import restore
+    from autofusex.execution.storage.queries import ResultQueries
     spec=variants(build_spec(count=8,nodes=64,weight=False),65536,8,random.Random(123))
     raw=encode(spec);assert len(raw)>12000 and decode(raw)==spec
     bundle=materialize_spec(spec)
@@ -101,8 +101,8 @@ def test_json_roundtrip_matches_independent_nnsmith_native_semantics(name):
     from nnsmith.abstract.dtype import DType
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.materialize.torch.forward import forward_fn
-    from autofusex.fuzz.client.nnsmith.aten_dialect import classes
-    from autofusex.fuzz.client.generation.torch_dialect import capture,execute_graph
+    from autofusex.workloads.fuzz.nnsmith.aten_dialect import classes
+    from autofusex.workloads.fuzz.generation.torch_dialect import capture,execute_graph
     # Only currently modeled targets are paired; no claim that the new four
     # families include LayerNorm/Gather/Cast, which need additional rules.
     if name=='Reshape':
@@ -141,8 +141,8 @@ def test_actual_parameters_against_independent_torch_oracle(target,attrs,shape,o
     import torch,math
     from nnsmith.abstract.tensor import AbsTensor
     from nnsmith.abstract.dtype import DType
-    from autofusex.fuzz.client.nnsmith.aten_dialect import classes
-    from autofusex.fuzz.client.generation.torch_dialect import capture,execute_graph
+    from autofusex.workloads.fuzz.nnsmith.aten_dialect import classes
+    from autofusex.workloads.fuzz.generation.torch_dialect import capture,execute_graph
     x=torch.arange(math.prod(shape),dtype=torch.float32).reshape(shape)*3-4
     op=next(c for c in classes() if c.rule.target==target)();op.extra_attrs=attrs
     tensors=[AbsTensor(shape,DType.float32)]
@@ -154,8 +154,8 @@ def test_actual_parameters_against_independent_torch_oracle(target,attrs,shape,o
 
 
 def test_current_golden_fingerprints():
-    from autofusex.fuzz.client.generation import materialize,workload_id
-    # Materializer class names belong to the autofusex.fuzz.client.nnsmith namespace.
+    from autofusex.workloads.fuzz.generation import materialize,workload_id
+    # Materializer class names retain their historical wire namespace.
     # Re-pinned after commit 0154365 ("normalize operator names and expose tool
     # categories"), which changed embedded display_name strings in graph_json for
     # several ops and so, intentionally, the workload_id of any graph containing
@@ -163,10 +163,39 @@ def test_current_golden_fingerprints():
     # does not undo the drift it already caused for workload_ids computed before
     # it on any production database -- those are unaffected and unrecoverable by
     # this test; it only stops the *next* unrelated change from going unnoticed.
-    expected=[(False,3,0,3,'81105c13c3dc953c34d8f81cc1cd695e9a3ea92e8748634e251f286a675f9cac'),
-              (False,3,1,3,'ec11059a04f6dca93375b3ed2f0e29fa998f03606f95d960f4e1376838b68ca2'),
-              (True,2,3,1,'8cae18ec587d71dbec5caaf138f3a932d2aea3445cf9d1104128ec6e6dfcab51'),
-              (True,8,3,1,'b2b00bbc2a98eb14a92f98e32141de7790da51b50503205a94f6d8f03d2ae04a')]
-    for dynamic,count,entropy,nodes,digest in expected:
-        config=SamplingConfig.profile('small',max_nodes=nodes,dtype_mode='float32',dynamic_variants=count)
-        assert workload_id(materialize(config.seed(entropy,dynamic)))==digest
+    # Full seeds freeze all parameters; changes to CLI defaults must not affect this test.
+    expected = [
+        ('14615016373650975031143068048546571285368833835008', '81105c13c3dc953c34d8f81cc1cd695e9a3ea92e8748634e251f286a675f9cac'),
+        ('14615016373650975031143068048546571285368833835009', 'ec11059a04f6dca93375b3ed2f0e29fa998f03606f95d960f4e1376838b68ca2'),
+        ('16076518010641594284351599784092572564968915861507', '8cae18ec587d71dbec5caaf138f3a932d2aea3445cf9d1104128ec6e6dfcab51'),
+        ('16076518012683288485877230564872820209559525130243', 'b2b00bbc2a98eb14a92f98e32141de7790da51b50503205a94f6d8f03d2ae04a'),
+    ]
+    for seed, digest in expected:
+        assert workload_id(materialize(seed)) == digest
+
+
+def test_persisted_materializer_identity_survives_package_migration():
+    from autofusex.workloads.fuzz.generation.torch_dialect import key
+    class Operator:
+        pass
+    Operator.__module__ = 'autofusex.workloads.fuzz.nnsmith.aten_dialect'
+    Operator.__name__ = 'Aten_add_Tensor'
+    assert key(Operator) == 'autofusex.fuzz.client.nnsmith.aten_dialect.Aten_add_Tensor'
+
+
+def test_case_identity_ignores_execution_environment(monkeypatch):
+    import torch
+    from autofusex.workloads.fuzz.generation import materialize, content_manifest
+    from autofusex.workloads.fuzz.generation.nnsmith_sampled import plan
+    seed = '14615016373650975031143068048546571285368833835008'
+    plan.cache_clear()
+    expected = content_manifest(materialize(seed))
+    try:
+        for version, platform in [('2.10.0+vendor', 'A2'), ('3.0.0+test', 'A3'), ('9.9.9', 'A5')]:
+            monkeypatch.setattr(torch, '__version__', version)
+            monkeypatch.setenv('ASCEND_HOME_PATH', '/unavailable/' + platform)
+            monkeypatch.setenv('ASCEND_OPP_PATH', '/unavailable/' + version)
+            plan.cache_clear()
+            assert content_manifest(materialize(seed)) == expected
+    finally:
+        plan.cache_clear()

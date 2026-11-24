@@ -1,9 +1,9 @@
 """Synthetic current-protocol metadata for unit tests, never a runtime replay cache."""
 from pathlib import Path
 from dataclasses import replace
-from autofusex.fuzz.client.case_spec import decode
-from autofusex.fuzz.client.contracts import CaseBundle, Seed
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.case_spec import decode
+from autofusex.workloads.fuzz.contracts import CaseBundle, Seed
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import math
 
 CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))

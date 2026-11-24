@@ -181,11 +181,11 @@ Python 3.9+，仅依赖 NumPy。CAModel 命令、CANN 路径和 simulator 环境
 新增 CLI：
 
 ```bash
-afx make-manifest --side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse --graph GRAPH --dump-dir DIR --out OUT
-afx compare --cpu-manifest CPU --npu-manifest NPU [--out JSON] [--csv CSV] [--rtol R] [--atol A]
-afx compare-npy --golden A.npy --actual B.npy [--rtol R] [--atol A]
-afx camodel-info --cann-root CANN_ROOT
-afx run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [--env KEY=VALUE]
+afx analyze manifest --side inductor_prefusion_cpu|inductor_prefusion_npu_eager|npu_autofuse --graph GRAPH --dump-dir DIR --out OUT
+afx analyze compare --cpu-manifest CPU --npu-manifest NPU [--out JSON] [--csv CSV] [--rtol R] [--atol A]
+afx analyze compare-npy --golden A.npy --actual B.npy [--rtol R] [--atol A]
+afx debug camodel info --cann-root CANN_ROOT
+afx debug camodel run --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [--env KEY=VALUE]
 ```
 
 ### 接口检查项
@@ -231,10 +231,10 @@ afx run-camodel --cann-root CANN_ROOT [--soc SOC] --out-dir DIR --command CMD [-
 
 当前不修改 Graph-autofusion 仓内子模块。新增独立目录：
 
-- `autofusex/graph.py`：GE dump 图解析和 manifest 生成。
-- `autofusex/compare.py`：精度比较核心。
-- `autofusex/camodel.py`：CANN simulator/CAModel 目录发现与环境变量构造。
-- `autofusex/runner.py`：外部命令执行封装。
+- `autofusex/execution/graph.py`：GE dump 图解析和 manifest 生成。
+- `autofusex/execution/compare.py`：精度比较核心。
+- `autofusex/execution/camodel.py`：CANN simulator/CAModel 目录发现与环境变量构造。
+- `autofusex/execution/runner.py`：外部命令执行封装。
 - `docs/`：设计与 manifest 文档。
 - `tests/`：最小 pytest。
 
@@ -284,7 +284,7 @@ CLI 参数非法由 argparse 报错。manifest schema 不匹配返回错误。�
 cd /home/xingzhixiong/dfx_dir/Autofuse-Debugger
 PYTHONPATH=. python3 -m pytest tests
 PYTHONPATH=. python3 -m afx --help
-PYTHONPATH=. python3 -m afx camodel-info --cann-root /home/xingzhixiong/Ascend/cann-9.1.0
+PYTHONPATH=. python3 -m afx debug camodel info --cann-root /home/xingzhixiong/Ascend/cann-9.1.0
 ```
 
 若后续集成到 Graph-autofusion 仓内，再按仓内测试要求补充：

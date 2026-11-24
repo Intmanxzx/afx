@@ -4,11 +4,11 @@
 
 本文描述的是当前代码行为，不是理想化的编译器 IR 对齐方案。对应实现主要位于：
 
-- `autofusex/torch_model.py`：从同一次 Inductor 编译截获 pre-fusion transformed FX 图和真实 AOT 输入，并在 CPU/NPU eager 回放。
-- `autofusex/inductor_autofuse.py`：native Inductor + AscendC/Autofuse 路径的 post-fusion 图解析和 CPU origin 匹配。
-- `autofusex/npu_examples.py`：旧 GE/Qwen 适配路径中的 compiler provenance 解析。
-- `autofusex/graph.py`：把 NPU 图输出属性转换为 manifest 的 `fusions` 映射。
-- `autofusex/compare.py`：根据 manifest 执行最终的输出对照。
+- `autofusex/workloads/model/torch_model.py`：从同一次 Inductor 编译截获 pre-fusion transformed FX 图和真实 AOT 输入，并在 CPU/NPU eager 回放。
+- `autofusex/workloads/model/inductor_autofuse.py`：native Inductor + AscendC/Autofuse 路径的 post-fusion 图解析和 CPU origin 匹配。
+- `autofusex/workloads/model/npu_examples.py`：旧 GE/Qwen 适配路径中的 compiler provenance 解析。
+- `autofusex/execution/graph.py`：把 NPU 图输出属性转换为 manifest 的 `fusions` 映射。
+- `autofusex/execution/compare.py`：根据 manifest 执行最终的输出对照。
 
 ## 1. 映射的目标
 
@@ -271,7 +271,7 @@ NPU Autofuse output -> CPU origin -> NPU eager semantic output
 
 ### 2.7 compare 阶段的最终规则
 
-`autofusex/graph.py` 会从 NPU `output_desc[].attr` 中提取 origin 属性，生成：
+`autofusex/execution/graph.py` 会从 NPU `output_desc[].attr` 中提取 origin 属性，生成：
 
 ```json
 {

@@ -2,7 +2,7 @@
 
 当前 E/F 协议使用的完整 ATen overload 清单，共 **368** 个。
 
-源代码定义：[aten_catalog.py](../../autofusex/fuzz/client/nnsmith/aten_catalog.py)。每个 overload 独占一行，展示名称可用于黑名单和报告。
+源代码定义：[aten_catalog.py](../../autofusex/workloads/fuzz/nnsmith/aten_catalog.py)。每个 overload 独占一行，展示名称可用于黑名单和报告。
 
 工具分类（category）可直接填写到命令的 `--ops` 中，大小写不敏感；原始 family 保留用于构图。
 

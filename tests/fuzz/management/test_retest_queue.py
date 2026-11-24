@@ -1,9 +1,9 @@
 import json
-from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.daemon.management.retest_queue import submit
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.budgets import Budget, write_policy
-from autofusex.fuzz.client.scheduling.placement import candidates
+from autofusex.client.store import Store
+from autofusex.client.retest_queue import submit
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+from autofusex.execution.scheduling.budgets import Budget, write_policy
+from autofusex.execution.scheduling.placement import candidates
 
 
 def test_retest_inherits_active_run_and_is_idempotent(tmp_path):
@@ -36,7 +36,7 @@ def test_retest_inherits_active_run_and_is_idempotent(tmp_path):
 
 
 def test_saved_database_path_is_used_without_cli_option(tmp_path):
-    from autofusex.fuzz.client.config import results_database
+    from autofusex.client.paths import results_database
     configured = tmp_path / 'archive' / 'custom.sqlite'
     (tmp_path / 'client.json').write_text(json.dumps({'platform': {'results': str(configured)}}))
     assert results_database(tmp_path) == configured

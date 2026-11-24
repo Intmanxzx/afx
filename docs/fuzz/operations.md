@@ -18,17 +18,17 @@ afx start
 
 本节是管理员手工安装受信环境的进阶流程；普通客户端使用上面的 `init/start` 即可。
 
-1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`），启动 afx daemon start。
-2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。执行 afx management trust trust.json。trust 保存在 home 下私有文件，仅本地可修改。
+1. 通过 pip 从 PyPI 安装基础包（`python -m pip install autofusex`，默认取最新版本；固定版本加 `==VERSION`），启动 afx start。
+2. 准备本机 trust：允许的设备/资源、CANN 路径、兼容 Python/包组合、下载域名与 wheel 摘要。高级安装由管理员维护 home 下的 trust.json（0600），不提供 CLI 或 IPC 写入接口。trust 保存在 home 下私有文件，仅本地可修改。
 3. 需要远程管理或上传时，使用 afx device enroll --token-stdin 从私有凭据来源读取 token，或执行 afx device pair 后在网页批准。
 4. 准备 environment.yaml，提交计划并执行；成功后取环境 ID 填到任务规格。
 
 ~~~sh
-afx environment plan environment.yaml --request-key env-plan-001
+afx env prepare environment.yaml --request-key env-plan-001
 afx operation wait PLAN_OPERATION_ID
-afx environment apply PLAN_ID --request-key env-apply-001
+afx env apply PLAN_ID --request-key env-apply-001
 afx operation wait APPLY_OPERATION_ID
-afx environment list
+afx env list
 ~~~
 
 PLAN_ID 来自计划操作的 data.result.plan_id，两个 OPERATION_ID 均来自提交响应 data.id。环境规格示意（版本、路径、兼容配置名必须与本机 trust 一致）：
@@ -48,28 +48,28 @@ packages:
   nnsmith: "实际版本"
 ~~~
 
-trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../../autofusex/fuzz/daemon/management/environments.py) 和 [artifacts.py](../../autofusex/fuzz/daemon/management/artifacts.py)。普通 init/start 流程会准备当前环境的基础资源授权；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
+trust 的 compatibility 配置还需提供匹配架构、Python 可执行文件、完整 wheel 清单及摘要、必要环境变量；existing_roots 限制已有 CANN 路径，resource_limits 限制设备与并发。读取字段见 [environments.py](../../autofusex/client/environments.py) 和 [artifacts.py](../../autofusex/client/artifacts.py)。普通 init/start 流程会准备当前环境的基础资源授权；本节的受信包安装仍需完整 compatibility 配置，不能只复制上述 YAML。
 
-多卡或更高并发需同时配置 trust 和 afx config apply policy.yaml --wait 的资源上限。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
+多卡或更高并发通过任务配置设置，仍不得超过本机 trust 的资源上限；内部执行策略由客户端维护，不提供独立 policy 命令。环境 ready 只证明版本/导入检查通过；真实 NPU 路径须在目标机器验证。开机自启由 systemd 或进程管理器负责。
 
 ## 结果数据库维护
 
 数据库恢复或替换后，不能沿用另一份库的旧统计侧文件。派生索引可重建，维护前备份，再按需要执行：
 
 ~~~sh
-afx fuzz maintenance index-results /path/to/results.sqlite
-afx fuzz maintenance index-cases /path/to/results.sqlite
+afx results rebuild-index --kind results /path/to/results.sqlite
+afx results rebuild-index --kind cases /path/to/results.sqlite
 ~~~
 
 ~~~sh
-afx fuzz maintenance check-db /path/to/results.sqlite
+afx results check /path/to/results.sqlite
 ~~~
 
 公开 maintenance snapshot 只导出允许分享的结果和观测事实，不是完整灾备；不要直接复制正在 WAL 写入的数据库主文件。
 
 升级先做一致性备份，在新虚拟环境 `pip install autofusex==VERSION` 固定版本，用数据库副本验证启动/查询后切换服务，保留旧环境和有效配置。旧 Python 进程不会自动加载新模块，客户端切换后须重启相关进程。
 
-平台服务端（`autofusex/platform/`）的身份、token、备份与恢复，见 [deploy/platform/README.md](../../deploy/platform/README.md)。
+平台服务端（`autofusex/server/`）的身份、token、备份与恢复，见 [deploy/platform/README.md](../../deploy/platform/README.md)。
 
 ## 构建与发布
 
@@ -117,6 +117,6 @@ git push origin refs/tags/v0.2.1
 
 发布成功后使用 `python -m pip install autofusex==0.2.1` 安装，运行 `afx --help` 验证。PyPI 同版本文件不能覆盖；上传失败可从 GitHub Actions 重跑对应发布任务，代码或依赖需要改变时升版本。
 
-流水线只运行 `tests/test_release_wheel.py`。`tests/fuzz` 仍有若干用例引用 `c6feaac`（refactor fuzz into client daemon server modules）重构前的模块路径（如 `autofusex.fuzz.resources`、`autofusex.fuzz.runtime`、`autofusex.fuzz.failure_details`），修复前不能作为发布门禁。
+流水线只运行 `tests/test_release_wheel.py`。`tests/fuzz` 仍有若干用例引用 `c6feaac`（refactor fuzz into client daemon server modules）重构前的模块路径（如 `autofusex.workloads.fuzz.resources`、`autofusex.workloads.fuzz.runtime`、`autofusex.workloads.fuzz.failure_details`），修复前不能作为发布门禁。
 
 GitCode 侧已移除自动发布工作流，避免同一 Tag 同时从两处向 PyPI 上传。

@@ -8,11 +8,11 @@ import time
 
 import pytest
 
-from autofusex.fuzz.client.contracts import ExecutionConfig, EvaluationConfig
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.ownership import own_queue
-from autofusex.fuzz.client.scheduling import hosting
-from autofusex.fuzz.client.storage import ResultRepository
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+from autofusex.execution.scheduling.ownership import own_queue
+from autofusex.workloads.fuzz.scheduling import hosting
+from autofusex.execution.storage import ResultRepository
 from fuzz_fixtures import CURRENT_SEED
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='POSIX process hosting')
@@ -32,7 +32,7 @@ def wait_finished(ledger, timeout=30):
 def test_detached_run_finishes_after_launcher_exits(tmp_path):
     pytest.importorskip("torch")
     pytest.importorskip("torch_npu")  # run discovers NPUs; mandatory AF-MLIR needs the Ascend runtime
-    output = subprocess.run([sys.executable, '-m', 'autofusex.fuzz', 'run', CURRENT_SEED, '--save',
+    output = subprocess.run([sys.executable, '-m', 'autofusex.workloads.fuzz', 'run', CURRENT_SEED, '--save',
                              '--data-dir', str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert output.returncode == 0, output.stderr
     response = json.loads(output.stdout)
@@ -114,7 +114,7 @@ def test_background_sigterm_cleans_active_worker(tmp_path, monkeypatch):
     # Injection exists only in this test's child process, not a production CLI hook.
     code = '''
 import sys
-from autofusex.fuzz.client.scheduling import hosting,supervisor
+from autofusex.workloads.fuzz.scheduling import hosting, supervisor
 worker="import pathlib,os,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)"
 supervisor._worker_command=lambda *a:[sys.executable,'-c',worker,sys.argv[-1]]
 sys.exit(hosting._child(*sys.argv[1:-1]))
@@ -151,13 +151,13 @@ def test_background_rejects_npu_before_enqueue(tmp_path):
 
 def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, tmp_path, capsys):
     import json
-    from autofusex.fuzz.client.cli import main
-    from autofusex.fuzz.client.contracts import Seed
+    from autofusex.workloads.fuzz.cli import main
+    from autofusex.workloads.fuzz.contracts import Seed
     def launch(ledger, database, specs, **kwargs):
         assert list(specs) == []
         configs, evaluation, count, devices, excluded, sampling, ops, budget = kwargs['campaign']
         return {'count': count, 'backends': [c.backend for c in configs]}
-    monkeypatch.setattr('autofusex.fuzz.client.scheduling.devices.select_devices', lambda _: ['npu:0'])
+    monkeypatch.setattr('autofusex.execution.scheduling.devices.select_devices', lambda _: ['npu:0'])
     monkeypatch.setattr(hosting, 'launch', launch)
     assert main(['run', '--data-dir', str(tmp_path), '--count', '4']) == 0
     value = json.loads(capsys.readouterr().out)
@@ -167,7 +167,7 @@ def test_count_generates_self_contained_v2_seeds_without_execution(monkeypatch, 
 
 
 def test_background_infinite_campaign_stops_without_refilling(tmp_path):
-    from autofusex.fuzz.client.scheduling.campaign import stop
+    from autofusex.workloads.fuzz.scheduling.campaign import stop
     ledger = TaskLedger(tmp_path/'queue')
     hosting.launch(ledger, tmp_path/'results', [], campaign=([EX], EV, None))
     deadline = time.monotonic() + 20

@@ -8,7 +8,7 @@ import pytest
 def test_fleet_rendering_filters_and_paging():
     node=shutil.which('node')
     if not node:pytest.skip('node unavailable')
-    source=Path('autofusex/fuzz/server/view/static/runtime.js').read_text()
+    source=Path('autofusex/server/static/runtime.js').read_text()
     source=source[:source.index("window.addEventListener('hashchange'")]
     script=r'''
 const assert=require('node:assert/strict');
@@ -101,7 +101,7 @@ def test_fleet_refresh_only_on_efficiency_page():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/fuzz/server/view/static/runtime.js').read_text()
+    source = Path('autofusex/server/static/runtime.js').read_text()
     source = source[:source.index("window.addEventListener('hashchange'")]
     script = r'''
 const assert = require('node:assert/strict');
@@ -130,7 +130,7 @@ renderFleet = (target, data, efficiency) => {
 })().catch(error => {console.error(error);process.exitCode = 1});
 '''
     subprocess.run([node, '-e', script], check=True, capture_output=True, text=True)
-    html = Path('autofusex/fuzz/server/view/static/index.html').read_text()
+    html = Path('autofusex/server/static/local.html').read_text()
     assert 'id="fleet-overview"' not in html
     assert 'id="fleet-efficiency"' in html
     assert 'id="chartOverall"' in html

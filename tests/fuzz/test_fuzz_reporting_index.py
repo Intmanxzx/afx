@@ -3,11 +3,11 @@ import sqlite3
 
 import pytest
 
-from autofusex.fuzz.server.reporting.index import rebuild
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.client.storage.transfer import restore
-from autofusex.fuzz.client.telemetry import validate
+from autofusex.execution.reporting.index import rebuild
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.execution.storage.transfer import restore
+from autofusex.execution.telemetry import validate
 
 
 def record(backend='cpu', batch='run1'):
@@ -45,8 +45,8 @@ def test_invalid_telemetry(raw):
 
 
 def test_environment_is_lightweight_and_never_reads_key(tmp_path):
-    from autofusex.fuzz.client.config import setup
-    from autofusex.fuzz.client.environment import collect
+    from autofusex.client.paths import setup
+    from autofusex.execution.environment import collect
     setup(tmp_path,display_name='设备A',user_id='owner')
     result=collect(tmp_path)
     assert result['device_name']=='设备A' and result['user_id']=='owner'
@@ -61,8 +61,8 @@ def test_failed_filter_keeps_peer_backend(tmp_path):
 
 
 def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
-    from autofusex.fuzz.server.reporting.statistics import statistics
-    from autofusex.fuzz.server.reporting import report
+    from autofusex.execution.reporting.statistics import statistics
+    from autofusex.execution.reporting import report
     repo=ResultRepository(tmp_path/'db');repo.save(record());repo.save(record('af-mlir'))
     monkeypatch.setattr(report,'spec_metadata',lambda *args:pytest.fail('must not regenerate during query'))
     result=statistics(repo.path)
@@ -77,7 +77,7 @@ def test_statistics_uses_persisted_facts_and_stage_rows(tmp_path, monkeypatch):
 def test_new_http_endpoints_and_snapshot(tmp_path):
     import threading
     from urllib.request import urlopen
-    from autofusex.fuzz.server.view.server import create_server
+    from autofusex.viewer.server import create_server
     repo=ResultRepository(tmp_path/'db');repo.save(record())
     with create_server(repo.path) as server:
         thread=threading.Thread(target=server.serve_forever);thread.start()
@@ -89,9 +89,9 @@ def test_new_http_endpoints_and_snapshot(tmp_path):
 
 def test_categories_follow_targets_when_display_names_differ(tmp_path, monkeypatch):
     from fuzz_fixtures import bundle
-    from autofusex.fuzz.client.case_spec import encode
-    from autofusex.fuzz.server.reporting import report
-    from autofusex.fuzz.client.nnsmith.aten_catalog import RULES
+    from autofusex.workloads.fuzz.case_spec import encode
+    from autofusex.execution.reporting import report
+    from autofusex.workloads.fuzz.nnsmith.aten_catalog import RULES
     selected = [next(rule for rule in RULES if rule.category == category)
                 for category in ('Reduce', 'Reshape', 'Transpose', 'Broadcast', 'Split')]
     metadata = {'op_types': [rule.display_name for rule in selected],

@@ -1,8 +1,8 @@
 """Uploads must not impersonate the live control agent."""
 from test_platform_ops import world
-from autofusex.platform import ops
-from autofusex.platform.ingest import Ingestor, upsert_client
-from autofusex.platform.store import now_ms
+from autofusex.server import ops
+from autofusex.server.ingest import Ingestor, upsert_client
+from autofusex.server.store import now_ms
 
 
 def test_upload_activity_does_not_keep_client_online_or_restore_deleted(world):
@@ -36,7 +36,7 @@ def test_upload_only_identity_is_offline(world):
 
 
 def test_control_identity_does_not_read_archived_results(tmp_path):
-    from autofusex.platform.client import Client
+    from autofusex.client.platform_transport import Client
     client = object.__new__(Client)
     # A non-database archive proves identity never opens historical results.
     archive = tmp_path / 'archive.sqlite'

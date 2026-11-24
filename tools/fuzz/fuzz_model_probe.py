@@ -5,11 +5,11 @@ from pathlib import Path
 import sys
 import time
 
-from autofusex.fuzz.server.reporting.materialized import rebuild
-from autofusex.fuzz.server.reporting.cases import rollup
-from autofusex.fuzz.server.reporting.statistics import statistics
-from autofusex.fuzz.client.storage.repository import _connect
-from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.execution.reporting.materialized import rebuild
+from autofusex.execution.reporting.cases import rollup
+from autofusex.execution.reporting.statistics import statistics
+from autofusex.execution.storage.repository import _connect
+from autofusex.execution.storage.queries import ResultQueries
 
 path=Path(sys.argv[1]);report={}
 with closing(_connect(path)) as c:

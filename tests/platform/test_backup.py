@@ -11,10 +11,12 @@ def _short(n):
 
 import pytest
 
-from autofusex.platform import auth, backup, queries
-from autofusex.platform.cli import main as cli_main
-from autofusex.platform.ingest import Ingestor, check_stats
-from autofusex.platform.store import Store
+from autofusex.server import auth
+from autofusex.server import backup
+from autofusex.server import queries
+from autofusex.server.cli import main as cli_main
+from autofusex.server.ingest import Ingestor, check_stats
+from autofusex.server.store import Store
 
 ENV = {"cann": "8.2", "torch": "2.6"}
 

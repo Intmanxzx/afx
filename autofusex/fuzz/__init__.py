@@ -1,1 +1,1 @@
-"""Lightweight fuzz contracts and commands; execution dependencies are opt-in."""
+"""Private upgrade compatibility namespace; workload APIs live in workloads.fuzz."""

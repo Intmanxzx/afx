@@ -3,9 +3,9 @@ import platform
 import sys
 from pathlib import Path
 import pytest
-from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.daemon.management.artifacts import atomic
-from autofusex.fuzz.daemon.management import environments
+from autofusex.client.store import Store
+from autofusex.client.artifacts import atomic
+from autofusex.client import environments
 
 
 def setup(tmp_path):

@@ -1,8 +1,8 @@
 import json
 from types import SimpleNamespace
 from unittest.mock import Mock
-from autofusex.fuzz.daemon.management import platform_retests as retests
-from autofusex.fuzz.daemon.management.store import Store
+from autofusex.client import platform_retests as retests
+from autofusex.client.store import Store
 
 
 def test_runner_uses_execution_environment_and_does_not_duplicate(tmp_path, monkeypatch):
@@ -53,10 +53,10 @@ def test_claim_journal_resumes_without_claiming_again(tmp_path):
 
 
 def test_standalone_replay_reaches_scheduler(tmp_path, monkeypatch):
-    from autofusex.fuzz.client.scheduling import staged
-    from autofusex.fuzz.client import config
-    from autofusex.fuzz.client.scheduling.budgets import Budget
-    from autofusex.fuzz.client.contracts import Seed
+    from autofusex.workloads.fuzz.scheduling import staged
+    from autofusex.client import paths as config
+    from autofusex.execution.scheduling.budgets import Budget
+    from autofusex.workloads.fuzz.contracts import Seed
     monkeypatch.setattr(config,'data_home',lambda *args:tmp_path)
     monkeypatch.setattr(Budget,'configured',lambda *args:Budget(cpu_workers=1,compile_threads=1))
     drain=Mock(return_value={'interrupted':0,'failed':0})

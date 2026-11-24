@@ -3,9 +3,9 @@ import sys
 import time
 from types import SimpleNamespace
 import pytest
-from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.daemon.management.activation import select, finish, ready
-from autofusex.fuzz.daemon.management import client_updates
+from autofusex.client.store import Store
+from autofusex.client.activation import select, finish, ready
+from autofusex.client import client_updates
 
 
 def test_staging_failure_preserves_pointer_and_running_tasks(tmp_path, monkeypatch):
@@ -17,7 +17,7 @@ def test_staging_failure_preserves_pointer_and_running_tasks(tmp_path, monkeypat
     def fail(*a, **k): raise RuntimeError('download failed')
     monkeypatch.setattr(client_updates, 'command', fail)
     processes = {'run': object()}
-    from autofusex.fuzz.daemon.management import upgrade_drain
+    from autofusex.client import upgrade_drain
     monkeypatch.setattr(upgrade_drain, 'begin', lambda *a: ['run'])
     monkeypatch.setattr(upgrade_drain, 'wait', lambda *a: processes.clear())
     with pytest.raises(RuntimeError):
@@ -54,9 +54,9 @@ def test_old_launcher_requires_explicit_migration(tmp_path):
 
 def test_supervisor_switches_real_process_and_rolls_back_failed_boot(tmp_path):
     import subprocess
-    from autofusex.fuzz.daemon.runtime import request
+    from autofusex.client.daemon import request
     s=Store(tmp_path)
-    child=subprocess.Popen([sys.executable,'-m','autofusex','daemon','supervise','--data-dir',str(tmp_path)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    child=subprocess.Popen([sys.executable,'-m','autofusex.client','daemon','supervise','--data-dir',str(tmp_path)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     def wait_for(fn):
         deadline=time.monotonic()+20
         while time.monotonic()<deadline:
@@ -92,7 +92,7 @@ def test_supervisor_switches_real_process_and_rolls_back_failed_boot(tmp_path):
 
 
 def test_local_stop_keeps_control_process_available(tmp_path):
-    from autofusex.fuzz.daemon.runtime import Manager
+    from autofusex.client.daemon import Manager
     manager=Manager(tmp_path)
     try:
         assert manager.dispatch({'action':'stop_session'}) == {'stopping':True}
@@ -103,8 +103,8 @@ def test_local_stop_keeps_control_process_available(tmp_path):
 
 
 def test_task_uses_registered_execution_python_not_active_control(tmp_path, monkeypatch):
-    from autofusex.fuzz.daemon.management import tasks
-    from autofusex.fuzz.daemon.management.artifacts import atomic
+    from autofusex.client import tasks
+    from autofusex.client.artifacts import atomic
     s=Store(tmp_path)
     prepared={'environment':{'id':'execution','python':'/execution/python','env':{}},'hash':'test'}
     monkeypatch.setattr(tasks,'prepare',lambda *a:dict(prepared))

@@ -1,4 +1,4 @@
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import re
 import json
 import sqlite3
@@ -7,11 +7,11 @@ from contextlib import closing
 import pytest
 
 from contextlib import closing as _closing
-from autofusex.fuzz.client.storage.repository import _connect as _connect_db
-from autofusex.fuzz.server.reporting.incremental import IncrementalStatistics
-from autofusex.fuzz.server.reporting.statistics import statistics
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.repository import _connect
+from autofusex.execution.storage.repository import _connect as _connect_db
+from autofusex.execution.reporting.incremental import IncrementalStatistics
+from autofusex.execution.reporting.statistics import statistics
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.repository import _connect
 from test_fuzz_case_summary import save
 from test_fuzz_shape_cases import record
 
@@ -20,7 +20,7 @@ def initialize(path):
     """Local stand-in for the old central repository's bootstrap: pre-creates
     the shared reporting schema that ResultRepository.save() would otherwise
     only create lazily on first write."""
-    from autofusex.fuzz.server.reporting.index import initialize as initialize_reporting
+    from autofusex.execution.reporting.index import initialize as initialize_reporting
     with _closing(_connect_db(path, writable=True)) as conn, conn:
         initialize_reporting(conn)
 
@@ -86,7 +86,7 @@ def test_shapes_nullable_means_extremes_and_duplicate(tmp_path):
 
 
 def test_failed_batch_keeps_checkpoint_and_retries(tmp_path,monkeypatch):
-    import autofusex.fuzz.server.reporting.incremental as module
+    import autofusex.execution.reporting.incremental as module
     db=tmp_path/'db'; initialize(db); repo=ResultRepository(db)
     save(repo,'a','af-mlir','error'); inc=IncrementalStatistics(db);same(db,inc)
     save(repo,'a','af-mlir','ok')
@@ -101,7 +101,7 @@ def test_failed_batch_keeps_checkpoint_and_retries(tmp_path,monkeypatch):
 
 
 def test_concurrent_commit_is_not_lost(tmp_path,monkeypatch):
-    import autofusex.fuzz.server.reporting.incremental as module
+    import autofusex.execution.reporting.incremental as module
     db=tmp_path/'db'; initialize(db); repo=ResultRepository(db)
     save(repo,'a','af-mlir','error');inc=IncrementalStatistics(db);same(db,inc)
     save(repo,'a','af-mlir','ok')
@@ -126,7 +126,7 @@ def test_replaced_source_rebuilds_sidecar(tmp_path):
 
 
 def test_no_group_rescan_for_unrelated_writes(tmp_path,monkeypatch):
-    import autofusex.fuzz.server.reporting.incremental as module
+    import autofusex.execution.reporting.incremental as module
     db=tmp_path/'db';initialize(db);save(ResultRepository(db),'a','af-mlir','ok')
     inc=IncrementalStatistics(db);same(db,inc)
     with sqlite3.connect(db) as conn:conn.execute('CREATE TABLE unrelated(value)')
@@ -159,7 +159,7 @@ def test_window_late_facts_and_cached_aggregate(tmp_path):
 
 
 def test_bootstrap_batches_resume(tmp_path,monkeypatch):
-    import autofusex.fuzz.server.reporting.incremental as module
+    import autofusex.execution.reporting.incremental as module
     db=tmp_path/'db';initialize(db);repo=ResultRepository(db)
     for i in range(5):
         value=record('af-mlir',['pass']);value['seed']=str(SamplingConfig.profile('small',max_nodes=8,dtype_mode='float32').seed(42+i).value)
@@ -202,9 +202,9 @@ def test_replace_group_and_transaction_rollback(tmp_path):
 
 
 def test_group_query_plan_uses_group_index(tmp_path):
-    from autofusex.fuzz.server.reporting.cases import rollup
+    from autofusex.execution.reporting.cases import rollup
     db=tmp_path/'db';initialize(db);save(ResultRepository(db),'a','af-mlir','ok')
-    from autofusex.fuzz.client.storage.repository import _connect
+    from autofusex.execution.storage.repository import _connect
     from contextlib import closing
     with closing(_connect(db)) as conn:
         sql,args=rollup()

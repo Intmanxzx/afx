@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from autofusex.html import write_report_html, write_report_html_from_json
+from autofusex.viewer.report import write_report_html, write_report_html_from_json
 
 
 def test_write_report_html_embeds_rows(tmp_path: Path) -> None:

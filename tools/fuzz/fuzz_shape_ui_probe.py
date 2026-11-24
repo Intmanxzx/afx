@@ -1,12 +1,12 @@
 """Shape-case UI acceptance, including DAG details and full-value tooltips."""
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 import json,sys,threading,re
 from pathlib import Path
 from playwright.sync_api import sync_playwright,expect
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.server.view.server import create_server
-from autofusex.fuzz.client.generation import workload_id
-from autofusex.fuzz.client.case_spec import encode
+from autofusex.execution.storage import ResultRepository
+from autofusex.viewer.server import create_server
+from autofusex.workloads.fuzz.generation import workload_id
+from autofusex.workloads.fuzz.case_spec import encode
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]/"tests/fuzz"))
 from fuzz_fixtures import bundle, three_shapes_spec
 root=Path(sys.argv[1]);root.mkdir(exist_ok=True);repo=ResultRepository(root/'results.sqlite')

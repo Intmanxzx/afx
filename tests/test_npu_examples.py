@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from autofusex.npu_examples import (
+from autofusex.workloads.model.npu_examples import (
     _GeGraphSnapshot,
     _ge_output_summaries,
     _load_pre_run_ge_models,
@@ -188,7 +188,7 @@ def test_prefusion_graph_prefers_optimized_stage(tmp_path: Path, monkeypatch: py
     early.touch()
     optimized.touch()
     monkeypatch.setattr(
-        "autofusex.npu_examples._load_runtime_ge_model",
+        "autofusex.workloads.model.npu_examples._load_runtime_ge_model",
         lambda path: path.name,
     )
 

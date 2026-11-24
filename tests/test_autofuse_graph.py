@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autofusex.autofuse_graph import collect_autofuse_graphs, parse_ascgraph_text
+from autofusex.workloads.model.autofuse_graph import collect_autofuse_graphs, parse_ascgraph_text
 
 
 ASCGRAPH = """

@@ -1,6 +1,6 @@
 import sqlite3
 import pytest
-from autofusex.fuzz.server.reporting.cases import compatible_ctes, rollup, reuse_latest
+from autofusex.execution.reporting.cases import compatible_ctes, rollup, reuse_latest
 
 
 @pytest.mark.parametrize('version', [(3, 31, 1), (3, 35, 0), (3, 45, 1)])
@@ -17,8 +17,8 @@ def test_cte_version_selection_preserves_query_results(monkeypatch, version):
 
 @pytest.mark.parametrize('dynamic', [False, True])
 def test_current_short_seed_uses_exact_search(dynamic):
-    from autofusex.fuzz.client.generation.sampling import SamplingConfig
-    from autofusex.fuzz.server.reporting.search import exact_seed, condition
+    from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
+    from autofusex.execution.reporting.search import exact_seed, condition
     seed = SamplingConfig().seed(42, dynamic=dynamic)
     assert exact_seed(seed.short) == str(seed)
     assert condition(seed.short) == ('p.seed=?', [str(seed)])

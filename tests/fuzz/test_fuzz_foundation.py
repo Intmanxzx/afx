@@ -8,12 +8,10 @@ import sys
 
 import pytest
 
-from autofusex.fuzz.client.config import setup
-from autofusex.fuzz.client.contracts import (
-    CaseBundle, CaseSpec, EvaluationConfig, ExecutionConfig, Seed,
-    ShapeResult, TensorSpec, canonical_json,
-)
-from autofusex.fuzz.client.diagnostics import GenerationTrace, first_divergence
+from autofusex.client.paths import setup
+from autofusex.contracts.execution import EvaluationConfig, ExecutionConfig, ShapeResult
+from autofusex.workloads.fuzz.contracts import CaseBundle, CaseSpec, Seed, TensorSpec, canonical_json
+from autofusex.workloads.fuzz.diagnostics import GenerationTrace, first_divergence
 
 
 def test_import_and_light_cli_do_not_load_dependencies_or_mutate_environment(tmp_path):
@@ -27,11 +25,11 @@ sys.meta_path.insert(0, Block())
 before = dict(os.environ)
 import autofusex
 import autofusex.cli
-from autofusex.fuzz.client.cli import main
-assert main(['maintenance', 'doctor']) == 0
-from autofusex.fuzz.client.config import setup
+from autofusex.cli import main
+assert main(['doctor']) == 0
+from autofusex.client.paths import setup
 setup(sys.argv[1])
-from autofusex.fuzz.client.cli import replay_parser
+from autofusex.workloads.fuzz.cli import replay_parser
 replay_parser()
 assert before == dict(os.environ)
 '''
@@ -109,7 +107,7 @@ def test_first_divergence_reports_stage_axis_and_input_order():
 
 def test_tensor_diagnostics_include_values_layout_and_alias():
     np = pytest.importorskip("numpy")
-    from autofusex.fuzz.client.diagnostics import tensor_signature
+    from autofusex.workloads.fuzz.diagnostics import tensor_signature
     x = np.arange(6, dtype=np.float32).reshape(2, 3)
     sig = tensor_signature([("x", x), ("view", x.T), ("copy", x.copy())])
     assert sig[0]["alias_group"] == sig[1]["alias_group"] != sig[2]["alias_group"]
@@ -123,7 +121,7 @@ def test_tensor_diagnostics_include_values_layout_and_alias():
 def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
     from fuzz_fixtures import CURRENT_SEED
     import autofusex.cli as cli
-    from autofusex.fuzz.client import cli as fuzz_cli
+    from autofusex.workloads.fuzz import cli as fuzz_cli
     seen = []
     monkeypatch.setattr(fuzz_cli, "execute_args", lambda args: seen.append(args.seed) or 0)
     assert cli.main(["fuzz", "replay", CURRENT_SEED, "--scheduling", "combined"]) == 0
@@ -134,7 +132,7 @@ def test_replay_dispatch_and_removed_legacy_entry(monkeypatch):
 
 def test_input_size_and_order_report_first_binding_divergence():
     np = pytest.importorskip("numpy")
-    from autofusex.fuzz.client.diagnostics import InputSignatureError, validate_input_signature
+    from autofusex.workloads.fuzz.diagnostics import InputSignatureError, validate_input_signature
     expected = [{"name": "x", "dtype": "float32", "shape": [2, 3]}]
     with pytest.raises(InputSignatureError) as error:
         validate_input_signature(expected, {"x": np.zeros((3, 2), dtype="float32")}, stage="before_backend")
@@ -176,7 +174,7 @@ def test_nnsmith_import_is_lazy():
     code = '''
 import sys
 import autofusex
-import autofusex.fuzz.client.nnsmith
+import autofusex.workloads.fuzz.nnsmith
 assert not any(n == 'nnsmith' or n.startswith('nnsmith.') for n in sys.modules)
 '''
     subprocess.run([sys.executable, '-c', code], check=True)

@@ -12,10 +12,12 @@ def _short(n):
 
 import pytest
 
-from autofusex.platform import aggregates, auth, queries
-from autofusex.platform.ingest import Ingestor, UploadError, check_stats, update_settings
-from autofusex.platform.server import PlatformServer
-from autofusex.platform.store import Store
+from autofusex.server import aggregates
+from autofusex.server import auth
+from autofusex.server import queries
+from autofusex.server.ingest import Ingestor, UploadError, check_stats, update_settings
+from autofusex.server.server import PlatformServer
+from autofusex.server.store import Store
 
 SEED_A = _short(1)
 SEED_B = _short(2)

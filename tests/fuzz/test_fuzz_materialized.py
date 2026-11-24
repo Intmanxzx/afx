@@ -1,12 +1,12 @@
 """Exact read-model equivalence and transactional invalidation."""
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 from contextlib import closing
 import sqlite3
 
-from autofusex.fuzz.server.reporting.materialized import rebuild, ready, refresh
-from autofusex.fuzz.client.storage.repository import ResultRepository, _connect
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.server.reporting.statistics import statistics
+from autofusex.execution.reporting.materialized import rebuild, ready, refresh
+from autofusex.execution.storage.repository import ResultRepository, _connect
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.execution.reporting.statistics import statistics
 from test_fuzz_global_rounds import save
 
 
@@ -28,7 +28,7 @@ def test_model_matches_legacy_and_incremental_updates(tmp_path):
     with closing(_connect(repo.path)) as conn:
         assert ready(conn)
         conn.create_function('failure_status',5,lambda *a: (_ for _ in ()).throw(AssertionError('unexpected classification')))
-        from autofusex.fuzz.server.reporting.materialized import rollup
+        from autofusex.execution.reporting.materialized import rollup
         sql,args=rollup(conn)
         assert 'failure_status(' not in sql and 'json_extract(' not in sql
         assert len(conn.execute(sql+'SELECT * FROM cases',args).fetchall())==3
@@ -57,16 +57,16 @@ def test_indexed_reads_do_not_reclassify_logs(tmp_path, monkeypatch):
     q=ResultQueries(repo.path)
     before=q.case_page()
     def forbidden(*args,**kwargs):raise AssertionError('read must not classify text')
-    monkeypatch.setattr('autofusex.fuzz.server.reporting.failure_origin.classify',forbidden)
-    monkeypatch.setattr('autofusex.fuzz.server.reporting.failure_origin.mlir_failure_evidence',forbidden)
-    monkeypatch.setattr('autofusex.fuzz.client.failure_details.core_error',forbidden)
+    monkeypatch.setattr('autofusex.execution.reporting.failure_origin.classify',forbidden)
+    monkeypatch.setattr('autofusex.execution.reporting.failure_origin.mlir_failure_evidence',forbidden)
+    monkeypatch.setattr('autofusex.execution.failure_details.core_error',forbidden)
     assert q.case_page()==before
     assert q.case_summary()['total']==2
     assert statistics(repo.path)['unit']=='shape_case'
 
 
 def test_classification_version_change_rebuilds_without_stale_reads(tmp_path,monkeypatch):
-    from autofusex.fuzz.server.reporting import materialized as model
+    from autofusex.execution.reporting import materialized as model
     repo=ResultRepository(tmp_path/'db');save(repo,'a','alice','af-mlir')
     rebuild(repo.path)
     monkeypatch.setattr(model,'CLASSIFICATION_VERSION',model.CLASSIFICATION_VERSION+1)
@@ -76,7 +76,7 @@ def test_classification_version_change_rebuilds_without_stale_reads(tmp_path,mon
 
 
 def test_merge_into_model_rebuilds_derived_data(tmp_path):
-    from autofusex.fuzz.client.storage.transfer import merge, restore
+    from autofusex.execution.storage.transfer import merge, restore
     source=ResultRepository(tmp_path/'src');target=ResultRepository(tmp_path/'dst')
     save(source,'a','alice','cpu');save(source,'a','alice','af-mlir')
     save(target,'b','bob','cpu');save(target,'b','bob','af-mlir')
@@ -90,8 +90,8 @@ def test_merge_into_model_rebuilds_derived_data(tmp_path):
 
 def test_per_seed_refresh_keeps_other_seeds_and_global_filters(tmp_path):
     from test_fuzz_shape_cases import record
-    from autofusex.fuzz.client.contracts import Seed
-    from autofusex.fuzz.server.reporting.cases import rollup
+    from autofusex.workloads.fuzz.contracts import Seed
+    from autofusex.execution.reporting.cases import rollup
     repo=ResultRepository(tmp_path/'db')
     for n in range(8):
         row=record('af-mlir',['pass','error'])

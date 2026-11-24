@@ -3,8 +3,8 @@ import json
 import random
 import struct
 import pytest
-from autofusex.fuzz.client.contracts import Seed,TensorSpec,CaseSpec,canonical_json
-from autofusex.fuzz.client.generation.sampling import SamplingConfig,decode,PROFILES,METHODS
+from autofusex.workloads.fuzz.contracts import Seed,TensorSpec,CaseSpec,canonical_json
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig,decode,PROFILES,METHODS
 
 
 @pytest.mark.parametrize('dynamic',[False,True])
@@ -31,7 +31,7 @@ def test_config_limits_fail_before_execution(kwargs):
 
 @pytest.mark.parametrize('mode',['uniform','log_scale','llm','recommendation'])
 def test_values_are_reproducible_and_complex_has_imaginary_part(mode):
-    from autofusex.fuzz.client.generation.nnsmith_sampled import materialize_spec
+    from autofusex.workloads.fuzz.generation.nnsmith_sampled import materialize_spec
     seed=SamplingConfig(value_dist_mode=mode).seed(42)
     t=TensorSpec('input','complex64',(64,),(1,))
     spec=CaseSpec(seed,canonical_json({'nodes':[]}),(t,),(),((t,),),())
@@ -44,14 +44,14 @@ def test_values_are_reproducible_and_complex_has_imaginary_part(mode):
 
 
 def test_integer_rounding_matches_old_rule_not_truncation():
-    from autofusex.fuzz.client.generation.nnsmith_sampled import _canonical_storage
+    from autofusex.workloads.fuzz.generation.nnsmith_sampled import _canonical_storage
     assert struct.unpack('<iii',_canonical_storage('int32',[3.2,3.8,6.8]))==(3,4,7)
     assert struct.unpack('<ii',_canonical_storage('int32',[.2,.8]))==(0,1)
     assert struct.unpack('<iiii',_canonical_storage('int32',[-1.5,-2.5,1.5,2.5]))==(-2,-2,2,2)
 
 
 def test_real_integer_and_complex_input_distributions():
-    from autofusex.fuzz.client.generation.nnsmith_sampled import materialize_spec
+    from autofusex.workloads.fuzz.generation.nnsmith_sampled import materialize_spec
     for mode,expected in [('uniform',{3,4,5,6,7}),('recommendation',{0,1})]:
         seed=SamplingConfig(value_dist_mode=mode).seed(42)
         t=TensorSpec('input','int32',(1024,),(1,))
@@ -60,9 +60,9 @@ def test_real_integer_and_complex_input_distributions():
 
 
 def test_current_campaign_embeds_all_factors(tmp_path):
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.campaign import initialize,refill
-    from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize,refill
+    from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     from dataclasses import asdict
     config=SamplingConfig.profile('small',dynamic_variants=8,method='symbolic')
     ledger=TaskLedger(tmp_path/'queue')
@@ -73,7 +73,7 @@ def test_current_campaign_embeds_all_factors(tmp_path):
 
 
 def test_ops_post_filter_does_not_change_seed():
-    from autofusex.fuzz.client.generation.operator_catalog import normalize_ops,matches_ops
+    from autofusex.workloads.fuzz.generation.operator_catalog import normalize_ops,matches_ops
     seed=SamplingConfig().seed(42)
     assert normalize_ops('Add,core.ReduceMean,aten.add.Tensor')==('add','mean','aten.add.Tensor')
     assert matches_ops('aten.add.Tensor',{'add'})
@@ -89,6 +89,6 @@ def test_legacy_space_cannot_alias_current_protocol():
 
 @pytest.mark.parametrize('scheduling',['staged','combined'])
 def test_cli_retired_replay_is_clear_error_without_runtime(scheduling,capsys):
-    from autofusex.fuzz.client.cli import main
+    from autofusex.workloads.fuzz.cli import main
     assert main(['replay','C16','--scheduling',scheduling])==2
     assert 'seed must be canonical decimal digits' in capsys.readouterr().err

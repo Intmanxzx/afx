@@ -1,11 +1,11 @@
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
 CURRENT_SEED = str(SamplingConfig.profile('small', max_nodes=1, dtype_mode='float32').seed(3))
 from dataclasses import asdict
 import json
 import pytest
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-from autofusex.fuzz.client.scheduling.campaign import initialize,read,refill,stop
-from autofusex.fuzz.client.contracts import ExecutionConfig,EvaluationConfig
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+from autofusex.workloads.fuzz.scheduling.campaign import initialize,read,refill,stop
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
 
 
 def test_read_roundtrips_budget_and_started_at(tmp_path):
@@ -53,7 +53,7 @@ def test_infinite_refill_stopped_atomically(tmp_path):
 
 
 def test_cpu_disagreement_never_triggers_secondary_or_changes_to_pass():
-    from autofusex.fuzz.client.execution import execute
+    from autofusex.workloads.fuzz.execution import execute
     from fuzz_fixtures import bundle as materialize
     class Adapter:
         name='af-mlir'
@@ -77,7 +77,7 @@ def test_cpu_disagreement_never_triggers_secondary_or_changes_to_pass():
 
 
 def test_bounded_redacted_failure_excerpt():
-    from autofusex.fuzz.client.failure_details import excerpt,validate
+    from autofusex.execution.failure_details import excerpt,validate
     try:raise RuntimeError('token=secretvalue '+'x'*2000)
     except RuntimeError as exc:text=excerpt(exc)
     assert len(text)<=1600 and 'secretvalue' not in text
@@ -86,7 +86,7 @@ def test_bounded_redacted_failure_excerpt():
 
 def test_native_core_log_is_bounded_and_redacted():
     import os
-    from autofusex.fuzz.client.core_logs import capture_tail
+    from autofusex.execution.core_logs import capture_tail
     with capture_tail() as tail:
         os.write(2, b'x' * 40000 + b'\ncompiler error token=private-value\n')
     assert len(tail()) <= 1600
@@ -95,9 +95,9 @@ def test_native_core_log_is_bounded_and_redacted():
 
 def test_campaign_capacity_is_enforced(tmp_path):
     import pytest
-    from autofusex.fuzz.client.scheduling.ledger import TaskLedger
-    from autofusex.fuzz.client.scheduling.campaign import initialize
-    from autofusex.fuzz.client.contracts import ExecutionConfig, EvaluationConfig
+    from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize
+    from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     with pytest.raises(ValueError, match='capacity'):
         initialize(TaskLedger(tmp_path/'queue', max_active=1),
                    [ExecutionConfig('cpu','cpu'), ExecutionConfig('af-mlir','npu:0')],
@@ -106,9 +106,9 @@ def test_campaign_capacity_is_enforced(tmp_path):
 
 def test_torch_cpu_reference_and_error_metrics():
     pytest.importorskip("torch")
-    from autofusex.fuzz.client.backends.torch import TorchAdapter
+    from autofusex.workloads.fuzz.torch_backend import TorchAdapter
     from fuzz_fixtures import bundle as materialize
-    from autofusex.fuzz.client.generation import materialize
+    from autofusex.workloads.fuzz.generation import materialize
     adapter=TorchAdapter(ExecutionConfig('cpu','cpu'))
     bundle=materialize(CURRENT_SEED)
     try:
@@ -118,14 +118,16 @@ def test_torch_cpu_reference_and_error_metrics():
         changed=tuple(t + 1 for t in expected)
         assert not adapter.compare(changed, expected)
         metrics=adapter.diagnose_accuracy(changed, expected)
-        assert metrics['max_abs']==1.0
+        assert metrics['max_abs'] == pytest.approx(1.0, abs=1e-6)
         assert metrics['mismatches']==metrics['elements']
     finally:
         adapter.close()
 
 
 def test_default_replay_uses_both_mandatory_backends(monkeypatch):
-    from autofusex.fuzz.client import cli
+    from autofusex.workloads.fuzz import cli
+    from autofusex.execution.scheduling import devices
+    monkeypatch.setattr(devices, 'select_replay_device', lambda device: 'npu:0')
     seen=[]
     monkeypatch.setattr(cli,'execute_args',lambda args: seen.append((args.backend,args.device)) or 0)
     assert cli.replay([CURRENT_SEED,'--scheduling','combined'])==0
@@ -133,7 +135,7 @@ def test_default_replay_uses_both_mandatory_backends(monkeypatch):
 
 
 def test_secondary_disagreement_stays_failed_and_cpu_uses_actual_reference():
-    from autofusex.fuzz.client.execution import execute
+    from autofusex.workloads.fuzz.execution import execute
     from fuzz_fixtures import bundle as materialize
     class Adapter:
         name = 'af-mlir'

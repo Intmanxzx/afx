@@ -1,7 +1,7 @@
-from autofusex.fuzz.server.reporting.outcomes import outcomes
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.server.reporting.statistics import statistics
+from autofusex.execution.reporting.outcomes import outcomes
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.execution.reporting.statistics import statistics
 
 
 def test_accuracy_survives_measurement_failure():

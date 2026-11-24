@@ -100,7 +100,7 @@ export AUTOFUSEX_AGENT_MODEL=default
 ## 单独归一化
 
 ```bash
-afx normalize-script \
+afx model normalize \
     --script /path/to/model.py \
     --framework pytorch \
     --out /tmp/model_accuracy/agent_normalization.json \
@@ -114,7 +114,7 @@ afx normalize-script \
 不指定 `--out` 时，默认输出到当前目录的：
 
 ```text
-<script_stem>_autofusex/agent_normalization.json
+<script_stem>_autofusex/workloads/model/agent_normalization.json
 ```
 
 执行成功后，JSON 中的 `status` 为 `ready`；Agent 无法确认必要信息时返回 `needs_user_input`，命令仍会保留结果供用户检查，但不会把不确定信息当作事实执行。
@@ -122,7 +122,7 @@ afx normalize-script \
 ## 与模型执行联动
 
 ```bash
-afx run-script \
+afx model run \
     --framework auto \
     --backend inductor_autofuse \
     --script /path/to/model.py \

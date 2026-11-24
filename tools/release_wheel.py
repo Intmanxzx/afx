@@ -93,10 +93,10 @@ def validate(root, tag, dist):
             raise ValueError('wheel must expose only the afx console command')
         if not {'afx/__init__.py', 'afx/__main__.py'} <= set(names):
             raise ValueError('wheel lacks python -m afx entry point')
-        for asset in ('index.html', 'app.js', 'charts.js'):
-            if f'autofusex/fuzz/server/view/static/{asset}' not in names:
+        for asset in ('index.html', 'bootstrap.js', 'app.js', 'app.css', 'local.html', 'local.js', 'local.css', 'charts.js', 'runtime.js'):
+            if f'autofusex/server/static/{asset}' not in names:
                 raise ValueError('wheel lacks viewer assets')
-        if any(name.startswith('autofusex/fuzz/client/nnsmith/patches/') for name in names):
+        if any(name.startswith('autofusex/workloads/fuzz/nnsmith/patches/') for name in names):
             raise ValueError('wheel contains obsolete bundled NNSmith patches')
         if archive.read('autofusex/__init__.py').decode() != init:
             raise ValueError('wheel package version source differs')

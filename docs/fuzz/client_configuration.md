@@ -63,3 +63,32 @@ afx config edit task.yaml
 平台管理员继续使用客户端管理页面下发目标 afx 版本。bootstrap daemon 只负责接收升级、停止 worker、安装到独立 client-releases 目录并切换 active-client.json；平台 heartbeat、配置同步和硬件/软件事实采集由当前 active client release 的 platform agent 子进程执行。上一版本指针保存在 previous-client.json。连续任务在升级后重新提交。这样新增 heartbeat 字段只需发布并切换 client release，不依赖 bootstrap daemon 加载新模块。
 
 每次管理员下发升级都有独立请求编号；同一次请求的重复心跳不会重复安装，重新下发相同版本会创建新操作。心跳上报 active-client.json 指向的执行端版本，服务端收到目标版本后清除升级目标。新初始化的数据目录生成独立持久化身份，已有 config.json 身份保持不变。旧 daemon 若不支持 active client agent，需要先手工升级并重启一次；支持该协议后，后续 heartbeat 和平台事实采集会随 active release 自动切换。
+
+### 配置查看、校验与导出
+
+所有 config 命令操作同一种任务配置，不再提供独立的 policy 命令。
+
+- afx config（或 config show）：返回 config 和 source。本地读取任务配置，托管模式读取平台配置。
+- afx config edit FILE：应用 JSON/YAML 任务配置，支持 - 从 stdin 读取。
+- afx config validate FILE：按 edit 的规则校验，不提交修改。
+- afx config reset：本地恢复默认并关闭上传；托管模式恢复平台继承配置。
+- afx config export：stdout 输出纯任务 JSON，可保存后交给 edit 或 validate。
+
+旧 config effective/apply、management trust/status 和 trust/effective 本地 IPC 接口已移除。底层资源约束仍保留供任务执行与高级安装使用。
+
+## 固定用例与整网任务
+
+导入只登记源码并计算版本，不执行脚本：
+
+    afx case import ./case.py
+    afx case import ./model-package --script model.py --entry create_case --workload model
+    afx case list
+    afx case inspect CASE_KEY
+    afx case run CASE_KEY --device npu:0
+    afx case run CASE_KEY --submit
+
+CASE_KEY 使用导入输出的 I: 或 M: 标识。默认执行本地登记版本；--submit 提交已配置的中心，由客户端领取执行。--upload 将本地执行的结果同步到中心。已有任务占用时，中心任务排队等待，不抢占正在运行的任务。
+
+脚本参数用 --script-arg 逐项传入；以短横线开头的参数可写为 --script-arg=--batch-size。--fullgraph、--dynamic、--with-cpu、--rtol 和 --atol 控制对应执行选项。工厂入口模型未指定 fullgraph/dynamic 时保留工厂定义。执行规格和结果保存在 runs/RUN_ID；中心“导入与整网”页面提供版本复测与报告下载。
+
+本地包最大 256 MiB；中心可传输源码包当前限制为 512 KiB。报告上传支持不超过 1 MiB 的 HTML、JSON、TXT、CSV、SVG 文件，大型张量产物保留在执行机器。

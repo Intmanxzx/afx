@@ -13,11 +13,15 @@ def _short(n):
 
 import pytest
 
-from autofusex.platform import auth, issues, knowledge, regression, retests
-from autofusex.platform.ingest import Ingestor
-from autofusex.platform.issues import IssueError
-from autofusex.platform.server import PlatformServer
-from autofusex.platform.store import Store
+from autofusex.server import auth
+from autofusex.server import issues
+from autofusex.server import knowledge
+from autofusex.server import regression
+from autofusex.server import retests
+from autofusex.server.ingest import Ingestor
+from autofusex.server.issues import IssueError
+from autofusex.server.server import PlatformServer
+from autofusex.server.store import Store
 
 ENV = {"cann": "8.2", "backend_version": "0.3.0"}
 FIX = {"fix_version": "0.3.1+fix1", "fix_sha256": "a" * 64}
@@ -421,7 +425,7 @@ def test_device_busy_is_invalid_not_failure(world):
 
 def test_short_id_migration_renames_everywhere(tmp_path):
     import sqlite3
-    from autofusex.platform import schema
+    from autofusex.server import schema
     store = Store(tmp_path / "data")
     with store.write() as conn:
         conn.execute("INSERT INTO issues(issue_id, dimension, backend, signature, category, title, status, first_seen_at, "

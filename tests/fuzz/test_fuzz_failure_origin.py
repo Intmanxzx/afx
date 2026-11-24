@@ -1,10 +1,10 @@
 import json
 import pytest
-from autofusex.fuzz.server.reporting.failure_origin import classify
-from autofusex.fuzz.server.reporting.statistics import statistics
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.server.reporting.incremental import IncrementalStatistics
+from autofusex.execution.reporting.failure_origin import classify
+from autofusex.execution.reporting.statistics import statistics
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.execution.reporting.incremental import IncrementalStatistics
 from test_fuzz_shape_cases import record
 
 
@@ -72,11 +72,11 @@ def test_every_surface_reclassifies_historical_rows_without_mutating_attempts(tm
 
 
 def test_old_cached_classification_is_invalidated(tmp_path):
-    from autofusex.fuzz.server.reporting.failure_origin import VERSION
+    from autofusex.execution.reporting.failure_origin import VERSION
     inc = IncrementalStatistics(tmp_path/'db')
     row = record('af-mlir', [])
     ResultRepository(inc.database).save(row)
-    from autofusex.fuzz.server.reporting.incremental import VERSION as CACHE_VERSION
+    from autofusex.execution.reporting.incremental import VERSION as CACHE_VERSION
     assert CACHE_VERSION >= 6  # Global seed contributions supersede provenance groups.
     assert json.loads(inc._identity())[:2] == [CACHE_VERSION, VERSION]
 
@@ -130,7 +130,7 @@ def test_local_torch_traceback_outranks_shared_af_failure():
     ('cube-fusion', 'no', 'unconfirmed'),
 ])
 def test_gate_inside_mlir_is_failure_evidence(gate, shortfall, expected):
-    from autofusex.fuzz.server.reporting.failure_origin import mlir_failure_evidence
+    from autofusex.execution.reporting.failure_origin import mlir_failure_evidence
     diag = {'shapes': {'0': {'error':
         f'Codegen generate kernel failed\nAF_MLIR_STRICT gate={gate} shortfall={shortfall}'}}}
     result = mlir_failure_evidence('af-mlir', 'error', '', '', diag, 0)
@@ -138,7 +138,7 @@ def test_gate_inside_mlir_is_failure_evidence(gate, shortfall, expected):
 
 
 def test_mlir_shared_log_bounds_af_failures_to_mlir():
-    from autofusex.fuzz.server.reporting.failure_origin import failure_path
+    from autofusex.execution.reporting.failure_origin import failure_path
     diag = {'error': 'MLIR Codegen Result: kFailed',
             'shapes': {'0': {'error': 'Codegen generate kernel failed'},
                        '1': {'error': 'Codegen generate kernel failed'}}}
@@ -181,7 +181,7 @@ def test_mlir_failure_path_consistent_across_surfaces(tmp_path):
 
 
 def test_run_evidence_does_not_require_single_shape():
-    from autofusex.fuzz.server.reporting.failure_origin import failure_path
+    from autofusex.execution.reporting.failure_origin import failure_path
     diag = {'error': 'MLIR Codegen Result: kFailed',
             'shapes': {'0': {'error': 'Codegen generate kernel failed'}}}
     assert failure_path('af-mlir', 'error', '', '', diag, 0) == 'mlir_failed'
@@ -197,7 +197,7 @@ def test_run_evidence_does_not_require_single_shape():
     ('error', 'no plan with an MLIR-supported template', 'unconfirmed'),
 ])
 def test_mlir_path_is_only_a_function_failure_subcategory(status, summary, expected):
-    from autofusex.fuzz.server.reporting.failure_origin import failure_path
+    from autofusex.execution.reporting.failure_origin import failure_path
     assert failure_path('af-mlir', status, '', summary) == expected
 
 
@@ -205,7 +205,7 @@ def test_mlir_evidence_http_and_retry_cache(tmp_path):
     import threading
     from urllib.request import urlopen
     from urllib.parse import urlencode
-    from autofusex.fuzz.server.view.server import create_server
+    from autofusex.viewer.server import create_server
     repo = ResultRepository(tmp_path/'db')
     row = record('af-mlir', ['error'])
     row['execution']['diagnostics'] = json.dumps({'version': 1, 'error':
@@ -242,7 +242,7 @@ def test_mlir_evidence_http_and_retry_cache(tmp_path):
 ])
 @pytest.mark.parametrize('separator', [':', '：'])
 def test_explicit_codegen_result(value, expected, separator):
-    from autofusex.fuzz.server.reporting.failure_origin import mlir_failure_evidence
+    from autofusex.execution.reporting.failure_origin import mlir_failure_evidence
     line = f'[DEBUG] GE(123) codegen.cpp: MLIR  Codegen Result{separator} {value}'
     diag = {'shapes': {'0': {'error':
         'Codegen generate kernel failed\n' + line}}}
@@ -252,7 +252,7 @@ def test_explicit_codegen_result(value, expected, separator):
 
 
 def test_successful_shared_verdict_does_not_erase_local_failure():
-    from autofusex.fuzz.server.reporting.failure_origin import failure_path
+    from autofusex.execution.reporting.failure_origin import failure_path
     diag = {'error': '[DEBUG] MLIR Codegen Result：kSucceeded',
             'shapes': {'0': {'error': 'RunMlirCodegen failed'}}}
     assert failure_path('af-mlir', 'error', '', '', diag, 0, 1) == 'mlir_failed'
@@ -262,7 +262,7 @@ def test_successful_shared_verdict_does_not_erase_local_failure():
 
 def test_debug_result_survives_error_log_tail():
     import os
-    from autofusex.fuzz.client.core_logs import capture_tail
+    from autofusex.execution.core_logs import capture_tail
     with capture_tail() as tail:
         os.write(2, '[DEBUG] MLIR  Codegen Result：kFailed\n'.encode())
         os.write(2, b'error: later error\n' * 5000)
@@ -272,13 +272,13 @@ def test_debug_result_survives_error_log_tail():
 
 
 def test_explicit_failed_result_needs_no_legacy_error_text():
-    from autofusex.fuzz.server.reporting.failure_origin import failure_path
+    from autofusex.execution.reporting.failure_origin import failure_path
     assert failure_path('af-mlir', 'error', '', '[DEBUG] MLIR Codegen Result：kFailed') == 'mlir_failed'
     assert failure_path('af-mlir', 'ok', '', '[DEBUG] MLIR Codegen Result：kFailed') == 'not_applicable'
 
 
 def test_multiple_codegen_calls_keep_failed_verdict():
-    from autofusex.fuzz.server.reporting.failure_origin import mlir_failure_evidence
+    from autofusex.execution.reporting.failure_origin import mlir_failure_evidence
     diag = {'shapes': {'0': {'error':
         'MLIR Codegen Result：kFailed\nMLIR Codegen Result：kSucceeded'}}}
     evidence = mlir_failure_evidence('af-mlir', 'error', '', '', diag, 0, 1)
@@ -313,6 +313,6 @@ def test_mlir_run_failure_bounds_multi_shape_case_across_surfaces(tmp_path, shar
 
 
 def test_native_mlir_verifier_error_is_sufficient_without_codegen_wrapper():
-    from autofusex.fuzz.server.reporting.failure_origin import failure_path
+    from autofusex.execution.reporting.failure_origin import failure_path
     assert failure_path('af-mlir', 'error', '',
         "error: 'arith.index_cast' op result #0 must be signless-integer-like, but got 'ui8'") == 'mlir_failed'

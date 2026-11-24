@@ -3,9 +3,10 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import pytest
-from autofusex.platform import accounts, auth
-from autofusex.platform.store import Store
-from autofusex.platform.server import PlatformServer
+from autofusex.server import accounts
+from autofusex.server import auth
+from autofusex.server.store import Store
+from autofusex.server.server import PlatformServer
 
 @pytest.fixture
 def world(tmp_path):
@@ -116,7 +117,7 @@ def test_http_public_and_admin_boundaries(world):
 
 
 def test_upgrade_preserves_existing_credentials(tmp_path):
-    from autofusex.platform import schema
+    from autofusex.server import schema
     store = Store(tmp_path)
     auth.add_user(store, 'existing', 'admin')
     token = auth.issue_token(store, 'existing')

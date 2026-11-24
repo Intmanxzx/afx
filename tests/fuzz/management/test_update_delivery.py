@@ -1,6 +1,6 @@
 import importlib.metadata
-from autofusex.fuzz.daemon.management.store import Store
-from autofusex.fuzz.daemon.management.update_delivery import receive, progress
+from autofusex.client.store import Store
+from autofusex.client.update_delivery import receive, progress
 
 
 def test_current_version_skips_install_and_acknowledges(tmp_path):

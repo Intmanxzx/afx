@@ -6,9 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-import autofusex.inductor_autofuse as inductor_autofuse
-from autofusex.graph import extract_edges
-from autofusex.inductor_autofuse import (
+import autofusex.workloads.model.inductor_autofuse as inductor_autofuse
+from autofusex.execution.graph import extract_edges
+from autofusex.workloads.model.inductor_autofuse import (
     _match_cpu_output,
     _fallback_capture_name,
     _trace_sort_key,

@@ -1,9 +1,9 @@
 import sqlite3
 import uuid
 
-from autofusex.fuzz import daemon
-from autofusex.fuzz.daemon import runtime
-from autofusex.fuzz.daemon.management.central import ControlStore
+import autofusex.client as daemon
+from autofusex.client import daemon as runtime
+from autofusex.client.central import ControlStore
 
 
 def create_user(path, display_name):
@@ -47,6 +47,6 @@ def test_manager_center_flow_retries_lost_ack_without_duplicate_effect(tmp_path,
 
 
 def test_platform_sync_module_imports():
-    from autofusex.fuzz.daemon.management import platform_sync
+    from autofusex.client import platform_sync
 
     assert callable(platform_sync.synchronize)

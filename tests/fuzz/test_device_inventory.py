@@ -2,7 +2,7 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
-from autofusex.fuzz.client.scheduling import devices
+from autofusex.execution.scheduling import devices
 
 
 @pytest.mark.parametrize('output,code,expected', [

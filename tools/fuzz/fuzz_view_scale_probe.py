@@ -10,8 +10,8 @@ import sys
 import time
 import uuid
 
-from autofusex.fuzz.client.storage.repository import _initialize
-from autofusex.fuzz.client.storage.queries import ResultQueries
+from autofusex.execution.storage.repository import _initialize
+from autofusex.execution.storage.queries import ResultQueries
 
 
 def main(path):

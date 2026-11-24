@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from autofusex import script_runner
-from autofusex.adapters import (
+from autofusex.workloads.model import script_runner
+from autofusex.workloads.model.adapters import (
     CapturedInvocation,
     InductorAutofuseBackend,
     JaxAdapter,
@@ -283,7 +283,7 @@ def tc_forked(kernel_path, case_path, case_name, soc_version, device_id):
 
 
 def test_pytorch_adapter_prefers_cann_ge_entry_matching_script_name(tmp_path: Path) -> None:
-    from autofusex.adapters.pytorch import _select_cann_ge_entry
+    from autofusex.workloads.model.adapters.pytorch import _select_cann_ge_entry
 
     script = tmp_path / "tc_selected.py"
 
@@ -302,7 +302,7 @@ def test_pytorch_adapter_prefers_cann_ge_entry_matching_script_name(tmp_path: Pa
 
 
 def test_cann_ge_run_af_parts_supports_keyword_and_config_calls() -> None:
-    from autofusex.adapters.pytorch import _cann_ge_run_af_parts
+    from autofusex.workloads.model.adapters.pytorch import _cann_ge_run_af_parts
 
     def run_af(
         inputs_param=None,
@@ -382,7 +382,7 @@ def test_detect_framework_falls_back_to_pytorch_for_indirect_model_import(tmp_pa
 
 
 def test_inductor_backend_preserves_captured_execution_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autofusex import torch_model
+    from autofusex.workloads.model import torch_model
 
     received = {}
 
@@ -502,4 +502,4 @@ def test_default_direct_output_paths_use_current_working_directory(tmp_path: Pat
     out_dir, html_path = script_runner.default_direct_output_paths(script, tmp_path)
 
     assert out_dir == tmp_path / "sasrec_autofusex"
-    assert html_path == tmp_path / "sasrec_autofusex.html"
+    assert html_path == tmp_path / "sasrec_autofusex.viewer.report"

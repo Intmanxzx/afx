@@ -3,10 +3,11 @@ import sys
 import time
 from pathlib import Path
 import pytest
-from autofusex.fuzz.daemon.management import tasks
-from autofusex.fuzz.daemon.management.artifacts import atomic
-from autofusex.fuzz.daemon.management.config import canonical,validate
-from autofusex.fuzz.daemon.management.store import Store
+from autofusex.client import tasks
+from autofusex.client.artifacts import atomic
+from autofusex.contracts.configuration import canonical
+from autofusex.client.configuration import validate
+from autofusex.client.store import Store
 
 
 def prepared(tmp_path):

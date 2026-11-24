@@ -7,8 +7,8 @@ import uuid
 
 import pytest
 
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.transfer import check_database, merge, restore
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.transfer import check_database, merge, restore
 
 
 def record(seed='14615016373650978276328604632813839116929039597610'):
@@ -101,7 +101,7 @@ def test_tampered_target_hash_is_not_accepted_as_idempotent(source, tmp_path):
 
 
 def test_disk_write_failure_rolls_back_and_cleans(source, tmp_path, monkeypatch):
-    from autofusex.fuzz.client.storage import transfer
+    from autofusex.execution.storage import transfer
     original = transfer._copy
     def fail(src, dst):
         original(src, dst)
@@ -120,7 +120,7 @@ def test_disk_write_failure_rolls_back_and_cleans(source, tmp_path, monkeypatch)
 
 
 def test_atomic_publication_failure_and_no_overwrite(source, tmp_path, monkeypatch):
-    from autofusex.fuzz.client.storage import transfer
+    from autofusex.execution.storage import transfer
     target = tmp_path/'target.sqlite'
     def raced_link(src, dst):
         target.write_bytes(b'another writer won')
@@ -172,10 +172,10 @@ class Block(importlib.abc.MetaPathFinder):
  def find_spec(self,name,*args):
   if name.split('.')[0] in {'torch','numpy','nnsmith','torch_npu'}: raise AssertionError(name)
 sys.meta_path.insert(0,Block())
-from autofusex.fuzz.client.cli import main
-assert main(['maintenance', 'restore',sys.argv[1],sys.argv[2]])==0
-assert main(['maintenance', 'import',sys.argv[1],sys.argv[2]])==0
-assert main(['maintenance', 'check-db',sys.argv[2]])==0
+from autofusex.cli import main
+assert main(['results', 'restore',sys.argv[1],sys.argv[2]])==0
+assert main(['results', 'merge',sys.argv[1],sys.argv[2]])==0
+assert main(['results', 'check',sys.argv[2]])==0
 '''
     result = subprocess.run([sys.executable, '-c', code, str(source.path), str(tmp_path/'new.sqlite')],
                             capture_output=True, text=True)
@@ -191,7 +191,7 @@ def test_killed_import_rolls_back_transaction(source, tmp_path):
     before = rows(target)
     code = '''
 import os,sys
-from autofusex.fuzz.client.storage import transfer
+from autofusex.execution.storage import transfer
 original=transfer._copy
 def crash(src,dst):
  original(src,dst)

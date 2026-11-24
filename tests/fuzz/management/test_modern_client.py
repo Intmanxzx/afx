@@ -1,9 +1,9 @@
 import json
 import pytest
-from autofusex.fuzz.daemon.management.modern_cli import run
-from autofusex.fuzz.client.contracts import ExecutionConfig, EvaluationConfig
-from autofusex.fuzz.client.generation.sampling import SamplingConfig
-from autofusex.fuzz.client.scheduling.ledger import TaskLedger
+from autofusex.client.modern_cli import run
+from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
+from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
+from autofusex.workloads.fuzz.scheduling.ledger import TaskLedger
 
 
 def test_init_is_isolated_and_local_even_with_endpoint(tmp_path, monkeypatch):
@@ -43,22 +43,22 @@ def test_invalid_priority_does_not_enqueue(tmp_path):
 
 def test_shape_mode_is_encoded_in_generated_seeds(tmp_path):
     from dataclasses import asdict
-    from autofusex.fuzz.client.scheduling.campaign import initialize, refill
+    from autofusex.workloads.fuzz.scheduling.campaign import initialize, refill
     for mode, dynamic in [('static',False),('dynamic',True)]:
         ledger=TaskLedger(tmp_path/(mode+'.sqlite'))
         initialize(ledger,[ExecutionConfig('cpu','cpu',1)],EvaluationConfig(),1,
                    sampling=asdict(SamplingConfig()),shape_mode=mode)
         assert refill(ledger)
-        from autofusex.fuzz.client.contracts import Seed
+        from autofusex.workloads.fuzz.contracts import Seed
         assert Seed.parse(ledger.claim()['seed']).dynamic is dynamic
 
 
 def test_replay_uses_history_and_enqueues_before_generation(tmp_path):
     import sqlite3
-    from autofusex.fuzz.daemon.management.store import Store
-    from autofusex.fuzz.daemon.management.replay import submit
-    from autofusex.fuzz.daemon.management.modern_cli import _default_task
-    from autofusex.fuzz.client.scheduling.budgets import Budget, write_policy
+    from autofusex.client.store import Store
+    from autofusex.client.replay import submit
+    from autofusex.client.modern_cli import _default_task
+    from autofusex.execution.scheduling.budgets import Budget, write_policy
     store=Store(tmp_path)
     spec=_default_task();spec['execution']['backends']=['cpu']
     prepared={'spec':spec,'environment':{'id':'local'}}
@@ -76,3 +76,39 @@ def test_replay_uses_history_and_enqueues_before_generation(tmp_path):
     assert ledger.claim()['id']==first['task_ids'][0]
     assert ledger.claim()['id']==second['task_ids'][0]
     assert ledger.claim()['id']==normal
+
+
+def test_config_roundtrip_and_reset(tmp_path):
+    prefix = ['--data-dir', str(tmp_path / 'client')]
+    run([*prefix, 'init', '--local'])
+    spec = run([*prefix, 'config', 'export'])
+    spec['execution']['devices'] = ['npu:1']
+    path = tmp_path / 'task.json'
+    path.write_text(json.dumps(spec))
+    assert run([*prefix, 'config', 'validate', str(path)]) == spec
+    assert run([*prefix, 'config'])['config']['execution']['devices'] != ['npu:1']
+    assert run([*prefix, 'config', 'edit', str(path)])['config'] == spec
+    assert run([*prefix, 'config', 'reset'])['config']['results']['upload'] is False
+    path.write_text(json.dumps({'schema_version': 1, 'kind': 'client_policy'}))
+    with pytest.raises(ValueError, match='task configuration'):
+        run([*prefix, 'config', 'validate', str(path)])
+
+
+def test_managed_config_export_and_validation(tmp_path, monkeypatch):
+    from autofusex.client.platform_transport import API
+    from autofusex.client.modern_cli import _default_task
+    prefix = ['--data-dir', str(tmp_path / 'client')]
+    run([*prefix, 'init', '--token', 'test-token'])
+    spec = _default_task()
+    calls = []
+    def call(self, method, path, body=None):
+        calls.append((method, path, body))
+        return {'config': spec, 'source': 'personal'}
+    monkeypatch.setattr(API, 'call', call)
+    assert run([*prefix, 'config', 'export']) == spec
+    path = tmp_path / 'task.json'
+    path.write_text(json.dumps(spec))
+    assert run([*prefix, 'config', 'validate', str(path)]) == spec
+    assert len(calls) == 1
+    run([*prefix, 'config', 'edit', str(path)])
+    assert calls[-1] == ('POST', '/api/config/me', {'config': spec})

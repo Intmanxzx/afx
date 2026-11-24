@@ -1,7 +1,7 @@
 """Space invariant and fail-closed collision checks for shared display text."""
 import sqlite3
 import pytest
-from autofusex.fuzz.server.reporting.shared_content import intern_text
+from autofusex.execution.reporting.shared_content import intern_text
 
 
 def test_long_unique_content_is_not_copied_into_index():
@@ -20,10 +20,10 @@ def test_long_unique_content_is_not_copied_into_index():
 
 def test_collection_preserves_live_display_and_rejects_silent_context_edits(tmp_path):
     from contextlib import closing
-    from autofusex.fuzz.client.storage.repository import ResultRepository, _connect
-    from autofusex.fuzz.server.reporting.materialized import rebuild
-    from autofusex.fuzz.server.reporting.compact import collect
-    from autofusex.fuzz.client.storage.queries import ResultQueries
+    from autofusex.execution.storage.repository import ResultRepository, _connect
+    from autofusex.execution.reporting.materialized import rebuild
+    from autofusex.execution.reporting.compact import collect
+    from autofusex.execution.storage.queries import ResultQueries
     from test_fuzz_global_rounds import save
     repo = ResultRepository(tmp_path / 'results')
     save(repo, 'one', 'user', 'cpu')
@@ -44,7 +44,7 @@ def test_collection_preserves_live_display_and_rejects_silent_context_edits(tmp_
 
 
 def test_statistics_labels_are_shared_between_owners():
-    from autofusex.fuzz.server.reporting.incremental import DDL, replace_group, COUNT_FIELDS
+    from autofusex.execution.reporting.incremental import DDL, replace_group, COUNT_FIELDS
     result = {kind: [] for kind in COUNT_FIELDS}
     result.update(overall=[dict(label='all', status='ok', count=1)],
                   attempts=1, case_groups=1, stages=[], performance=[])
@@ -61,8 +61,8 @@ def test_statistics_labels_are_shared_between_owners():
 
 def test_current_heads_store_references_not_duplicate_history(tmp_path):
     from contextlib import closing
-    from autofusex.fuzz.client.storage.repository import ResultRepository, _connect
-    from autofusex.fuzz.server.reporting.materialized import rebuild
+    from autofusex.execution.storage.repository import ResultRepository, _connect
+    from autofusex.execution.reporting.materialized import rebuild
     from test_fuzz_global_rounds import save
     repo = ResultRepository(tmp_path / 'db')
     for batch in ('first', 'second'):

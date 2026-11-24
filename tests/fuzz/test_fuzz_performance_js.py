@@ -10,7 +10,7 @@ def test_performance_scope_grouping_paging_and_refresh():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    source = Path('autofusex/fuzz/server/view/static/app.js').read_text()
+    source = Path('autofusex/server/static/local.js').read_text()
     helpers = source[source.index('const efficiencyView='):source.index('function renderStatisticsTables(')]
     script = r'''
 const assert=require('node:assert/strict');

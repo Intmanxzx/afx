@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autofusex"
-version = "0.2.4.1"
+version = "0.2.5"
 description = "Autofuse debugging and reproducible CPU/NPU fuzz testing"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,4 +26,4 @@ include = ["afx*", "autofusex*"]
 
 [tool.setuptools.package-data]
 # Offline and cloud viewers share these prebuilt assets.
-autofusex = ["fuzz/server/view/static/*", "platform/static/*"]
+autofusex = ["server/static/*"]

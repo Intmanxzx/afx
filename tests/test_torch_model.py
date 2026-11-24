@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import autofusex.torch_model as torch_model
+import autofusex.workloads.model.torch_model as torch_model
 from autofusex.cli import build_parser
-from autofusex.artifact_io import tensor_to_numpy
+from autofusex.execution.artifact_io import tensor_to_numpy
 
-from autofusex.torch_model import (
+from autofusex.workloads.model.torch_model import (
     TorchCase,
     _execution_context,
     _model_device_hints,
@@ -226,7 +226,7 @@ def test_match_npu_to_cpu_chooses_lowest_error_candidate(tmp_path: Path) -> None
 
 def test_cli_has_run_torch_model() -> None:
     parser = build_parser()
-    args = parser.parse_args(["run-torch-model", "--script", "case.py", "--out-dir", "out"])
+    args = parser.parse_args(["model", "run", "--entry", "create_case", "--script", "case.py", "--out-dir", "out"])
     assert args.entry == "create_case"
     assert args.device == "npu:0"
     assert args.rtol is None
@@ -236,7 +236,7 @@ def test_cli_has_run_torch_model() -> None:
 
     explicit = parser.parse_args(
         [
-            "run-torch-model",
+            "model", "run", "--entry", "create_case",
             "--script",
             "case.py",
             "--out-dir",
@@ -253,7 +253,7 @@ def test_cli_has_run_script_with_script_arguments() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
-            "run-script",
+            "model", "run",
             "--script",
             "model.py",
             "--out-dir",
@@ -267,13 +267,13 @@ def test_cli_has_run_script_with_script_arguments() -> None:
     )
     assert args.backend == "inductor_autofuse"
     assert args.script_args == ["--", "--batch-size", "2"]
-    assert args.fullgraph is False
+    assert args.fullgraph is None
     assert args.rewrite_device_hints is False
     assert args.save_elementwise_data is False
 
     explicit = parser.parse_args(
         [
-            "run-script",
+            "model", "run",
             "--script",
             "model.py",
             "--out-dir",
@@ -302,7 +302,8 @@ def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
         return {"passed": True, "summary": {"status": "PASS", "passed": 0, "total": 0}}
 
     monkeypatch.chdir(tmp_path)
-    from autofusex import script_runner, torch_model
+    from autofusex.workloads.model import script_runner
+    from autofusex.workloads.model import torch_model
     monkeypatch.setattr(script_runner, "run_framework_script", fake_run_framework_script)
     monkeypatch.setattr(torch_model, "format_run_summary", lambda summary: "summary")
 
@@ -310,7 +311,7 @@ def test_cli_direct_python_mode_dispatches_without_parsing_script_arguments(
     assert received["script"] == script.resolve()
     assert received["script_args"] == ("--device", "npu", "--custom-flag")
     assert received["out_dir"] == tmp_path / "model_autofusex"
-    assert received["html_path"] == tmp_path / "model_autofusex.html"
+    assert received["html_path"] == tmp_path / "model_autofusex.viewer.report"
 
 
 def test_export_cpu_graph_supports_keyword_tensor_inputs(tmp_path: Path) -> None:

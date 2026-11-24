@@ -1,6 +1,6 @@
 # 平台使用说明
 
-**NPU 客户端**执行用例并上报数据（自动泛化测试、导入用例）。客户端默认交给 daemon 托管；下文"托管"工作流（下发任务、管理环境、一键更新）都是通过本机 `afx` CLI 与本地 daemon 交互，不需要远程托管时，跳过它直接用"方式二"本机运行即可。问题闭环、知识库等 Agent 工作流由独立的平台服务（`autofusex/platform/`）提供，见[平台业务与数据设计](platform_v3_design.md)；本文档只覆盖 fuzz 执行引擎本身。
+**NPU 客户端**执行用例并上报数据（自动泛化测试、导入用例）。客户端默认交给 daemon 托管；下文"托管"工作流（下发任务、管理环境、一键更新）都是通过本机 `afx` CLI 与本地 daemon 交互，不需要远程托管时，跳过它直接用"方式二"本机运行即可。问题闭环、知识库等 Agent 工作流由独立的平台服务（`autofusex/server/`）提供，见[平台业务与数据设计](platform_v3_design.md)；本文档只覆盖 fuzz 执行引擎本身。
 
 ## 快速开始
 
@@ -24,12 +24,12 @@ afx stop
 ~~~sh
 python -m pip install 'autofusex[execution]'
 # 再按架构装匹配的 Torch 2.10.0+cpu、torch_npu 和 CANN toolkit（无通用 pip 包，手工装）
-afx fuzz maintenance doctor        # 校验环境
+afx doctor --workload fuzz        # 校验环境
 afx fuzz run --count 100 --save
 afx fuzz status
 ~~~
 
-完整参数见下文"方式二"。要把结果上传到云端（上传、心跳、复测），独立运行 `afx platform client run`，用法见 [deploy/platform/README.md](../../deploy/platform/README.md#客户端npu机器)。
+完整参数见下文"方式二"。要把结果上传到云端（上传、心跳、复测），独立运行 `afx sync run`，用法见 [deploy/platform/README.md](../../deploy/platform/README.md#客户端npu机器)。
 
 ## 安装与准备
 
@@ -49,7 +49,7 @@ python -m pip install -e '.[execution]'
 
 ## 方式一：本地管理 CLI（afx，NPU 客户端机器）
 
-入口定义在 [management/cli.py](../../autofusex/fuzz/daemon/management/cli.py)。普通请求输出统一 envelope（`--help`/`--version`/daemon 生命周期命令不计入此协议）：
+入口定义在 [management/cli.py](../../autofusex/client/cli.py)。普通请求输出统一 envelope（`--help`/`--version`/daemon 生命周期命令不计入此协议）：
 
 ~~~json
 {"schema_version":1,"ok":true,"data":{}}
@@ -63,8 +63,8 @@ python -m pip install -e '.[execution]'
 先查询可用环境，填入 task.yaml 的 environment：
 
 ~~~sh
-afx daemon start
-afx environment list
+afx start
+afx env list
 ~~~
 
 ~~~yaml
@@ -105,10 +105,10 @@ afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 | task replay SEED... --from-run RUN_ID [--wait] | 按原环境/后端/评估设置提交独立重放 |
 | task list/inspect/pause/resume/stop/force-stop/reconfigure RUN_ID | 查询与控制 Run；reconfigure 在安全边界切换配置 |
 | operation inspect/wait/logs/cancel OP_ID | 操作状态、等待、事件、取消 |
-| config validate/apply FILE / config effective | 校验或应用客户端策略 |
+| config show/edit/reset/validate/export | 查看、修改、重置、校验或导出任务配置 |
 | build submit FILE / tool stage FILE / tool activate RELEASE_ID | 本地受信构建与签名制品升级 |
 
-配置 schema 见 [management/config.py](../../autofusex/fuzz/daemon/management/config.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），资源还受 trust 和 policy 限制。
+配置 schema 见 [fuzz 配置协议](../../autofusex/workloads/fuzz/configuration.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），资源还受 trust 和 policy 限制。
 
 ## 方式二：临时运行与重放（afx fuzz，本机直接调试）
 
@@ -121,7 +121,7 @@ afx fuzz stop
 afx fuzz replay SEED --save
 ~~~
 
-将 SEED 替换为结果中的当前 E/F seed。不传 count 持续生成，`--fg` 前台运行，`--save` 才归档结果到本地库；上传到云端用独立的 `afx platform client run`（见上文"快速开始"）。
+将 SEED 替换为结果中的当前 E/F seed。不传 count 持续生成，`--fg` 前台运行，`--save` 才归档结果到本地库；上传到云端用独立的 `afx sync run`（见上文"快速开始"）。
 
 | 目的 | 命令 |
 |---|---|
@@ -129,24 +129,24 @@ afx fuzz replay SEED --save
 | 人工 eager-npu 复核 | afx fuzz replay SEED --backend eager-npu --save |
 | 过滤算子 | afx fuzz run --ops add,ge,sum,reshape --save |
 | 双卡指定资源 | afx fuzz run --device npu:0 --device npu:1 --workers 4 --compile-threads 1 --save |
-| 检查环境 | afx fuzz maintenance doctor |
+| 检查环境 | afx doctor --workload fuzz |
 
 run --backend 增加被测后端，replay --backend 只执行指定后端；不要与同一 home 的活动托管任务同时运行。
 
 ## 查询结果
 
-公网结果网页：https://autofuse.online 。页面和 HTTP API 由 `autofusex/platform/` 提供，路由与鉴权见[平台业务与数据设计](platform_v3_design.md)，不在本文档重复。
+公网结果网页：https://autofuse.online 。页面和 HTTP API 由 `autofusex/server/` 提供，路由与鉴权见[平台业务与数据设计](platform_v3_design.md)，不在本文档重复。
 
 本地结果可导出快照后离线查看：
 
 ~~~sh
-afx fuzz maintenance snapshot /path/results.sqlite ./results.snapshot.sqlite
-afx fuzz view ./results.snapshot.sqlite --no-browser
+afx results snapshot /path/results.sqlite ./results.snapshot.sqlite
+afx view ./results.snapshot.sqlite --no-browser
 ~~~
 
 ## 设备管理
 
-设备管理（配对、环境、任务下发、`client.update` 远程升级）是本机 `afx` CLI 与本地 daemon 之间的协议，数据模型见 [management/central.py](../../autofusex/fuzz/daemon/management/central.py)。目前没有暴露对应的远程 HTTP 接口，所有管理操作都在本机通过上文"快速开始"列出的 `afx` 命令完成。
+设备管理（配对、环境、任务下发、`client.update` 远程升级）是本机 `afx` CLI 与本地 daemon 之间的协议，数据模型见 [management/central.py](../../autofusex/client/central.py)。目前没有暴露对应的远程 HTTP 接口，所有管理操作都在本机通过上文"快速开始"列出的 `afx` 命令完成。
 
 `client.update` 的 payload 是 `{"version":"0.1.4","package":"autofusex"}`，可选 `index_url`（仅用于受控 PyPI 镜像）；version 必须精确，daemon 不执行无版本的升级，也不自行探测最新版本。
 

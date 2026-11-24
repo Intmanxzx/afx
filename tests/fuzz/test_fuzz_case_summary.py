@@ -1,6 +1,6 @@
-from autofusex.fuzz.client.storage import ResultRepository
-from autofusex.fuzz.client.storage.queries import ResultQueries
-from autofusex.fuzz.server.reporting.statistics import statistics
+from autofusex.execution.storage import ResultRepository
+from autofusex.execution.storage.queries import ResultQueries
+from autofusex.execution.reporting.statistics import statistics
 
 
 def save(repo, batch, backend, status, *, user='alice'):
@@ -41,7 +41,7 @@ def test_cpu_only_unknown_and_cpu_match_filter_keeps_mlir_failure(tmp_path):
 
 
 def test_unfiltered_rollup_does_not_sort_full_diagnostics():
-    from autofusex.fuzz.server.reporting.cases import rollup
+    from autofusex.execution.reporting.cases import rollup
     sql, values = rollup()
     assert 'SELECT a.* FROM attempts' not in sql
     assert 'SELECT c.* FROM unfiltered_cases c WHERE 1=1' in sql
@@ -60,7 +60,7 @@ import pytest
     "WHERE status = 'accuracy_failed'", "WHERE shape_index = 2 OR status = 'function_failed'"])
 def test_bounded_page_keys_match_full_rollup_with_retries_and_sparse_shapes(tmp_path, query):
     import sqlite3
-    from autofusex.fuzz.server.reporting.cases import page_keys, rollup
+    from autofusex.execution.reporting.cases import page_keys, rollup
     from test_fuzz_shape_cases import record
     repo = ResultRepository(tmp_path/'pages')
     # More than one rowid window, with old backend peers and fresh retries.
@@ -77,7 +77,7 @@ def test_bounded_page_keys_match_full_rollup_with_retries_and_sparse_shapes(tmp_
     value['status'] = 'error'
     repo.save(value)
     from contextlib import closing
-    from autofusex.fuzz.client.storage.repository import _connect
+    from autofusex.execution.storage.repository import _connect
     with closing(_connect(repo.path)) as conn:
         conn.row_factory = sqlite3.Row
         cte, args = rollup(q=query)
@@ -96,8 +96,8 @@ def test_bounded_page_keys_match_full_rollup_with_retries_and_sparse_shapes(tmp_
 
 
 def test_case_only_sql_avoids_projection_and_preserves_parameter_binding():
-    from autofusex.fuzz.server.reporting.cases import rollup
-    from autofusex.fuzz.server.reporting.search import case_condition
+    from autofusex.execution.reporting.cases import rollup
+    from autofusex.execution.reporting.search import case_condition
     for term in ["WHERE status='accuracy_failed'", "where STATUS = 'Pass' OR shape_index = 2",
                  "WHERE status='function_failed' AND failure_path != 'mlir_failed'"]:
         sql, values = rollup(q=term)
@@ -111,8 +111,8 @@ def test_case_only_sql_avoids_projection_and_preserves_parameter_binding():
 def test_filtered_first_page_stays_in_recent_window(tmp_path):
     from contextlib import closing
     import sqlite3
-    from autofusex.fuzz.client.storage.repository import _connect
-    from autofusex.fuzz.server.reporting.cases import page_keys
+    from autofusex.execution.storage.repository import _connect
+    from autofusex.execution.reporting.cases import page_keys
     repo = ResultRepository(tmp_path/'bounded')
     for batch in range(160):
         save(repo, str(batch), 'af-mlir', 'fail')
