@@ -5,7 +5,7 @@ OpenAPI 3.1 JSON，不套用业务接口的 data envelope。
 
 curl -fsS http://127.0.0.1:8100/openapi.json -o openapi.json
 
-原有启动命令不变：
+启动命令：
 
 afx server --data DIR serve --host 127.0.0.1 --port 8100
 
