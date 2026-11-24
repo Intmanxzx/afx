@@ -122,15 +122,11 @@ class Pool:
         a, b = socket.socketpair()
         from autofusex.client.paths import debug_directory
         debug_dir = debug_directory(os.environ.get('AFX_TASK_HOME', self.directory))
-        dfx_flags = [item for item in os.environ.get('AUTOFUSE_DFX_FLAGS', '').split(';')
-                     if item and not item.startswith('--debug_dir=')]
-        if '--codegen_compile_debug=true' not in dfx_flags:
-            dfx_flags.append('--codegen_compile_debug=true')
-        dfx_flags.append(f'--debug_dir={debug_dir}')
         env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                    TORCHINDUCTOR_COMPILE_THREADS=str(self.budget.compile_threads),
-                   TMPDIR=scratch.name, TORCHINDUCTOR_CACHE_DIR=scratch.name+'/inductor',
-                   TRITON_CACHE_DIR=scratch.name+'/triton', AUTOFUSE_DFX_FLAGS=';'.join(dfx_flags))
+                   TMPDIR=scratch.name, TRITON_CACHE_DIR=scratch.name+'/triton')
+        from autofusex.workloads.fuzz.scheduling.supervisor import _debug_env
+        env = _debug_env(env, scratch.name, debug_dir, key[0] if isinstance(key, tuple) else None)
         child = subprocess.Popen([sys.executable,'-m','autofusex.workloads.fuzz.scheduling.stage_worker',str(b.fileno())],
             pass_fds=(self.fd,b.fileno()),start_new_session=True,stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env)

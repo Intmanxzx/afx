@@ -19,7 +19,7 @@ PAGES.ops = async root => {
     el("td", {}, archLabel(c.npu_arch)),
     el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
     el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
-      c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中",succeeded:"升级完成",failed:"升级失败",needs_attention:"需要处理"})[c.update_status.state] || "") : null,
+      c.target_afx_version && c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中"})[c.update_status.state] || "升级中") : null,
       c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
     el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
     el("td", {}, clientControls(c, data.latest_afx_version)),
@@ -87,8 +87,8 @@ function clientControls(client, latestVersion) {
   const pending = { running: "启动中（等待回执）", stopped: "停止中（等待回执）", restart: "重启中（等待回执）" }[client.target_daemon_state];
   const statuses = el("div", { style: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } },
     status, pending ? el("span", { class: "chip info" }, pending) : null,
-    client.update_status?.phase === "stop_timeout" ? el("span", { class: "chip danger" }, "停止失败") : null,
-    client.update_status?.phase === "upgrade_timeout" ? el("span", { class: "chip danger" }, "升级失败") : null);
+    client.target_afx_version && client.update_status?.phase === "stop_timeout" ? el("span", { class: "chip danger" }, "停止失败") : null,
+    client.target_afx_version && client.update_status?.phase === "upgrade_timeout" ? el("span", { class: "chip danger" }, "升级失败") : null);
   return el("div", {}, statuses, actions);
 }
 // One bar per hour for the last 48 hours, counted by unique case IDs when they ran.

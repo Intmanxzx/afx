@@ -688,6 +688,11 @@ def test_update_request_identity_survives_retries_and_changes_on_new_request(wor
     ack = ops.heartbeat(store, client, body)['update_request_id']
     complete = ops.heartbeat(store, client, dict(body, afx_version='0.2.1', update_ack=ack))
     assert complete['update_to'] is None and complete['update_request_id'] is None
+    conn = store.reader()
+    try:
+        assert json.loads(conn.execute('SELECT update_status FROM clients WHERE client_id=?', (cid,)).fetchone()[0]) == {'state': 'idle'}
+    finally:
+        conn.close()
     ops.request_update(store, admin, dict(request, request_key='upgrade-third'))
     ops.request_update(store, admin, dict(request, request_key='upgrade-cancel', version=None))
     cancelled = ops.heartbeat(store, client, body)

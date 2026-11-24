@@ -163,7 +163,8 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
         progress = json.loads(progress_row[0]) if progress_row and progress_row[0] else {}
         if (target is not None and target == row["afx_version"]
                 and body.get("update_ack") == row["update_request_id"]):
-            conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL WHERE client_id=?", (client_id,))
+            conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL, update_status=? WHERE client_id=?",
+                         (json.dumps({'state': 'idle'}), client_id))
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                          (now, principal.user_id, "client.updated", f"client {client_id} -> {target}"))
             target = None
