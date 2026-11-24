@@ -19,7 +19,7 @@ PAGES.ops = async root => {
     el("td", {}, archLabel(c.npu_arch)),
     el("td", {}, c.card_count == null ? "未上报" : fmt(c.card_count)),
     el("td", {}, c.afx_version || "—", c.afx_version && data.latest_afx_version && c.afx_version !== data.latest_afx_version ? el("span", { class: "chip warn", style: { marginLeft: "4px" } }, "落后") : null,
-      c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中",succeeded:"升级完成",failed:"升级失败",needs_attention:"需要处理"})[c.update_status.state] || "") : null,
+      c.target_afx_version && c.update_status ? el("span", { class: "chip info" }, ({queued:"等待升级",running:"升级中",activating:"切换中"})[c.update_status.state] || "升级中") : null,
       c.target_afx_version ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "→ " + c.target_afx_version) : null),
     el("td", { class: "small" }, Object.entries(c.backend_versions).filter(([, v]) => v).map(([k, v]) => `${label(k)} ${v}`).join(" · ") || "—"),
     el("td", {}, clientControls(c, data.latest_afx_version)),
@@ -39,23 +39,22 @@ PAGES.ops = async root => {
   const overviewRows = (data.users || []).map(u => {
     const e = efficiencyUsers.get(u.user_id) || {};
     const clients = data.clients.filter(c => c.user_id === u.user_id);
-    const uploadErrors = clients.reduce((sum, c) => sum + (c.last_24h.upload_errors || 0), 0);
     const pendingUploads = clients.reduce((sum, c) => sum + (c.pending_uploads || 0), 0);
     return el("tr", {},
-      el("td", {}, u.user_id), el("td", {}, fmt(u.clients)), el("td", {}, fmt(u.online_clients)),
-      el("td", {}, u.card_count == null ? "未上报" : fmt(u.card_count)), el("td", {}, fmt(u.executions_10m)),
-      el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)), el("td", {}, fmt(u.executions_24h)),
-      el("td", {}, fmt(u.uploads_24h)), el("td", {}, fmt(uploadErrors)), el("td", {}, fmt(pendingUploads)), el("td", {}, fmt(e.success)),
+      el("td", {}, u.user_id), el("td", {}, fmt(u.online_clients) + "/" + fmt(u.clients)),
+      el("td", {}, u.npu_total == null ? "未上报" : fmt(u.npu_used) + "/" + fmt(u.npu_total)), el("td", {}, fmt(u.executions_10m)),
+      el("td", {}, Number(u.cases_per_minute || 0).toFixed(2)),
+      el("td", {}, fmt(u.executions_24h) + "/" + fmt(u.uploads_24h)), el("td", {}, fmt(pendingUploads)), el("td", {}, fmt(e.success)),
       el("td", {}, fmt(e.completed)), el("td", {}, fmt(e.failed)), el("td", {}, fmt(e.case_errors)),
       el("td", {}, e.success_per_minute == null ? "—" : Number(e.success_per_minute).toFixed(2)));
   });
   const overviewPanel = el("section", { class: "panel" }, el("h2", {}, "用户运行概览"),
-    el("p", { class: "muted small" }, "Shape 和 Case 错误指标与 24 小时执行采用相同范围：最近 24 小时的非 CPU 执行（含复测），不含已删除客户端。完成 Shape = 成功 + 失败；成功要求功能通过且精度未失败，失败包含执行错误和精度失败。Case 错误指未产生 Shape 明细的失败执行。Shape 按后端和运行计数，动态用例可包含多个 Shape。成功 Shape/min 按本窗口首条执行至今的时间计算。"),
+    el("p", { class: "muted small" }, "用例指标按总览页面口径：同一 case 在不同后端或重复执行只计 1 个唯一用例；近 10 分钟用例按最近执行过的唯一 case 计数。客户端显示在线数/总数，NPU 显示当前运行任务使用数/机器总数。24 小时执行/上传中的执行和上传均为最近 24 小时累计。完成 Shape = 成功 + 失败；成功要求功能通过且精度未失败，Shape 按后端和运行计数，动态用例可包含多个 Shape。Case 错误指唯一用例在统计窗口内没有任何 Shape 明细且至少一次执行失败。"),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" },
-      el("thead", {}, el("tr", {}, ["用户", "客户端", "在线", "可见 NPU 数", "近 10 分钟用例", "用例/分钟", "24 小时执行", "24 小时上传", "上传失败（24h）", "待上传", "成功 Shape", "完成 Shape", "失败 Shape", "Case 错误", "成功 Shape/min"].map(t => el("th", {}, t)))),
-      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 15, class: "empty" }, "暂无用户运行数据"))]))));
+      el("thead", {}, el("tr", {}, ["用户", "客户端（在线/总数）", "NPU 使用/总数", "近 10 分钟用例", "用例/分钟", "24 小时执行/上传", "待上传", "成功 Shape", "完成 Shape", "失败 Shape", "错误用例", "成功 Shape/min"].map(t => el("th", {}, t)))),
+      el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 12, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
-  root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
+  root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（用例/小时）"), hourly(data.hourly)));
   if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
@@ -88,14 +87,14 @@ function clientControls(client, latestVersion) {
   const pending = { running: "启动中（等待回执）", stopped: "停止中（等待回执）", restart: "重启中（等待回执）" }[client.target_daemon_state];
   const statuses = el("div", { style: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } },
     status, pending ? el("span", { class: "chip info" }, pending) : null,
-    client.update_status?.phase === "stop_timeout" ? el("span", { class: "chip danger" }, "停止失败") : null,
-    client.update_status?.phase === "upgrade_timeout" ? el("span", { class: "chip danger" }, "升级失败") : null);
+    client.target_afx_version && client.update_status?.phase === "stop_timeout" ? el("span", { class: "chip danger" }, "停止失败") : null,
+    client.target_afx_version && client.update_status?.phase === "upgrade_timeout" ? el("span", { class: "chip danger" }, "升级失败") : null);
   return el("div", {}, statuses, actions);
 }
-// One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).
+// One bar per hour for the last 48 hours, counted by unique case IDs when they ran.
 function hourly(series) {
   if (!series.length) return el("div", { class: "empty" }, "暂无执行数据");
-  const W = 900, H = 170, pad = 26, bottom = 22, max = Math.max(1, ...series.map(s => s.executions));
+  const W = 900, H = 170, pad = 26, bottom = 22, max = Math.max(1, ...series.map(s => s.cases || 0));
   const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "hourly throughput" });
   const bw = (W - 2 * pad) / 48, plotH = H - pad - bottom;
   const last = Math.floor(Date.now() / 3600000);
@@ -103,15 +102,15 @@ function hourly(series) {
   root.append(svg("line", { x1: pad, x2: W - pad, y1: H - bottom, y2: H - bottom, stroke: "var(--line, #8884)", "stroke-width": 1 }));
   const byHour = new Map(series.map(s => [s.hour, s]));
   for (let i = 0; i < 48; i++) {
-    const hour = last - (47 - i), s = byHour.get(hour) || { executions: 0, retests: 0 };
-    const h = s.executions ? Math.max(2, plotH * s.executions / max) : 0;
+    const hour = last - (47 - i), s = byHour.get(hour) || { cases: 0 };
+    const h = s.cases ? Math.max(2, plotH * s.cases / max) : 0;
     if (h) root.append(svg("rect", { x: pad + i * bw, y: H - bottom - h, width: Math.max(1, bw - 2), height: h, fill: "var(--accent)" }));
     // Full-height transparent hit area per hour, so empty and tiny bars can be hovered too (the custom tooltip reads data-tooltip).
     root.append(svg("rect", { x: pad + i * bw, y: pad, width: bw, height: H - bottom - pad, fill: "transparent", "pointer-events": "all",
-      "data-tooltip": `${hourText(hour)}\n${s.executions} 次执行${s.retests ? `（含 ${s.retests} 次复测）` : ""}` }));
+      "data-tooltip": `${hourText(hour)}\n${s.cases || 0} 个用例` }));
   }
   for (const k of [0, 12, 24, 36, 47]) root.append(svg("text", { x: pad + k * bw + bw / 2, y: H - 6, "text-anchor": k === 0 ? "start" : k === 47 ? "end" : "middle", class: "muted small" }, hourText(last - (47 - k))));
-  root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max}/小时`));
+  root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max} 个用例/小时`));
   return root;
 }
 async function settingsPanel() {

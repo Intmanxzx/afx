@@ -1,16 +1,101 @@
 """Platform heartbeat/configuration and opt-in per-run result upload."""
 import importlib.metadata
 import json
+import os
 import socket
 import time
+import sqlite3
+from pathlib import Path
 from autofusex.client.artifacts import atomic
 from autofusex.client.paths import retest_directory
 from autofusex.client.platform_transport import API, Client
 
 
+def runtime_snapshots(home) -> list:
+    """Read current task snapshots published by the local execution reporter."""
+    try:
+        boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except OSError:
+        boot = 'unknown'
+    now = time.monotonic()
+    runs = []
+    for path in sorted((home / 'runtime').glob('*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[:64]:
+        try:
+            saved = json.loads(path.read_text())
+            age = now - saved['monotonic']
+            if saved['boot'] != boot or age < 0 or age > 86400:
+                continue
+            runs.append(dict(saved['sample'], age=age))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if len(runs) >= 32:
+            break
+    return runs
+
+
+def pending_uploads(store) -> int:
+    """Count local fuzz attempts after each run's persisted upload cursor."""
+    total = 0
+    with store.connect() as db:
+        runs = list(db.execute("SELECT id, spec FROM runs"))
+    for run in runs:
+        try:
+            spec = json.loads(run["spec"])["spec"]
+        except (TypeError, ValueError, KeyError):
+            continue
+        if spec.get("kind") != "fuzz_task" or not spec.get("results", {}).get("upload"):
+            continue
+        directory = store.home / "runs" / run["id"]
+        results = directory / "results.sqlite"
+        progress = directory / "upload.sqlite"
+        if not results.exists():
+            continue
+        try:
+            source = sqlite3.connect(results)
+            cursor = 0
+            if progress.exists():
+                state = sqlite3.connect(progress)
+                row = state.execute("SELECT value FROM progress WHERE key='fuzz:cursor'").fetchone()
+                cursor = int(row[0]) if row else 0
+                state.close()
+            total += source.execute("SELECT COUNT(*) FROM attempts WHERE rowid>?", (cursor,)).fetchone()[0]
+            source.close()
+        except (OSError, sqlite3.Error, ValueError, TypeError):
+            continue
+    return total
+
+
+def configured_task_devices(store, inventory) -> list:
+    """Return the logical NPU cards selected by currently running managed tasks."""
+    devices = []
+    try:
+        with store.connect() as db:
+            rows = db.execute("SELECT state, spec FROM runs WHERE state IN ('preparing','running','paused','pausing','draining','cancelling')").fetchall()
+        for row in rows:
+            payload = json.loads(row['spec'])
+            spec = payload.get('spec', payload)
+            execution = spec.get('execution') or {}
+            if not any(backend != 'cpu' for backend in execution.get('backends') or []):
+                continue
+            selected = execution.get('devices') or []
+            if 'all' in selected:
+                selected = inventory.get('devices') or []
+            devices.extend(str(device) for device in selected if str(device).startswith('npu:'))
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return []
+    return list(dict.fromkeys(devices))
+
+
 def synchronize(manager, client):
     store=manager.store
     api=API(client['endpoint'],client['token'],timeout=15)
+    # Enable the execution reporter before managed workers are started.  The
+    # reporter is intentionally opt-in so standalone/local runs never write
+    # fleet telemetry, while managed tasks publish their configured devices.
+    try:
+        atomic(store.home / 'platform-client.json', {'endpoint': client['endpoint'], 'pid': os.getpid()})
+    except OSError:
+        pass
     # Use the same deterministic identity as the standalone platform client.
     # The old daemon path generated a random UUID, so `afx start` and
     # `afx sync run` on the same host appeared as two clients.
@@ -48,6 +133,11 @@ def synchronize(manager, client):
             update_ack = request_id
     from autofusex.client.update_delivery import progress, receive
     claims_path = retest_directory(store.home) / 'claims.json'
+    runtime = runtime_snapshots(store.home)
+    selected_devices = configured_task_devices(store, inventory)
+    if selected_devices and not any(run.get('state') == 'running' for run in runtime):
+        runtime.append(dict(run_id='managed-config', state='running',
+                            devices=[dict(logical=device) for device in selected_devices]))
     heartbeat=dict(
         machine_id=identity[:128], client_home=home[:512],
         hostname=socket.gethostname(), npu_arch=env.get('device_model') or inventory['model'],
@@ -60,8 +150,8 @@ def synchronize(manager, client):
         # server-assigned retest. Ordinary fuzz work must remain Online in the
         # fleet view; otherwise the UI incorrectly labels it "复测中".
         busy=bool(claims_path.exists() and json.loads(claims_path.read_text()).get('tasks')),
-        pending_uploads=0,
-        runtime=[]
+        pending_uploads=pending_uploads(store),
+        runtime=runtime,
     )
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
@@ -86,6 +176,7 @@ def synchronize(manager, client):
     source_jobs(manager, api, identity[:128])
     with store.connect() as db:
         runs=list(db.execute('SELECT id,spec FROM runs'))
+    reported = {'executions': 0, 'uploads': 0, 'upload_errors': 0, 'retests': 0}
     for run in runs:
         spec=json.loads(run['spec'])['spec']
         if not spec['results']['upload']: continue
@@ -104,5 +195,11 @@ def synchronize(manager, client):
             continue
         if not (directory/'results.sqlite').exists():continue
         uploader=Client(api,str(directory/'results.sqlite'),directory/'upload.sqlite')
-        try:uploader.upload_once()
+        try:
+            uploader.upload_once()
+            for name, value in uploader.counters.take().items():
+                reported[name] += value
         finally:uploader.state.conn.close()
+    if any(reported.values()):
+        heartbeat['counters'] = reported
+        api.call('POST', '/api/client/heartbeat', heartbeat, attempts=1)

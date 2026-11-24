@@ -2,6 +2,14 @@
 from autofusex.execution.backends.base import UnsupportedBackend
 
 
+def _ensure_backend_dfx_flag(flags: str, mode: str) -> str:
+    """Add the backend route without replacing an explicit caller choice."""
+    parts = [part.strip() for part in (flags or '').split(';') if part.strip()]
+    if not any(part.lstrip('-').split('=', 1)[0] == 'mlir_codegen_config' for part in parts):
+        parts.append('--mlir_codegen_config=' + mode)
+    return ';'.join(parts)
+
+
 class TorchAdapter:
     """Lazy execution dependency for NNSmith-generated immutable graphs."""
     from autofusex.execution.backends.base import Capabilities
@@ -31,10 +39,9 @@ class TorchAdapter:
         import os
         if self.name in {'af-legacy', 'af-mlir'}:
             flags = os.environ.get('AUTOFUSE_DFX_FLAGS', '')
-            parts = [p for p in flags.split(';') if p and not p.strip().startswith('--mlir_codegen_config=')]
             self.old_dfx = os.environ.get('AUTOFUSE_DFX_FLAGS')
             mode = 'mlir' if self.name == 'af-mlir' else 'none'
-            os.environ['AUTOFUSE_DFX_FLAGS'] = ';'.join(parts + ['--mlir_codegen_config=' + mode])
+            os.environ['AUTOFUSE_DFX_FLAGS'] = _ensure_backend_dfx_flag(flags, mode)
         os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(self.config.compile_threads)
         import torch
         self.torch = torch

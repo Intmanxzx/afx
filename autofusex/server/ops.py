@@ -163,7 +163,8 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
         progress = json.loads(progress_row[0]) if progress_row and progress_row[0] else {}
         if (target is not None and target == row["afx_version"]
                 and body.get("update_ack") == row["update_request_id"]):
-            conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL WHERE client_id=?", (client_id,))
+            conn.execute("UPDATE clients SET target_afx_version=NULL, update_request_id=NULL, update_status=? WHERE client_id=?",
+                         (json.dumps({'state': 'idle'}), client_id))
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                          (now, principal.user_id, "client.updated", f"client {client_id} -> {target}"))
             target = None
@@ -278,6 +279,14 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
             "SELECT client_id, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests FROM executions "
             "WHERE created_at>? AND backend<>'cpu' GROUP BY client_id", (now - 86_400_000,)):
         ran[row["client_id"]] = (row["executions"], row["retests"])
+    # Uploads are authoritative once an execution row is accepted by the
+    # server.  Do not depend on client heartbeat deltas here: managed clients
+    # can upload between heartbeats, and older clients did not report them.
+    uploaded = {}
+    for row in conn.execute(
+            "SELECT client_id, COUNT(*) AS uploads FROM executions "
+            "WHERE received_at>? AND backend<>'cpu' GROUP BY client_id", (now - 86_400_000,)):
+        uploaded[row["client_id"]] = row["uploads"]
     clients = []
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
@@ -288,7 +297,8 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
         item["update_status"] = json.loads(item["update_status"]) if item["update_status"] else {"state":"idle"}
         item["backend_versions"] = json.loads(item["backend_versions"]) if item["backend_versions"] else {}
         mine = see_all or (viewer is not None and item["user_id"] == viewer)
-        item["runtime"] = json.loads(item["runtime"]) if item["runtime"] and mine else []
+        raw_runtime = json.loads(item["runtime"]) if item["runtime"] else []
+        item["runtime"] = raw_runtime if mine else []
         item["mine"] = viewer is not None and item["user_id"] == viewer
         item["online"] = is_online(item["last_heartbeat_at"], now)
         totals = conn.execute(
@@ -296,10 +306,31 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
             "WHERE client_id=? AND hour>?", (item["client_id"], hour - 24)).fetchone()
         item["last_24h"] = dict(totals)
         item["last_24h"]["executions"], item["last_24h"]["retests"] = ran.get(item["client_id"], (0, 0))
+        item["last_24h"]["uploads"] = uploaded.get(item["client_id"], 0)
         raw_devices = item.pop("devices")
         devices = json.loads(raw_devices) if raw_devices is not None else None
         item["devices"] = devices if mine else None
         item["card_count"] = len(devices) if mine and devices is not None else None
+        # Runtime snapshots carry the device set selected by the current task.
+        # Count the union across running snapshots so a two-card host running a
+        # one-card task is shown as 1/2 in the user overview.  `busy` is a
+        # worker state, not the task's configured device set, so it must not
+        # suppress an otherwise selected card.
+        active_devices = set()
+        for run in raw_runtime:
+            if run.get("state") != "running":
+                continue
+            for device in run.get("devices") or []:
+                if isinstance(run.get("age"), (int, float)) and run["age"] > 180:
+                    continue
+                if isinstance(device, dict):
+                    identity = device.get("uuid") or device.get("logical")
+                else:
+                    identity = device
+                if identity:
+                    active_devices.add(str(identity))
+        item["npu_used"] = len(active_devices) if mine and devices is not None else None
+        item["npu_total"] = len(devices) if mine and devices is not None else None
         clients.append(item)
     users = []
     user_ids = sorted({c["user_id"] for c in clients if see_all or c["user_id"] == viewer})
@@ -307,21 +338,24 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
         owned = [c for c in clients if c["user_id"] == user_id]
         ids = [c["client_id"] for c in owned]
         marks = ",".join("?" for _ in ids)
-        recent = conn.execute(f"SELECT COUNT(*) FROM executions WHERE client_id IN ({marks}) AND created_at>=? AND backend<>'cpu'",
+        recent = conn.execute(f"SELECT COUNT(DISTINCT case_id) FROM executions WHERE client_id IN ({marks}) AND created_at>=? AND backend<>'cpu'",
                               [*ids, now - 600_000]).fetchone()[0] if ids else 0
         latest = conn.execute(f"SELECT MAX(created_at) FROM executions WHERE client_id IN ({marks}) AND backend<>'cpu'", ids).fetchone()[0] if ids else None
         users.append({"user_id": user_id, "clients": len(owned),
                       "online_clients": sum(c["online"] for c in owned),
                       "card_count": sum(c["card_count"] for c in owned) if all(c["card_count"] is not None for c in owned) else None,
+                      "npu_used": sum(c["npu_used"] for c in owned) if all(c["npu_used"] is not None for c in owned) else None,
+                      "npu_total": sum(c["npu_total"] for c in owned) if all(c["npu_total"] is not None for c in owned) else None,
                       "executions_24h": sum(c["last_24h"]["executions"] for c in owned),
                       "uploads_24h": sum(c["last_24h"]["uploads"] for c in owned),
                       "executions_10m": recent, "cases_per_minute": round(recent / 10, 2),
                       "last_execution_at": latest})
     buckets = {}
     for r in conn.execute(
-            "SELECT created_at/3600000 AS hour, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests "
+            "SELECT created_at/3600000 AS hour, COUNT(DISTINCT case_id) AS cases, "
+            "COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests "
             "FROM executions WHERE created_at>=? AND backend<>'cpu' GROUP BY 1", ((hour - 47) * 3_600_000,)):
-        buckets[r["hour"]] = {"hour": r["hour"], "executions": r["executions"], "retests": r["retests"],
+        buckets[r["hour"]] = {"hour": r["hour"], "cases": r["cases"], "executions": r["executions"], "retests": r["retests"],
                               "uploads": 0, "upload_errors": 0}
     for r in conn.execute("SELECT hour, SUM(uploads) AS uploads, SUM(upload_errors) AS upload_errors FROM metric_rollups "
                           "WHERE hour>? GROUP BY hour", (hour - 48,)):
@@ -367,18 +401,24 @@ def efficiency(store: Store, client_id=None, limit: int = 100) -> dict:
     # counts. Runs that fail before producing any shapes remain Case errors.
     rows = conn.execute(
         "WITH per_execution AS ("
-        "SELECT e.exec_id, e.user_id, e.client_id, e.created_at, e.function_status, "
+        "SELECT e.exec_id, e.user_id, e.client_id, e.case_id, e.created_at, e.function_status, "
         "COUNT(s.exec_id) AS completed, "
         "SUM(CASE WHEN s.function_status='pass' AND COALESCE(s.accuracy_status,'skipped')<>'fail' "
         "THEN 1 ELSE 0 END) AS success "
         "FROM executions e JOIN clients c ON c.client_id=e.client_id "
         "LEFT JOIN execution_shapes s ON s.exec_id=e.exec_id "
         f"WHERE {where} GROUP BY e.exec_id) "
-        "SELECT user_id, COUNT(*) AS executions_24h, COUNT(DISTINCT client_id) AS clients, "
-        "SUM(completed) AS completed, SUM(success) AS success, SUM(completed-success) AS failed, "
-        "SUM(completed=0 AND function_status<>'pass') AS case_errors, "
-        "MIN(created_at) AS first_at, MAX(created_at) AS last_at "
-        "FROM per_execution GROUP BY user_id", args)
+        ", per_case AS ("
+        "SELECT user_id, case_id, SUM(completed) AS completed, SUM(success) AS success, "
+        "MAX(function_status<>'pass') AS has_failure, MIN(created_at) AS first_at, MAX(created_at) AS last_at "
+        "FROM per_execution GROUP BY user_id, case_id), user_clients AS ("
+        "SELECT user_id, COUNT(DISTINCT client_id) AS clients, COUNT(*) AS executions_24h "
+        "FROM per_execution GROUP BY user_id) "
+        "SELECT p.user_id, c.executions_24h, c.clients, "
+        "SUM(p.completed) AS completed, SUM(p.success) AS success, SUM(p.completed-p.success) AS failed, "
+        "SUM(p.completed=0 AND p.has_failure=1) AS case_errors, "
+        "MIN(p.first_at) AS first_at, MAX(p.last_at) AS last_at "
+        "FROM per_case p JOIN user_clients c USING(user_id) GROUP BY p.user_id", args)
     users = []
     for row in rows:
         user = dict(row)
