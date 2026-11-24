@@ -54,7 +54,7 @@ PAGES.ops = async root => {
       el("thead", {}, el("tr", {}, ["用户", "客户端（在线/总数）", "NPU 使用/总数", "近 10 分钟用例", "用例/分钟", "24 小时执行/上传", "待上传", "成功 Shape", "完成 Shape", "失败 Shape", "错误用例", "成功 Shape/min"].map(t => el("th", {}, t)))),
       el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 12, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
-  root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（执行/小时）"), hourly(data.hourly)));
+  root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（用例/小时）"), hourly(data.hourly)));
   if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }
   if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
 };
@@ -91,10 +91,10 @@ function clientControls(client, latestVersion) {
     client.update_status?.phase === "upgrade_timeout" ? el("span", { class: "chip danger" }, "升级失败") : null);
   return el("div", {}, statuses, actions);
 }
-// One bar per hour for the last 48 hours, counted from when each execution ran (not when it was uploaded).
+// One bar per hour for the last 48 hours, counted by unique case IDs when they ran.
 function hourly(series) {
   if (!series.length) return el("div", { class: "empty" }, "暂无执行数据");
-  const W = 900, H = 170, pad = 26, bottom = 22, max = Math.max(1, ...series.map(s => s.executions));
+  const W = 900, H = 170, pad = 26, bottom = 22, max = Math.max(1, ...series.map(s => s.cases || 0));
   const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "hourly throughput" });
   const bw = (W - 2 * pad) / 48, plotH = H - pad - bottom;
   const last = Math.floor(Date.now() / 3600000);
@@ -102,15 +102,15 @@ function hourly(series) {
   root.append(svg("line", { x1: pad, x2: W - pad, y1: H - bottom, y2: H - bottom, stroke: "var(--line, #8884)", "stroke-width": 1 }));
   const byHour = new Map(series.map(s => [s.hour, s]));
   for (let i = 0; i < 48; i++) {
-    const hour = last - (47 - i), s = byHour.get(hour) || { executions: 0, retests: 0 };
-    const h = s.executions ? Math.max(2, plotH * s.executions / max) : 0;
+    const hour = last - (47 - i), s = byHour.get(hour) || { cases: 0 };
+    const h = s.cases ? Math.max(2, plotH * s.cases / max) : 0;
     if (h) root.append(svg("rect", { x: pad + i * bw, y: H - bottom - h, width: Math.max(1, bw - 2), height: h, fill: "var(--accent)" }));
     // Full-height transparent hit area per hour, so empty and tiny bars can be hovered too (the custom tooltip reads data-tooltip).
     root.append(svg("rect", { x: pad + i * bw, y: pad, width: bw, height: H - bottom - pad, fill: "transparent", "pointer-events": "all",
-      "data-tooltip": `${hourText(hour)}\n${s.executions} 次执行${s.retests ? `（含 ${s.retests} 次复测）` : ""}` }));
+      "data-tooltip": `${hourText(hour)}\n${s.cases || 0} 个用例` }));
   }
   for (const k of [0, 12, 24, 36, 47]) root.append(svg("text", { x: pad + k * bw + bw / 2, y: H - 6, "text-anchor": k === 0 ? "start" : k === 47 ? "end" : "middle", class: "muted small" }, hourText(last - (47 - k))));
-  root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max}/小时`));
+  root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max} 个用例/小时`));
   return root;
 }
 async function settingsPanel() {

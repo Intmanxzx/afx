@@ -121,7 +121,7 @@ def test_heartbeat_rollups_and_update(world):
     summary = ops.summary(store)
     me = next(c for c in summary["clients"] if c["client_id"] == first["client_id"])
     assert me["last_24h"]["executions"] == 10 and me["online"] and me["backend_versions"] == {"af-mlir": "9.2.0"}
-    assert summary["executions_24h"] == 10 and sum(h["executions"] for h in summary["hourly"]) == 10
+    assert summary["executions_24h"] == 10 and sum(h["cases"] for h in summary["hourly"]) == 10
     with pytest.raises(auth.AuthError):
         ops.request_update(store, client, {"request_key": "u2", "client_ids": [1], "version": "0.3"})
     with pytest.raises(IssueError):
@@ -199,6 +199,9 @@ def test_summary_uses_unique_cases_and_reports_active_npu_usage(world):
     user = next(u for u in ops.summary(store, admin, "all")["users"] if u["user_id"] == "dev")
     assert user["executions_10m"] == 40
     assert user["npu_used"] == 1 and user["npu_total"] == 2
+    hourly = ops.summary(store, admin, "all")["hourly"]
+    assert sum(bucket["cases"] for bucket in hourly) == 40
+    assert sum(bucket["executions"] for bucket in hourly) == 80
 
 
 def test_admin_can_delete_offline_client_and_heartbeat_restores_it(world):

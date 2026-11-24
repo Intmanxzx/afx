@@ -340,9 +340,10 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
                       "last_execution_at": latest})
     buckets = {}
     for r in conn.execute(
-            "SELECT created_at/3600000 AS hour, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests "
+            "SELECT created_at/3600000 AS hour, COUNT(DISTINCT case_id) AS cases, "
+            "COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests "
             "FROM executions WHERE created_at>=? AND backend<>'cpu' GROUP BY 1", ((hour - 47) * 3_600_000,)):
-        buckets[r["hour"]] = {"hour": r["hour"], "executions": r["executions"], "retests": r["retests"],
+        buckets[r["hour"]] = {"hour": r["hour"], "cases": r["cases"], "executions": r["executions"], "retests": r["retests"],
                               "uploads": 0, "upload_errors": 0}
     for r in conn.execute("SELECT hour, SUM(uploads) AS uploads, SUM(upload_errors) AS upload_errors FROM metric_rollups "
                           "WHERE hour>? GROUP BY hour", (hour - 48,)):
