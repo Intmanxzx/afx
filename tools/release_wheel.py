@@ -78,6 +78,8 @@ def validate(root, tag, dist):
         raise ValueError('unexpected wheel filename')
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
+        if any(name.startswith('autofusex/fuzz/') for name in names):
+            raise ValueError('wheel contains retired fuzz compatibility package; build from clean sources')
         metadata = [name for name in names if name.endswith('.dist-info/METADATA')]
         if len(metadata) != 1:
             raise ValueError('invalid wheel metadata')

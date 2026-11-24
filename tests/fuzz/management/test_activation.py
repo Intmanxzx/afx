@@ -10,7 +10,7 @@ from autofusex.client import client_updates
 
 def test_staging_failure_preserves_pointer_and_running_tasks(tmp_path, monkeypatch):
     s = Store(tmp_path)
-    s.put('supervisor_protocol', 2)
+    s.put('supervisor_protocol', 3)
     pointer = tmp_path/'active-client.json'
     pointer.write_text(json.dumps({'version':'old','python':sys.executable}))
     before = pointer.read_bytes()
@@ -27,7 +27,9 @@ def test_staging_failure_preserves_pointer_and_running_tasks(tmp_path, monkeypat
     assert s.get('client_switch')['state'] == 'stage_failed'
 
 
-def test_activation_requires_process_identity_heartbeat_and_restoration(tmp_path):
+def test_activation_requires_process_identity_heartbeat_and_restoration(tmp_path, monkeypatch):
+    installed = []
+    monkeypatch.setattr('autofusex.client.activation.install_release', installed.append)
     s = Store(tmp_path)
     (tmp_path/'client.json').write_text('{"mode":"managed"}')
     switch = dict(target=dict(python='/new/python',version='new'),previous=dict(python='/old/python',version='old'),resume=True)
@@ -43,7 +45,8 @@ def test_activation_requires_process_identity_heartbeat_and_restoration(tmp_path
     s.put('connection', dict(state='ok',time=0))
     assert not ready(s,switch,status)
     finish(s,switch,False)
-    assert json.loads((tmp_path/'active-client.json').read_text()) == switch['previous']
+    assert installed == [switch['target'], switch['previous']]
+    assert not (tmp_path/'active-client.json').exists()
     assert s.get('client_switch')['state']=='rolled_back'
 
 
@@ -52,43 +55,27 @@ def test_old_launcher_requires_explicit_migration(tmp_path):
         client_updates.install(Store(tmp_path),{'version':'0.2.2.6'}, {})
 
 
-def test_supervisor_switches_real_process_and_rolls_back_failed_boot(tmp_path):
+def test_supervisor_ignores_old_installation_pointers(tmp_path):
     import subprocess
     from autofusex.client.daemon import request
-    s=Store(tmp_path)
-    child=subprocess.Popen([sys.executable,'-m','autofusex.client','daemon','supervise','--data-dir',str(tmp_path)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-    def wait_for(fn):
-        deadline=time.monotonic()+20
-        while time.monotonic()<deadline:
-            try:
-                value=fn()
-                if value:return value
-            except (OSError,ValueError):pass
-            time.sleep(.05)
-        raise AssertionError('supervisor transition timed out')
+    s = Store(tmp_path)
+    (tmp_path/'active-client.json').write_text(json.dumps({'python':'/missing/old/python'}))
+    s.put('active_tool', 'obsolete')
+    child = subprocess.Popen([sys.executable, '-m', 'autofusex.client', 'daemon', 'supervise',
+                              '--data-dir', str(tmp_path)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
-        before=wait_for(lambda:request(tmp_path,{'action':'status'}))
-        assert before['pid']!=child.pid
-        import importlib.metadata
-        target=dict(python=sys.executable,version=importlib.metadata.version('autofusex'))
-        op=s.submit('client.update',{'version':target['version']},'switch')
-        s.state(op['id'],'activating')
-        s.put('client_switch',dict(state='requested',target=target,previous=target,resume=False,operation_id=op['id']))
-        wait_for(lambda:s.get('client_switch',{}).get('state')=='succeeded')
-        after=request(tmp_path,{'action':'status'})
-        assert after['pid']!=before['pid']
-        assert s.operation(op['id'])['state']=='succeeded'
-        s.put('client_switch',dict(state='requested',target=dict(python='/usr/bin/false',version='bad'),previous=target,resume=False))
-        wait_for(lambda:s.get('client_switch',{}).get('state')=='rolled_back')
-        restored=wait_for(lambda:request(tmp_path,{'action':'status'}))
-        assert restored['agent_python']==sys.executable
-        request(tmp_path,{'action':'shutdown'})
-        assert child.wait(timeout=10)==0
+        for _ in range(100):
+            try:
+                status = request(tmp_path, {'action':'status'})
+                break
+            except OSError: time.sleep(.1)
+        else: raise AssertionError('supervisor did not start')
+        assert status['agent_python'] == sys.executable
+        assert s.get('supervisor_protocol') == 3
+        request(tmp_path, {'action':'shutdown'})
+        assert child.wait(timeout=10) == 0
     finally:
-        if child.poll() is None:
-            try:request(tmp_path,{'action':'shutdown'})
-            except (OSError,ValueError):pass
-            child.wait(timeout=10)
+        if child.poll() is None: child.terminate(); child.wait(timeout=10)
 
 
 def test_local_stop_keeps_control_process_available(tmp_path):

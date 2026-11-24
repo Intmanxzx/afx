@@ -80,17 +80,6 @@ def _build_parser() -> argparse.ArgumentParser:
     action(daemon, "status", "Show local daemon, connection, operation, and task status.")
     action(daemon, "stop", "Stop the manager only when no operation or task is active.")
 
-    device = group("device", "Enroll, pair, inspect, or revoke a managed device.")
-    action(device, "enroll", "Enroll with an administrator token read from stdin; the token is never an argument.", options=[
-        lambda p: p.add_argument("--token-stdin", action="store_true", required=True),
-        lambda p: p.add_argument("--endpoint", default="https://autofuse.online"),
-        lambda p: p.add_argument("--name", default=__import__("socket").gethostname()[:80])])
-    action(device, "pair", "Start browser pairing for this local device.", options=[
-        lambda p: p.add_argument("--endpoint", default="https://autofuse.online"),
-        lambda p: p.add_argument("--name", default=__import__("socket").gethostname()[:80])])
-    action(device, "status", "Show this device's local pairing and capability status.")
-    action(device, "revoke", "Revoke this device on the service; requires a paired device.")
-
     environment = group("environment", "Inspect and prepare isolated CANN/Python execution environments.")
     action(environment, "inspect", "Detect Python, architecture, and locally installed managed environments.")
     action(environment, "list", "List locally managed environments.")
@@ -191,7 +180,16 @@ def _wait(home, operation_id, timeout):
         raise ValueError("--timeout must be positive")
     started = time.monotonic()
     while True:
-        result = request(home, dict(action="operation", id=operation_id))
+        try:
+            result = request(home, dict(action="operation", id=operation_id))
+        except OSError:
+            # The supervisor owns the update while the daemon is stopped.
+            from autofusex.client.store import Store
+            store = Store(home)
+            result = store.operation(operation_id)
+            switch = store.get('client_switch', {})
+            if switch.get('operation_id') != operation_id or switch.get('state') not in {'requested','activating','succeeded','rolled_back'}:
+                raise
         if result["state"] in TERMINAL:
             return result
         if time.monotonic() - started >= timeout:
@@ -237,6 +235,9 @@ def _run(args):
         if action == "start":
             try:
                 result = request(home, dict(action="status"))
+                from autofusex.client.store import Store
+                if Store(home).get('supervisor_protocol') != 3 or result.get('agent_python') != sys.executable:
+                    raise RuntimeError('stop the existing client and supervisor before starting this installation')
             except (OSError, ValueError):
                 log = (home / "manager-start.log").open("ab")
                 try:
@@ -256,21 +257,9 @@ def _run(args):
         if action == "status": return request(home, dict(action="status"))
         if action == "stop": return request(home, dict(action="shutdown"))
 
-    if group == "device":
-        if action == "enroll":
-            token = sys.stdin.readline(258).strip()
-            if not 20 <= len(token) <= 256: raise ValueError("invalid registration token")
-            return request(home, dict(action="enroll", endpoint=args.endpoint, name=args.name, token=token))
-        if action == "pair": return request(home, dict(action="pair", endpoint=args.endpoint, name=args.name))
-        if action == "status": return request(home, dict(action="status"))
-        if action == "revoke": return request(home, dict(action="revoke"))
-
     if group == "client":
         if action == "status":
             result = request(home, dict(action="status"))
-            active = home / 'active-client.json'
-            if active.exists():
-                result['active_client'] = json.loads(active.read_text())
             return result
         if action == "update":
             payload = dict(version=args.version, package='autofusex')

@@ -53,6 +53,8 @@ def tick(manager):
     env = os.environ.copy()
     env.pop('PYTHONPATH', None)
     env.update(manifest['env'])
+    from autofusex.client.installation import execution_env
+    env = execution_env(env)
     env['AUTOFUSEX_HOME'] = str(store.home)
     env['AFX_TASK_HOME'] = str(store.home)
     with (retest_dir / 'runner.log').open('ab') as log:

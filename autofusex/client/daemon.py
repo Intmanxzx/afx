@@ -12,30 +12,10 @@ import subprocess
 import threading
 import time
 import hashlib
-from urllib.request import Request, build_opener, HTTPRedirectHandler
-from urllib.parse import urlsplit
 
 from autofusex.contracts.configuration import canonical, quantity
-from autofusex.client.store import Store, TERMINAL
+from autofusex.client.store import Store
 from autofusex.client.operations import validate_operation, execute
-
-
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self,*args,**kwargs):
-        raise ValueError('control endpoint redirects are forbidden')
-
-
-def remote(endpoint,route,payload,token=None):
-    parsed=urlsplit(endpoint)
-    if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError('server endpoint must be credential-free HTTPS')
-    headers={'Content-Type':'application/json'}
-    if token: headers['Authorization']='Bearer '+token
-    request=Request(endpoint.rstrip('/')+'/api/manage/'+route,canonical(payload).encode(),headers=headers)
-    with build_opener(NoRedirect).open(request,timeout=15) as response:
-        raw=response.read(65537)
-    if len(raw)>65536: raise ValueError('oversized server response')
-    return json.loads(raw)
 
 
 from autofusex.contracts.ipc import _socket_path, request
@@ -87,23 +67,6 @@ class Manager:
         if action=='operation': return self.store.operation(body['id'])
         if action=='events': return self.store.events(body['id'],int(body.get('after',0)))
         if action=='query': return self.query(body.get('query'), body.get('value'))
-        if action=='revoke':
-            credential=self.store.get('credential')
-            if not credential: raise ValueError('device is not paired')
-            result=remote(credential['endpoint'],'revoke',{},credential['token'])
-            self.store.put('credential',None)
-            return dict(result,local_credential='removed')
-        if action=='pair':
-            if not body.get('endpoint','').startswith('https://'):
-                raise ValueError('pair endpoint must use HTTPS')
-            result=remote(body['endpoint'],'pair',dict(name=body['name']))
-            self.store.put('pairing',dict(endpoint=body['endpoint'],**result))
-            return {k:v for k,v in result.items() if k!='secret'}
-        if action=='enroll':
-            result=remote(body['endpoint'],'enroll',dict(name=body['name'],token=body['token']))
-            self.store.put('credential',dict(endpoint=body['endpoint'],device_id=result['device_id'],token=result['token']))
-            self.store.put('pairing',None)
-            return dict(device_id=result['device_id'],state='paired')
         raise ValueError('unknown local action')
 
     def query(self, query, value=None):
@@ -161,7 +124,7 @@ class Manager:
                     run['result_count']=results.execute('SELECT count(*) FROM attempts').fetchone()[0]
             except sqlite3.Error:
                 pass
-        return dict(protocol=1, pid=os.getpid(), agent_python=os.sys.executable, agent_version=__import__('importlib.metadata', fromlist=['version']).version('autofusex'), paired=bool(self.store.get('credential')),config=self.store.get('config_state',{}),
+        return dict(protocol=1, pid=os.getpid(), agent_python=os.sys.executable, agent_version=__import__('importlib.metadata', fromlist=['version']).version('autofusex'), paired=False,config=self.store.get('config_state',{}),
                     active_operation=self.active[0] if self.active else None,runs=runs,environments=environments)
 
     def tick(self):
@@ -224,41 +187,6 @@ class Manager:
             if client.get('mode')=='managed':
                 from autofusex.client.platform_sync import synchronize
                 return synchronize(self, client)
-        pairing=self.store.get('pairing');credential=self.store.get('credential')
-        if pairing and not credential:
-            result=remote(pairing['endpoint'],'exchange',dict(id=pairing['id'],secret=pairing['secret']))
-            if result['state']=='paired':
-                credential=dict(endpoint=pairing['endpoint'],device_id=result['device_id'],token=result['token'])
-                self.store.put('credential',credential);self.store.put('pairing',None)
-        if not credential: return
-        # Persisted mapping/outbox survives lost acknowledgements and restart.
-        mappings=self.store.get('remote_operations',{})
-        for identity,mapping in list(mappings.items()):
-            operation=self.store.operation(identity)
-            if operation['state'] not in TERMINAL: continue
-            result=operation['result']
-            # Never upload credentials, host environment, full specs or arbitrary installer output.
-            allowed={'id','plan_id','run_id','state','hash','config_hash','applied','scope','existing_tasks_unchanged','code','message','build_id','verification','npu_verified','release_id','epoch','python','architecture','environments'}
-            safe={k:v for k,v in (result or {}).items() if k in allowed}
-            remote(credential['endpoint'],'ack',dict(id=identity,generation=mapping['generation'],state=operation['state'],result=safe),credential['token'])
-            del mappings[identity];self.store.put('remote_operations',mappings)
-        from autofusex.client.uploads import upload_runs
-        upload_runs(self.store,credential)
-        response=remote(credential['endpoint'],'poll',dict(status=self.snapshot()),credential['token'])
-        revision=response['revision'];state=self.store.get('config_state',{})
-        if revision and revision!=state.get('revision'):
-            operation=self.store.submit('config.apply',validate_operation('config.apply',response['config']),'remote-config:'+str(revision))
-            self.store.put('config_state',dict(revision=revision,state='received',operation_id=operation['id']))
-        state=self.store.get('config_state',{})
-        if state.get('operation_id'):
-            operation=self.store.operation(state['operation_id'])
-            state['state']='applied' if operation['state']=='succeeded' else 'rejected' if operation['state'] in TERMINAL else operation['state']
-            self.store.put('config_state',state)
-        for item in response['operations']:
-            if item['expires']<time.time(): continue
-            self.store.submit(item['kind'],validate_operation(item['kind'],item['payload']), 'remote:'+item['id'],item['id'])
-            mappings[item['id']]=dict(generation=item['generation'])
-        self.store.put('remote_operations',mappings)
 
     def run(self):
         store=self.store

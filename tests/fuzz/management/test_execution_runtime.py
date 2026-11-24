@@ -22,4 +22,6 @@ def test_facts_uses_registered_pythonpath_not_control_path(tmp_path, monkeypatch
     with store.connect() as db:
         db.execute("UPDATE environments SET manifest=?", (json.dumps(manifest),))
     execution_runtime.facts(store)
-    assert seen == ['/selected-cann/python', None]
+    from autofusex.client.installation import execution_env
+    root = execution_env({})['PYTHONPATH']
+    assert seen == [root + ':/selected-cann/python', root]
