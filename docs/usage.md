@@ -1,5 +1,7 @@
 # 使用与执行阶段
 
+全部公开 CLI 命令和参数索引见 [CLI 命令汇总](cli.md)。
+
 本文记录 `afx` 的完整使用方式，以及 CPU、NPU eager 和 NPU Autofuse 三条执行路径分别使用的图和数据。根目录 [README.md](../README.md) 只保留快速上手内容。
 
 ## 环境要求

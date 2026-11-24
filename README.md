@@ -73,6 +73,7 @@ afx replay SEED --dump     # 重放指定 seed 并开启编译调试 dump
 
 | 文档 | 内容 |
 |---|---|
+| [CLI 命令汇总](docs/cli.md) | 全部公开命令、子命令、用途与参数索引 |
 | [申请加入与用户管理](docs/user_registration.md) | 申请、审核、领取 token 和账号管理 |
 | [客户端使用说明](docs/client/configuration.md) | 初始化、设备选择、配置、重放与更新 |
 | [客户端升级](docs/client/upgrade.md) | 单安装更新、回退与旧安装接入 |
