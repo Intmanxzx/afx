@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import json
 import inspect
 import socket
 import threading
@@ -214,6 +215,19 @@ def create_app(store: Store) -> FastAPI:
                         raise HTTPError(411, 'length_required', 'Content-Length is required')
                     if request.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
                         raise HTTPError(415, 'unsupported_media_type', 'Content-Type must be application/json')
+            from autofusex.server.client_access import allowed, protected, read as access_policy
+            if protected(path, request.method):
+                try:
+                    policy = access_policy(store.dir)
+                    if not policy['enabled']:
+                        admitted = True
+                    else:
+                        body = json.loads(raw) if raw else {}
+                        admitted = allowed(store, principal, path, request.method, body if isinstance(body, dict) else {}, policy)
+                except (ValueError, OSError, TypeError, AttributeError):
+                    admitted = False
+                if not admitted:
+                    raise HTTPError(503, 'client_paused', 'Client admission is temporarily restricted', {'Retry-After': '60'})
             response = await call_next(request)
         except HTTPError as exc:
             response = JSONResponse(_error(exc.code, str(exc)), exc.status, headers=exc.headers)

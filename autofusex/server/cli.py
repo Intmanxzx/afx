@@ -42,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     restore = sub.add_parser("restore", help="restore an archive into the empty --data directory")
     restore.add_argument("archive")
     restore.add_argument("--content-from", help="full archive supplying content.db for a core-only archive")
+    access = sub.add_parser('client-access', help='show or atomically apply client admission policy before startup')
+    access.add_argument('action', choices=('show', 'apply'))
+    access.add_argument('file', nargs='?')
     return parser
 
 
@@ -50,6 +53,18 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if not args.data:
         parser.error("--data is required for server commands")
+    if args.command == 'client-access':
+        from autofusex.server import client_access
+        try:
+            if args.action == 'apply':
+                if not args.file: parser.error('client-access apply requires FILE')
+                from pathlib import Path
+                client_access.write(args.data, json.loads(Path(args.file).read_text()))
+            print(json.dumps(client_access.read(args.data), indent=2))
+            return 0
+        except (ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     if args.command in ("backup", "verify-backup", "restore"):
         # Never open (and so never create or migrate) the data directory here.
         from autofusex.server import backup as backups
