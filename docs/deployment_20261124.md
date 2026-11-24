@@ -27,3 +27,15 @@
 yuhu 试点通过后分两批放行：shuer（0.2.4）、zhixiong（0.2.4.1），随后 wenfu、yunpeng（均 0.2.4.1）。五台均恢复心跳；观察窗口内 shuer 新增 294 条、zhixiong 44 条、yunpeng 279 条执行入库。wenfu 状态 stopped，没有新结果，未替用户启动任务；zhixiong 补传后也是 stopped。yuhu 持续上报。
 
 确认五台心跳均在 120 秒内后，将 client-access.json 设置 enabled=false、clients=[]，恢复正常认证接入。恢复前五客户端策略留存于 /srv/afx-platform/backups/rollout-five-client-policy.json。服务 active，NRestarts=0，公网 healthz 正常。客户端未统一升级或重启。
+
+## 0.2.5 客户端候选包试点
+
+在 mlir 上通过旧版 0.2.4.1 的 client.update 操作安装本地候选 wheel，没有发布 PyPI、打发布标签或升级其他客户端。候选 SHA256：adfd3f5e24dab1c7c757e181e9b9499db4d664ccd1bd98080748c079d77755c5。文件保留在客户端 home/candidate-wheels/0.2.5。
+
+旧升级器会导入 autofusex.fuzz.daemon.runtime，旧 supervisor 会执行 python -m autofusex daemon run；为这两个内部协议保留最小兼容入口，公开 afx help 不暴露 daemon。mlir 隔离环境启动和 IPC 验证通过，候选包运行 5 项 daemon 回归测试全部通过。
+
+升级前私有备份位于 /home/developer/.local/share/autofusex/backups/pre-025-20261124T103323，管理数据库通过 SQLite backup 保存，保留配置和版本指针。操作 aa739397-338b-49e7-b98d-d142b5ede3f1 经 draining、staging、activation 到 succeeded；等待当前 Case 自然结束，没有强杀执行进程。
+
+原 run a511e76b-0dee-4fa1-98b0-c8b6aacd0d45 在新执行环境恢复，控制进程与 worker-version.json 均为 0.2.5，中心 client_id=24 的心跳版本也更新为 0.2.5。排空时结果行数 7044；恢复后抽取 7045–7059 共 15 条结果，按 exec_uuid 在中心逐条匹配，15/15 入库，覆盖 cpu、af-mlir、af-legacy，包括成功和 build_fail。已有 5 条 device busy 本地过滤记录保持不变，没有新增上传拒收。
+
+本次保留旧稳定 supervisor 及 0.2.4.1 环境，没有将稳定层跟随业务客户端一起更换。旧 supervisor 仍能启动旧环境，也能经兼容入口启动 0.2.5。本次验证了升级成功路径，未人为注入故障触发生产回滚；也不代表所有硬件平台的完整验收。正式发布尚未执行。

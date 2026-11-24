@@ -8,9 +8,10 @@ import pytest
 from autofusex.client.daemon import request
 
 
-def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
+@pytest.mark.parametrize('module', ['autofusex.client', 'autofusex'])
+def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path, module):
     home=tmp_path/'home';home.mkdir()
-    child=subprocess.Popen([sys.executable,'-m','autofusex.client','daemon','run','--data-dir',str(home)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    child=subprocess.Popen([sys.executable,'-m',module,'daemon','run','--data-dir',str(home)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     try:
         for _ in range(100):
             if child.poll() is not None:raise AssertionError(child.communicate())
@@ -38,6 +39,16 @@ def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path):
 def test_management_import_is_lightweight():
     script='import sys; import autofusex.client.cli; assert not any(x in sys.modules for x in ("torch","numpy","nnsmith","torch_npu"))'
     subprocess.run([sys.executable,'-c',script],check=True)
+
+
+def test_old_installer_probe_and_private_launch_are_compatible():
+    script = ('import sys; import autofusex.fuzz.daemon.runtime; '
+              'assert not any(x in sys.modules for x in '
+              '("torch","numpy","nnsmith","torch_npu"))')
+    subprocess.run([sys.executable, '-c', script], check=True)
+    help_text = subprocess.check_output(
+        [sys.executable, '-m', 'autofusex', '--help'], text=True)
+    assert 'daemon' not in help_text
 
 
 def test_task_worker_persists_failure_message_and_traceback(tmp_path):
