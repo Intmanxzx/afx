@@ -4,8 +4,7 @@ import sys
 import uuid
 import os
 from autofusex.contracts.configuration import canonical
-from autofusex.client.configuration import load, validate
-from autofusex.execution.resources import resource_inventory
+from autofusex.client.configuration import load
 
 
 _EXECUTION_ENV_KEYS = (
@@ -56,23 +55,5 @@ def start(manager, dump=None):
             if any(value != dump for value in current):
                 raise ValueError('dump mode differs from active task; use afx restart --dump')
         return dict(state='running',run_ids=list(manager.processes))
-    from autofusex.client.artifacts import atomic
-    inventory=resource_inventory(store.home)
-    ceiling=inventory['cpu_worker_ceiling'] or 1
-    resources=dict(allowed_devices=spec['execution']['devices'],max_workers=ceiling,max_compile_threads=ceiling)
-    # Keep an existing trust policy intact. A new local installation derives
-    # execution authority from the local user's editable task specification.
-    if not (store.home/'trust.json').exists():
-        atomic(store.home/'trust.json',dict(resource_limits=resources))
-    store.put('effective_policy',validate(dict(schema_version=1,kind='client_policy',resources=resources)))
-    if spec['execution']['devices'] == ['all']:
-        from autofusex.client.execution_runtime import facts
-        execution = facts(store)
-        devices = execution['inventory']['devices'] if execution else None
-        if not devices:
-            raise ValueError('registered execution environment cannot discover devices')
-        spec['execution']['devices'] = devices
-        resources['allowed_devices'] = devices
-        store.put('effective_policy',validate(dict(schema_version=1,kind='client_policy',resources=resources)))
     from autofusex.client.tasks import start as start_task
     return start_task(store,spec,'local-start:'+str(uuid.uuid4()),manager.processes)

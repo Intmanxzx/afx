@@ -156,12 +156,6 @@ def synchronize(manager, client):
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
     config = effective['config']
-    # A device selected during `afx init --device` is a local operator
-    # override.  Keep the server config for every other field, but never let
-    # a later sync silently replace that explicit local selection.
-    local = json.loads((store.home/'client.json').read_text())
-    if local.get('devices'):
-        config.setdefault('execution', {})['devices'] = local['devices']
     atomic(store.home/'task.json',config)
     store.put('config_state',dict(revision=effective['revision'],source=effective['source']))
     if beat.get('update_to'):

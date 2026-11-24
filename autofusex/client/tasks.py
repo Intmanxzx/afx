@@ -12,20 +12,6 @@ from autofusex.client.configuration import validate
 from autofusex.client.environments import resolve
 
 
-def _expand_devices(devices):
-    """Resolve the user-facing ``all`` device wildcard to logical NPUs.
-
-    Device names in task and policy files are logical ``npu:<index>`` names;
-    physical IDs reported by ``npu-smi`` must not leak into the task ledger.
-    """
-    values = list(dict.fromkeys(devices or []))
-    if "all" not in values:
-        return values
-    from autofusex.execution.scheduling.devices import select_devices
-    discovered = select_devices(None)
-    return list(dict.fromkeys([value for value in values if value != "all"] + discovered))
-
-
 def prepare(store, spec):
     spec=validate(spec)
     if spec['kind'] not in {'fuzz_task', 'imported_task', 'model_task'}: raise ValueError('task required')
@@ -33,32 +19,14 @@ def prepare(store, spec):
         from autofusex.workloads.imported.registry import inspect
         inspect(store.home, spec['workload']['case_key'], spec['workload']['revision'])
     manifest=resolve(store,spec['environment'])
-    from autofusex.client.artifacts import trusted
-    local=trusted(store.home).get('resource_limits',{})
-    policy=store.get('effective_policy',validate(dict(schema_version=1,kind='client_policy')))
-    limits=policy['resources']; requested=spec['execution']['resources']
-    local_devices = local.get('allowed_devices', [])
-    if 'all' in local_devices and spec['execution']['devices'] != ['all']:
-        from autofusex.client.execution_runtime import facts
-        observed = facts(store)
-        local_allowed = observed['inventory']['devices'] if observed else _expand_devices(local_devices)
-        if local_allowed is None: raise ValueError('execution inventory unavailable')
-    else:
-        local_allowed = _expand_devices(local_devices)
-    policy_allowed = _expand_devices(limits.get('allowed_devices', []))
+    requested=spec['execution']['resources']
     if spec['execution']['devices'] == ['all']:
-        available = local_allowed or policy_allowed
-        if not available:
-            raise PermissionError('no authorized NPU devices available')
-        spec['execution']['devices'] = list(available)
-    if any(backend!='cpu' for backend in spec['execution']['backends']) and not set(spec['execution']['devices']).issubset(local_allowed):
-        raise PermissionError('NPU execution requires explicit local device authorization')
-    if not set(spec['execution']['devices']).issubset(policy_allowed):
-        raise PermissionError('task requests devices outside local policy')
-    for name, cap in [('workers','max_workers'),('compile_threads','max_compile_threads')]:
-        if requested.get(name,1)>limits[cap]: raise ValueError(name+' exceeds device limit')
-    if requested.get('memory_budget') and limits.get('memory_budget') and quantity(requested['memory_budget'])>quantity(limits['memory_budget']):
-        raise ValueError('task memory exceeds device limit')
+        from autofusex.client.execution_runtime import facts
+        observed = facts(store, manifest['id'])
+        devices = observed['inventory']['devices'] if observed else None
+        if not devices:
+            raise ValueError('execution environment cannot discover NPU devices')
+        spec['execution']['devices'] = list(dict.fromkeys(devices))
     client_path=store.home/'client.json'
     platform_client=json.loads(client_path.read_text()) if client_path.exists() else {}
     if spec['results']['upload'] and not store.get('credential') and platform_client.get('mode')!='managed':
@@ -67,15 +35,21 @@ def prepare(store, spec):
         from autofusex.execution.resources import npu_resource_plan
         from autofusex.execution.scheduling.budgets import Budget
         device_count=len(spec['execution']['devices']) if any(b!='cpu' for b in spec['execution']['backends']) else 0
-        configured_memory=requested.get('memory_budget') or limits.get('memory_budget')
+        configured_memory=requested.get('memory_budget')
         plan=npu_resource_plan(store.home,device_count,Budget(memory_budget_bytes=int(quantity(configured_memory)) if configured_memory else None))
         if plan['budget_limits'].get('memory_budget_bytes'):
             requested['memory_budget']=str(plan['budget_limits']['memory_budget_bytes'])+'B'
         defaults=plan['selected']
-        requested.update(workers=min(defaults['cpu_workers'],limits['max_workers'],local.get('max_workers',1)),
-                         compile_threads=min(defaults['compile_threads'],limits['max_compile_threads'],local.get('max_compile_threads',1)))
-    for name, cap in [('workers','max_workers'),('compile_threads','max_compile_threads')]:
-        if requested.get(name,1)>local.get(cap,1): raise PermissionError('task exceeds local resource authorization')
+        requested.update(workers=defaults['cpu_workers'], compile_threads=defaults['compile_threads'])
+    else:
+        requested.setdefault('workers', 1)
+        requested.setdefault('compile_threads', 1)
+    # Freeze this task's resolved budget, independently of persistent policy.
+    resources = dict(allowed_devices=spec['execution']['devices'],
+                     max_workers=requested['workers'], max_compile_threads=requested['compile_threads'])
+    if requested.get('memory_budget'):
+        resources['memory_budget'] = requested['memory_budget']
+    policy=validate(dict(schema_version=1,kind='client_policy',resources=resources))
     spec['environment']=manifest['id']
     return dict(spec=spec,environment=manifest,policy=policy,hash=fingerprint(spec))
 

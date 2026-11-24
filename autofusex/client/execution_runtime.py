@@ -4,9 +4,9 @@ import os
 import subprocess
 
 
-def facts(store):
+def facts(store, environment='local'):
     with store.connect() as db:
-        row=db.execute("SELECT manifest FROM environments WHERE id='local' AND state='ready'").fetchone()
+        row=db.execute("SELECT manifest FROM environments WHERE id=? AND state='ready'", (environment,)).fetchone()
     if not row:
         return None
     manifest=json.loads(row['manifest'])

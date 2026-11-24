@@ -37,7 +37,7 @@ Fuzz 是 AFX 的自动泛化工作负载，生成逻辑和阶段队列位于 `au
 
 共享进程池受 CPU、内存、缓存与设备预算限制。物理 NPU 通过 UUID 锁独占，CPU 与不同卡可并行。worker 按后端、设备和编译参数隔离并有界复用，默认最多 16 个任务，失败或资源增长会触发回收。
 
-直接 fuzz run 的自动资源策略在启动时按有效 CPU、RAM 和设备数计算，编译并发起点上限为 8，workers × compile_threads 不超过有效 CPU；这是启发式，不是在线最优调参。托管任务还受 trust 和 client policy 上限约束；普通 init/start 会根据当前环境准备基础资源授权，实际设备与并发以任务冻结配置及本机授权为准。
+自动资源策略在启动时按有效 CPU、RAM 和设备数计算，编译并发起点上限为 8，workers × compile_threads 不超过有效 CPU；这是启发式，不是在线最优调参。托管任务使用平台拉取的设备和资源配置，all 在所选执行环境中展开为可见设备；手动资源策略使用配置中的并发值。每次启动冻结本次任务的配置，不读取 trust 或旧 client policy 的设备、资源上限；运行时保留资源可用性检查和设备锁。
 
 精度以 CPU 为准，浮点容差由 [compare.py](../../autofusex/execution/compare.py) 按 dtype 决定，整数/布尔精确比较；NaN 不通过，同符号 Inf 可通过。CPU 不与自身比较。精度失败直接保留，不自动追加 eager-npu 复核；人工 replay 产生独立记录。
 

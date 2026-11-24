@@ -10,7 +10,7 @@ afx init
 afx start
 ```
 
-`init` 只需一次；`start` 自动启动 daemon，登记当前 Python 环境并准备基础资源授权，无需手工编写 trust 或 environment 文件。初始化不会安装 Torch/CANN，也不代表已通过完整 NPU 执行验证。默认持续生成、使用全部可见 NPU、自动计算资源并保存结果，性能测量关闭。
+`init` 只需一次；`start` 自动启动 daemon 并登记当前 Python 环境，无需手工编写 trust 或 environment 文件。初始化不会安装 Torch/CANN，也不代表已通过完整 NPU 执行验证。默认持续生成、使用全部可见 NPU、自动计算资源并保存结果，性能测量关闭。
 
 日常控制：
 
@@ -29,7 +29,7 @@ afx start
 
 token 由管理员发放，`--endpoint` 默认就是上述地址，可以省略。带 token 时 daemon 自动发送心跳、同步配置，并按 `results.upload` 上传结果，无需另起上传进程。平台默认任务启用保存与上传，个人或管理员配置可覆盖这些选项。
 
-需要限定设备时，在首次初始化命令中增加 `--device npu:0`，多卡可重复指定，如 `afx init --device npu:0 --device npu:1`。显式选择的设备会覆盖平台配置中的设备列表。以上初始化方式按需选一个；已初始化的目录再次 `init` 会报错，不会覆盖身份或切换模式。
+托管模式的设备和其他任务参数以平台拉取的配置为准。修改个人配置后，从页面触发 restart，客户端会停止旧任务，再按新配置启动；无需另行 stop/start。本地模式可以在首次初始化时使用 `--device npu:0`，多卡可重复指定，后续通过 `afx config edit` 修改任务配置。以上初始化方式按需选一个；已初始化的目录再次 `init` 会报错，不会覆盖身份或切换模式。
 
 不带 token 的客户端不进行心跳、配置同步或结果上传。配置和结果位于客户端数据目录。测试请始终指定独立的 --data-dir；此选项不会修改全局默认目录指针。
 
@@ -46,7 +46,7 @@ afx config edit task.yaml
 
 数据目录可用 `AUTOFUSEX_HOME` 或命令末尾的 `--data-dir DIR` 指定，以 `init` 返回的 `home` 为准。指定独立目录时，每条命令都需保持一致，例如 `afx init --data-dir /path/to/afx-client`、`afx start --data-dir /path/to/afx-client`。托管任务结果分别保存在 `runs/RUN_ID/results.sqlite`，可用 `afx task list`、`afx task results RUN_ID` 查询。
 
-资源由客户端根据设备数量、有效 CPU 和内存计算，仍受本机资源授权上限约束。本地模式关闭上传，带 token 时以上述平台配置为准。
+自动资源策略由客户端根据设备数量、有效 CPU 和内存计算；手动策略使用任务配置中的 workers、compile_threads 和 memory_budget。普通任务与复测不创建或校验 trust.json，也不受旧设备、资源授权限制；运行时仍检查资源可用性并使用设备锁。本地模式关闭上传，带 token 时以上述平台配置为准。
 
 ## Replay
 

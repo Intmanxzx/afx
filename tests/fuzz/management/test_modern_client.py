@@ -14,12 +14,30 @@ def test_init_is_isolated_and_local_even_with_endpoint(tmp_path, monkeypatch):
     assert json.loads((tmp_path/'client/task.json').read_text())['results']['upload'] is False
 
 
-def test_init_device_is_persisted_as_local_override(tmp_path):
+def test_init_device_sets_initial_local_task(tmp_path):
     run(['--data-dir', str(tmp_path/'client'), 'init', '--local', '--device', 'npu:1', '--device', 'npu:0'])
     client = json.loads((tmp_path/'client/client.json').read_text())
     task = json.loads((tmp_path/'client/task.json').read_text())
     assert client['devices'] == ['npu:1', 'npu:0']
     assert task['execution']['devices'] == ['npu:1', 'npu:0']
+
+
+def test_managed_start_uses_fetched_configuration(tmp_path, monkeypatch):
+    from autofusex.client import modern_cli, daemon
+    from autofusex.client.platform_transport import API
+    prefix = ['--data-dir', str(tmp_path/'client')]
+    run([*prefix, 'init', '--token', 'fixture', '--device', 'npu:0'])
+    config = modern_cli._default_task()
+    config['execution']['devices'] = ['npu:1']
+    config['execution']['resources'] = dict(policy='manual', workers=2, compile_threads=3)
+    monkeypatch.setattr(API, 'call', lambda *args: {'config': config})
+    monkeypatch.setattr(modern_cli, '_legacy', lambda *args: {})
+    def request(home, body):
+        assert body == {'action': 'start_session'}
+        assert json.loads((home/'task.json').read_text()) == config
+        return {'state': 'preparing'}
+    monkeypatch.setattr(daemon, 'request', request)
+    assert run([*prefix, 'start']) == {'state': 'preparing'}
 
 
 def test_replay_priority_survives_restart_and_is_fifo(tmp_path):
