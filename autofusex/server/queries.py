@@ -211,6 +211,8 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
             "LIMIT ?", (cid, MAX_EXECUTIONS_PER_CASE + 1))]
         heads = {row[0] for row in conn.execute("SELECT exec_id FROM execution_heads WHERE case_id=?", (cid,))}
         for execution in executions:
+            from autofusex.server.plog_summary import attach
+            attach(conn, execution)
             execution["is_head"] = execution["exec_id"] in heads
             execution["stale_graph"] = execution["case_revision"] != case["case_revision"]
         groups.append({"case": case, "executions": executions[:MAX_EXECUTIONS_PER_CASE],
@@ -264,6 +266,8 @@ def case_history(store: Store, case_key: str, *, after=None, limit: int = 50) ->
         (case["case_id"], after if after is not None else 1 << 62, limit))]
     heads = {r[0] for r in conn.execute("SELECT exec_id FROM execution_heads WHERE case_id=?", (case["case_id"],))}
     for row in rows:
+        from autofusex.server.plog_summary import attach
+        attach(conn, row)
         row["is_head"] = row["exec_id"] in heads
         row["stale_graph"] = row["case_revision"] != case["case_revision"]
     total = conn.execute("SELECT COUNT(*) FROM executions WHERE case_id=?", (case["case_id"],)).fetchone()[0]
