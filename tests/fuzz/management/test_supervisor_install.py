@@ -7,7 +7,7 @@ from autofusex.client.supervisor.install import ensure
 
 def test_bundle_is_independent_and_not_replaced(tmp_path):
     command = ensure(tmp_path)
-    bundle = tmp_path / 'supervisor/v1'
+    bundle = tmp_path / 'supervisor/v2'
     source = bundle / 'autofusex/client/supervisor/__init__.py'
     original = source.read_bytes()
     source.write_bytes(original + b'\n# installed revision\n')
@@ -20,4 +20,4 @@ def test_bundle_is_independent_and_not_replaced(tmp_path):
         'assert "yaml" not in sys.modules; print("ready")', str(bundle)], capture_output=True, text=True)
     assert probe.returncode == 0, probe.stderr
     assert probe.stdout.strip() == 'ready'
-    assert json.loads((bundle / 'ready.json').read_text())['protocol'] == 2
+    assert json.loads((bundle / 'ready.json').read_text())['protocol'] == 3

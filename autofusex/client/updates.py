@@ -47,11 +47,9 @@ def stage(store,envelope,operation_id):
         requirements.append(f"{item['name']}=={item['version']} --hash=sha256:{item['sha256']}")
     if not any(item['name'].replace('-','_')=='autofusex' for item in manifest['wheels']):raise ValueError('tool wheel missing')
     lock=directory/'requirements.lock';lock.write_text('\n'.join(requirements)+'\n')
-    command([sys.executable,'-m','venv',str(directory/'venv')])
-    python=directory/'venv/bin/python'
-    command([str(python),'-m','pip','install','--no-index','--find-links',str(wheels),'--require-hashes','-r',str(lock)],timeout=1800)
-    command([str(python),'-c','import autofusex.client.daemon; import autofusex.client.central'])
-    atomic(directory/'ready.json',dict(envelope=envelope,python=str(python),id=identity))
+    command([sys.executable,'-m','pip','install','--dry-run','--ignore-installed','--no-index',
+             '--find-links',str(wheels),'--require-hashes','-r',str(lock)],timeout=1800)
+    atomic(directory/'ready.json',dict(envelope=envelope,id=identity))
     store.event(operation_id,'Signed tool release staged; activation requires managed launcher and idle device')
     return dict(release_id=identity,state='staged')
 
@@ -64,6 +62,12 @@ def activate(store,release_id,processes):
     value=json.loads(path.read_text())
     verify_manifest(store.home,value['envelope'])
     if value['id']!=release_id:raise ValueError('release identity mismatch')
-    previous=store.get('active_tool')
-    store.put('tool_switch',dict(target=release_id,previous=previous,state='requested'))
+    if store.get('supervisor_protocol') != 3: raise ValueError('restart with the single-install supervisor')
+    from autofusex.client.client_updates import stage
+    version=next(w['version'] for w in value['envelope']['manifest']['wheels'] if w['name'].replace('-','_')=='autofusex')
+    from autofusex.client.artifacts import sha256
+    for wheel in value['envelope']['manifest']['wheels']:
+        if sha256(path.parent/'wheels'/wheel['filename']) != wheel['sha256']:
+            raise ValueError('staged release wheel changed')
+    stage(store, dict(version=version), processes, target_wheels=path.parent/'wheels')
     return dict(release_id=release_id,state='waiting_launcher')

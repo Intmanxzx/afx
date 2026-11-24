@@ -119,6 +119,8 @@ def start(store,spec,operation_id,processes,resume_run=None):
     env['AFX_TASK_HOME']=str(store.home)
     if manifest['id'] != 'local':
         env.pop('PYTHONPATH',None)
+    from autofusex.client.installation import execution_env
+    env = execution_env(env)
     try:
         # Execution uses its registered environment, never the control venv.
         worker_python = manifest['python']

@@ -11,6 +11,8 @@ def facts(store):
         return None
     manifest=json.loads(row['manifest'])
     env=os.environ.copy();env.pop('PYTHONPATH',None);env.update(manifest['env'])
+    from autofusex.client.installation import execution_env
+    env = execution_env(env)
     script = ('import json,sys; from autofusex.execution.environment import collect; '
               'from autofusex.execution.scheduling.devices import device_inventory_info; '
               'print(json.dumps(dict(environment=collect(sys.argv[1]),inventory=device_inventory_info())))')

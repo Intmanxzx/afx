@@ -12,19 +12,20 @@ def test_quiet_window_restarts_when_descendant_reappears(tmp_path, monkeypatch):
     assert clock[0] == 10
 
 
-def test_activation_restores_execution_environment_on_rollback(tmp_path):
+def test_activation_preserves_execution_environment_on_rollback(tmp_path, monkeypatch):
     import json
     from autofusex.client.activation import select, finish
     store = Store(tmp_path)
     old = dict(id='local', python='/old/python', env={})
-    new = dict(old, python='/new/python')
+    installed=[]
+    monkeypatch.setattr('autofusex.client.activation.install_release', installed.append)
     with store.connect() as db:
         db.execute('INSERT INTO environments VALUES (?,?,?,?)', ('local','local',json.dumps(old),'ready'))
-    switch = dict(previous=dict(python='/old/control'), target=dict(python='/new/control', version='0.2.3',
-        environments=[dict(id='local',previous=old,target=new)]))
+    switch = dict(previous=dict(python='/control',version='old'), target=dict(python='/control', version='new'))
     select(store, switch)
     with store.connect() as db:
-        assert json.loads(db.execute('SELECT manifest FROM environments').fetchone()[0]) == new
+        assert json.loads(db.execute('SELECT manifest FROM environments').fetchone()[0]) == old
     finish(store, switch, False)
+    assert installed == [switch['target'], switch['previous']]
     with store.connect() as db:
         assert json.loads(db.execute('SELECT manifest FROM environments').fetchone()[0]) == old

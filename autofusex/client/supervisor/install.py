@@ -20,7 +20,10 @@ def ensure(home):
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (root / 'install.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        bundle = root / 'v1'
+        # Installing a new launcher must not race a still-running old launcher.
+        with (home/'launcher.lock').open('a') as owner:
+            fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        bundle = root / 'v2'
         if not (bundle / 'ready.json').exists():
             source = Path(__file__).resolve().parents[2]
             stage = Path(tempfile.mkdtemp(prefix='.install-', dir=root))
@@ -32,12 +35,12 @@ def ensure(home):
                     shutil.copyfile(source / name, target)
                 # The frozen package must never import the upgradeable client facade.
                 (package / 'client/__init__.py').write_text('')
-                (stage / 'ready.json').write_text(json.dumps({'protocol': 2, 'python': sys.executable}))
+                (stage / 'ready.json').write_text(json.dumps({'protocol': 3}))
                 os.rename(stage, bundle)
             finally:
                 if stage.exists():
                     shutil.rmtree(stage)
     manifest = json.loads((bundle / 'ready.json').read_text())
-    return [manifest['python'], '-I', '-c',
-            'import sys; sys.path.insert(0, sys.argv[1]); from autofusex.client.supervisor import run; raise SystemExit(run(sys.argv[2]))',
-            str(bundle), str(home)]
+    return [sys.executable, '-I', '-c',
+            'import sys; sys.path.insert(0, sys.argv[1]); from autofusex.client.supervisor import run; raise SystemExit(run(sys.argv[2], sys.argv[3]))',
+            str(bundle), str(home), sys.executable]

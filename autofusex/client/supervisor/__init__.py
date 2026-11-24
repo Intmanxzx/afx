@@ -13,24 +13,16 @@ from autofusex.client.store import Store
 LOG = logging.getLogger('autofusex.supervisor')
 
 
-def run(home):
+def run(home, client_python=None):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
     store=Store(home)
     with (store.home/'launcher.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         store.put('launcher_enabled',True)
-        store.put('supervisor_protocol',2)
+        store.put('supervisor_protocol',3)
         try:
             while True:
-                active=store.get('active_tool')
-                python=sys.executable
-                pointer = store.home / 'active-client.json'
-                if pointer.exists():
-                    python = json.loads(pointer.read_text())['python']
-                if active:
-                    manifest=json.loads((store.home/'tools'/active/'ready.json').read_text())
-                    from autofusex.client.updates import verify_manifest
-                    verify_manifest(store.home,manifest['envelope']);python=manifest['python']
+                python=client_python or sys.executable
                 store.put('normal_shutdown',False)
                 try:
                     LOG.info('daemon.start python=%s', python)
@@ -56,10 +48,6 @@ def run(home):
                     if activation.get('state') == 'activating':
                         from autofusex.client.activation import finish
                         finish(store, activation, False)
-                        continue
-                    switch=store.get('tool_switch')
-                    if switch and switch['state']=='activating':
-                        store.put('active_tool',switch['previous']);switch['state']='rolled_back';store.put('tool_switch',switch)
                         continue
                     raise RuntimeError('management daemon failed local health check')
                 activation = store.get('client_switch', {})
@@ -111,9 +99,6 @@ def run(home):
                         finish(store, activation, False)
                         continue
                     finish(store, activation, True)
-                switch=store.get('tool_switch')
-                if switch and switch['state']=='activating':
-                    switch['state']='active';store.put('tool_switch',switch)
                 switching=False
                 while child.poll() is None:
                     activation = store.get('client_switch', {})
@@ -140,16 +125,12 @@ def run(home):
                             time.sleep(.2)
                             continue
                         child.wait(timeout=30)
-                        select(store, activation)
+                        try:
+                            select(store, activation)
+                        except Exception:
+                            finish(store, activation, False)
                         switching=True
                         break
-                    switch=store.get('tool_switch')
-                    if switch and switch['state']=='requested':
-                        try:request(store.home,dict(action='shutdown'))
-                        except (ValueError,OSError):time.sleep(.2);continue
-                        child.wait(timeout=30)
-                        store.put('active_tool',switch['target']);switch['state']='activating';store.put('tool_switch',switch)
-                        switching=True;break
                     time.sleep(.2)
                 if not switching:
                     if child.returncode == 0 and store.get('normal_shutdown'): return 0

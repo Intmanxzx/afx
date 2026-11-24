@@ -21,7 +21,6 @@ def synchronize(manager, client):
     if not identity:
         raise ValueError('managed client installation configuration is missing')
     store.put('machine_id', identity[:128])
-    active_path=store.home/'active-client.json'
     version=importlib.metadata.version('autofusex')
     from autofusex.execution.scheduling.devices import device_inventory_info
     inventory = device_inventory_info()

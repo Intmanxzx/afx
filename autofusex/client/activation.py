@@ -5,8 +5,7 @@ from autofusex.client.artifacts import atomic
 
 def select(store, switch):
     store.event(switch.get('operation_id'), 'activation.select target=%s python=%s' % (switch['target'].get('version'), switch['target'].get('python')))
-    environments(store, switch, 'target')
-    atomic(store.home / 'active-client.json', switch['target'])
+    install_release(switch['target'])
     switch.update(state='activating', started=time.time())
     store.put('client_switch', switch)
 
@@ -14,8 +13,7 @@ def select(store, switch):
 def finish(store, switch, success):
     switch['state'] = 'succeeded' if success else 'rolled_back'
     if not success:
-        environments(store, switch, 'previous')
-        atomic(store.home / 'active-client.json', switch['previous'])
+        install_release(switch['previous'])
     store.put('client_switch', switch)
     store.event(switch.get('operation_id'), 'activation.finish state=%s version=%s' % (switch['state'], switch['target'].get('version')))
     if switch.get('operation_id'):
@@ -53,9 +51,12 @@ def readiness(store, switch, status):
     return True, 'ready'
 
 
-def environments(store, switch, side):
-    import json
-    with store.connect() as db:
-        for item in switch['target'].get('environments', []):
-            db.execute('UPDATE environments SET manifest=? WHERE id=?', (json.dumps(item[side]), item['id']))
-    store.put('execution_facts', {})
+def install_release(release):
+    import subprocess
+    subprocess.run([release['python'], '-m', 'pip', 'install', '--no-index',
+        '--find-links', release['wheels'], '--force-reinstall',
+        'autofusex==' + release['version']], check=True, timeout=1800)
+    actual = subprocess.check_output([release['python'], '-I', '-c',
+        'import autofusex.client.daemon, importlib.metadata; print(importlib.metadata.version("autofusex"))'],
+        text=True, timeout=60).strip()
+    if actual != release['version']: raise ValueError('installed version mismatch')

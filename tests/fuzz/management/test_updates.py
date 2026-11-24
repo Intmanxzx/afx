@@ -52,40 +52,20 @@ def test_untrusted_key_and_idle_gate(tmp_path):
     with pytest.raises(ValueError):activate(store,'0'*64,{'run':object()})
 
 
-def test_launcher_failed_release_rolls_back_without_database_restore(tmp_path):
-    import json
-    import os
-    from pathlib import Path
-    import subprocess
-    import sys
-    import time
-    from autofusex.client.daemon import request
-    home=tmp_path/'home';store=Store(home)
-    envelope=signed(home)
-    identity='a'*64;directory=home/'tools'/identity;directory.mkdir(parents=True)
-    broken=directory/'broken-python';broken.write_text('#!/bin/sh\nexit 42\n');broken.chmod(0o700)
-    atomic(directory/'ready.json',dict(id=identity,envelope=envelope,python=str(broken)))
-    child=subprocess.Popen([sys.executable,'-m','autofusex.client','daemon','supervise','--data-dir',str(home)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-    try:
-        for _ in range(100):
-            try:request(home,dict(action='status'));break
-            except OSError:time.sleep(.05)
-        else:raise AssertionError('launcher did not start')
-        store.put('preserve-test',dict(identity='same',outbox=['pending-result']))
-        assert activate(store,identity,{})['state']=='waiting_launcher'
-        for _ in range(200):
-            switch=store.get('tool_switch')
-            if switch and switch['state']=='rolled_back':
-                try:request(home,dict(action='status'));break
-                except OSError:pass
-            if child.poll() is not None:raise AssertionError(child.communicate())
-            time.sleep(.05)
-        else:raise AssertionError('rollback not observed')
-        assert store.get('active_tool') is None
-        assert store.get('preserve-test')['outbox']==['pending-result']
-        request(home,dict(action='shutdown'));assert child.wait(timeout=10)==0
-    finally:
-        if child.poll() is None:
-            try:request(home,dict(action='shutdown'))
-            except (ValueError,OSError):pass
-            child.terminate();child.wait(timeout=10)
+def test_signed_activation_uses_single_install_update(tmp_path, monkeypatch):
+    from autofusex.client import client_updates
+    from autofusex.contracts.serialization import fingerprint
+    import hashlib
+    envelope = signed(tmp_path, [dict(name='autofusex', version='0.2.5', filename='test.whl', sha256=hashlib.sha256(b'wheel').hexdigest())])
+    identity = fingerprint(envelope['manifest'])
+    store = Store(tmp_path)
+    store.put('launcher_enabled', True)
+    store.put('supervisor_protocol', 3)
+    atomic(tmp_path/'tools'/identity/'ready.json', dict(id=identity,envelope=envelope))
+    wheels=tmp_path/'tools'/identity/'wheels';wheels.mkdir()
+    (wheels/'test.whl').write_bytes(b'wheel')
+    seen=[]
+    monkeypatch.setattr(client_updates, 'stage', lambda *args, **kwargs: seen.append(args))
+    assert activate(store, identity, {})['state']=='waiting_launcher'
+    assert seen[0][1]['version']=='0.2.5'
+    assert not (tmp_path/'active-client.json').exists()

@@ -8,7 +8,7 @@ import pytest
 from autofusex.client.daemon import request
 
 
-@pytest.mark.parametrize('module', ['autofusex.client', 'autofusex'])
+@pytest.mark.parametrize('module', ['autofusex.client'])
 def test_daemon_cli_durable_operation_without_heavy_imports(tmp_path, module):
     home=tmp_path/'home';home.mkdir()
     child=subprocess.Popen([sys.executable,'-m',module,'daemon','run','--data-dir',str(home)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -41,11 +41,12 @@ def test_management_import_is_lightweight():
     subprocess.run([sys.executable,'-c',script],check=True)
 
 
-def test_old_installer_probe_and_private_launch_are_compatible():
-    script = ('import sys; import autofusex.fuzz.daemon.runtime; '
-              'assert not any(x in sys.modules for x in '
-              '("torch","numpy","nnsmith","torch_npu"))')
+def test_retired_entry_points_are_unavailable():
+    script = 'import importlib.util; s=importlib.util.find_spec("autofusex.fuzz"); assert s is None or s.origin is None'
     subprocess.run([sys.executable, '-c', script], check=True)
+    retired = subprocess.run([sys.executable, '-m', 'autofusex', 'daemon', 'run'],
+                             capture_output=True, text=True)
+    assert retired.returncode == 2
     help_text = subprocess.check_output(
         [sys.executable, '-m', 'autofusex', '--help'], text=True)
     assert 'daemon' not in help_text

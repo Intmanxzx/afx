@@ -54,6 +54,14 @@ def test_plan_is_offline_and_version_checked(artifact, monkeypatch, capsys):
         release.validate(root,'v0.1.2',wheel.parent)
 
 
+def test_retired_compatibility_package_is_not_bundled(artifact):
+    root, wheel = artifact
+    with zipfile.ZipFile(wheel, 'a') as archive:
+        archive.writestr('autofusex/fuzz/daemon/runtime.py', 'obsolete')
+    with pytest.raises(ValueError, match='retired fuzz compatibility'):
+        release.validate(root, 'v0.1.2', wheel.parent)
+
+
 def test_nnsmith_patches_are_not_bundled(artifact):
     root, wheel = artifact
     with zipfile.ZipFile(wheel, 'a') as archive:
