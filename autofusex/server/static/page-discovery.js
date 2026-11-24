@@ -109,7 +109,10 @@ export function execValue(e, k) {
   switch (k) {
     case "backend": return el("span", {}, label(e.backend), e.is_head ? null : el("span", { class: "muted small", title: "非当前结果（历史/复测/验证）" }, " ·历史"), e.stale_graph ? el("span", { class: "chip gray" }, "旧图") : null);
     case "status": return statusChip(e);
-    case "log_summary": return el("span", { class: "small mono", title: e.log_summary || "" }, (e.log_summary || "未采集到 CANN plog ERROR").slice(0, 80));
+    case "log_summary":
+      if (e.backend === "cpu" || e.backend === "cpu-compile" ||
+          (e.function_status === "pass" && e.accuracy_status !== "fail")) return "";
+      return el("span", { class: "small mono", title: e.log_summary || "" }, (e.log_summary || "未采集到 CANN plog ERROR").slice(0, 80));
     case "compile_ns": case "kernel_ns": case "e2e_ns": return ns(e[k]);
     case "run": return el("span", {}, `#${e.run_id}`, e.run_kind !== "fuzz" ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, { retest: "复测", verify: "验证", regress: "回归", import: "导入" }[e.run_kind] || e.run_kind) : null);
     case "created_at": return el("span", { class: "small" }, time(e.created_at));
