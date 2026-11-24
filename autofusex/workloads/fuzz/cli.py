@@ -117,6 +117,7 @@ def replay_parser():
     parser = argparse.ArgumentParser(prog="afx fuzz replay")
     parser.add_argument("seed", help="self-contained short seed")
     parser.add_argument("--scheduling",choices=("combined","staged"),default="staged")
+    parser.add_argument("--dump", action="store_true", help="enable compiler debug dumps (default: off); independent of --save")
     parser.add_argument("--static-only", action="store_true", help="execute base sample only; does not change case or workload ID")
     parser.add_argument("--backend", choices=BACKEND_NAMES, help="focused backend diagnostic; default replays CPU and AF-MLIR")
     parser.add_argument("--device")
@@ -130,6 +131,25 @@ def replay_parser():
 
 
 def execute_args(args):
+    import os
+    import tempfile
+    from autofusex.client.cleanup import debug_worker
+    from autofusex.workloads.fuzz.scheduling.supervisor import _debug_env
+    dump = getattr(args,'dump',False)
+    home = data_home(); home.mkdir(parents=True,exist_ok=True)
+    directory, lease = debug_worker(home) if dump else (None,None)
+    with tempfile.TemporaryDirectory(prefix='.replay-cache-',dir=home) as scratch:
+        before = dict(os.environ)
+        try:
+            configured = _debug_env(before,scratch,directory,args.backend,dump)
+            os.environ.clear(); os.environ.update(configured)
+            return _execute_args(args)
+        finally:
+            os.environ.clear(); os.environ.update(before)
+            if lease: lease.close()
+
+
+def _execute_args(args):
     try:
         from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
         from autofusex.workloads.fuzz.contracts import Seed
@@ -138,7 +158,7 @@ def execute_args(args):
         from autofusex.execution.backends import create_backend
         from autofusex.execution.resources import adaptive_defaults
         threads = args.compile_threads or adaptive_defaults(data_home())["compile_threads"]
-        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only or not Seed.parse(args.seed).dynamic, save_results=args.save)
+        config = ExecutionConfig(args.backend, args.device or ("npu:0" if args.backend in {"eager-npu", "triton-npu", "af-legacy", "af-mlir"} else "cpu"), threads, static_only=args.static_only or not Seed.parse(args.seed).dynamic, save_results=args.save, dump=getattr(args,'dump',False))
         evaluation = EvaluationConfig(performance=args.performance, warmup_steps=args.warmup_steps, measured_steps=args.measured_steps)
         import time
         generation_start = time.perf_counter_ns()

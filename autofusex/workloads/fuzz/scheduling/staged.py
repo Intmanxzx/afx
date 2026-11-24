@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import asdict
 import json
+import os
 import shutil
 from pathlib import Path
 import tempfile
@@ -47,7 +48,8 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     policy=json.loads(row[0]);names.update(policy.get('devices',[]))
                     exclude_ops=[] if policy.get('ops') else policy.get('exclude_ops',[])
                     ops=policy.get('ops',[])
-        pool = Pool(budget,scratch,fd,discover(sorted(names)),max_tasks=budget.worker_max_tasks)
+        pool = Pool(budget,scratch,fd,discover(sorted(names)),max_tasks=budget.worker_max_tasks,
+                    debug_home=os.environ.get('AFX_TASK_HOME', ledger.path.parent.parent))
         if budget.device_budget_bytes:
             for device in pool.devices: device.capacity=min(device.capacity,budget.device_budget_bytes)
         cases, sessions, stages = {}, {}, {}
@@ -484,7 +486,7 @@ def replay(args):
                         'cpu' if backend == 'cpu' else replay_device,
                         budget.compile_threads, scheduling='staged',
                         static_only=args.static_only or not seed.dynamic,
-                        batch_id=batch, save_results=True), evaluation, None)
+                        batch_id=batch, save_results=True, dump=getattr(args,'dump',False)), evaluation, None)
                      for backend in backends]
             ids = ledger.enqueue_many(tasks, priority=100)
             # Keep the CLI synchronous: the existing supervisor performs the
@@ -509,7 +511,7 @@ def replay(args):
         batch=str(uuid.uuid4());seed=Seed.parse(args.seed)
         for backend in ([args.backend] if args.backend else ['cpu','af-mlir']):
             config=ExecutionConfig(backend,'cpu' if backend=='cpu' else replay_device,budget.compile_threads,
-                scheduling='staged',static_only=args.static_only or not seed.dynamic,batch_id=batch,save_results=args.save)
+                scheduling='staged',static_only=args.static_only or not seed.dynamic,batch_id=batch,save_results=args.save,dump=getattr(args,'dump',False))
             ledger.enqueue(seed,config,EvaluationConfig(performance=args.performance,warmup_steps=args.warmup_steps,measured_steps=args.measured_steps))
         result=drain(ledger,database,timeout=120)
         print(json.dumps(result))

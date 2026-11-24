@@ -11,8 +11,11 @@ class ExecutionConfig:
     static_only: bool = False
     batch_id: str = ""
     save_results: bool = True
+    dump: bool = False
 
     def __post_init__(self):
+        if type(self.dump) is not bool:
+            raise ValueError("dump must be boolean")
         if type(self.save_results) is not bool:
             raise ValueError("save_results must be boolean")
         if self.compile_threads < 1 or self.scheduling not in {"combined", "staged"}:

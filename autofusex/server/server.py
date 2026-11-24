@@ -543,24 +543,24 @@ def create_app(store: Store) -> FastAPI:
         return _success({'items': [{'id': r.target, 'name': r.display_name, 'category': r.category} for r in RULES]})
 
     @route('/api/config/me')
-    def config_me(principal=Depends(writer)):
+    def config_me(request: Request, principal=Depends(writer)):
         from autofusex.server import task_config
-        return _success(task_config.get(store, principal))
+        return _success(task_config.for_client(task_config.get(store, principal), request.headers.get('X-AFX-Capabilities', '')))
 
     @route('/api/config/default')
-    def config_default(principal=Depends(administrator)):
+    def config_default(request: Request, principal=Depends(administrator)):
         from autofusex.server import task_config
-        return _success(task_config.get(store, principal, administrator=True))
+        return _success(task_config.for_client(task_config.get(store, principal, administrator=True), request.headers.get('X-AFX-Capabilities', '')))
 
     @route('/api/config/me', 'POST')
-    def put_config_me(body: m.Configuration, principal=Depends(writer)):
+    def put_config_me(request: Request, body: m.Configuration, principal=Depends(writer)):
         from autofusex.server import task_config
-        return _success(task_config.put(store, principal, data(body)))
+        return _success(task_config.for_client(task_config.put(store, principal, data(body)), request.headers.get('X-AFX-Capabilities', '')))
 
     @route('/api/config/default', 'POST')
-    def put_config_default(body: m.Configuration, principal=Depends(administrator)):
+    def put_config_default(request: Request, body: m.Configuration, principal=Depends(administrator)):
         from autofusex.server import task_config
-        return _success(task_config.put(store, principal, data(body), administrator=True))
+        return _success(task_config.for_client(task_config.put(store, principal, data(body), administrator=True), request.headers.get('X-AFX-Capabilities', '')))
 
     @route('/api/registration/apply', 'POST')
     def apply(request: Request, body: m.Application):

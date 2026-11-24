@@ -34,22 +34,24 @@ class Manager:
             from autofusex.client.tasks import start
             switch=self.store.get('client_switch', {})
             results=[]
-            for identity in switch.get('old_runs', []):
-                prepared=json.loads((self.store.home/'runs'/identity/'spec.json').read_text())
-                results.append(start(self.store,prepared['spec'],'upgrade-resume',self.processes,resume_run=identity))
+            from autofusex.client.cleanup import access
+            with access(self.store.home):
+                for identity in switch.get('old_runs', []):
+                    prepared=json.loads((self.store.home/'runs'/identity/'spec.json').read_text())
+                    results.append(start(self.store,prepared['spec'],'upgrade-resume',self.processes,resume_run=identity))
             return dict(runs=results)
         if action=='drain_upgrade':
             from autofusex.client.upgrade_drain import begin
             return dict(runs=begin(self.store, self.processes))
         if action=='start_session':
             from autofusex.client.local_session import start
-            return start(self)
+            return start(self, dump=body.get('dump'))
         if action=='platform_retest':
             from autofusex.client.retest_queue import submit
             return submit(self.store.home, body['task'])
         if action=='replay':
             from autofusex.client.replay import submit
-            return submit(self.store, body['seeds'], self.processes)
+            return submit(self.store, body['seeds'], self.processes, dump=body.get('dump',False))
         if action=='status': return self.snapshot()
         if action=='stop_session':
             from autofusex.client.tasks import action as task_action
@@ -110,10 +112,14 @@ class Manager:
 
     def snapshot(self):
         with self.store.connect() as db:
-            runs=[dict(id=r['id'],state=r['state']) for r in db.execute('SELECT id,state FROM runs ORDER BY rowid DESC LIMIT 20')]
+            runs=[dict(id=r['id'],state=r['state'],summary=json.loads(r['result']) if r['result'] else {}) for r in db.execute('SELECT id,state,result FROM runs ORDER BY rowid DESC LIMIT 20')]
             environments=[dict(id=r['id'],name=r['name']) for r in db.execute("SELECT id,name FROM environments WHERE state='ready' ORDER BY name LIMIT 20")]
         for run in runs:
+            summary=run.pop('summary', {})
             if run['state'] not in {'completed','failed','stopped','cancelled','interrupted'}:
+                continue
+            if summary.get('cleanup'):
+                run.update(cleanup=summary['cleanup'],result_count=summary.get('result_count',0))
                 continue
             path=self.store.home/'runs'/run['id']/'results.sqlite'
             if not path.exists():
@@ -125,7 +131,7 @@ class Manager:
             except sqlite3.Error:
                 pass
         return dict(protocol=1, pid=os.getpid(), agent_python=os.sys.executable, agent_version=__import__('importlib.metadata', fromlist=['version']).version('autofusex'), paired=False,config=self.store.get('config_state',{}),
-                    active_operation=self.active[0] if self.active else None,runs=runs,environments=environments)
+                    active_operation=self.active[0] if self.active else None,runs=runs,environments=environments,cleanup=self.store.get('cleanup_state',{}))
 
     def tick(self):
         from autofusex.client.tasks import refresh
@@ -180,6 +186,11 @@ class Manager:
         finally:bind(lambda:False)
 
     def synchronize(self):
+        from autofusex.client.cleanup import access
+        with access(self.store.home):
+            return self._synchronize()
+
+    def _synchronize(self):
         client_path=self.store.home/'client.json'
         if client_path.exists():
             client=json.loads(client_path.read_text())
@@ -210,9 +221,25 @@ class Manager:
                     self.wfile.write(canonical(result).encode()+b'\n')
             server=socketserver.UnixStreamServer(str(sockpath),Handler);os.chmod(sockpath,0o600);server.timeout=.1
             network=ThreadPoolExecutor(max_workers=1);future=None;next_sync=0
+            maintenance=ThreadPoolExecutor(max_workers=1,thread_name_prefix="retention");cleaning=None;next_cleanup=0;cleanup_policy=None;next_cleanup_config=0
             try:
                 while not self.stop.is_set():
                     server.handle_request();self.tick()
+                    from autofusex.client.cleanup import settings, sweep
+                    if time.monotonic() >= next_cleanup_config:
+                        try: configured = settings(store)
+                        except Exception: configured = None
+                        if configured != cleanup_policy:
+                            cleanup_policy = configured
+                            next_cleanup = 0
+                        next_cleanup_config = time.monotonic()+10
+                    if cleaning and cleaning.done():
+                        try: cleaning.result()
+                        except Exception as exc: store.put('cleanup_state',dict(state='error',error=type(exc).__name__))
+                        cleaning=None
+                    if cleaning is None and time.monotonic() >= next_cleanup:
+                        cleaning=maintenance.submit(sweep,store)
+                        next_cleanup=time.monotonic()+3600
                     if future and future.done():
                         try: future.result();store.put('connection',dict(state='ok',time=time.time()))
                         except Exception as exc: store.put('connection',dict(state='retrying',error=type(exc).__name__,time=time.time()))
@@ -225,4 +252,4 @@ class Manager:
                 from autofusex.client.platform_retests import stop as stop_retests
                 stop_retests(self)
                 server.server_close();sockpath.unlink(missing_ok=True)
-                network.shutdown(wait=True);self.pool.shutdown(wait=True)
+                network.shutdown(wait=True);self.pool.shutdown(wait=True);maintenance.shutdown(wait=True)

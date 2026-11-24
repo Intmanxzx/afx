@@ -7,8 +7,8 @@ class ScenarioParser(argparse.ArgumentParser):
         return '''usage: afx fuzz COMMAND [OPTIONS]
 
 客户端 · 执行、采集、保存
-  run [SEED ...] [--count N]               后台测试；不传 --count 无限运行，--save 才保存
-  replay SEED [--save]            单 seed 重放
+  run [SEED ...] [--count N] [--dump]      后台测试；--save 保存结果，--dump 开启调试产物
+  replay SEED [--save] [--dump]             单 seed 重放；默认关闭 dump
   status                                 查看任务状态
   stop                                   停止当前测试
   resume                                 恢复中断任务

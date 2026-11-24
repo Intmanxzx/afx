@@ -20,7 +20,7 @@ def submit(home, task):
     if record.exists():
         saved = json.loads(record.read_text())
         if saved['lease_id'] == task['lease_id']:
-            return admit(record, saved)
+            return saved if saved.get('delivered') else admit(record, saved)
     with store.connect() as db:
         runs = list(db.execute("SELECT id FROM runs WHERE state='running'"))
     if len(runs) != 1:
@@ -79,11 +79,17 @@ def completed(saved):
 
 def synchronize(client, home):
     """Coordinate remote leases and receipts without starting execution processes."""
-    from autofusex.client.platform_transport import installed_packages, Mapper, upload_new
-    from autofusex.client.daemon import request
     from autofusex.client.upgrade_drain import BUSY
     if Store(home).get('client_switch', {}).get('state') in BUSY:
         return 0
+    from autofusex.client.cleanup import access
+    with access(home):
+        return _synchronize(client, home)
+
+
+def _synchronize(client, home):
+    from autofusex.client.platform_transport import installed_packages, Mapper, upload_new
+    from autofusex.client.daemon import request
     installed = installed_packages(client.environment())
     if not installed or not client.devices:
         return 0
@@ -98,6 +104,8 @@ def synchronize(client, home):
         if task['case_source'] != 'nnsmith':
             continue
         saved = request(home, {'action': 'platform_retest', 'task': task})
+        if saved.get('delivered'):
+            continue
         ids = completed(saved)
         if not ids:
             continue
@@ -114,5 +122,7 @@ def synchronize(client, home):
         client.api.call('POST', f"/api/client/retests/{task['task_id']}/complete", {
             'request_key': f"complete-{task['task_id']}-{task['lease_id'][:8]}",
             'lease_id': task['lease_id'], 'exec_uuids': uploaded, 'installed': installed})
+        saved['delivered'] = True
+        atomic(Path(home) / 'retest' / ('task-' + str(task['task_id']) + '.json'), saved)
         finished += 1
     return finished

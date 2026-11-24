@@ -91,6 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
     action(task, "validate", "Validate task YAML, resolve its environment, and return the effective snapshot.", options=[lambda p: _add_file(p), lambda p: p.add_argument("--wait", action="store_true")])
     action(task, "submit", "Submit a task; returns an operation ID and never waits by default.", options=[
         lambda p: _add_file(p), lambda p: p.add_argument("--workers", type=int),
+        lambda p: p.add_argument("--dump", action="store_true", help="enable compiler debug dumps for this task"),
         lambda p: p.add_argument("--wait", action="store_true", help="wait for terminal operation state")])
     action(task, "wait", "Wait for task completion, interruption, or attention; does not cancel on timeout.", options=[
         lambda p: p.add_argument("run_id", metavar="RUN_ID")])
@@ -104,6 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
     action(task, "replay", "Replay seeds using a prior run's environment and execution/evaluation settings.", options=[
         lambda p: p.add_argument("seeds", nargs="+", metavar="SEED"),
         lambda p: p.add_argument("--from-run", required=True, metavar="RUN_ID"),
+        lambda p: p.add_argument("--dump", action="store_true", help="enable compiler debug dumps for this replay"),
         lambda p: p.add_argument("--wait", action="store_true", help="wait for submission, not execution")])
     action(task, "list", "List locally submitted task runs.")
     action(task, "inspect", "Show one task run and its effective immutable snapshot.", options=[lambda p: p.add_argument("run_id", metavar="RUN_ID")])
@@ -277,7 +279,12 @@ def _run(args):
 
     if group == "task":
         if action == "validate": return _submit(home, args, "task.validate", _task_payload(args), wait=args.wait)
-        if action == "submit": return _submit(home, args, "task.submit", _task_payload(args), wait=args.wait)
+        if action == "submit":
+            payload = _task_payload(args)
+            if args.dump:
+                if payload['kind'] != 'fuzz_task': raise ValueError('--dump is valid only for fuzz_task')
+                payload.setdefault('execution', {})['dump'] = True
+            return _submit(home, args, "task.submit", payload, wait=args.wait)
         if action == "wait": return _wait_run(home, args.run_id, args.timeout)
         if action == "results":
             from autofusex.client.results import read
@@ -288,6 +295,7 @@ def _run(args):
             original = _local_query(home, "run", args.from_run)
             payload = copy.deepcopy(original["spec"]["spec"])
             payload["workload"] = {"mode": "replay", "seeds": args.seeds}
+            payload["execution"]["dump"] = args.dump
             payload.pop("termination", None)
             # Stored auto plans contain resolved workers/threads; replay those exact budgets.
             resources = payload.get("execution", {}).get("resources", {})

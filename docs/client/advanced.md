@@ -97,11 +97,12 @@ afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 
 | 命令（前缀 afx） | 返回或用途 |
 |---|---|
-| start / status / stop / restart | 启动、查看、停止业务或重启客户端 |
+| start [--dump] / restart [--dump] / status / stop | 启动、重启、查看或停止客户端；--dump 为本次任务开启编译调试产物 |
+| replay SEED... [--dump] | 按本地历史配置重放；默认关闭编译调试 dump |
 | env prepare FILE / apply PLAN_ID | 返回 operation；wait 后从 result.plan_id / 环境 manifest 取值 |
-| task submit/validate FILE [--wait] | 提交或校验规格，返回 operation |
+| task submit FILE [--dump] [--wait] / task validate FILE [--wait] | 提交或校验规格；submit --dump 开启该任务的编译调试产物 |
 | task wait RUN_ID [--timeout SEC] / results RUN_ID | 等待执行；查询结果（--status、--seed、--limit、--after、--attempt） |
-| task replay SEED... --from-run RUN_ID [--wait] | 按原环境/后端/评估设置提交独立重放 |
+| task replay SEED... --from-run RUN_ID [--dump] [--wait] | 按原环境/后端/评估设置重放；dump 默认关闭 |
 | task list/inspect/pause/resume/stop/force-stop/reconfigure RUN_ID | 查询与控制 Run；reconfigure 在安全边界切换配置 |
 | operation inspect/wait/logs/cancel OP_ID | 操作状态、等待、事件、取消 |
 | config show/edit/reset/validate/export | 查看、修改、重置、校验或导出任务配置 |
@@ -124,11 +125,15 @@ afx fuzz replay SEED --save
 
 | 目的 | 命令 |
 |---|---|
+| 开启临时运行 dump | afx fuzz run --count 100 --dump --save |
+| 开启重放 dump | afx fuzz replay SEED --dump --save |
 | 单后端重放 | afx fuzz replay SEED --backend af-mlir --save |
 | 人工 eager-npu 复核 | afx fuzz replay SEED --backend eager-npu --save |
 | 过滤算子 | afx fuzz run --ops add,ge,sum,reshape --save |
 | 双卡指定资源 | afx fuzz run --device npu:0 --device npu:1 --workers 4 --compile-threads 1 --save |
 | 检查环境 | afx doctor --workload fuzz |
+
+--dump 默认关闭，与 --save 独立；开启时在 debug/autofuse_compile/worker-* 保存编译诊断，目录受自动清理策略管理。任务文件字段为 execution.dump，默认 false。--continue 精确恢复保存的模式，不能同时指定 --dump。详见[手动开启 dump](configuration.md#手动开启编译调试-dump)。
 
 run --backend 增加被测后端，replay --backend 只执行指定后端；不要与同一 home 的活动托管任务同时运行。
 

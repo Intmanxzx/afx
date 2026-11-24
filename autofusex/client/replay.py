@@ -1,4 +1,5 @@
 """Resolve replay settings from history and enqueue atomically ahead of generation."""
+from autofusex.client.cleanup import reader
 import copy
 import json
 import sqlite3
@@ -12,7 +13,9 @@ from autofusex.execution.scheduling.budgets import read_policy
 from autofusex.client.configuration import validate
 
 
-def submit(store, seeds, processes):
+@reader
+def submit(store, seeds, processes, *, dump=False):
+    if type(dump) is not bool: raise ValueError('dump must be boolean')
     seeds = [str(Seed.parse(seed)) for seed in seeds]
     if not 1 <= len(seeds) <= 1000:
         raise ValueError('replay requires 1..1000 seeds')
@@ -55,13 +58,14 @@ def submit(store, seeds, processes):
             for backend in ex['backends']:
                 execution=ExecutionConfig(backend, 'cpu' if backend=='cpu' else ex['devices'][0],
                     budget.compile_threads, scheduling='staged', static_only=ex['static_only'],
-                    batch_id=batch, save_results=old['spec']['results']['save'])
+                    batch_id=batch, save_results=old['spec']['results']['save'], dump=dump)
                 tasks.append((seed,execution,evaluation,None))
         ids=ledger.enqueue_many(tasks, priority=100)
         return dict(run_id=active[0],task_ids=ids,priority=100,state='queued')
     specs=[]
     for seed, old in resolved:
         spec=copy.deepcopy(old['spec'])
+        spec['execution']['dump']=dump
         spec['workload']={'mode':'replay','seeds':[seed]};spec.pop('termination',None)
         resources=spec['execution']['resources']
         resources['policy']='auto';resources.pop('workers',None);resources.pop('compile_threads',None)

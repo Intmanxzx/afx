@@ -634,6 +634,11 @@ def test_task_configuration_http(world):
     try:
         api=API('http://127.0.0.1:'+str(server.server_port),token)
         result=api.call('GET','/api/config/me')
+        assert result['config']['cleanup']==dict(debug_days=2,runs_days=2)
+        import urllib.request
+        legacy_request=urllib.request.Request(api.endpoint+'/api/config/me',headers={'Authorization':'Bearer '+token})
+        with urllib.request.urlopen(legacy_request) as response:
+            assert 'cleanup' not in json.load(response)['data']['config']
         spec=result['config'];spec['workload']['generation']={'shape_mode':'dynamic','dtype_mode':'float32'}
         saved=api.call('POST','/api/config/me',{'config':spec})
         assert saved['source']=='personal'
@@ -745,3 +750,24 @@ def test_reported_daemon_state_survives_command_ack(world):
     assert item["daemon_state"] == "running"
     assert item["daemon_state_at"] is not None
     assert item["target_daemon_state"] is None
+
+
+def test_retention_configuration_defaults_legacy_and_wire_compatibility(world):
+    from autofusex.server import task_config
+    store,dev,admin=world
+    spec=task_config.default()
+    assert spec['cleanup']==dict(debug_days=2,runs_days=2)
+    spec['cleanup']=dict(debug_days=1,runs_days=7)
+    saved=task_config.put(store,admin,dict(config=spec),administrator=True)
+    assert task_config.get(store,dev)['config']['cleanup']['runs_days']==7
+    legacy=dict(spec);legacy.pop('cleanup')
+    task_config.put(store,admin,dict(config=legacy),administrator=True)
+    assert task_config.get(store,dev)['config']['cleanup']['runs_days']==7
+    assert 'cleanup' not in task_config.for_client(saved,'')['config']
+    assert task_config.for_client(saved,'cleanup-v1')['config']['cleanup']['debug_days']==1
+    with pytest.raises(ValueError):
+        task_config.put(store,dev,dict(config=dict(spec,cleanup=dict(debug_days=-1))))
+    # Existing on-disk profiles acquire defaults without a database rewrite.
+    with store.write() as db:
+        db.execute("UPDATE task_profiles SET spec=? WHERE owner='*'",(json.dumps(legacy),))
+    assert task_config.get(store,dev)['config']['cleanup']==dict(debug_days=2,runs_days=2)

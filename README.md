@@ -55,6 +55,8 @@ afx status                 # 查看客户端状态
 afx stop                   # 停止当前任务
 afx start                  # 按当前配置启动任务
 afx restart                # 若更新了CANN包等，可热加载配置
+afx start --dump           # 本次任务开启编译调试 dump（默认关闭）
+afx replay SEED --dump     # 重放指定 seed 并开启编译调试 dump
 ```
 
 更多详细介绍，参考：[客户端使用说明](docs/client/configuration.md)。

@@ -29,6 +29,7 @@ def synchronize(manager, api, machine):
         api.call('POST','/api/source-jobs/'+saved['job_id']+'/complete',dict(lease_id=saved['lease_id'],result=result))
         if run_id:
             upload_artifacts(api,directory,saved['job_id'],saved['lease_id'],result)
+            atomic(directory/'source-upload.json', {'job_id':saved['job_id'], 'delivered':True})
         store.put('source_job',None)
         return
     if manager.active:return
