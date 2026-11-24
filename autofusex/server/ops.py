@@ -278,6 +278,14 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
             "SELECT client_id, COUNT(*) AS executions, COALESCE(SUM(run_kind<>'fuzz'),0) AS retests FROM executions "
             "WHERE created_at>? AND backend<>'cpu' GROUP BY client_id", (now - 86_400_000,)):
         ran[row["client_id"]] = (row["executions"], row["retests"])
+    # Uploads are authoritative once an execution row is accepted by the
+    # server.  Do not depend on client heartbeat deltas here: managed clients
+    # can upload between heartbeats, and older clients did not report them.
+    uploaded = {}
+    for row in conn.execute(
+            "SELECT client_id, COUNT(*) AS uploads FROM executions "
+            "WHERE received_at>? AND backend<>'cpu' GROUP BY client_id", (now - 86_400_000,)):
+        uploaded[row["client_id"]] = row["uploads"]
     clients = []
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
@@ -297,21 +305,24 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
             "WHERE client_id=? AND hour>?", (item["client_id"], hour - 24)).fetchone()
         item["last_24h"] = dict(totals)
         item["last_24h"]["executions"], item["last_24h"]["retests"] = ran.get(item["client_id"], (0, 0))
+        item["last_24h"]["uploads"] = uploaded.get(item["client_id"], 0)
         raw_devices = item.pop("devices")
         devices = json.loads(raw_devices) if raw_devices is not None else None
         item["devices"] = devices if mine else None
         item["card_count"] = len(devices) if mine and devices is not None else None
         # Runtime snapshots carry the device set selected by the current task.
-        # Count the union across active snapshots so a two-card host running a
-        # one-card task is shown as 1/2 in the user overview.
+        # Count the union across running snapshots so a two-card host running a
+        # one-card task is shown as 1/2 in the user overview.  `busy` is a
+        # worker state, not the task's configured device set, so it must not
+        # suppress an otherwise selected card.
         active_devices = set()
         for run in raw_runtime:
             if run.get("state") != "running":
                 continue
             for device in run.get("devices") or []:
+                if isinstance(run.get("age"), (int, float)) and run["age"] > 180:
+                    continue
                 if isinstance(device, dict):
-                    if "busy" in device and not device.get("busy"):
-                        continue
                     identity = device.get("uuid") or device.get("logical")
                 else:
                     identity = device

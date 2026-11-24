@@ -122,6 +122,7 @@ def test_heartbeat_rollups_and_update(world):
     me = next(c for c in summary["clients"] if c["client_id"] == first["client_id"])
     assert me["last_24h"]["executions"] == 10 and me["online"] and me["backend_versions"] == {"af-mlir": "9.2.0"}
     assert summary["executions_24h"] == 10 and sum(h["cases"] for h in summary["hourly"]) == 10
+    assert me["last_24h"]["uploads"] == 80
     with pytest.raises(auth.AuthError):
         ops.request_update(store, client, {"request_key": "u2", "client_ids": [1], "version": "0.3"})
     with pytest.raises(IssueError):

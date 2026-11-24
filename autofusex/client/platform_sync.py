@@ -1,6 +1,7 @@
 """Platform heartbeat/configuration and opt-in per-run result upload."""
 import importlib.metadata
 import json
+import os
 import socket
 import time
 import sqlite3
@@ -64,9 +65,37 @@ def pending_uploads(store) -> int:
     return total
 
 
+def configured_task_devices(store, inventory) -> list:
+    """Return the logical NPU cards selected by currently running managed tasks."""
+    devices = []
+    try:
+        with store.connect() as db:
+            rows = db.execute("SELECT state, spec FROM runs WHERE state IN ('preparing','running','paused','pausing','draining','cancelling')").fetchall()
+        for row in rows:
+            payload = json.loads(row['spec'])
+            spec = payload.get('spec', payload)
+            execution = spec.get('execution') or {}
+            if not any(backend != 'cpu' for backend in execution.get('backends') or []):
+                continue
+            selected = execution.get('devices') or []
+            if 'all' in selected:
+                selected = inventory.get('devices') or []
+            devices.extend(str(device) for device in selected if str(device).startswith('npu:'))
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return []
+    return list(dict.fromkeys(devices))
+
+
 def synchronize(manager, client):
     store=manager.store
     api=API(client['endpoint'],client['token'],timeout=15)
+    # Enable the execution reporter before managed workers are started.  The
+    # reporter is intentionally opt-in so standalone/local runs never write
+    # fleet telemetry, while managed tasks publish their configured devices.
+    try:
+        atomic(store.home / 'platform-client.json', {'endpoint': client['endpoint'], 'pid': os.getpid()})
+    except OSError:
+        pass
     # Use the same deterministic identity as the standalone platform client.
     # The old daemon path generated a random UUID, so `afx start` and
     # `afx sync run` on the same host appeared as two clients.
@@ -104,6 +133,11 @@ def synchronize(manager, client):
             update_ack = request_id
     from autofusex.client.update_delivery import progress, receive
     claims_path = retest_directory(store.home) / 'claims.json'
+    runtime = runtime_snapshots(store.home)
+    selected_devices = configured_task_devices(store, inventory)
+    if selected_devices and not any(run.get('state') == 'running' for run in runtime):
+        runtime.append(dict(run_id='managed-config', state='running',
+                            devices=[dict(logical=device) for device in selected_devices]))
     heartbeat=dict(
         machine_id=identity[:128], client_home=home[:512],
         hostname=socket.gethostname(), npu_arch=env.get('device_model') or inventory['model'],
@@ -117,7 +151,7 @@ def synchronize(manager, client):
         # fleet view; otherwise the UI incorrectly labels it "复测中".
         busy=bool(claims_path.exists() and json.loads(claims_path.read_text()).get('tasks')),
         pending_uploads=pending_uploads(store),
-        runtime=runtime_snapshots(store.home),
+        runtime=runtime,
     )
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
@@ -142,6 +176,7 @@ def synchronize(manager, client):
     source_jobs(manager, api, identity[:128])
     with store.connect() as db:
         runs=list(db.execute('SELECT id,spec FROM runs'))
+    reported = {'executions': 0, 'uploads': 0, 'upload_errors': 0, 'retests': 0}
     for run in runs:
         spec=json.loads(run['spec'])['spec']
         if not spec['results']['upload']: continue
@@ -160,5 +195,11 @@ def synchronize(manager, client):
             continue
         if not (directory/'results.sqlite').exists():continue
         uploader=Client(api,str(directory/'results.sqlite'),directory/'upload.sqlite')
-        try:uploader.upload_once()
+        try:
+            uploader.upload_once()
+            for name, value in uploader.counters.take().items():
+                reported[name] += value
         finally:uploader.state.conn.close()
+    if any(reported.values()):
+        heartbeat['counters'] = reported
+        api.call('POST', '/api/client/heartbeat', heartbeat, attempts=1)
