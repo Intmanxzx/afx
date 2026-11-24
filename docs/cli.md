@@ -22,6 +22,7 @@ afx task submit --help
 | `afx init` | 初始化本地或平台客户端 |
 | `afx start` / `stop` / `restart` / `status` | 客户端启动、停止、重启和状态 |
 | `afx config` | 查看、修改、校验、重置或导出配置 |
+| `afx daemon` | 单独启动、停止或查询后台管理服务 |
 | `afx env` | 执行环境检查、准备与安装 |
 | `afx replay` | 使用客户端历史配置重放 |
 | `afx task` | 提交和控制托管任务 |
@@ -74,6 +75,18 @@ afx status
 ```
 
 ## 托管任务与异步操作
+
+### 后台管理服务
+
+| 命令 | 用途 |
+|---|---|
+| `afx daemon start` | 启动 supervisor 和 daemon，等待通信接口就绪；不开始测试会话；支持 `--foreground` |
+| `afx daemon status` | 查看后台服务、连接、操作和任务状态 |
+| `afx daemon stop` | 停止后台管理服务；有活动任务或操作时拒绝停止 |
+
+以上命令支持 `--data-dir DIR`、`--json`、`--timeout SECONDS` 和 `--request-key KEY`。完全停机时，先执行 `afx stop` 并等待任务退出，再执行 `afx daemon stop`。`run` 和 `supervise` 保留为内部管理入口，不在公开 `afx daemon` 中提供。
+
+### 任务与操作参数
 
 本节 `task`、`operation`、`build`、`release` 的每个动作以及 `update` 均支持：
 
@@ -288,4 +301,4 @@ afx sync run --endpoint https://autofuse.online \
 
 ## 维护本索引
 
-新增、删除或重命名公开命令时同步更新本文。命令路由以 [autofusex/cli.py](../autofusex/cli.py) 为准；各组参数分别定义在客户端、Fuzz、固定用例、结果和服务端 CLI 模块。本文使用公开的 `env`、`release`、`update` 命令名；内部管理模块中的 `daemon`、`environment`、`tool`、`client` 不属于统一入口的公开顶层命令。
+新增、删除或重命名公开命令时同步更新本文。命令路由以 [autofusex/cli.py](../autofusex/cli.py) 为准；各组参数分别定义在客户端、Fuzz、固定用例、结果和服务端 CLI 模块。本文使用公开的 `env`、`release`、`update` 命令名；内部管理模块中的 `environment`、`tool`、`client` 不属于统一入口的公开顶层命令。

@@ -556,6 +556,7 @@ def root_help():
         ('init', 'initialize a local or managed client'), ('start', 'start testing'),
         ('stop', 'stop testing'), ('restart', 'restart client'), ('status', 'show client status'),
         ('config', 'show, edit, reset, validate or export configuration'),
+        ('daemon', 'start, stop or inspect the background manager'),
         ('env', 'manage execution environments'), ('replay', 'replay using historical configuration'),
         ('task', 'submit and control tasks'), ('operation', 'inspect asynchronous operations'),
         ('build', 'build execution environments'), ('update', 'upgrade the client'),
@@ -620,8 +621,10 @@ def main(argv: list[str] | None = None) -> int:
                 return modern_main(raw_argv)
             raw_argv = ["--data-dir", raw_argv[index + 1], *raw_argv[:index], *raw_argv[index + 2:]]
         return modern_main(raw_argv)
-    if raw_argv and raw_argv[0] in {"task", "operation", "build", "release", "update"}:
+    if raw_argv and raw_argv[0] in {"daemon", "task", "operation", "build", "release", "update"}:
         from autofusex.client.cli import main as management_main
+        if raw_argv[0] == "daemon":
+            return management_main(raw_argv, public_daemon=True)
         if raw_argv[0] == "release":
             raw_argv[0] = "tool"
         elif raw_argv[0] == "update":

@@ -50,7 +50,7 @@ def _add_file(parent, name="FILE"):
     parent.add_argument(name.lower(), metavar=name, help="YAML or JSON specification file; - reads stdin")
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser(*, public_daemon=False) -> argparse.ArgumentParser:
     root = AgentArgumentParser(
         prog="afx",
         description="AutofuseX managed client CLI. All output is JSON for Agent automation.",
@@ -74,9 +74,10 @@ def _build_parser() -> argparse.ArgumentParser:
     daemon = group("daemon", "Start, inspect, or stop the local management daemon.")
     action(daemon, "start", "Start the supervised daemon and return when its local socket is ready.", options=[
         lambda p: p.add_argument("--foreground", action="store_true", help="run in this process")])
-    action(daemon, "run", "Run the manager process in the foreground; used by the launcher.", options=[
-        lambda p: p.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)])
-    action(daemon, "supervise", "Run the stable launcher; it performs health checks and rollback.")
+    if not public_daemon:
+        action(daemon, "run", "Run the manager process in the foreground; used by the launcher.", options=[
+            lambda p: p.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)])
+        action(daemon, "supervise", "Run the stable launcher; it performs health checks and rollback.")
     action(daemon, "status", "Show local daemon, connection, operation, and task status.")
     action(daemon, "stop", "Stop the manager only when no operation or task is active.")
 
@@ -332,8 +333,8 @@ def _exit_for_result(result):
     return EXIT_OK
 
 
-def main(argv=None):
-    args = parser().parse_args(argv)
+def main(argv=None, *, public_daemon=False):
+    args = _build_parser(public_daemon=public_daemon).parse_args(argv)
     try:
         result = _run(args)
         print(canonical(dict(schema_version=1, ok=True, data=result)))

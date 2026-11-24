@@ -49,7 +49,7 @@ def test_retired_entry_points_are_unavailable():
     assert retired.returncode == 2
     help_text = subprocess.check_output(
         [sys.executable, '-m', 'autofusex', '--help'], text=True)
-    assert 'daemon' not in help_text
+    assert 'daemon' in help_text
     assert 'device' not in help_text
     rejected = subprocess.run([sys.executable, '-m', 'autofusex', 'device', 'pair'],
                               capture_output=True, text=True)

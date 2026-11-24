@@ -23,3 +23,5 @@ supervisor 固定代码保存在数据目录的 `supervisor/v2`，协议版本�
 启动不读取 `active-client.json` 或 `active_tool` 来选择其他 AFX，不创建 `client-releases` 控制/执行虚拟环境。磁盘上已有旧目录不会自动删除，因为登记的解释器可能仍引用其中依赖；确认执行依赖已独立且无引用后再清理。
 
 更新安装包不会自动替换已经驻留的旧 Python 进程。日常更换执行环境后，加载相应环境并使用 `afx restart`。
+
+需要完全停机时，先执行 `afx stop` 并等待任务退出，再执行 `afx daemon stop`。`afx daemon start` 只启动后台管理服务，`afx daemon status` 查询后台状态；这三个命令都支持在末尾传入 `--data-dir DIR`。

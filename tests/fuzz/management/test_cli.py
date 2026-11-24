@@ -8,7 +8,7 @@ import pytest
 def run_cli(tmp_path,*args,input=None):
     env={'PYTHONPATH':str(Path.cwd()),'PYTHONDONTWRITEBYTECODE':'1'}
     import os
-    process=subprocess.run([sys.executable,'-m','autofusex.client','daemon',*args,'--data-dir',str(tmp_path)],input=input,text=True,capture_output=True,env={**os.environ,**env})
+    process=subprocess.run([sys.executable,'-m','afx','daemon',*args,'--data-dir',str(tmp_path)],input=input,text=True,capture_output=True,env={**os.environ,**env})
     return process
 
 
@@ -24,6 +24,20 @@ def test_daemon_command_json_and_exit_codes(tmp_path):
     start=run_cli(tmp_path,'start');assert start.returncode==0;assert json.loads(start.stdout)['ok']
     status=run_cli(tmp_path,'status');value=json.loads(status.stdout);assert value['ok'] and value['data']['protocol']==1
     stop=run_cli(tmp_path,'stop');assert stop.returncode==0
+
+
+def test_public_daemon_help_and_internal_actions(capsys):
+    from autofusex.cli import main
+    with pytest.raises(SystemExit) as exc:
+        main(['daemon', '--help'])
+    assert exc.value.code == 0
+    text = capsys.readouterr().out
+    assert all(action in text for action in ('start', 'status', 'stop'))
+    assert 'supervise' not in text.split()
+    for action in ('run', 'supervise'):
+        with pytest.raises(SystemExit) as exc:
+            main(['daemon', action])
+        assert exc.value.code == 2
 
 
 def test_file_command_parsing_accepts_stdin_and_plan_alias(tmp_path):
