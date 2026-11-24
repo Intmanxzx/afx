@@ -108,9 +108,7 @@ jobs:
           # A build/ left over from an older distribution name leaks stale
           # packages into the wheel, which the smoke test then rejects.
           rm -rf build dist
-          # Only the release-tooling tests run here. tests/fuzz still imports
-          # modules that the "refactor fuzz into client daemon server modules"
-          # commit moved, so it cannot gate a release until it is repaired.
+          # This job checks packaging; business and NPU regressions are separate.
           .release-venv/bin/python -m pytest -q tests/test_release_wheel.py
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           export SOURCE_DATE_EPOCH

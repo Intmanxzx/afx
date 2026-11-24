@@ -1,6 +1,6 @@
-# 平台使用说明
+# 客户端进阶命令
 
-**NPU 客户端**执行用例并上报数据（自动泛化测试、导入用例）。客户端默认交给 daemon 托管；下文"托管"工作流（下发任务、管理环境、一键更新）都是通过本机 `afx` CLI 与本地 daemon 交互，不需要远程托管时，跳过它直接用"方式二"本机运行即可。问题闭环、知识库等 Agent 工作流由独立的平台服务（`autofusex/server/`）提供，见[平台业务与数据设计](platform_v3_design.md)；本文档只覆盖 fuzz 执行引擎本身。
+**NPU 客户端**执行用例并上报数据（自动泛化测试、导入用例）。客户端默认交给 daemon 托管；下文"托管"工作流（下发任务、管理环境、一键更新）都是通过本机 `afx` CLI 与本地 daemon 交互，不需要远程托管时，跳过它直接用"方式二"本机运行即可。问题闭环、知识库等 Agent 工作流由独立的平台服务（`autofusex/server/`）提供，见[平台业务与数据设计](../server/architecture.md)。固定源码与整网任务见[客户端使用说明](configuration.md#固定用例与整网任务)。
 
 ## 快速开始
 
@@ -17,7 +17,7 @@ afx status
 afx stop
 ~~~
 
-初始化只需一次。接入平台时将 `afx init` 换成 `afx init --token YOUR_TOKEN`。`start` 自动启动 daemon、登记当前环境并启动任务；带 token 时自动同步配置与心跳，按 `results.upload` 上传结果，无需另起上传进程。详见[客户端配置与重放](client_configuration.md)。下文“方式一”是手工管理环境和任务的进阶接口。
+初始化只需一次。接入平台时将 `afx init` 换成 `afx init --token YOUR_TOKEN`。`start` 自动启动 daemon、登记当前环境并启动任务；带 token 时自动同步配置与心跳，按 `results.upload` 上传结果，无需另起上传进程。详见[客户端配置与重放](configuration.md)。下文“方式一”是手工管理环境和任务的进阶接口。
 
 不需要托管、只是本机临时调试时，可以跳过上面整套流程，直接：
 
@@ -29,7 +29,7 @@ afx fuzz run --count 100 --save
 afx fuzz status
 ~~~
 
-完整参数见下文"方式二"。要把结果上传到云端（上传、心跳、复测），独立运行 `afx sync run`，用法见 [deploy/platform/README.md](../../deploy/platform/README.md#客户端npu机器)。
+完整参数见下文"方式二"。要把结果上传到云端（上传、心跳、复测），独立运行 `afx sync run`，用法见 [deploy/platform/README.md](../../deploy/platform/README.md#客户端npu-机器)。
 
 ## 安装与准备
 
@@ -45,11 +45,11 @@ python -m pip install autofusex
 python -m pip install -e '.[execution]'
 ~~~
 
-数据目录用 AUTOFUSEX_HOME 或命令末尾的 `--data-dir DIR` 指定。管理 CLI 需要 daemon 已启动、执行环境已登记为 ready、设备已获本地授权；首次准备见[运维说明](operations.md)。
+数据目录用 AUTOFUSEX_HOME 或命令末尾的 `--data-dir DIR` 指定。管理 CLI 需要 daemon 已启动、执行环境已登记为 ready、设备已获本地授权；首次准备见[运维说明](../operations.md)。
 
 ## 方式一：本地管理 CLI（afx，NPU 客户端机器）
 
-入口定义在 [management/cli.py](../../autofusex/client/cli.py)。普通请求输出统一 envelope（`--help`/`--version`/daemon 生命周期命令不计入此协议）：
+入口定义在 [client/cli.py](../../autofusex/client/cli.py)。普通请求输出统一 envelope（`--help`/`--version`/日常客户端生命周期命令不计入此协议）：
 
 ~~~json
 {"schema_version":1,"ok":true,"data":{}}
@@ -97,16 +97,15 @@ afx task replay SEED --from-run RUN_ID --wait --request-key replay-001
 
 | 命令（前缀 afx） | 返回或用途 |
 |---|---|
-| daemon start / status / stop | 本地进程状态；stop 要求无活动工作 |
-| device enroll --token-stdin / device pair | 注册或浏览器配对；device status / revoke 查询或撤销 |
-| environment plan FILE / apply PLAN_ID | 返回 operation；wait 后从 result.plan_id / 环境 manifest 取值 |
+| start / status / stop / restart | 启动、查看、停止业务或重启客户端 |
+| env prepare FILE / apply PLAN_ID | 返回 operation；wait 后从 result.plan_id / 环境 manifest 取值 |
 | task submit/validate FILE [--wait] | 提交或校验规格，返回 operation |
 | task wait RUN_ID [--timeout SEC] / results RUN_ID | 等待执行；查询结果（--status、--seed、--limit、--after、--attempt） |
 | task replay SEED... --from-run RUN_ID [--wait] | 按原环境/后端/评估设置提交独立重放 |
 | task list/inspect/pause/resume/stop/force-stop/reconfigure RUN_ID | 查询与控制 Run；reconfigure 在安全边界切换配置 |
 | operation inspect/wait/logs/cancel OP_ID | 操作状态、等待、事件、取消 |
 | config show/edit/reset/validate/export | 查看、修改、重置、校验或导出任务配置 |
-| build submit FILE / tool stage FILE / tool activate RELEASE_ID | 本地受信构建与签名制品升级 |
+| build submit FILE / release stage FILE / release activate RELEASE_ID | 本地受信构建与签名制品升级 |
 
 配置 schema 见 [fuzz 配置协议](../../autofusex/workloads/fuzz/configuration.py)，支持 client_policy/environment/fuzz_task；未知字段、YAML 重复键/别名、超限内容会拒绝。任务默认持续生成、保存并启用上传（本地模式须关闭上传），资源还受 trust 和 policy 限制。
 
@@ -135,7 +134,7 @@ run --backend 增加被测后端，replay --backend 只执行指定后端；不�
 
 ## 查询结果
 
-公网结果网页：https://autofuse.online 。页面和 HTTP API 由 `autofusex/server/` 提供，路由与鉴权见[平台业务与数据设计](platform_v3_design.md)，不在本文档重复。
+公网结果网页：https://autofuse.online 。页面和 HTTP API 由 `autofusex/server/` 提供，路由与鉴权见[平台业务与数据设计](../server/architecture.md)，不在本文档重复。
 
 本地结果可导出快照后离线查看：
 
@@ -144,20 +143,10 @@ afx results snapshot /path/results.sqlite ./results.snapshot.sqlite
 afx view ./results.snapshot.sqlite --no-browser
 ~~~
 
-## 设备管理
+## 平台管理与任务配置
 
-设备管理（配对、环境、任务下发、`client.update` 远程升级）是本机 `afx` CLI 与本地 daemon 之间的协议，数据模型见 [management/central.py](../../autofusex/client/central.py)。目前没有暴露对应的远程 HTTP 接口，所有管理操作都在本机通过上文"快速开始"列出的 `afx` 命令完成。
+普通客户端通过 `afx init --token` 接入平台，daemon 同步配置、心跳与结果，并领取平台操作。客户端配置与升级规则分别见[客户端配置](configuration.md)和[安装与升级](upgrade.md)。问题领取、验证/回归及知识库由[中心服务](../server/architecture.md)提供。
 
-`client.update` 的 payload 是 `{"version":"0.1.4","package":"autofusex"}`，可选 `index_url`（仅用于受控 PyPI 镜像）；version 必须精确，daemon 不执行无版本的升级，也不自行探测最新版本。
+`fuzz_task.workload.generation` 支持 `ops`、`method`、`dynamic_variants`、`dtype_mode` 等参数，字段与限制以 [Fuzz 配置 schema](../../autofusex/workloads/fuzz/configuration.py) 为准。固定源码任务使用独立 schema，不接受生成参数。
 
-问题领取、知识库、Agent 修复闭环由平台服务的 `/api/issues/*` 等接口提供，见[平台业务与数据设计](platform_v3_design.md)第 5 节；本地 skill [afx-repair](../../skills/afx-repair/SKILL.md) 把那份文档当作当前 API 参考。
-
-## 当前自动化边界
-
-以下是当前实现限制，不能当作已经支持的接口：
-
-- `task submit/replay --wait` 等待提交；`task wait` 单独等待执行。停止/暂停操作成功表示控制请求已写入；completed 只表示调度完成，不表示所有模型通过，需读取 results。
-- 托管 task schema 尚未覆盖直接 fuzz 的 --ops、method、dynamic-variants、dtype 等全部生成参数；需要时使用 afx fuzz，并遵守任务所有权限制。
-- `task results` 查询本地已保存 attempt，`available=false` 表示结果库尚未生成，不能当作全部通过；未保存的执行无法补取结果。
-
-后续计划：统一托管与直接 fuzz 的生成参数。
+`task submit/replay --wait` 等待提交操作；`task wait` 等待执行结束。completed 只表示调度完成，不表示模型全部通过，应继续查看 results。`task results` 返回 `available=false` 时表示结果库尚未生成，未保存的执行无法补取结果。

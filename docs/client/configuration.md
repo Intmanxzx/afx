@@ -40,9 +40,9 @@ afx config show
 afx config edit task.yaml
 ```
 
-`config edit` 读取已有 JSON/YAML 任务文件，不会打开编辑器。任务规格见[进阶命令](fuzz_usage.md)。本地模式写入本机配置，须设置 `results.upload: false`；带 token 时保存平台个人配置。
+`config edit` 读取已有 JSON/YAML 任务文件，不会打开编辑器。任务规格见[进阶命令](advanced.md)。本地模式写入本机配置，须设置 `results.upload: false`；带 token 时保存平台个人配置。
 
-平台配置接口：GET/POST /api/config/me；管理员默认配置 GET/POST /api/config/default。POST 的 config 为 null 表示恢复继承。个人配置为完整快照；没有个人配置时继承管理员默认配置。配置页面位于客户端管理页面。保存配置在下次 start 生效，运行中任务继续使用原快照。带 token 时 `afx config reset` 清除个人配置；本地 `reset` 使用通用默认值，其中上传为开启，启动前需用 `config edit` 关闭上传。
+平台配置接口：GET/POST /api/config/me；管理员默认配置 GET/POST /api/config/default。POST 的 config 为 null 表示恢复继承。个人配置为完整快照；没有个人配置时继承管理员默认配置。配置页面位于客户端管理页面。保存配置在下次 start 生效，运行中任务继续使用原快照。带 token 时 `afx config reset` 清除个人配置；本地 `reset` 恢复默认任务配置并关闭上传。
 
 数据目录可用 `AUTOFUSEX_HOME` 或命令末尾的 `--data-dir DIR` 指定，以 `init` 返回的 `home` 为准。指定独立目录时，每条命令都需保持一致，例如 `afx init --data-dir /path/to/afx-client`、`afx start --data-dir /path/to/afx-client`。托管任务结果分别保存在 `runs/RUN_ID/results.sqlite`，可用 `afx task list`、`afx task results RUN_ID` 查询。
 
@@ -60,11 +60,11 @@ afx config edit task.yaml
 
 ## 更新
 
-平台管理员继续使用客户端管理页面下发目标 afx 版本。bootstrap daemon 只负责接收升级、停止 worker、安装到独立 client-releases 目录并切换 active-client.json；平台 heartbeat、配置同步和硬件/软件事实采集由当前 active client release 的 platform agent 子进程执行。上一版本指针保存在 previous-client.json。连续任务在升级后重新提交。这样新增 heartbeat 字段只需发布并切换 client release，不依赖 bootstrap daemon 加载新模块。
+客户端从调用 `afx` 的 Python 环境启动。`afx update VERSION` 或管理员下发目标版本后，daemon 排空任务并缓存目标版与回退版 wheel，由 supervisor 在同一 Python 环境安装、重启和验证；失败则使用缓存回退。心跳、配置同步及任务管理由当前 daemon 执行，不依赖独立 platform agent 或活动版本指针。
 
-每次管理员下发升级都有独立请求编号；同一次请求的重复心跳不会重复安装，重新下发相同版本会创建新操作。心跳上报 active-client.json 指向的执行端版本，服务端收到目标版本后清除升级目标。新初始化的数据目录生成独立持久化身份，已有 config.json 身份保持不变。旧 daemon 若不支持 active client agent，需要先手工升级并重启一次；支持该协议后，后续 heartbeat 和平台事实采集会随 active release 自动切换。
+更新保留身份、配置、结果与队列。完整流程、稳定 supervisor 边界及旧安装接入方式见[客户端安装与升级](upgrade.md)。
 
-### 配置查看、校验与导出
+## 配置查看、校验与导出
 
 所有 config 命令操作同一种任务配置，不再提供独立的 policy 命令。
 
@@ -74,7 +74,7 @@ afx config edit task.yaml
 - afx config reset：本地恢复默认并关闭上传；托管模式恢复平台继承配置。
 - afx config export：stdout 输出纯任务 JSON，可保存后交给 edit 或 validate。
 
-旧 config effective/apply、management trust/status 和 trust/effective 本地 IPC 接口已移除。底层资源约束仍保留供任务执行与高级安装使用。
+本机资源约束由客户端维护，任务执行和高级安装仍须通过资源准入。
 
 ## 固定用例与整网任务
 
