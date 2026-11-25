@@ -6,7 +6,7 @@ failure means from the immutable evidence shipped with an execution.
 import json
 import re
 
-VERSION = 10
+VERSION = 11
 
 _NNSMITH_SIGNATURE = 'ValueError: materialized Torch graph differs from declared NNSmith output signature'
 
@@ -221,6 +221,10 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
         frontend = frontend_failure(backend, summary, detail, log)
         if frontend:
             return (*frontend, VERSION)
+        from autofusex.server.local_failure_attribution import local_failure
+        local = local_failure(detail, backend)
+        if local:
+            return (*local, VERSION)
     from autofusex.execution.module_attribution import classify_module
     # Module markers identify the actual failing frame. Otherwise only the
     # terminal summary may prove aclNN ownership; shared logs can contain

@@ -7,9 +7,33 @@ from autofusex.server import aggregates
 from autofusex.server.store import get_content
 from autofusex.server.triton_attribution import triton_failure
 from autofusex.server.native_runtime_attribution import native_runtime_failure
+from autofusex.server.local_failure_attribution import local_failure
 from autofusex.server.failure_attribution import classify, local_aclnn_failure, frontend_failure, nnsmith_failure, VERSION
 
 FIELDS = ('function_status','fail_stage','failure_owner','classifier_version')
+
+
+def local_failure_plan(conn):
+    """Preview only approved local-evidence rules on unknown-retest failures."""
+    changes = []
+    for row in conn.execute(
+            "SELECT e.*,c.case_key,(h.exec_id=e.exec_id) AS is_head FROM executions e "
+            "JOIN cases c ON c.case_id=e.case_id LEFT JOIN execution_heads h "
+            "ON h.case_id=e.case_id AND h.backend=e.backend AND h.npu_arch=e.npu_arch "
+            "WHERE e.fail_stage='unknown_retest' AND e.function_status IN "
+            "('build_fail','gen_fail','ascgraph_fail','compile_fail','runtime_fail') ORDER BY e.exec_id"):
+        detail = get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None
+        result = local_failure(detail, row['backend'])
+        if result:
+            changes.append({'exec_id': row['exec_id'], 'exec_uuid': row['exec_uuid'],
+                            'case_key': row['case_key'], 'backend': row['backend'],
+                            'npu_arch': row['npu_arch'], 'is_head': bool(row['is_head']),
+                            'before': [row[k] for k in FIELDS], 'after': [*result, VERSION]})
+    return changes
+
+
+def apply_local_failure(store, batch_id, changes):
+    return _apply_scoped(store, batch_id, changes, 'local_failure')
 
 
 def triton_plan(conn):
@@ -135,7 +159,12 @@ def _apply_scoped(store, batch_id, changes, rule):
                     or [row[k] for k in FIELDS] != change['before']):
                 raise ValueError('record changed after preview')
             detail = get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None
-            if rule == 'aclnn':
+            if rule == 'local_failure':
+                if (row['fail_stage'] != 'unknown_retest' or row['function_status'] not in
+                        ('build_fail', 'gen_fail', 'ascgraph_fail', 'compile_fail', 'runtime_fail')):
+                    raise ValueError('record is outside local failure correction scope')
+                result = local_failure(detail, row['backend'])
+            elif rule == 'aclnn':
                 result = native_runtime_failure(detail, row['backend'])
                 if result and result[1] != 'aclnn':
                     result = None

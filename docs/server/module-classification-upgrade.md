@@ -2,6 +2,16 @@
 
 本改动为候选代码，未升级生产服务或客户端，未写入现网历史记录。
 
+## Shape 局部异常与调用栈补充（分类器 v11，待部署）
+
+服务端新增经确认的八类规则：Inductor remove_noop_ops 的 int_noop/decimals 参数错误、same_meta 的 SymInt.size 错误、AOT functional graph 断言、torch_npu 索引表达式校验失败、保留实际 Torch lowering/ir 栈的 pow/SymInt 签名错误、validate_lib 产物权限错误、autofused Kernel 初始化或执行错误、Autofuse AscendC 主机或设备编译异常。分别使用既有 inductor、environment、fused_kernel、af_common 分类，不新增细分标签。仅改变服务端分类器和存量补正工具；客户端、协议、采集版本、数据库 schema 和页面分类无需更新。
+
+每个失败 Shape 必须同时包含具体异常和实际 traceback，并证明相同模块；已知模块冲突、缺失 Shape 异常、只有共享日志或生成源码时不触发。保留 JSON 字符串形式 diagnostics 的兼容。2026-11-25 17:13:59 只读快照的 9,895 条 unknown_retest 历史执行中，新规则命中 6,940 条（当前执行头 6,934 条），与逐条审核范围一致；这是离线预览，尚未写入现网。
+
+历史记录不会因部署分类器自动刷新。独立一致快照或已停止写入的数据可用 tools/classification_local_failure.py DATA --batch local-failure-v11 --offline --preview manifest.json 预览；将 --preview 改为 --apply 可应用清单，使用 --rollback 可回滚同批。
+
+预览只读打开 core/content，不初始化 Store 或执行迁移。应用仅处理 unknown_retest 的失败记录，逐条核对 UUID、旧分类和当前证据，在既有 classification_changes 中保存可回滚审计并重建统计。原始 detail/log、reported 字段、执行头和问题状态不改写；不执行通用全量刷新，不创建复测任务。
+
 ## 分类契约
 
 | status | stage | 展示 |
