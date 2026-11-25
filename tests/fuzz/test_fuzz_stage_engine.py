@@ -327,8 +327,8 @@ def test_npu_first_resource_budget_respects_limits(monkeypatch):
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling':40,'effective_memory_bytes':200*1024**3})
     monkeypatch.setattr(sys, 'platform', 'linux')
-    assert resources.npu_first_defaults('.',2,Budget()) == {'cpu_workers':4,'compile_threads':8}
-    assert resources.npu_first_defaults('.',2,Budget(memory_budget_bytes=4*1024**3))['cpu_workers']==2
+    assert resources.npu_first_defaults('.',2,Budget()) == {'cpu_workers':8,'compile_threads':5}
+    assert resources.npu_first_defaults('.',2,Budget(memory_budget_bytes=4*1024**3))['cpu_workers']==1
 
 
 def test_mlir_runtime_reuse_is_explicit_and_not_compile_split():

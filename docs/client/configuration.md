@@ -46,7 +46,7 @@ afx config edit task.yaml
 
 数据目录可用 `AUTOFUSEX_HOME` 或命令末尾的 `--data-dir DIR` 指定，以 `init` 返回的 `home` 为准。指定独立目录时，每条命令都需保持一致，例如 `afx init --data-dir /path/to/afx-client`、`afx start --data-dir /path/to/afx-client`。托管任务结果分别保存在 `runs/RUN_ID/results.sqlite`，可用 `afx task list`、`afx task results RUN_ID` 查询。
 
-自动资源策略由客户端根据设备数量、有效 CPU 和内存计算；手动策略使用任务配置中的 workers、compile_threads 和 memory_budget。普通任务与复测不创建或校验 trust.json，也不受旧设备、资源授权限制；运行时仍检查资源可用性并使用设备锁。本地模式关闭上传，带 token 时以上述平台配置为准。
+自动资源策略由客户端根据设备数量、有效 CPU 和内存计算：优先以每张 NPU 4 个 workers 为目标，CPU 或内存不足时下调；再为每个 worker 分配编译线程（上限 8），总编译线程数不超过有效 CPU 数。例如两张卡、32 个有效 CPU 且内存预算充足时，选择 8 workers × 4 threads。auto 模式下，停止、升级后启动新运行会重新计算；恢复已有运行则沿用该运行冻结的预算。手动策略使用任务配置中的 workers、compile_threads 和 memory_budget。普通任务与复测不创建或校验 trust.json，也不受旧设备、资源授权限制；运行时仍检查资源可用性并使用设备锁。本地模式关闭上传，带 token 时以上述平台配置为准。
 
 ## Replay
 
