@@ -56,6 +56,9 @@ def test_marker_transaction_filter_retest_and_rollback(env):
              detail=diagnostic(['Check dtype failed for graph_hint/cast'])),
         item('old-known', status='runtime_fail', log_summary='call aclnnSign failed', c=case(SEED_B)),
     ]))
+    # Model an existing pre-authoritative classification, not a fresh upload.
+    with store.write() as conn:
+        conn.execute("UPDATE executions SET fail_stage='af_common' WHERE exec_uuid='old-unresolved'")
     changes = plan(store.reader())
     assert len(changes) == 1 and changes[0]['exec_uuid'] == 'old-unresolved'
     assert changes[0]['is_head']
@@ -79,6 +82,8 @@ def test_marker_transaction_filter_retest_and_rollback(env):
 def test_stale_manifest_rejected_without_partial_updates(env):
     store, ingestor, principal = env
     upload(ingestor, principal, body([item('stale-unknown', status='runtime_fail')]))
+    with store.write() as conn:
+        conn.execute("UPDATE executions SET fail_stage='unknown' WHERE exec_uuid='stale-unknown'")
     changes = plan(store.reader())
     with store.write() as conn:
         conn.execute("UPDATE executions SET fail_stage='aclnn'")

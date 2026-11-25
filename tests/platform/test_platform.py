@@ -177,7 +177,7 @@ def test_pipeline_and_head_replacement(env):
     store, ingestor, principal = env
     upload(ingestor, principal, body([
         item("exec-0001", backend="cpu"),
-        item("exec-0002", backend="af-mlir", status="compile_fail", fail_stage="schedule", created=1000),
+        item("exec-0002", backend="af-mlir", status="compile_fail", fail_stage="schedule", log_summary="Schedule failed", created=1000),
         item("exec-0003", backend="af-legacy", accuracy="fail"),
         item("exec-0004", backend="af-mlir", c=case(key=SEED_B)),
     ]))

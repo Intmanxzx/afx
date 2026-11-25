@@ -61,7 +61,7 @@ def test_shape_scope_and_backend_protection():
     shared = {'execution': {'diagnostics': {'error': EXCEPTION}}}
     assert triton_failure('triton-npu', detail=shared) is None
     assert classify(backend='triton-npu', declared_status='runtime_fail', log=EXCEPTION,
-                    detail=detail('RuntimeError: unknown'))[:2] == ('runtime_fail', 'unknown')
+                    detail=detail('RuntimeError: unknown'))[:2] == ('runtime_fail', 'unknown_retest')
     assert classify(backend='triton-npu', declared_status='pass', detail=detail(EXCEPTION))[0] == 'pass'
     assert classify(backend='triton-npu', declared_status='timeout', detail=detail(EXCEPTION))[0] == 'timeout'
     assert classify(backend='triton-npu', declared_status='unsupported', detail=detail(EXCEPTION))[0] == 'unsupported'

@@ -83,7 +83,7 @@ class World:
             n = int(task["case_key"][1:], 36)
             status = outcome(task["case_key"])
             uuid = f"t{task['task_id']:06d}x{self.keys}"
-            self.upload([item(uuid, n, status=status, summary="error at 0x1f tile 32" if status != "pass" else None,
+            self.upload([item(uuid, n, status=status, summary="Schedule failed at 0x1f tile 32" if status != "pass" else None,
                               created=5000, fail_stage="schedule" if status != "pass" else None)], kind=task["run_kind"], run=task["run_uuid"])
             results.append(retests.complete(self.store, self.client, task["task_id"], {
                 "request_key": self.key(), "lease_id": task["lease_id"], "exec_uuids": [uuid],
@@ -102,8 +102,8 @@ def world(tmp_path):
 def seed_failures(world):
     """Two cases share one schedule bug, one case has another bug, eight cases pass."""
     world.upload([
-        item("exec-0001", 1, status="compile_fail", fail_stage="schedule", summary="error at 0x1f tile 32"),
-        item("exec-0002", 2, status="compile_fail", fail_stage="schedule", summary="error at 0x2a tile 64"),
+        item("exec-0001", 1, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x1f tile 32"),
+        item("exec-0002", 2, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x2a tile 64"),
         item("exec-0003", 3, status="runtime_fail", summary="aclrtSynchronize failed", c=case(3, "reduce")),
         *[item(f"exec-1{n:03d}", n) for n in range(10, 18)],
         *[item(f"exec-2{n:03d}", n, backend="cpu") for n in range(1, 4)],
@@ -114,7 +114,7 @@ def seed_failures(world):
 
 def test_clustering_groups_same_normalized_error(world):
     by_category = seed_failures(world)
-    assert set(by_category) == {"schedule", "unknown"}
+    assert set(by_category) == {"schedule", "unknown_retest"}
     schedule = by_category["schedule"]
     assert schedule["case_count"] == 2 and schedule["status"] == "open" and re.fullmatch(r"F\d+", schedule["issue_id"])
     assert schedule["dimension"] == "function" and schedule["backend"] == "af-mlir"
@@ -128,7 +128,7 @@ def test_function_title_new_and_legacy(world):
     world.upload([item('exec-title', 301, status='compile_fail', fail_stage='lowering',
                        summary=summary, c=case(301, 'view'))])
     row = issues.list_issues(world.store)['issues'][0]
-    expected = '[af-mlir] unknown: Operator Reshape failed: shape [3, 4], axis 2 (view)'
+    expected = '[af-mlir] unknown_retest: Operator Reshape failed: shape [3, 4], axis 2 (view)'
     assert row['title'] == expected
     assert row['log_summary'] == summary
     with world.store.write() as conn:
@@ -265,11 +265,11 @@ def test_full_lifecycle(world):
 
     # the old, still-unmerged version keeps failing: expected, the issue stays resolved
     later = 10**13
-    world.upload([item("exec-9001", 40, status="compile_fail", fail_stage="schedule", summary="error at 0x99 tile 8",
+    world.upload([item("exec-9001", 40, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x99 tile 8",
                        created=later)])
     assert world.issue(issue_id)["status"] == "resolved"
     # the same bug on a newer version reopens it
-    world.upload([item("exec-9002", 41, status="compile_fail", fail_stage="schedule", summary="error at 0x98 tile 8",
+    world.upload([item("exec-9002", 41, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x98 tile 8",
                        created=later, env={"cann": "8.2", "backend_version": "0.3.2"})])
     detail = world.issue(issue_id)
     assert detail["status"] == "open" and detail["case_count"] == 4
