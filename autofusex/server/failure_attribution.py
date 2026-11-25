@@ -6,7 +6,7 @@ failure means from the immutable evidence shipped with an execution.
 import json
 import re
 
-VERSION = 6
+VERSION = 9
 
 _NNSMITH_SIGNATURE = 'ValueError: materialized Torch graph differs from declared NNSmith output signature'
 
@@ -14,6 +14,29 @@ _TIMEOUT = re.compile(r"\b(?:timeout|timed ?out|TimeoutError)\b", re.I)
 _ENV = re.compile(r"device busy|out of memory|no space left|npu unavailable|torch_npu unavailable|another managed test", re.I)
 _TORCH = re.compile(r"UnsupportedIndexExpr|unknown SymPy node|torch\._dynamo\.exc|torch\._inductor\.exc|ConstraintViolationError|GuardOnDataDependentSymNode", re.I)
 _GRAPH = re.compile(r"Check (?:dtype|shape) failed|Infer dtype failed|infer shape failed", re.I)
+_MLIR_RUNTIME = re.compile(r'UnsupportedBackend:\s*af-mlir runtime verification failed:')
+
+
+def mlir_environment_failure(backend, summary, detail):
+    """Runtime capability checks fail before compiling the generated graph."""
+    if backend != 'af-mlir':
+        return False
+    return _local_failure_matches(summary, detail, _MLIR_RUNTIME.search)
+
+
+def _local_failure_matches(summary, detail, matches):
+    """Require the same cause in every failing shape; exclude shared logs."""
+    d = _object(detail)
+    execution = _object(_object(d.get('contexts')).get('execution') or d.get('execution'))
+    shapes = _object(_object(execution.get('diagnostics')).get('shapes'))
+    summaries = {str(s.get('shape_index')): s.get('error_summary') or ''
+                 for s in d.get('shape_results', []) if isinstance(s, dict)
+                 and s.get('correctness') == 'error'}
+    indices = set(summaries) | {str(k) for k, v in shapes.items() if _object(v).get('error')}
+    if indices:
+        return all(matches(summaries.get(index, '') + '\n' +
+                   str(_object(shapes.get(index)).get('error') or '')) for index in indices)
+    return bool(matches(summary or ''))
 
 
 def _object(value):
@@ -165,6 +188,13 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
     if declared_status in ("ok", "fail", "pass"):
         # A correctness failure is represented separately by accuracy_status.
         return "pass", None, None, VERSION
+    # A generated schedule frame can wrap this preflight exception. The loaded
+    # CANN runtime lacks the required capability; no compiler phase failed.
+    if mlir_environment_failure(backend, summary, detail):
+        return 'runtime_fail', 'environment', 'infrastructure', VERSION
+    from autofusex.execution.module_attribution import torch_guard_failure
+    if _local_failure_matches(summary, detail, torch_guard_failure):
+        return 'gen_fail', 'inductor', 'torch', VERSION
     if declared_status not in {'unsupported', 'timeout'}:
         generated = nnsmith_failure(summary, detail)
         if generated:

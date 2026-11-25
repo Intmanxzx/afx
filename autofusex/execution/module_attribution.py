@@ -4,6 +4,13 @@ import re
 
 MARKER = 'AFX_MODULE_V1='
 
+
+def torch_guard_failure(text):
+    """Recognize Dynamo's own guard assertion, even through compiler wrappers."""
+    return bool(re.search(
+        r'AssertionError:\s*Guard failed on the same frame it was created\.', text))
+
+
 def boundary_failure(exc, sources):
     """Inspect actual generated-code frames, never source text in an error message."""
     seen = set()
