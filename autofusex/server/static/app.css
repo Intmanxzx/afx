@@ -136,7 +136,12 @@ table.grid td.batch { border-left: 4px solid transparent; }
 .actionbar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--text); color: var(--bg); border-radius: 12px; padding: 8px 14px; display: flex; gap: 10px; align-items: center; z-index: 40; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
 .actionbar button { background: transparent; color: inherit; border-color: rgba(255,255,255,.35); }
 .colpick { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; }
-.back-btn { position: fixed; left: max(12px, env(safe-area-inset-left, 0px)); bottom: calc(24px + env(safe-area-inset-bottom, 0px)); z-index: 25; box-shadow: var(--shadow); display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; padding: 10px 20px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+.case-page { padding-left: 104px; }
+.back-btn { position: fixed; left: max(28px, calc((100vw - 1500px) / 2 + 28px)); top: 50%; transform: translateY(-50%); width: 88px; min-height: 72px; z-index: 25; box-shadow: var(--shadow); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 18px; font-weight: 600; padding: 16px 10px; border-radius: 12px; border: 2px solid var(--accent); background: var(--panel); color: var(--accent); }
+@media (max-width: 760px) {
+  .case-page { padding-left: 68px; }
+  .back-btn { left: 12px; width: 64px; min-height: 64px; font-size: 16px; padding: 12px 4px; }
+}
 .back-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .search-suggest { position: absolute; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; max-height: 320px; overflow-y: auto; }
 .search-sug-item { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; border: none; background: none; padding: 6px 10px; border-radius: 6px; }

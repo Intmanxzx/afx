@@ -20,6 +20,7 @@ function stageLabel(f) {
 const DTYPE_SHORT = { float16: "fp16", float32: "fp32", float64: "fp64", bfloat16: "bf16" };
 
 PAGES.case = async (root, params) => {
+  root.classList.add("case-page");
   const key = params.get("key");
   if (!key) { root.append(el("div", { class: "empty" }, "缺少用例 ID")); return; }
   const [spec, history] = await Promise.all([api(`/api/cases/${encodeURIComponent(key)}/spec`), api(`/api/cases/${encodeURIComponent(key)}/history?limit=50`)]);
