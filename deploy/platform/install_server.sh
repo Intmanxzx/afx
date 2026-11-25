@@ -4,25 +4,27 @@
 set -euo pipefail
 usage() {
   cat <<'HELP'
-Usage: install_server.sh --wheel FILE --root DIR [--port 8100] [--user USER] [--service afx-platform] [--python python3]
+Usage: install_server.sh --wheel FILE --root DIR [--port 8100] [--user USER] [--service afx-platform] [--python python3] [--memory-max 600M] [--read-processes 0]
   ROOT/data holds core.db, content.db, stats.db and secret.key (created on first start).
   Users and tokens are issued afterwards with:
     ROOT/bin/afx server --data ROOT/data user add NAME --role admin
     ROOT/bin/afx server --data ROOT/data token issue NAME   # one token per user; reissuing revokes the old one
 HELP
 }
-WHEEL=; ROOT=; PORT=8100; USER_NAME=$(id -un); SERVICE=afx-platform; PYTHON_BIN=python3
+WHEEL=; ROOT=; PORT=8100; USER_NAME=$(id -un); SERVICE=afx-platform; PYTHON_BIN=python3; MEMORY_MAX=600M; READ_PROCESSES=0
 while (($#)); do
   [[ $1 == -h || $1 == --help ]] && { usage; exit 0; }
   (($# >= 2)) || { usage >&2; exit 2; }
   case $1 in
     --wheel) WHEEL=$2;; --root) ROOT=$2;; --port) PORT=$2;; --user) USER_NAME=$2;;
     --service) SERVICE=$2;; --python) PYTHON_BIN=$2;;
+    --memory-max) MEMORY_MAX=$2;;
+    --read-processes) READ_PROCESSES=$2;;
     *) echo "Unknown option: $1" >&2; exit 2;;
   esac
   shift 2
 done
-[[ -f $WHEEL && $ROOT == /* && $PORT =~ ^[0-9]+$ && $SERVICE =~ ^[a-zA-Z0-9_-]+$ ]] || { usage >&2; exit 2; }
+[[ -f $WHEEL && $ROOT == /* && $PORT =~ ^[0-9]+$ && $SERVICE =~ ^[a-zA-Z0-9_-]+$ && $MEMORY_MAX =~ ^[1-9][0-9]*[KMG]?$ && $READ_PROCESSES =~ ^[0-8]$ ]] || { usage >&2; exit 2; }
 SUDO=(); ((EUID == 0)) || SUDO=(sudo)
 umask 077
 mkdir -p "$ROOT/deployments" "$ROOT/data" "$ROOT/bin"
@@ -56,7 +58,7 @@ After=network.target
 Type=simple
 User=$USER_NAME
 WorkingDirectory=$ROOT
-ExecStart=$VENV/bin/python -I -m afx server --data $ROOT/data serve --host 127.0.0.1 --port $PORT
+ExecStart=$VENV/bin/python -I -m afx server --data $ROOT/data serve --host 127.0.0.1 --port $PORT --read-processes $READ_PROCESSES
 Restart=on-failure
 RestartSec=5
 UMask=0077
@@ -65,7 +67,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=$ROOT/data
-MemoryMax=600M
+MemoryMax=$MEMORY_MAX
 [Install]
 WantedBy=multi-user.target
 EOF

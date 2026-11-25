@@ -39,6 +39,10 @@ class SearchError(ValueError):
         super().__init__(message)
         self.status, self.code = status, code
 
+    def __reduce__(self):
+        # Overview errors cross the dedicated read-process boundary.
+        return type(self), (str(self), self.status, self.code)
+
 
 @dataclass
 class Query:

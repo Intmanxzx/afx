@@ -100,3 +100,15 @@ afx retest run --endpoint https://autofuse.online --token-file client.token \
 - `once`：上传一次并发送心跳；`status`：查看上传游标，以及可用于验证的已安装包（graph-autofusion Version 与 `pyautofuse.so` 的 SHA256）。
 - 管理员在“平台运维”页点击一键更新后，客户端在下一次心跳时 `pip install autofusex==版本` 并重启自身进程；正在进行的 fuzz 任务需另行重启。
 - 已知限制：当前执行引擎不支持严格的 NPU kernel 计时（replay `--perf` 会报 `strict NPU measurement requires a device lease; not implemented yet`），因此 Kernel 对比与能力画像暂时只能使用其他来源的 kernel 数据。
+
+## 4 核 4G 服务端配置
+
+安装服务时可指定 --read-processes 3 --memory-max 2G。API 主进程仍独占写入协调、鉴权和限流，三个子进程仅执行总览缓存未命中的只读查询，不创建或迁移数据库，也不读取 token 密钥。CLI 对应 afx server --data DIR serve --read-processes 3；默认 0，维持单进程运行方式。
+
+总览使用进程内 32MiB / 128 条 LRU 缓存，缓存已经编码的响应；相同版本、相同查询的并发请求共享一次计算。缓存键包含 ingest_seq、统计 applied_seq、性能阈值 revision 和完整筛选条件。子进程若观察到较新的快照，当前请求改用自身原始快照计算，避免版本与内容错配。
+
+用例列表和历史页的错误摘要按原始 detail/log 内容 ID 和 fallback 文本缓存，最多 8192 条 / 8MiB；缺失的备份日志不会缓存，补齐后可重新读取。缓存不修改原始上传，不缓存鉴权或问题状态。重启后首次请求仍需实际计算。
+
+2026-11-25 在 afx 的一致数据副本上，新旧接口 JSON 对照一致。两条 AF 总览热请求中位值 98.45ms → 6.26ms，50 用例列表 167.12ms → 25.56ms；4 并发分别从 821.52ms → 14.38ms、847.96ms → 184.29ms。三个只读进程处理 6 个不同冷总览请求的总耗时 345ms → 148ms。扩大 SQLite cache 或开启 mmap 的收益不稳定，保持 32MiB 连接缓存和 mmap=0。结果为本机回环的小规模对照，不含公网与浏览器渲染耗时。
+
+本次已部署到 afx，命令参数 --read-processes 3，systemd MemoryMax=2G，保留原 v12 部署和配置便于回退。平台测试 342 passed；生产回环总览热请求 8–10ms、列表 20–23ms，4 并发总览 12–16ms。公开详情与优化前一致，总览计数及对当前数据库的精确查询校验通过，身份密钥和客户端准入配置保持一致。完整备份、最终停写快照、对照结果与三库 quick_check 报告保存在服务端 /srv/afx-platform/private/read-performance-20261125。
