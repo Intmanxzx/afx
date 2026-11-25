@@ -43,8 +43,12 @@ def select(conn, issue, round_no: int, budget: int | None = None):
         for arch in arches:
             row = conn.execute(
                 "SELECT e.function_status, e.accuracy_status FROM execution_heads h JOIN executions e "
-                "ON e.exec_id=h.exec_id WHERE h.case_id=? AND h.backend=? AND h.npu_arch=?",
-                (case_id, issue["backend"], arch)).fetchone()
+                "ON e.exec_id=h.exec_id WHERE h.case_id=? AND h.npu_arch=? AND h.backend IN "
+                "(SELECT backend FROM issue_cases WHERE issue_id=? AND role='affected' AND npu_arch=?) "
+                "GROUP BY h.case_id HAVING MIN(e.function_status='pass' AND COALESCE(e.accuracy_status,'')<>'fail')=1 "
+                "AND COUNT(DISTINCT h.backend)=(SELECT COUNT(DISTINCT backend) FROM issue_cases WHERE issue_id=? "
+                "AND role='affected' AND npu_arch=?)",
+                (case_id, arch, issue["issue_id"], arch, issue["issue_id"], arch)).fetchone()
             if row is not None and row[0] == "pass" and row[1] != "fail":
                 return arch
         return None
@@ -134,8 +138,8 @@ def _history(conn, issue, affected, rng):
     per_issue_limit, seen, filtered = 3, {}, []
     for row in conn.execute(
             "SELECT ic.issue_id, ic.case_id FROM issues i JOIN issue_cases ic ON ic.issue_id=i.issue_id "
-            "AND ic.role='affected' WHERE i.status='resolved' AND i.backend=? AND i.issue_id<>? "
-            "ORDER BY i.resolved_at DESC, ic.added_at LIMIT 3000", (issue["backend"], issue["issue_id"])):
+            "AND ic.role='affected' WHERE i.status='resolved' AND ic.backend IN (SELECT backend FROM issue_cases WHERE issue_id=?) AND i.issue_id<>? "
+            "ORDER BY i.resolved_at DESC, ic.added_at LIMIT 3000", (issue["issue_id"], issue["issue_id"])):
         if seen.get(row[0], 0) < per_issue_limit:
             seen[row[0]] = seen.get(row[0], 0) + 1
             filtered.append(row[1])

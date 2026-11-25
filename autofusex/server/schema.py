@@ -537,6 +537,32 @@ CREATE INDEX issues_page_dimension ON issues(dimension,
 CREATE INDEX issues_page_status ON issues(dimension, status,
  CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END, case_count DESC, issue_no DESC);
 """),
+    (20, """
+ALTER TABLE issues ADD COLUMN treatment TEXT NOT NULL DEFAULT 'normal' CHECK(treatment IN ('ignore','low','normal','high'));
+ALTER TABLE issues ADD COLUMN primary_category TEXT NOT NULL DEFAULT 'Unknown';
+ALTER TABLE issues ADD COLUMN cluster_generation INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE issue_cases RENAME TO issue_cases_old;
+CREATE TABLE issue_cases(
+ issue_id TEXT NOT NULL, case_id INTEGER NOT NULL, role TEXT NOT NULL,
+ npu_arch TEXT NOT NULL, backend TEXT NOT NULL DEFAULT '', pick_reason TEXT,
+ case_revision INTEGER NOT NULL, stale INTEGER NOT NULL DEFAULT 0,
+ first_exec_id INTEGER, last_exec_id INTEGER, round_no INTEGER, result TEXT,
+ added_at INTEGER NOT NULL,
+ PRIMARY KEY(issue_id,role,case_id,npu_arch,backend)
+) WITHOUT ROWID;
+INSERT INTO issue_cases SELECT ic.issue_id,ic.case_id,ic.role,ic.npu_arch,
+ COALESCE((SELECT backend FROM executions WHERE exec_id=ic.last_exec_id),
+ (SELECT backend FROM issues WHERE issue_id=ic.issue_id)),ic.pick_reason,
+ ic.case_revision,ic.stale,ic.first_exec_id,ic.last_exec_id,ic.round_no,ic.result,ic.added_at FROM issue_cases_old ic;
+DROP TABLE issue_cases_old;
+CREATE INDEX issue_cases_case ON issue_cases(case_id,backend,npu_arch);
+CREATE TABLE issue_current(case_id INTEGER NOT NULL,backend TEXT NOT NULL,npu_arch TEXT NOT NULL,
+ issue_id TEXT NOT NULL,exec_id INTEGER NOT NULL,PRIMARY KEY(case_id,backend,npu_arch)) WITHOUT ROWID;
+CREATE INDEX issue_current_issue ON issue_current(issue_id,case_id);
+CREATE INDEX issue_current_exec ON issue_current(exec_id);
+CREATE UNIQUE INDEX issues_cluster_v2 ON issues(dimension,signature) WHERE cluster_generation=2;
+"""),
+
 ]
 
 CONTENT = [

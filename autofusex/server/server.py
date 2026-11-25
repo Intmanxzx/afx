@@ -375,10 +375,18 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
         return _success(search.field_values(store))
 
     @route('/api/issues')
-    def issue_list(dimension: QueryValue = None, backend: QueryValue = None, status: QueryValue = None,
+    def issue_list(dimension: QueryValue = None, backend: QueryValue = None, status: QueryText = None,
                    q: QueryText = None, after: QueryValue = None, limit: int = 50, page: int | None = None,
-                   principal=Depends(identity)):
-        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status, q=q, after=after, limit=limit, page=page))
+                   results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None,
+                   categories: QueryText = None, treatment: QueryText = None, scope: str = 'all',
+                   case_q: QueryText = None, principal=Depends(identity)):
+        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status,
+            q=q, after=after, limit=limit, page=page, results=results, selected_backends=selected_backends,
+            chips=chips, categories=categories, treatment=treatment, scope=scope, case_q=case_q))
+
+    @route('/api/admin/issues/{issue_id}/treatment', 'POST')
+    def issue_treatment(issue_id: str, body: m.IssueTreatment, principal=Depends(administrator)):
+        return _success(issues.set_treatment(store, principal, issue_id, data(body)))
 
     @route('/api/issues/claim', 'POST')
     def claim(body: m.Claim, principal=Depends(writer)):

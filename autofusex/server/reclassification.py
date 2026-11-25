@@ -4,6 +4,7 @@ Call only on a stopped server or an isolated consistent snapshot.
 """
 import json
 from autofusex.server import aggregates
+from autofusex.server.issues import refresh_classified_executions
 from autofusex.server.store import get_content
 from autofusex.server.triton_attribution import triton_failure
 from autofusex.server.native_runtime_attribution import native_runtime_failure
@@ -223,6 +224,7 @@ def _apply_scoped(store, batch_id, changes, rule):
             conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',
                          (*change['after'], row['exec_id']))
         if changes:
+            refresh_classified_executions(conn, [c['exec_id'] for c in changes])
             aggregates.rebuild(conn, store.setting(conn, 'perf.tie_threshold'))
             aggregates.advance_seq(conn)
     return len(changes)
@@ -253,6 +255,7 @@ def refresh(store, batch_id, *, apply=False):
                     (batch_id,change['exec_id'],json.dumps(change['before']),json.dumps(change['after'])))
                 conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',
                     (*change['after'],change['exec_id']))
+            refresh_classified_executions(conn, [c['exec_id'] for c in changes])
             aggregates.rebuild(conn,store.setting(conn,'perf.tie_threshold'))
             aggregates.advance_seq(conn)
     return changes
@@ -267,6 +270,7 @@ def rollback(store,batch_id):
         for row in rows:
             conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',
                          (*json.loads(row['before_json']),row['exec_id']))
+        refresh_classified_executions(conn, [r['exec_id'] for r in rows])
         conn.execute('DELETE FROM classification_changes WHERE batch_id=?',(batch_id,))
         aggregates.rebuild(conn,store.setting(conn,'perf.tie_threshold'));aggregates.advance_seq(conn)
     return len(rows)

@@ -13,10 +13,11 @@ export function route() {
   return { page, params: new URLSearchParams(query || "") };
 }
 export function go(page, params = {}) {
-  const current = route().params;
+  const currentRoute = route();
+  const current = currentRoute.params;
   const merged = new URLSearchParams();
   if (current.get("q") && params.q === undefined) merged.set("q", current.get("q"));
-  for (const key of ["results", "backends", "chips"]) if (current.has(key) && params[key] === undefined) merged.set(key, current.get(key));
+  for (const key of ["results", "backends", "chips"]) if ((page === "repair") === (currentRoute.page === "repair") && current.has(key) && params[key] === undefined) merged.set(key, current.get(key));
   for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined && v !== "") merged.set(k, v);
   const s = merged.toString();
   location.hash = page + (s ? "?" + s : "");
@@ -41,9 +42,9 @@ export async function render() {
   hideActionBar();
   overviewRedraw = null;
   document.querySelector(".result-filter")?.remove();
-  const filterable = ["overview", "discovery"].includes(page) && params.get("sub") !== "retests";
+  const filterable = ["overview", "discovery", "repair"].includes(page) && params.get("sub") !== "retests";
   document.body.classList.toggle("has-result-filter", filterable);
-  if (filterable) document.body.append(resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes, page: null })));
+  if (filterable) document.body.append(resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes, page: null }), [], { repair: page === "repair" }));
   const main = $("#main");
   const q = params.get("q");
   const content = el("div");

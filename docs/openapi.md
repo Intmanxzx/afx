@@ -23,3 +23,5 @@ api_models.py。业务函数继续负责数据库状态、租约和幂等性等�
 
 开发验证：安装项目和 test extra 后运行 pytest tests/platform；测试对实际 HTTP
 入口、鉴权、参数校验、幂等行为和 OpenAPI 标准及路由覆盖进行检查。
+
+修复闭环的筛选、处理标签、跨后端关联与存量重建语义见 [issues.md](server/issues.md)。

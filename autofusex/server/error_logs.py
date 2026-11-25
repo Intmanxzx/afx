@@ -143,3 +143,26 @@ def presentation(detail=None, log=None, fallback=None):
     entries = sections(d, log, fallback)
     return {'error_logs': entries, 'error_log': merged_log(entries), 'ascir_graphs': graphs,
             'shape_views': views}
+
+
+def issue_summary(detail=None, log=None, fallback=None, status=None):
+    """First error evidence for clustering; immutable logs remain untouched."""
+    if isinstance(detail, bytes):
+        detail = detail.decode(errors='replace')
+    if isinstance(log, bytes):
+        log = log.decode(errors='replace')
+    entries = sections(detail, log, fallback)
+    # ERROR-level native records take precedence over synthetic wrappers.
+    for entry in entries:
+        for line in entry['text'].splitlines():
+            if re.search(r"(?i)(?:\[ERROR\]|^error:|\bERROR\s)", line) and not _WRAPPER.search(line):
+                return line.strip()
+    for entry in entries:
+        for line in entry['text'].splitlines():
+            if (_ERROR.search(line) or re.search(r"Check dtype failed|UnsupportedBackend:|Segmentation fault|SIGSEGV|SIGABRT", line)) and not _WRAPPER.search(line):
+                return line.strip()
+    if status == 'timeout':
+        return 'Execution timed out'
+    if isinstance(fallback, str) and fallback.strip() and not re.search(r"AF_MLIR_STRICT|deprecated|Traceback", fallback):
+        return fallback.strip().splitlines()[0]
+    return 'No diagnostic evidence'
