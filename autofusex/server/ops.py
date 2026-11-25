@@ -292,7 +292,8 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
             "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
             "target_afx_version, update_status, target_daemon_state, daemon_request_id, daemon_state, daemon_state_at, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
             "FROM clients WHERE deleted_at IS NULL "
-            "ORDER BY COALESCE(last_heartbeat_at, last_seen_at) DESC"):
+            # Keep dashboard rows in registration order as heartbeats and status change.
+            "ORDER BY client_id ASC"):
         item = dict(row)
         item["update_status"] = json.loads(item["update_status"]) if item["update_status"] else {"state":"idle"}
         item["backend_versions"] = json.loads(item["backend_versions"]) if item["backend_versions"] else {}
