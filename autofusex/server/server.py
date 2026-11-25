@@ -73,13 +73,14 @@ _HASHED_ASSETS = ("bootstrap.js", "app.css", "favicon.svg")
 def _versioned_index(html: bytes) -> bytes:
     """Reference assets by content hash so CDN/browser caches can never serve a stale script."""
     import hashlib
-    key = hashlib.sha256(html).hexdigest()
+    assets = {asset: _static(asset) for asset in _HASHED_ASSETS}
+    key = (hashlib.sha256(html).hexdigest(), tuple(
+        (asset, hashlib.sha256(found[0]).hexdigest()[:12] if found else None)
+        for asset, found in assets.items()))
     if key not in _INDEX_CACHE:
         out = html
-        for asset in _HASHED_ASSETS:
-            found = _static(asset)
-            if found:
-                digest = hashlib.sha256(found[0]).hexdigest()[:12]
+        for asset, digest in key[1]:
+            if digest:
                 out = out.replace(f'"{asset}"'.encode(), f'"{asset}?v={digest}"'.encode())
         _INDEX_CACHE.clear()
         _INDEX_CACHE[key] = out
