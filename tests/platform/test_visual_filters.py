@@ -80,6 +80,40 @@ def test_visual_filters_reach_http_endpoints(env):
     assert client.get('/api/cases', params={'page': 0}).status_code == 400
 
 
+@pytest.mark.parametrize('endpoint,params', [
+    ('/api/cases', {}),
+    ('/api/overview/pipeline', {}),
+    ('/api/overview/backend', {'backend': 'af-mlir'}),
+    ('/api/overview/matrix', {'backends': 'af-mlir'}),
+    ('/api/overview/perf', {'x': 'af-mlir', 'y': 'triton-npu'}),
+])
+def test_all_result_categories_reach_http_endpoints(env, endpoint, params):
+    from fastapi.testclient import TestClient
+    from autofusex.server.server import create_app
+    from autofusex.server.result_categories import RESULT_KEYS
+
+    store, ingestor, principal = env
+    upload(ingestor, principal, body([
+        item('all-results-mlir', kernel=100),
+        item('all-results-triton', backend='triton-npu', kernel=200),
+    ]))
+    client = TestClient(create_app(store), base_url='http://127.0.0.1')
+    results = ','.join(sorted(RESULT_KEYS))
+    assert len(results) > 128
+    expected = client.get(endpoint, params=params)
+    response = client.get(endpoint, params={**params, 'results': results})
+    assert expected.status_code == response.status_code == 200, response.text
+    actual_data, expected_data = response.json()['data'], expected.json()['data']
+    # The pipeline echoes whether a query was composed, even for an all-results filter.
+    if endpoint == '/api/overview/pipeline':
+        actual_data.pop('q')
+        expected_data.pop('q')
+    assert actual_data == expected_data
+    for invalid in (results + ',invalid', results + '\n', 'x' * 4097):
+        response = client.get(endpoint, params={**params, 'results': invalid})
+        assert response.status_code == 400, response.text
+
+
 
 def test_visual_overview_reads_aggregates_without_scanning_executions(env):
     store, ingestor, principal = env
