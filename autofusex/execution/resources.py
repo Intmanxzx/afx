@@ -157,9 +157,9 @@ def adaptive_defaults(home):
 def npu_resource_plan(home, devices, budget):
     """Explainable startup heuristic, not an online optimizer or hard isolation.
 
-    Preserve device runtimes and CPU pipeline slots before adding compilation
-    parallelism. Eight is a throughput-oriented starting ceiling: dual-910
-    probes found a modest benefit at nine over six, not a universal optimum.
+    Prefer four workers per NPU to overlap CPU compilation with device work,
+    then distribute compiler threads within effective CPU and RAM limits.
+    This is a throughput-oriented starting point, not a universal optimum.
     """
     if type(devices) is not int or devices < 0:
         raise ValueError('device count must be a nonnegative integer')
@@ -176,15 +176,17 @@ def npu_resource_plan(home, devices, budget):
     # A saved cap is not evidence of current capacity. Unknown RAM permits
     # only one worker/thread; keep it unknown in diagnostics and admission.
     planning_memory = memory if memory is not None else min(configured_memory or 2*gib, 2*gib)
-    # CPU-only callers need no compiler subprocess pool. For NPUs leave at
-    # least two shared CPU slots when resources permit, not two workers/card.
-    target = devices + max(2, math.ceil(devices/2)) if devices else min(4, cores)
-    workers = max(1, min(cores, planning_memory//(2*gib), target))
+    # NPU workers need room for at least one compiler child as well as the
+    # worker itself. CPU-only callers need no compiler subprocess pool.
+    target = devices*4 if devices else min(4, cores)
+    minimum_worker_memory = (4 if devices else 2)*gib
+    workers = max(1, min(cores, planning_memory//minimum_worker_memory, target))
     # Conservatively charge every slot, including potential compiler children.
     # RSS estimates are a startup guard, never a guarantee for arbitrary graphs.
     memory_threads = max(1, planning_memory//(workers*2*gib)-1)
     threads = max(1, min(8 if devices else 1, cores//workers, memory_threads))
-    reasons = ['preserve NPU runtimes and shared CPU pipeline slots',
+    reasons = ['target four workers per NPU to overlap compilation and device execution'
+               if devices else 'bound CPU-only workers by effective CPU and RAM',
                'cap compile fan-out at eight; retain CPU/RAM admission and bounded worker reuse',
                'bound workers × compile_threads by effective CPU and estimated RSS budget']
     if not inventory.get('cpu_worker_ceiling') or available_memory is None:
@@ -205,7 +207,7 @@ def npu_resource_plan(home, devices, budget):
         reasons.append('compile fan-out reduced by CPU capacity or the conservative RAM estimate')
     corrections = {key: {'configured': getattr(budget, key, None), 'selected': value}
                    for key, value in budget_limits.items() if getattr(budget, key, None) != value}
-    return {'version': 3, 'mode': 'auto', 'inventory': inventory,
+    return {'version': 4, 'mode': 'auto', 'inventory': inventory,
             'budget_corrections': corrections,
             'budget_limits': budget_limits,
             'devices': devices, 'memory_budget_bytes': memory,

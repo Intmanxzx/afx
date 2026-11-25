@@ -111,17 +111,20 @@ def test_platform_path_selection_without_host_execution(monkeypatch, platform, e
 
 
 @pytest.mark.parametrize('cores,devices,memory_gib,expected', [
-    (40, 2, 200, (4, 8)),
-    (36, 2, 105, (4, 8)),
-    (16, 2, 64, (4, 4)),
+    (40, 2, 200, (8, 5)),
+    (36, 2, 105, (8, 4)),
+    (32, 2, 80, (8, 4)),
+    (6, 2, 64, (6, 1)),
+    (24, 1, 12, (3, 1)),
+    (16, 2, 64, (8, 2)),
     (3, 2, 64, (3, 1)),
     (1, 1, 2, (1, 1)),
-    (36, 2, 4, (2, 1)),
+    (36, 2, 4, (1, 1)),
     (36, 2, 16, (4, 1)),
-    (64, 4, 200, (6, 8)),
+    (64, 4, 200, (16, 4)),
     (None, 2, None, (1, 1)),
-    (24, 1, 64, (3, 8)),
-    (64, 8, 200, (12, 5)),
+    (24, 1, 64, (4, 6)),
+    (64, 8, 200, (32, 2)),
     (8, 0, 32, (4, 1)),
 ])
 def test_npu_auto_budget_distributes_effective_cores(monkeypatch, cores, devices, memory_gib, expected):
@@ -142,7 +145,7 @@ def test_npu_auto_budget_respects_smaller_configured_memory(monkeypatch):
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling': 36, 'effective_memory_bytes': 200*1024**3})
     assert resources.npu_first_defaults('.', 2, SimpleNamespace(memory_budget_bytes=8*1024**3)) == {
-        'cpu_workers': 4, 'compile_threads': 1}
+        'cpu_workers': 2, 'compile_threads': 1}
 
 
 @pytest.mark.parametrize('config,requested,workers,threads,expected', [
@@ -183,8 +186,9 @@ def test_auto_plan_explains_unused_cpu_capacity(monkeypatch):
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'host_cpu_count': 40, 'cpu_worker_ceiling': 36, 'effective_memory_bytes': 200*1024**3})
     plan = resources.npu_resource_plan('.', 2, SimpleNamespace(memory_budget_bytes=105*1024**3))
-    assert plan['selected'] == {'cpu_workers': 4, 'compile_threads': 8}
-    assert plan['version'] == 3 and plan['reasons'] and plan['inventory']['host_cpu_count'] == 40
+    assert plan['selected'] == {'cpu_workers': 8, 'compile_threads': 4}
+    assert plan['target_workers'] == 8
+    assert plan['version'] == 4 and plan['reasons'] and plan['inventory']['host_cpu_count'] == 40
 
 
 def test_auto_plan_clamps_stale_machine_budgets(monkeypatch):
@@ -199,7 +203,7 @@ def test_auto_plan_clamps_stale_machine_budgets(monkeypatch):
         memory_budget_bytes=100*1024**3, cache_budget_bytes=20*1024**3))
     assert plan['budget_limits'] == {
         'memory_budget_bytes': 8*1024**3, 'cache_budget_bytes': 2*1024**3}
-    assert plan['selected'] == {'cpu_workers':4,'compile_threads':1}
+    assert plan['selected'] == {'cpu_workers':2,'compile_threads':1}
 
 
 @pytest.mark.parametrize('configured', [None, 100*1024**3])
@@ -239,17 +243,17 @@ def test_plan_reports_budget_corrections(monkeypatch):
 
 
 @pytest.mark.parametrize('cores,memory_gib,expected', [
-    (36, 105, (4, 8)), (32, 72, (4, 8)),
-    (31, 72, (4, 7)), (36, 64, (4, 7)), (36, 16, (4, 1)),
+    (36, 105, (8, 4)), (32, 80, (8, 4)),
+    (31, 72, (8, 3)), (36, 64, (8, 3)), (36, 16, (4, 1)),
 ])
-def test_eight_thread_policy_keeps_cpu_and_memory_bounds(monkeypatch, cores, memory_gib, expected):
+def test_worker_depth_policy_keeps_cpu_and_memory_bounds(monkeypatch, cores, memory_gib, expected):
     from types import SimpleNamespace
     from autofusex.execution import resources
     memory = memory_gib * 1024**3
     monkeypatch.setattr(resources, 'resource_inventory', lambda _: {
         'cpu_worker_ceiling': cores, 'effective_memory_bytes': memory*2})
     plan = resources.npu_resource_plan('.', 2, SimpleNamespace(memory_budget_bytes=memory))
-    assert plan['version'] == 3
+    assert plan['version'] == 4
     assert (plan['selected']['cpu_workers'], plan['selected']['compile_threads']) == expected
     assert expected[0]*expected[1] <= cores
     assert expected[0]*(expected[1]+1)*2*1024**3 <= memory
