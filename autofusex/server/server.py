@@ -41,6 +41,8 @@ MAX_AGGREGATE_CONCURRENT = 4
 
 QueryValue = Annotated[Optional[str], Query(pattern=r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")]
 QueryText = Annotated[Optional[str], Query(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")]
+# Comma-separated visual selections can exceed the search text limit.
+QuerySelection = Annotated[Optional[str], Query(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f\x7f]+$")]
 RequiredValue = Annotated[str, Query(pattern=r"^[A-Za-z0-9_.:/+<>=-]{1,256}$")]
 
 
@@ -320,7 +322,7 @@ def create_app(store: Store) -> FastAPI:
     @route('/api/cases')
     def cases(after: Optional[int] = None, limit: int = 50, page: Optional[int] = None, backend: QueryValue = None,
               status: QueryValue = None, arch: QueryValue = None, case_key: QueryValue = None,
-              case_id: Optional[int] = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+              case_id: Optional[int] = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         return _success(queries.case_page(store, after=after, limit=limit, backend=backend, status=status,
                                           arch=arch, case_key=case_key, case_id=case_id, q=q, results=results, selected_backends=selected_backends, chips=chips, page=page))
 
@@ -600,15 +602,15 @@ def create_app(store: Store) -> FastAPI:
         return _success(accounts.manage(store, principal, data(body)))
 
     @route('/api/overview/pipeline', dependencies=[Depends(aggregate)])
-    def pipeline(arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+    def pipeline(arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         return _success(queries.pipeline(store, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/backend', dependencies=[Depends(aggregate)])
-    def backend(backend: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+    def backend(backend: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         return _success(queries.backend_stats(store, backend, dim, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/perf', dependencies=[Depends(aggregate)])
-    def perf(x: RequiredValue, y: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+    def perf(x: RequiredValue, y: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         return _success(queries.perf_pair(store, x, y, dim, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/dims', dependencies=[Depends(aggregate)])
@@ -616,7 +618,7 @@ def create_app(store: Store) -> FastAPI:
         return _success(queries.dims(store))
 
     @route('/api/overview/matrix', dependencies=[Depends(aggregate)])
-    def matrix(backends: str, arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+    def matrix(backends: str, arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         names = [b for b in backends.split(',') if b][:8]
         if not names or not all(re.fullmatch('[A-Za-z0-9_.:/+<>=-]{1,256}', b) for b in names):
             raise HTTPError(400, 'invalid', 'backends must be a comma separated list of backend names')
