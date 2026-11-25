@@ -129,7 +129,8 @@ class TorchAdapter:
         return tensors
 
     def invoke(self, prepared, inputs):
-        with self.torch.no_grad():
+        from autofusex.execution.backends.compile_overlap import overlap_compile
+        with overlap_compile(self), self.torch.no_grad():
             output = prepared(*inputs)
         if getattr(self, 'expected_outputs', None) is not None:
             if (not isinstance(output, tuple) or len(output) != len(self.expected_outputs)

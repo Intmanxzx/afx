@@ -83,7 +83,10 @@ def statistics(conn,selected_ids=None, *, use_cached=False, window_id=None):
             if not lease:continue
             a=max(start['monotonic_ns'],lease['acquired']);b=min(end['monotonic_ns'],lease['released'])
             token_ns+=max(0,b-a)*lease['cpu_tokens']
-            if lease.get('device_uuid') in device_intervals:device_intervals[lease['device_uuid']].append((a,b))
+            if lease.get('device_uuid') in device_intervals:
+                intervals = lease.get('device_intervals', [(a,b)])
+                device_intervals[lease['device_uuid']].extend(
+                    (max(start['monotonic_ns'], x), min(end['monotonic_ns'], y)) for x,y in intervals)
         for r in by_backend.values():
             for name in ('processing','e2e'):
                 values=r.pop(name);r[name+'_samples']=len(values);r[name+'_p50_ns']=percentile(values,.5);r[name+'_p95_ns']=percentile(values,.95)

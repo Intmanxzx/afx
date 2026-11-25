@@ -70,7 +70,7 @@ class Reporter:
         now=time.monotonic()
         if not force and now-self.last<5:return
         self.last=now;self.sequence+=1
-        busy={x.get('device_uuid') for x in pool.leases.values()}
+        busy={x.get('device_uuid') for x in pool.leases.values() if x.get('device_held', True)}
         counts={}
         for s in stages.values():
             if s.state=='running':counts[s.kind.value]=counts.get(s.kind.value,0)+1
