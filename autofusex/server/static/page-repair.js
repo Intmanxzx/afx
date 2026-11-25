@@ -1,7 +1,7 @@
 "use strict";
 // 修复闭环: issue list with a subway-style status track, and the issue detail drawer.
 import { el, api, qs, rkey, time, label, fmt, archLabel, STATUS_LABEL } from "./core.js";
-import { select } from "./widgets.js";
+import { select, pagination } from "./widgets.js";
 import { PAGES, go, openCase } from "./router.js";
 import { isAdmin } from "./auth.js";
 import { openDrawer } from "./ui.js";
@@ -26,6 +26,8 @@ PAGES.repair = async (root, params) => {
   const dimension = params.get("dimension") || "function";
   const status = params.get("status") || "";
   const q = params.get("q") || "";
+  const requestedPage = Number(params.get("page") || 1);
+  const pageNumber = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
   const tabs = el("div", { class: "tabs" }, [["function", "功能问题"], ["accuracy", "精度问题"], ["performance", "性能问题"]].map(([k, t]) =>
     el("button", { class: k === dimension ? "active" : "", onclick: () => go("repair", { dimension: k, status, q: q || null }) }, t)));
   const filter = select([["", "全部状态"], ...Object.entries(STATUS_LABEL)], status, v => go("repair", { dimension, status: v, q: q || null }));
@@ -37,18 +39,15 @@ PAGES.repair = async (root, params) => {
   const table = el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["问题", "后端", "用例数", "状态", "领取人", "更新时间"].map(t => el("th", {}, t)))), body);
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
   panel.append(el("div", { class: "table-wrap" }, table), more);
-  let cursor = null, loadedOnce = false;
   const load = async () => {
-    if (loadedOnce) panel.dataset.custom = "1";  // extra pages loaded: a refresh would drop them
-    loadedOnce = true;
-    const page = await api("/api/issues" + qs({ dimension, status, q, after: cursor, limit: 50 }));
-    cursor = page.next_cursor;
+    const page = await api("/api/issues" + qs({ dimension, status, q, page: pageNumber, limit: 50 }));
     for (const issue of page.issues) body.append(el("tr", {},
       el("td", {}, el("a", { href: "#", onclick: e => { e.preventDefault(); issueDrawer(issue.issue_id); } }, issue.issue_id), el("div", { class: "small", title: issue.title }, issue.title.slice(0, 110))),
       el("td", {}, label(issue.backend)), el("td", {}, fmt(issue.case_count)), el("td", {}, subway(issue)),
       el("td", { class: "small" }, issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"), el("td", { class: "small" }, time(issue.updated_at))));
     if (!body.children.length) body.append(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "暂无问题")));
-    more.replaceChildren(cursor ? el("button", { onclick: load }, "加载更多") : "");
+    more.replaceChildren(pagination(page.page, page.total_pages, page.total, target =>
+      go("repair", { dimension, status, q: q || null, page: target })));
   };
   await load();
 };

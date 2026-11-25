@@ -353,9 +353,9 @@ def create_app(store: Store) -> FastAPI:
 
     @route('/api/issues')
     def issue_list(dimension: QueryValue = None, backend: QueryValue = None, status: QueryValue = None,
-                   q: QueryText = None, after: QueryValue = None, limit: int = 50,
+                   q: QueryText = None, after: QueryValue = None, limit: int = 50, page: int | None = None,
                    principal=Depends(identity)):
-        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status, q=q, after=after, limit=limit))
+        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status, q=q, after=after, limit=limit, page=page))
 
     @route('/api/issues/claim', 'POST')
     def claim(body: m.Claim, principal=Depends(writer)):

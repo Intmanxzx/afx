@@ -596,10 +596,18 @@ _ISSUE_COLUMNS = ("issue_id, dimension, backend, category, title, log_summary, s
                   "updated_at")
 
 
-def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=None, after=None, limit=50) -> dict:
+_ISSUE_RANK = "CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END"
+_ISSUE_ORDER = f"{_ISSUE_RANK} ASC, case_count DESC, issue_no DESC"
+
+
+def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=None, after=None, limit=50, page=None) -> dict:
     """List claimed work first, then unclaimed issues by affected-case count."""
     if not 1 <= limit <= 200:
         raise IssueError("invalid", "limit must be 1..200")
+    if page is not None and (isinstance(page, bool) or not isinstance(page, int) or page < 1):
+        raise IssueError("invalid", "page must be a positive integer")
+    if page is not None and after is not None:
+        raise IssueError("invalid", "page and after cannot be combined")
     where, args = [], []
     for column, value in (("dimension", dimension), ("backend", backend), ("status", status)):
         if value is not None:
@@ -612,6 +620,29 @@ def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=No
         where.append("(issue_id LIKE ? OR title LIKE ? OR COALESCE(log_summary,'') LIKE ?)")
         pattern = "%" + q + "%"
         args.extend([pattern, pattern, pattern])
+    if page is not None:
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        conn = store.reader()
+        # Count and page share a WAL snapshot without taking the writer lock.
+        conn.execute("BEGIN")
+        try:
+            total = conn.execute(f"SELECT COUNT(*) FROM issues {clause}", args).fetchone()[0]
+            total_pages = (total + limit - 1) // limit
+            page = min(page, max(1, total_pages))
+            # Skip narrow index entries; fetch wide title/log columns only for this page.
+            rows = conn.execute(
+                f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues JOIN "
+                f"(SELECT issue_no AS page_no FROM issues {clause} "
+                f"ORDER BY {_ISSUE_ORDER} LIMIT ? OFFSET ?) AS selected "
+                f"ON issues.issue_no=selected.page_no ORDER BY {_ISSUE_ORDER}",
+                args + [limit, (page - 1) * limit]).fetchall()
+        finally:
+            conn.execute("ROLLBACK")
+        items = [_display_issue(row) for row in rows]
+        for item in items:
+            item.pop("issue_no")
+        return {"issues": items, "page": page, "page_size": limit,
+                "total": total, "total_pages": total_pages}
     if after is not None:
         try:
             parts = [int(part) for part in str(after).split(":")]
@@ -623,14 +654,14 @@ def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=No
                 raise ValueError
         except ValueError:
             raise IssueError("invalid", "after must be '<claimed>:<case_count>:<issue_no>'")
-        rank_sql = "CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END"
+        rank_sql = _ISSUE_RANK
         where.append(f"(({rank_sql})>? OR (({rank_sql})=? AND "
                      "(case_count<? OR (case_count=? AND issue_no<?))))")
         args += [after_rank, after_rank, after_count, after_count, after_no]
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     rows = store.reader().execute(
         f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues {clause} "
-        "ORDER BY CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END ASC, case_count DESC, issue_no DESC LIMIT ?", args + [limit]).fetchall()
+        f"ORDER BY {_ISSUE_ORDER} LIMIT ?", args + [limit]).fetchall()
     items = [_display_issue(row) for row in rows]
     if len(items) == limit:
         last = items[-1]

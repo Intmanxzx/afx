@@ -360,6 +360,51 @@ def test_regression_budget_respected(world):
 
 
 # -- HTTP ----------------------------------------------------------------------
+def test_numbered_pages(world):
+    seed_failures(world)
+    rows = issues.list_issues(world.store)['issues']
+    issues.claim(world.store, world.agent, {'request_key': 'page-claim', 'agent_id': 'p',
+                                          'issue_id': rows[-1]['issue_id']})
+    expected = issues.list_issues(world.store)['issues']
+    first = issues.list_issues(world.store, page=1, limit=1)
+    second = issues.list_issues(world.store, page=2, limit=1)
+    assert first == dict(issues=expected[:1], page=1, page_size=1, total=2, total_pages=2)
+    assert second['issues'] == expected[1:]
+    assert issues.list_issues(world.store, page=10**30, limit=1) == second
+    cursor = issues.list_issues(world.store, limit=1)['next_cursor']
+    assert issues.list_issues(world.store, after=cursor, limit=1)['issues'] == second['issues']
+    filtered = issues.list_issues(world.store, page=2, limit=1, dimension='function',
+                                  backend='af-mlir', status='claimed', q=expected[0]['issue_id'])
+    assert filtered['total'] == filtered['total_pages'] == filtered['page'] == 1
+    assert filtered['issues'] == expected[:1]
+    assert issues.list_issues(world.store, page=5, q='no matching issue') == dict(
+        issues=[], page=1, page_size=50, total=0, total_pages=0)
+    with world.store.write() as conn:
+        conn.execute("UPDATE issues SET status='closed' WHERE issue_id=?", (expected[1]['issue_id'],))
+    shrunk = issues.list_issues(world.store, page=2, limit=1, status='claimed')
+    assert shrunk['page'] == shrunk['total_pages'] == shrunk['total'] == 1
+
+
+@pytest.mark.parametrize('kwargs', [dict(page=0), dict(page=-1), dict(page=1.5),
+                                    dict(page=True), dict(page=1, after='1:1:1'),
+                                    dict(page=1, limit=201)])
+def test_invalid_numbered_pages(world, kwargs):
+    with pytest.raises(IssueError):
+        issues.list_issues(world.store, **kwargs)
+
+
+def test_page_id_query_uses_ordered_indexes(world):
+    conn = world.store.reader()
+    for clause, args, index in [('', [], 'issues_page'),
+                                ('WHERE dimension=?', ['function'], 'issues_page_dimension'),
+                                ('WHERE dimension=? AND status=?', ['function', 'open'], 'issues_page_status')]:
+        plan = ' '.join(row[3] for row in conn.execute(
+            f'EXPLAIN QUERY PLAN SELECT issue_no FROM issues {clause} '
+            f'ORDER BY {issues._ISSUE_ORDER} LIMIT ? OFFSET ?', args + [50, 10000]))
+        assert index in plan
+        assert 'TEMP B-TREE' not in plan
+
+
 def test_http_issue_flow(world):
     server = PlatformServer(world.store, ("127.0.0.1", 0))
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -380,6 +425,10 @@ def test_http_issue_flow(world):
         seed_failures(world)
         status, listed = call("GET", "/api/issues?dimension=function")
         assert status == 200 and len(listed["data"]["issues"]) == 2
+        status, paged = call("GET", "/api/issues?dimension=function&page=2&limit=1")
+        assert status == 200 and paged['data']['page'] == 2 and paged['data']['total_pages'] == 2
+        assert call("GET", "/api/issues?page=0")[0] == 400
+        assert call("GET", "/api/issues?page=abc")[0] == 400
         status, claimed = call("POST", "/api/issues/claim", {"request_key": "h1", "agent_id": "a"})
         issue_id, lease = claimed["data"]["issue_id"], claimed["data"]["lease_id"]
         status, verify = call("POST", f"/api/issues/{issue_id}/verify",
