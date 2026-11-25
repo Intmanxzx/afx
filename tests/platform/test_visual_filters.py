@@ -30,6 +30,8 @@ def test_filters_intersect_on_same_head_and_chip(env):
     assert result["accepted"] == 4
     with store.write() as conn:
         conn.execute("UPDATE executions SET function_status='compile_fail',fail_stage='mlir' WHERE exec_uuid='v-a-triton'")
+        from autofusex.server.aggregates import rebuild
+        rebuild(conn, store.setting(conn, "perf.tie_threshold"))
     assert len(queries.case_page(store, chips='a2a3')['groups']) == 1
     assert len(queries.case_page(store, chips='a5')['groups']) == 1
     assert not queries.case_page(store, chips='none')['groups']
@@ -66,3 +68,18 @@ def test_visual_filters_reach_http_endpoints(env):
     assert data['lanes'] == []
     response = client.get('/api/cases', params={'q': 'status:pass', 'results': 'pass', 'chips': 'a2a3'})
     assert response.json()['data']['groups'][0]['case']['case_key'] == SEED_A
+
+
+def test_visual_overview_reads_aggregates_without_scanning_executions(env):
+    store, ingestor, principal = env
+    upload(ingestor, principal, body([item('aggregate-fast-001', kernel=100)]))
+    conn = store.reader()
+    statements = []
+    conn.set_trace_callback(statements.append)
+    try:
+        result = queries.backend_stats(store, 'af-mlir', chips='a2a3', results='pass', q='status:pass -stage:mlir')
+    finally:
+        conn.set_trace_callback(None)
+    assert result['groups'][0]['total'] == 1
+    assert any('stats.stat_buckets' in sql for sql in statements)
+    assert not any('JOIN executions' in sql for sql in statements)

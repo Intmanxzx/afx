@@ -5,17 +5,33 @@ import { select, stackBar, legend } from "./widgets.js";
 import { RESULT_ITEMS, RESULT_COLORS, selectedResults, resultFilterParams } from "./result-filter.js";
 import { PAGES } from "./router.js";
 
+// Cache the complete result distribution for a search/chip cohort. Result and
+// backend toggles are projections of this snapshot, rather than new SQL scans.
+const overviewCache = new Map();
+function overviewData(path) {
+  const cached = overviewCache.get(path);
+  if (cached && Date.now() - cached.at < 60000) return cached.promise;
+  const entry = { at: Date.now(), promise: api(path) };
+  overviewCache.set(path, entry);
+  entry.promise.catch(() => { if (overviewCache.get(path) === entry) overviewCache.delete(path); });
+  if (overviewCache.size > 32) overviewCache.delete(overviewCache.keys().next().value);
+  return entry.promise;
+}
 PAGES.overview = async (root, params) => {
+  if (root.forceRefresh) overviewCache.clear();
   const filters = resultFilterParams(params);
   const active = selectedResults(params);
   const arch = "";
-  const pipeline = await api("/api/overview/pipeline" + qs({ arch, ...filters }));
+  const cohort = { q: filters.q, chips: filters.chips };
+  const pipeline = await overviewData("/api/overview/pipeline" + qs({ arch, ...cohort }));
+  const selectedBackends = filters.selected_backends ? new Set(filters.selected_backends.split(",")) : null;
+  const shown = pipeline.lanes.filter(l => !selectedBackends || selectedBackends.has(l.backend));
   const head = el("h2", {}, "基础能力统计分布");
   const box = el("section", { class: "panel hero" }, head); root.append(box);
-  const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
-  const tabsDone = renderBackendTabs(box, lanes, arch, filters, active);
+  const lanes = shown.filter(l => !l.baseline).map(l => l.backend);
+  const tabsDone = renderBackendTabs(box, lanes, arch, cohort, active, pipeline.lanes.filter(l => !l.baseline).map(l => l.backend));
   const perfBox = el("section", { class: "panel" }); root.append(perfBox);
-  const npuBackends = pipeline.lanes.map(l => l.backend).filter(b => b !== "cpu");
+  const npuBackends = shown.map(l => l.backend).filter(b => b !== "cpu");
   const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]), params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category", false, filters);
   root.settled = Promise.all([tabsDone, perfDone]);
 };
@@ -24,7 +40,7 @@ const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-leg
 
 // Capability matrix: one column per backend, one row per dimension, so a row compares the same
 // metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
-async function renderBackendTabs(box, lanes, arch, filters, active) {
+async function renderBackendTabs(box, lanes, arch, filters, active, allLanes = lanes) {
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
   let matrix;
   const redraw = () => {
@@ -48,7 +64,7 @@ async function renderBackendTabs(box, lanes, arch, filters, active) {
   };
   box.append(body);
   if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, "暂无数据")); return; }
-  try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, ...filters })); }
+  try { matrix = await overviewData("/api/overview/matrix" + qs({ backends: allLanes.join(","), arch, ...filters })); }
   catch (err) { body.replaceChildren(errorBox(err)); return; }
   redraw();
 }
@@ -109,7 +125,7 @@ async function renderPerf(box, backends, arch, x, y, dim, custom = false, filter
     el("button", { onclick: () => renderPerf(box, backends, arch, y, x, dim, true, filters) }, "⇄ 交换"), "Kernel 性能统计分布", el("span", { class: "spacer" }),
     select(Object.entries(DIM_LABEL).filter(([k]) => k !== "all"), dim, v => renderPerf(box, backends, arch, x, y, v, true, filters))), body);
   try {
-    const [all, byDim] = await Promise.all([api("/api/overview/perf" + qs({ x, y, dim: "all", arch, ...filters })), api("/api/overview/perf" + qs({ x, y, dim, arch, ...filters }))]);
+    const [all, byDim] = await Promise.all([overviewData("/api/overview/perf" + qs({ x, y, dim: "all", arch, ...filters })), overviewData("/api/overview/perf" + qs({ x, y, dim, arch, ...filters }))]);
     const g = all.groups[0];
     if (!g) { body.replaceChildren(el("div", { class: "empty" }, "两者都有 kernel 耗时的用例为 0。")); return; }
     const tiles = el("div", { class: "tiles" },

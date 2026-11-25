@@ -37,7 +37,7 @@ const groups = [
   {value:'全部', total:100, results:{pass:30, nnsmith:40, mlir:10, aclnn:20}},
   {value:'FP32', total:100, results:{pass:30, nnsmith:40, mlir:10, aclnn:20}}
 ];
-const api = async () => ({dims:['dtype','op_display'], cells:Object.fromEntries(
+const overviewData = async () => ({dims:['dtype','op_display'], cells:Object.fromEntries(
   ['af-mlir','triton-npu'].map(b => [b, Object.fromEntries(
     ['all','dtype','op_display'].map((d,i) => [d,{dim:d,groups:[groups[i ? 1 : 0]]}]))]))});
 function nodes(root, predicate) {

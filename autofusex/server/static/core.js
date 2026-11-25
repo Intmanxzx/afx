@@ -115,6 +115,11 @@ export async function api(path, { method = "GET", body, raw = false } = {}) {
 export const qs = obj => { const p = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) if (v !== null && v !== undefined && v !== "") p.set(k, v); const s = p.toString(); return s ? "?" + s : ""; };
 export function errorBox(err) { return el("div", { class: "error-box" }, err instanceof ApiError ? `${err.message}（${err.status} ${err.code}）` : String(err)); }
 
+let archesRequest = null, archesExpires = 0;
 export async function archOptions() {
-  return (await api("/api/overview/pipeline")).arches;
+  if (!archesRequest || Date.now() >= archesExpires) {
+    archesExpires = Date.now() + 60000;
+    archesRequest = api("/api/overview/pipeline").then(data => data.arches).catch(error => { archesRequest = null; throw error; });
+  }
+  return archesRequest;
 }

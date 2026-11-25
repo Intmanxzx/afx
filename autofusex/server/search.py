@@ -146,6 +146,19 @@ def filtered_cases(conn, query: Query, cursor: int, limit: int) -> list:
 
 def filtered_buckets(conn, query: Query, *, backend=None, arch=None, dim="all"):
     """Head-level status counts for the filtered case set, same columns as stat_buckets."""
+    # These predicates depend only on columns already present in stat_buckets.
+    # Keep visual filters and status/stage/backend/arch searches on aggregates.
+    if aggregate_compatible(query):
+        sql, args = query.head_sql()
+        where = [sql, "e.dim=?"]
+        args.append(dim)
+        if backend:
+            where.append("e.backend=?"); args.append(backend)
+        if arch:
+            where.append("e.npu_arch=?"); args.append(arch)
+        return conn.execute(
+            "SELECT e.dim_value, e.backend, e.function_status, e.fail_stage, e.accuracy_status, SUM(e.count) AS n "
+            "FROM stats.stat_buckets e WHERE " + ' AND '.join(where) + " GROUP BY 1,2,3,4,5", args).fetchall()
     head_sql, head_args = query.head_sql()
     case_sql, case_args = query.case_sql()
     join, value = "", "'all'"
@@ -274,3 +287,9 @@ def filtered_perf(conn, query, bx, by, dim, arch, tie):
         bucket = buckets.setdefault(key, dict(dim_value=key[0], verdict=key[1], ratio_bin=key[2], n=0, s=0.0))
         bucket['n'] += 1; bucket['s'] += log
     return list(buckets.values())
+
+
+def aggregate_compatible(query):
+    if query.case:
+        return False
+    return not any("e.user_id" in sql or "e.log_summary" in sql for sql, _ in query.head)

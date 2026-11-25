@@ -45,8 +45,20 @@ export function selectedResults(params) {
 export function resultFilterParams(params) {
   return { q: params.get("q"), results: params.get("results") || DEFAULT_RESULTS.join(","), selected_backends: params.get("backends"), chips: params.get("chips") || "a2a3" };
 }
+let filterTimer = null;
+export function cancelFilterChange() { clearTimeout(filterTimer); }
 let collapsed = matchMedia("(max-width:760px)").matches;
 export function resultFilter(params, change, arches = []) {
+  params = new URLSearchParams(params);
+  const notify = change;
+  change = patch => {
+    for (const [key, value] of Object.entries(patch)) value == null ? params.delete(key) : params.set(key, value);
+    const scroll = aside.scrollTop;
+    const fresh = resultFilter(params, notify, arches);
+    aside.replaceWith(fresh); fresh.scrollTop = scroll;
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => notify({ ...Object.fromEntries(params), backends: params.get("backends"), chips: params.get("chips"), results: params.get("results") }), 180);
+  };
   const active = selectedResults(params);
   const aside = el("aside", { class: "result-filter", "aria-label": "数据筛选" });
   const body = el("div", { class: "result-filter-body", id: "result-filter-body" });
@@ -67,7 +79,7 @@ export function resultFilter(params, change, arches = []) {
   }
   const backendOptions = Object.entries(BACKEND_LABEL);
   const chipOptions = [["a2a3", "A2A3"], ["a5", "A5"], ...arches.filter(a => !/910|950/i.test(a)).map(a => [a, a])];
-  body.append(el("h2", {}, "数据筛选"), el("p", { class: "muted small" }, "字段内多选取并集，字段间与搜索条件取交集"),
+  body.append(
     field("后端", "backends", backendOptions, params.has("backends") ? params.get("backends").split(",") : backendOptions.map(([v]) => v)),
     field("芯片", "chips", chipOptions, (params.get("chips") || "a2a3").split(",")),
     el("h3", {}, "结果与阶段"),
