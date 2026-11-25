@@ -68,22 +68,28 @@ def test_http_client_classification_roundtrip(http):
     group=result['data']['cells']['af-mlir']['all']['groups'][0]
     assert group['results']=={'ascgraph_fail':1} and group['total']==1
 
-def test_overview_uses_exclusive_results_and_stable_denominator():
+def test_overview_uses_exclusive_results_and_selected_denominator():
     import shutil,subprocess
     from pathlib import Path
     node=shutil.which('node')
     if not node:pytest.skip('node unavailable')
     text=Path('autofusex/server/static/page-overview.js').read_text()
     start=text.index('function stageMetric(');end=text.index('function donutChart(',start)
-    script='const assert=require("assert").strict;\n'+text[start:end]+'''
+    script='const assert=require("assert").strict;\nconst pct=(a,b)=>b?(100*a/b).toFixed(1)+"%":"—";\n'+text[start:end]+'''
 const group={total:10,results:{pass:3,aclnn:4,compile_unknown:2,unchecked:1},stage_fail:{first_call_combined:4,unknown:2}};
 assert.equal(selectedTotal(group,new Set(Object.keys(group.results))),10);
 assert.equal(stageMetric(group,'compile_unknown'),2);
 assert.equal(selectedTotal(group,new Set(['pass'])),3);
+assert.equal(selectedPassRate(group,new Set(Object.keys(group.results))),'30.0%');
+assert.equal(selectedPassRate(group,new Set(['pass','unchecked'])),'75.0%');
+assert.equal(selectedPassRate(group,new Set(['pass'])),'100.0%');
+assert.equal(selectedPassRate(group,new Set(['aclnn'])),'0.0%');
+assert.equal(selectedPassRate(group,new Set()),'—');
+assert.equal(selectedPassRate(group,new Set(['nnsmith'])),'—');
 assert.equal(group.total,10);
 '''
     subprocess.run([node,'-e',script],check=True,capture_output=True,text=True)
-    assert 'pct(stageMetric(g,"pass"), g.total)' in text
+    assert 'pct(stageMetric(g,"pass"), g.total)' not in text
 
 
 def test_terminal_shape_aclnn_outranks_native_summary_and_shared_mlir():

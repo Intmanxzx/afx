@@ -202,6 +202,11 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
     from autofusex.execution.module_attribution import torch_guard_failure
     if _local_failure_matches(summary, detail, torch_guard_failure):
         return 'gen_fail', 'inductor', 'torch', VERSION
+    if declared_status != 'unsupported':
+        from autofusex.server.native_runtime_attribution import native_runtime_failure
+        synced = native_runtime_failure(detail, backend)
+        if synced:
+            return (*synced, VERSION)
     if declared_status not in {'unsupported', 'timeout'}:
         generated = nnsmith_failure(summary, detail)
         if generated:
@@ -209,6 +214,10 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
         local = local_aclnn_failure(detail, backend)
         if local:
             return (*local, VERSION)
+        from autofusex.server.triton_attribution import triton_failure
+        triton = triton_failure(backend, summary, detail)
+        if triton:
+            return (*triton, VERSION)
         frontend = frontend_failure(backend, summary, detail, log)
         if frontend:
             return (*frontend, VERSION)
