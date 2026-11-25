@@ -29,7 +29,7 @@ PAGES.case = async (root, params) => {
   let shape = Number(params.get("shape") || (shapes ? 0 : -1));
   const command = replayCommand(c.case_key, executions);
   const copy = el("button", { onclick: () => navigator.clipboard && navigator.clipboard.writeText(command).then(() => { copy.textContent = "已复制"; }) }, "复制");
-  root.append(el("button", { class: "back-btn",
+  root.append(el("button", { class: "back-btn", "aria-label": "返回上一页",
     onclick: () => { if (window.history.length > 1) window.history.back(); else go("discovery"); } }, "← 返回"));
   root.append(el("section", { class: "panel" },
     el("h2", {}, "用例详情 · ", el("span", { class: "mono" }, c.case_key + (shape >= 0 && c.is_dynamic ? String(shape) : "")), el("span", { class: "spacer" }),

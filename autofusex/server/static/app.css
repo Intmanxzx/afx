@@ -124,8 +124,11 @@ table.grid td.batch { border-left: 4px solid transparent; }
 .float-tag { font-size: 10px; padding: 0 5px; border-radius: 6px; background: var(--info); color: #fff; margin-left: 4px; vertical-align: 1px; }
 .icon-btn { border: none; background: none; padding: 2px 6px; color: var(--muted); }
 .icon-btn:hover { color: var(--accent); }
-.mini-actions { display: flex; gap: 6px; margin-top: 4px; }
-.mini-btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); border-radius: 6px; padding: 1px 7px; font-size: 11px; line-height: 1.6; }
+.mini-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.mini-btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); border-radius: 6px; padding: 7px 12px; min-height: 36px; font-size: 13px; line-height: 1.6; }
+.execution-link { display: inline-block; border-radius: 10px; }
+.execution-link:hover .chip { text-decoration: underline; }
+.execution-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .mini-btn:hover { color: var(--accent); border-color: var(--accent); }
 .menu { position: absolute; z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; min-width: 150px; }
 .menu button { display: block; width: 100%; text-align: left; border: none; padding: 6px 10px; }
@@ -133,7 +136,7 @@ table.grid td.batch { border-left: 4px solid transparent; }
 .actionbar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--text); color: var(--bg); border-radius: 12px; padding: 8px 14px; display: flex; gap: 10px; align-items: center; z-index: 40; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
 .actionbar button { background: transparent; color: inherit; border-color: rgba(255,255,255,.35); }
 .colpick { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; }
-.back-btn { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; padding: 10px 20px; margin-bottom: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+.back-btn { position: fixed; left: max(12px, env(safe-area-inset-left, 0px)); bottom: calc(24px + env(safe-area-inset-bottom, 0px)); z-index: 25; box-shadow: var(--shadow); display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; padding: 10px 20px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
 .back-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .search-suggest { position: absolute; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; max-height: 320px; overflow-y: auto; }
 .search-sug-item { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; border: none; background: none; padding: 6px 10px; border-radius: 6px; }

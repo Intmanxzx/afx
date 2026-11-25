@@ -10,7 +10,7 @@ PAGES.overview = async (root, params) => {
   const arch = params.get("arch") || arches[0] || "";
   const pipeline = await api("/api/overview/pipeline" + qs({ arch, q }));
   const head = el("h2", {}, "基础能力统计分布", el("span", { class: "spacer" }),
-    arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => go("overview", { arch: v })) : null);
+    arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => go("overview", { ...Object.fromEntries(params), arch: v }), { "aria-label": "选择平台", title: "选择平台" }) : null);
   const box = el("section", { class: "panel hero" }, head); root.append(box);
   const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
   const tabsDone = renderBackendTabs(box, lanes, arch, q);
@@ -119,7 +119,7 @@ async function renderBackendTabs(box, lanes, arch, q) {
     legendNode.append(el("div", { class: "legend-group", role: "group", "aria-label": name }, groupButton, entries));
   }
   updateLegend();
-  box.replaceChildren(el("h2", {}, "基础能力统计分布"), legendNode, body);
+  box.append(legendNode, body);
   if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, "暂无数据")); return; }
   try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, q })); }
   catch (err) { body.replaceChildren(errorBox(err)); return; }

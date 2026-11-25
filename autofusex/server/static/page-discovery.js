@@ -98,17 +98,21 @@ function expandedTable(groups, visible, selected, updateBar) {
       if (i === 0) tr.append(caseCell(group, selected, updateBar, rows.length));
       if (!e) { tr.append(el("td", { colspan: cols.length, class: "muted" }, "暂无执行")); body.append(tr); return; }
       const cls = batchOf(e.run_id);
-      for (const [k] of cols) tr.append(el("td", { class: cls + (k === cols[0][0] ? " batch" : "") }, execValue(e, k)));
+      for (const [k] of cols) tr.append(el("td", { class: cls + (k === cols[0][0] ? " batch" : "") }, execValue(e, k, group.case.case_key)));
       body.append(tr);
     });
     if (group.more_executions) body.append(el("tr", {}, el("td", { colspan: cols.length + 1, class: "muted small" }, "仅显示最近 10 条，更多见用例详情")));
   }
   return el("table", { class: "grid" }, el("thead", {}, el("tr", {}, el("th", {}, "用例"), cols.map(([, t]) => el("th", {}, t)))), body);
 }
-export function execValue(e, k) {
+function executionLink(e, caseKey) {
+  return el("a", { class: "execution-link", href: "#case?key=" + encodeURIComponent(caseKey) + "&exec=" + encodeURIComponent(e.exec_uuid),
+    title: "查看执行详情", "aria-label": "查看执行详情" }, statusChip(e));
+}
+export function execValue(e, k, caseKey = e.case_key) {
   switch (k) {
     case "backend": return el("span", {}, label(e.backend), e.is_head ? null : el("span", { class: "muted small", title: "非当前结果（历史/复测/验证）" }, " ·历史"), e.stale_graph ? el("span", { class: "chip gray" }, "旧图") : null);
-    case "status": return statusChip(e);
+    case "status": return executionLink(e, caseKey);
     case "log_summary":
       if (e.backend === "cpu" || e.backend === "cpu-compile" ||
           (e.function_status === "pass" && e.accuracy_status !== "fail")) return "";
@@ -135,7 +139,7 @@ function pivotTable(groups, selected, updateBar) {
       if (i === 0) tr.append(caseCell(group, selected, updateBar, Math.max(1, runs.length)));
       const any = Object.values(cells)[0];
       tr.append(el("td", { class: run ? batchOf(run) + " batch" : "" }, run ? `#${run}` : "—", any ? el("div", { class: "muted small" }, `${any.user_name || any.user_id} · ${any.client_name || ""} · ${time(any.created_at)}`) : null));
-      for (const b of backends) { const e = cells[b]; tr.append(el("td", { class: run ? batchOf(run) : "" }, e ? el("div", {}, statusChip(e), el("div", { class: "muted small" }, e.kernel_ns ? "kernel " + ns(e.kernel_ns) : "")) : "—")); }
+      for (const b of backends) { const e = cells[b]; tr.append(el("td", { class: run ? batchOf(run) : "" }, e ? el("div", {}, executionLink(e, group.case.case_key), el("div", { class: "muted small" }, e.kernel_ns ? "kernel " + ns(e.kernel_ns) : "")) : "—")); }
       body.append(tr);
     });
   }
