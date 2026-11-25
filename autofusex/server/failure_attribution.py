@@ -6,7 +6,7 @@ failure means from the immutable evidence shipped with an execution.
 import json
 import re
 
-VERSION = 11
+VERSION = 12
 
 _NNSMITH_SIGNATURE = 'ValueError: materialized Torch graph differs from declared NNSmith output signature'
 
@@ -214,6 +214,10 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
         local = local_aclnn_failure(detail, backend)
         if local:
             return (*local, VERSION)
+        from autofusex.server.mlir_attribution import mlir_failure
+        mlir = mlir_failure(backend, summary, detail)
+        if mlir:
+            return (*mlir, VERSION)
         from autofusex.server.triton_attribution import triton_failure
         triton = triton_failure(backend, summary, detail)
         if triton:

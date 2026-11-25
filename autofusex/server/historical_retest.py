@@ -13,6 +13,7 @@ from autofusex.server.failure_attribution import frontend_failure
 from autofusex.server.triton_attribution import triton_failure
 from autofusex.server.native_runtime_attribution import native_runtime_failure
 from autofusex.server.local_failure_attribution import local_failure
+from autofusex.server.mlir_attribution import mlir_failure
 from autofusex.server.reclassification import FIELDS
 from autofusex.server.store import get_content
 
@@ -86,6 +87,8 @@ def reason(row, detail):
     if native_runtime_failure(d, row['backend']):
         return None
     if local_failure(d, row['backend']):
+        return None
+    if mlir_failure(row['backend'], row['log_summary'], d):
         return None
     contexts = _object(d.get("contexts"))
     execution = _object(contexts.get("execution") or d.get("execution"))
