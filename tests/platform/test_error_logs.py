@@ -1,7 +1,7 @@
 import json
 
 from autofusex.execution.ascir import construction_source, saved_construction_source, validate_sources
-from autofusex.server.error_logs import presentation, summary
+from autofusex.server.error_logs import presentation, summary, merged_log
 from autofusex.server import queries
 from test_platform import env, body, item, upload
 
@@ -71,6 +71,29 @@ def test_execution_api_exposes_sources_independent_of_error_logs(env):
     assert out['log_summary'] == 'RuntimeError: graph failure'
 
 
+def test_merged_log_prefers_traceback_and_adds_only_missing_evidence():
+    trace = 'Traceback (most recent call last):\n  File "probe.py", line 1\n    run()\nValueError: actual failure'
+    entries = [{'name': '执行错误', 'text': 'ValueError: actual failure'},
+               {'name': '运行日志', 'text': trace},
+               {'name': '保存日志', 'text': 'ValueError: actual failure\n\n' + trace + '\n\n[ERROR] native detail'},
+               {'name': 'CANN plog', 'text': '[ERROR] native detail'}]
+    log = merged_log(entries)
+    assert log.startswith(trace)
+    assert log.count('ValueError: actual failure') == 1
+    assert log.count('Traceback (most recent call last):') == 1
+    assert log.count('[ERROR] native detail') == 1
+    assert '保存日志' not in log and '执行错误' not in log and '运行日志' not in log
+
+
+def test_merged_log_preserves_independent_shapes_with_identical_errors():
+    detail = {'contexts': {'execution': {'diagnostics': {'shapes': {
+        '0': {'error': 'ValueError: same cause'}, '1': {'error': 'ValueError: same cause'}}}}}}
+    log = presentation(detail)['error_log']
+    assert 'Shape 0\nValueError: same cause' in log
+    assert 'Shape 1\nValueError: same cause' in log
+    assert presentation({}, None)['error_log'] == ''
+
+
 def test_pages_render_generic_errors_and_only_selected_shape_graph():
     from pathlib import Path
     import shutil
@@ -90,19 +113,20 @@ const statusChip=()=>'',label=String,archLabel=String,time=String,ns=String,secs
 ''' + case[case.index('function renderExecution('):case.index('// DAG layout')] + '\n' + discovery[
         discovery.index('export function execValue('):discovery.index('function pivotTable(')].replace('export ', '') + r'''
 const d={backend:'af-mlir',env:{},shapes:[],detail:{diagnostic_view:{shape_log:'WRONG ERROR AS GRAPH'}},
- diagnostics:{error_logs:[{name:'Python',text:'ValueError: python failure'},{name:'Triton',text:'MLIRCompilationError: bad dtype'},{name:'CANN plog',text:'[ERROR] native failed'}],
+ diagnostics:{error_log:'ValueError: python failure\nMLIRCompilationError: bad dtype\n[ERROR] native failed',
  ascir_graphs:[{shape_index:0,source:'GRAPH_ZERO'},{shape_index:1,source:'GRAPH_ONE'}]}};
 const rendered=renderExecution(d,1);
 // replaceChildren(...rendered) requires top-level DOM nodes, not a nested array.
 assert(rendered.every(n=>n instanceof E));
-assert.equal(rendered.filter(n=>n.tag==='details').length,3);
+assert.equal(rendered.filter(n=>n.tag==='details').length,0);
+assert.equal(rendered.filter(n=>n.tag==='pre' && text(n).includes('python failure')).length,1);
 const log=text(rendered);
 assert(log.includes('错误日志') && log.includes('ValueError: python failure') && log.includes('MLIRCompilationError: bad dtype'));
 assert(!log.includes('CANN plog 错误') && !log.includes('WRONG ERROR AS GRAPH'));
 assert(log.includes('GRAPH_ONE') && !log.includes('GRAPH_ZERO'));
 assert(text(execValue({backend:'cpu',function_status:'gen_fail',log_summary:'ValueError: cpu error'},'log_summary')).includes('cpu error'));
 assert(text(execValue({function_status:'runtime_fail'},'log_summary')).includes('未采集到错误日志'));
-d.diagnostics.error_logs=[];
+d.diagnostics.error_log='';
 assert(renderExecution(d,1).every(n=>n instanceof E));
 assert(text(renderExecution(d,1)).includes('未保存错误日志'));
 '''

@@ -1,6 +1,7 @@
 """Read saved error evidence and graph source without rewriting immutable uploads."""
 import json
 import re
+from difflib import SequenceMatcher
 
 from autofusex.execution.failure_details import diagnostic_view, redact
 from autofusex.execution.ascir import construction_source, saved_construction_source
@@ -22,15 +23,14 @@ def sections(detail=None, log=None, fallback=None):
     d = obj(detail)
     diag = obj(obj(obj(d.get('contexts')).get('execution')).get('diagnostics'))
     result = []
-    seen = set()
 
     def add(name, text):
         if not isinstance(text, str) or not text.strip():
             return
         text = redact(text.strip())
-        if text not in seen and not any(text in section['text'] for section in result):
+        if not any(text in section['text'] and (not name.startswith('Shape ') or section['name'] == name)
+                   for section in result):
             result.append({'name': name, 'text': text})
-            seen.add(text)
 
     for index, shape in obj(diag.get('shapes')).items():
         add('Shape ' + index, obj(shape).get('error'))
@@ -70,6 +70,49 @@ def summary(detail=None, log=None, fallback=None):
     return redact(fallback).strip()[:500] if isinstance(fallback, str) and fallback.strip() else None
 
 
+def merged_log(entries):
+    """Keep complete traces first; append only evidence missing from earlier text."""
+    groups = {}
+    for entry in entries:
+        name = entry['name'] if entry['name'].startswith('Shape ') else ''
+        groups.setdefault(name, []).append(entry)
+    output, shape_lines = [], []
+    for name in sorted(groups, key=lambda name: (not bool(name), name)):
+        known = [] if name else list(shape_lines)
+        blocks = []
+        # A stored summary may precede the complete traceback in the upload.
+        for entry in sorted(groups[name], key=lambda entry: (
+                entry['name'] in {'保存日志', '上报摘要'},
+                'Traceback (most recent call last)' not in entry['text'], -len(entry['text']))):
+            text = entry['text']
+            lines = text.splitlines()
+            keys = [line.strip() for line in lines]
+            covered = set()
+            known_errors = {line for line in known if _ERROR.search(line)}
+            covered.update(i for i, key in enumerate(keys) if key in known_errors)
+            for match in SequenceMatcher(None, known, keys, autojunk=False).get_matching_blocks():
+                if match.size >= 2:
+                    covered.update(range(match.b, match.b + match.size))
+                elif match.size == 1 and _ERROR.search(keys[match.b]):
+                    covered.add(match.b)
+            pending = []
+            for i, line in enumerate(lines):
+                if i in covered:
+                    if pending:
+                        blocks.append('\n'.join(pending).strip()); pending = []
+                else:
+                    pending.append(line)
+            if pending:
+                blocks.append('\n'.join(pending).strip())
+            known.extend(keys)
+        text = '\n\n'.join(block for block in blocks if block)
+        if text:
+            output.append((name + '\n' if name else '') + text)
+        if name:
+            shape_lines.extend(known)
+    return '\n\n'.join(output)
+
+
 def presentation(detail=None, log=None, fallback=None):
     d = obj(detail)
     execution = obj(obj(d.get('contexts')).get('execution'))
@@ -97,5 +140,6 @@ def presentation(detail=None, log=None, fallback=None):
         source = saved_construction_source(obj(view).get('shape_log'))
         if source:
             graphs.append({'shape_index': int(index), 'source': source})
-    return {'error_logs': sections(d, log, fallback), 'ascir_graphs': graphs,
+    entries = sections(d, log, fallback)
+    return {'error_logs': entries, 'error_log': merged_log(entries), 'ascir_graphs': graphs,
             'shape_views': views}
