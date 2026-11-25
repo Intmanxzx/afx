@@ -37,6 +37,13 @@ ERRORS = [
      'autofuse.ascendc_compile.CompileError: Device compile failed with code 1', 'compile_fail', 'af_common'),
 ]
 
+ATT_GE = ('[ERROR] GE(1155915,python):2026-11-25-23:49:16.821.942 '
+          '[./autofuse/att/gen_model_info/api_perf_register/v1/ascir_api_perf_v1.cpp:443]'
+          '1155915 BrcbToOneBlockPerf: ErrorNo: 4294967295(failed) Data type [bfloat16] unsatisfied.')
+VECTOR_CORE = '[Error]: The vector core execution is abnormal.'
+MLIR_KERNEL = ('AF_MLIR_STRICT gate=none shortfall=no graph=autofused_add_abc\n'
+               "RuntimeError: Failed to build ascend kernel, trigger bug by following command: 'cmd'")
+
 
 def detail(*errors, serialized=True):
     diagnostics = {'shapes': {str(i): {'error': error} for i, error in enumerate(errors)}}
@@ -89,6 +96,15 @@ def test_source_literals_do_not_create_traceback_evidence():
     assert local_failure(detail(repr(error)), 'af-mlir') is None
     assert local_failure(detail(error.replace('TypeError:', 'raise TypeError(')), 'af-mlir') is None
     assert local_failure(detail(error.replace('in remove_noop_ops', 'in unrelated')), 'af-mlir') is None
+
+
+@pytest.mark.parametrize('error,status,stage,backend', [
+    (ATT_GE, 'compile_fail', 'af_common', 'af-legacy'),
+    (VECTOR_CORE, 'runtime_fail', 'fused_kernel', 'af-mlir'),
+    (MLIR_KERNEL, 'runtime_fail', 'fused_kernel', 'af-mlir'),
+])
+def test_af_native_shape_signatures(error, status, stage, backend):
+    assert local_failure(detail(error), backend)[:2] == (status, stage)
 
 
 def test_scoped_plan_apply_rollback_and_evidence_change(env):
