@@ -86,6 +86,7 @@ export function resultFilter(params, change, arches = []) {
     el("div", { class: "toolbar" },
       el("button", { type: "button", onclick: () => change({ results: RESULT_ITEMS.map(([key]) => key).join(",") }) }, "全选"),
       el("button", { type: "button", onclick: () => change({ results: "none" }) }, "清空选择"),
+      el("button", { type: "button", onclick: () => change({ results: null }) }, "恢复默认"),
       el("span", { class: "muted small" }, "已选 " + active.size + "/" + RESULT_ITEMS.length)));
   const legend = el("div", { class: "legend capability-legend" });
   const commit = () => change({ results: [...active].join(",") || "none" });
