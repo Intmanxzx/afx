@@ -38,7 +38,8 @@ def test_codegen_requires_branch_evidence():
 
 def test_ingest_and_exclusive_overview(env):
     store,ingestor,principal=env
-    assert upload(ingestor,principal,body([item('new-asc-0001',status='ascgraph_fail',fail_stage='af_fronted')]))['results'][0]['status']=='accepted'
+    assert upload(ingestor,principal,body([item('new-asc-0001',status='ascgraph_fail',fail_stage='af_fronted',
+        log_summary='AFX_MODULE_V1={"stage":"af_fronted"}\nTypeError: bad graph')]))['results'][0]['status']=='accepted'
     result=queries.backend_stats(store,'af-mlir')['groups'][0]
     assert result['results']=={'ascgraph_fail':1}
     assert sum(result['results'].values())==result['total']

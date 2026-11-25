@@ -6,7 +6,7 @@ failure means from the immutable evidence shipped with an execution.
 import json
 import re
 
-VERSION = 9
+VERSION = 10
 
 _NNSMITH_SIGNATURE = 'ValueError: materialized Torch graph differs from declared NNSmith output signature'
 
@@ -15,6 +15,12 @@ _ENV = re.compile(r"device busy|out of memory|no space left|npu unavailable|torc
 _TORCH = re.compile(r"UnsupportedIndexExpr|unknown SymPy node|torch\._dynamo\.exc|torch\._inductor\.exc|ConstraintViolationError|GuardOnDataDependentSymNode", re.I)
 _GRAPH = re.compile(r"Check (?:dtype|shape) failed|Infer dtype failed|infer shape failed", re.I)
 _MLIR_RUNTIME = re.compile(r'UnsupportedBackend:\s*af-mlir runtime verification failed:')
+_COMPILE_ENV = re.compile(
+    r'UnsupportedBackend:\s*Autofuse compile runtime is incomplete|'
+    r'ValueError:\s*missing compile APIs:\s*build_\w+|'
+    r"(?:ModuleNotFoundError|ImportError):\s*No module named ['\"]"
+    r"(?:autofuse(?:\.[\w.]+)?|asc_op_compile_base|tbe(?:\.[\w.]+)?)['\"]|"
+    r"No module named ['\"]autofuse\.(?:pyautofuse|compile_adapter)['\"]", re.I)
 
 
 def mlir_environment_failure(backend, summary, detail):
@@ -190,7 +196,8 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
         return "pass", None, None, VERSION
     # A generated schedule frame can wrap this preflight exception. The loaded
     # CANN runtime lacks the required capability; no compiler phase failed.
-    if mlir_environment_failure(backend, summary, detail):
+    if (mlir_environment_failure(backend, summary, detail)
+            or _local_failure_matches(summary, detail, _COMPILE_ENV.search)):
         return 'runtime_fail', 'environment', 'infrastructure', VERSION
     from autofusex.execution.module_attribution import torch_guard_failure
     if _local_failure_matches(summary, detail, torch_guard_failure):
@@ -205,14 +212,11 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
         frontend = frontend_failure(backend, summary, detail, log)
         if frontend:
             return (*frontend, VERSION)
-    if declared_stage == 'unknown_retest':
-        # An offline historical triage decision, not additional failure evidence.
-        return declared_status, 'unknown_retest', 'unknown', VERSION
     from autofusex.execution.module_attribution import classify_module
     # Module markers identify the actual failing frame. Otherwise only the
     # terminal summary may prove aclNN ownership; shared logs can contain
     # unrelated failures from another shape or graph.
-    module = classify_module(evidence if 'AFX_MODULE_V1=' in evidence else (summary or ''), backend, declared_stage)
+    module = classify_module(evidence if 'AFX_MODULE_V1=' in evidence else (summary or ''), backend)
     if module:
         return (*module, VERSION)
     if declared_status == "unsupported":
@@ -236,11 +240,9 @@ def classify(*, backend, declared_status, declared_stage=None, summary=None, log
             return "compile_fail", "af_common", "autofuse", VERSION
     if _TORCH.search(summary or "") and 'InductorError' not in (summary or ""):
         return "gen_fail", "inductor", "torch", VERSION
-    if declared_status == "build_fail":
-        return "gen_fail", "inductor" if declared_stage == "torch" else "unknown", "unknown", VERSION
-    if declared_status in {"gen_fail", "ascgraph_fail", "compile_fail", "runtime_fail", "timeout"}:
-        stages = {"inductor", "nnsmith", "af_fronted", "schedule", "legacy_codegen", "mlir",
-                  "triton_ascend", "aclnn", "fused_kernel", "af_common", "environment", "unknown"}
-        stage = declared_stage if declared_stage in stages else "unknown"
-        return declared_status, stage, "unknown", VERSION
-    return "runtime_fail", "unknown", "unknown", VERSION
+    # Client stage labels are retained as reported facts only. They never
+    # establish ownership, including labels emitted by newer clients.
+    status = 'gen_fail' if declared_status == 'build_fail' else declared_status
+    if status not in {'gen_fail', 'ascgraph_fail', 'compile_fail', 'runtime_fail'}:
+        status = 'runtime_fail'
+    return status, 'unknown_retest', 'unknown', VERSION
