@@ -207,3 +207,70 @@ def filtered_case_count(conn, query: Query) -> int:
                                 f"ON e.exec_id=h.exec_id JOIN cases c ON c.case_id=h.case_id WHERE {head_sql} "
                                 f"AND {case_sql}", [*head_args, *case_args]).fetchone()[0]
         return conn.execute(f"SELECT COUNT(*) FROM cases c WHERE {case_sql}", case_args).fetchone()[0]
+
+
+def visual_query(q=None, results=None, selected_backends=None, chips=None):
+    """Compose visual predicates with the search on the same execution head."""
+    query = parse(q) or Query()
+    for text, column in ((selected_backends, 'e.backend'),):
+        if text is not None:
+            values = text.split(',')
+            if len(values) > MAX_VALUES or not all(_VALUE.fullmatch(v) for v in values):
+                raise SearchError('invalid visual filter')
+            query.head.append((f"{column} IN ({','.join('?' for _ in values)})", values))
+    if chips is not None:
+        values = chips.split(',')
+        if len(values) > MAX_VALUES or not all(_VALUE.fullmatch(v) for v in values):
+            raise SearchError('invalid chip filter')
+        parts, args = [], []
+        for value in values:
+            if value in ('a2a3', 'a5'):
+                parts.append("lower(e.npu_arch) LIKE ?")
+                args.append('%910%' if value == 'a2a3' else '%950%')
+            else:
+                parts.append('e.npu_arch=?'); args.append(value)
+        query.head.append(('(' + ' OR '.join(parts) + ')', args))
+    if results is not None:
+        values = results.split(',')
+        from autofusex.server.result_categories import RESULT_KEYS, category_sql
+        if not values or not set(values) <= RESULT_KEYS | {'none'}:
+            raise SearchError('invalid result filter')
+        query.head.append((f"({category_sql()}) IN ({','.join('?' for _ in values)})", values))
+    return query if query.head or query.case else None
+
+
+def filtered_perf(conn, query, bx, by, dim, arch, tie):
+    import math
+    from autofusex.server.aggregates import perf_verdict, ratio_bin
+    head_sql, head_args = query.head_sql()
+    case_sql, case_args = query.case_sql()
+    where, args = [case_sql], list(case_args)
+    if arch:
+        where.append('hx.npu_arch=?'); args.append(arch)
+    # Filter the cohort with one matching head; compare both measured backends
+    # for those cases on that same chip, without multiplying feature rows.
+    where.append('EXISTS (SELECT 1 FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id '
+                 'WHERE h.case_id=c.case_id AND h.npu_arch=hx.npu_arch AND ' + head_sql + ')')
+    args.extend(head_args)
+    join, value, prefix = '', "'all'", []
+    if dim != 'all':
+        join = ('JOIN case_features f ON f.case_id=c.case_id JOIN feature_registry r ON r.feature_id=f.feature_id '
+                'AND r.name=? JOIN feature_values v ON v.value_id=f.value_id ')
+        value = 'v.value'; prefix = [dim]
+    with time_limit(conn):
+        rows = conn.execute(
+            f'SELECT {value} AS value, ex.kernel_ns AS kx, ey.kernel_ns AS ky FROM cases c '
+            'JOIN execution_heads hx ON hx.case_id=c.case_id AND hx.backend=? '
+            'JOIN execution_heads hy ON hy.case_id=c.case_id AND hy.npu_arch=hx.npu_arch AND hy.backend=? '
+            'JOIN executions ex ON ex.exec_id=hx.exec_id JOIN executions ey ON ey.exec_id=hy.exec_id ' + join +
+            "WHERE ex.function_status='pass' AND ey.function_status='pass' "
+            "AND COALESCE(ex.accuracy_status,'')<>'fail' AND COALESCE(ey.accuracy_status,'')<>'fail' "
+            "AND ex.kernel_ns>0 AND ey.kernel_ns>0 AND " + ' AND '.join(where),
+            [bx, by, *prefix, *args]).fetchall()
+    buckets = {}
+    for row in rows:
+        ratio = row['kx'] / row['ky']; log = math.log2(ratio)
+        key = (row['value'], perf_verdict(ratio, tie), ratio_bin(log))
+        bucket = buckets.setdefault(key, dict(dim_value=key[0], verdict=key[1], ratio_bin=key[2], n=0, s=0.0))
+        bucket['n'] += 1; bucket['s'] += log
+    return list(buckets.values())

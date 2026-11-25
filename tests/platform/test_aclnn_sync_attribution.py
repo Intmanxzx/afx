@@ -128,7 +128,7 @@ def test_aicpu_refresh_rollback_and_http(http, env):
 def test_aicpu_legend_hidden_and_searchable():
     import shutil, subprocess
     from pathlib import Path
-    text = Path('autofusex/server/static/page-overview.js').read_text()
+    text = Path('autofusex/server/static/result-filter.js').read_text().replace('export ', '')
     script = text[text.index('const RESULT_GROUPS ='):text.index('const RESULT_COLORS =')]
     node = shutil.which('node')
     if not node: pytest.skip('node unavailable')

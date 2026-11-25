@@ -1,4 +1,4 @@
-"""Overview percentages follow legend clicks across all backends and dimensions."""
+"""Shared visual filters and overview percentages follow the selected result set."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -6,12 +6,15 @@ import subprocess
 import pytest
 
 
-def test_legend_recalculates_every_displayed_pass_rate():
+def test_selected_results_recalculate_every_displayed_pass_rate():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
     source = Path('autofusex/server/static/page-overview.js').read_text()
     source = source[source.index('const LANE_COLOR'):]
+    catalog = Path('autofusex/server/static/result-filter.js').read_text()
+    catalog = catalog[catalog.index('export const RESULT_GROUPS'):catalog.index('let collapsed')]
+    source = catalog.replace('export ', '') + source
     script = r'''
 const assert = require('node:assert/strict');
 class E {
@@ -43,10 +46,9 @@ function nodes(root, predicate) {
 }
 ''' + source + r'''
 (async () => {
-  const box = el('section', {});
-  await renderBackendTabs(box, ['af-mlir','triton-npu'], '', '');
-  const button = key => nodes(box, n => n.attrs['data-result'] === key)[0];
-  function rates(expected) {
+  async function rates(keys, expected) {
+    const box = el('section', {});
+    await renderBackendTabs(box, ['af-mlir','triton-npu'], '', {}, new Set(keys));
     const donuts = nodes(box, n => n.attrs.class === 'donut-center');
     const rows = nodes(box, n => n.attrs.class === 'hbar');
     assert.equal(donuts.length, 2);
@@ -54,14 +56,15 @@ function nodes(root, predicate) {
     assert.deepEqual([...donuts.map(n => n.children[0]), ...rows.map(n => n.children.at(-1).children[0])],
       Array(6).fill(expected));
   }
-  assert.equal(button('nnsmith').attrs['aria-pressed'], 'false');
-  rates('75.0%');
-  button('nnsmith').events.click(); rates('37.5%');
-  button('aclnn').events.click(); rates('30.0%');
-  button('pass').events.click(); rates('0.0%');
-  for (const b of nodes(box, n => n.attrs['data-result'] && n.attrs['aria-pressed'] === 'true')) b.events.click();
-  rates('—');
-  button('pass').events.click(); rates('100.0%');
+  assert.equal(selectedResults(new URLSearchParams()).size, DEFAULT_RESULTS.length);
+  assert.equal(selectedResults(new URLSearchParams('results=none')).size, 0);
+  assert.equal(resultFilterParams(new URLSearchParams()).chips, 'a2a3');
+  await rates(['pass','mlir'], '75.0%');
+  await rates(['pass','mlir','nnsmith'], '37.5%');
+  await rates(['pass','mlir','nnsmith','aclnn'], '30.0%');
+  await rates(['mlir','nnsmith','aclnn'], '0.0%');
+  await rates([], '—');
+  await rates(['pass'], '100.0%');
   assert.equal(groups[0].total, 100);
   assert.equal(groups[0].results.pass, 30);
 })().catch(e => { console.error(e); process.exitCode = 1; });

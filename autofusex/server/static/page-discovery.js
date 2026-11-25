@@ -1,6 +1,7 @@
 "use strict";
 // 问题发现: execution records grouped by case (expanded/pivot views) + manual retests.
 import { el, store, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
+import { resultFilterParams } from "./result-filter.js";
 import { select, stackBar, statusChip } from "./widgets.js";
 import { PAGES, go, render, caseDrawer, openCase } from "./router.js";
 import { isAdmin } from "./auth.js";
@@ -25,7 +26,7 @@ PAGES.discovery = async (root, params) => {
     el("button", { class: params.get("sub") === "retests" ? "active" : "", onclick: () => go("discovery", { sub: "retests" }) }, "复测记录"));
   root.append(tabs);
   if (params.get("sub") === "retests") return renderRetests(root);
-  const q = params.get("q");
+  const filters = resultFilterParams(params);
   const view = store.get(VIEW_KEY, "expanded");
   const visible = new Set(store.get(COLS_KEY, COLUMNS.map(c => c[0]).filter(k => k !== "client" && k !== "run")));
   const panel = el("section", { class: "panel" });
@@ -41,7 +42,7 @@ PAGES.discovery = async (root, params) => {
   let groups = [];
   let cursor = null, loadedOnce = false;
   const load = async () => {
-    const page = await api("/api/cases" + qs({ q, after: cursor, limit: 30 }));
+    const page = await api("/api/cases" + qs({ ...filters, after: cursor, limit: 30 }));
     groups = groups.concat(page.groups);
     cursor = page.next_cursor;
     if (loadedOnce) panel.dataset.custom = "1";  // extra pages loaded: a refresh would drop them

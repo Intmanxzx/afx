@@ -1,73 +1,31 @@
 "use strict";
 // 总览: pipeline/capability tabs + Kernel performance comparison.
-import { el, svg, api, qs, errorBox, archLabel, label, fmt, pct, archOptions, DIM_LABEL, DIM_ORDER } from "./core.js";
+import { el, svg, api, qs, errorBox, label, fmt, pct, DIM_LABEL, DIM_ORDER } from "./core.js";
 import { select, stackBar, legend } from "./widgets.js";
-import { PAGES, go } from "./router.js";
+import { RESULT_ITEMS, RESULT_COLORS, selectedResults, resultFilterParams } from "./result-filter.js";
+import { PAGES } from "./router.js";
 
 PAGES.overview = async (root, params) => {
-  const q = params.get("q");
-  const arches = await archOptions();
-  const arch = params.get("arch") || arches[0] || "";
-  const pipeline = await api("/api/overview/pipeline" + qs({ arch, q }));
-  const head = el("h2", {}, "基础能力统计分布", el("span", { class: "spacer" }),
-    arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => go("overview", { ...Object.fromEntries(params), arch: v }), { "aria-label": "选择平台", title: "选择平台" }) : null);
+  const filters = resultFilterParams(params);
+  const active = selectedResults(params);
+  const arch = "";
+  const pipeline = await api("/api/overview/pipeline" + qs({ arch, ...filters }));
+  const head = el("h2", {}, "基础能力统计分布");
   const box = el("section", { class: "panel hero" }, head); root.append(box);
   const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
-  const tabsDone = renderBackendTabs(box, lanes, arch, q);
+  const tabsDone = renderBackendTabs(box, lanes, arch, filters, active);
   const perfBox = el("section", { class: "panel" }); root.append(perfBox);
   const npuBackends = pipeline.lanes.map(l => l.backend).filter(b => b !== "cpu");
-  const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]), params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category");
+  const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]), params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category", false, filters);
   root.settled = Promise.all([tabsDone, perfDone]);
 };
 
 const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-legacy)", "triton-npu": "var(--lane-triton)", "eager-npu": "var(--lane-eager)" };
 
-const RESULT_GROUPS = [
-  ["构图失败", [
-    ["nnsmith", "c-build", "NNSmith", "构图失败 · NNSmith"],
-    ["gen_fail", "c-build", "Inductor", "Inductor 构图失败"],
-    ["ascgraph_fail", "c-build", "AF前端", "构图失败 · AF前端"]
-  ]],
-  ["编译失败", [
-    ["schedule", "c-compile", "Schedule", "Schedule 失败"],
-    ["legacy_codegen", "c-compile", "Legacy Codegen", "Legacy Codegen 失败"],
-    ["mlir", "c-compile", "MLIR Codegen", "MLIR Codegen 失败"],
-    ["triton_ascend", "c-compile", "TritonNPU", "TritonNPU 编译失败"],
-    ["af_common", "c-compile", "AF其他", "AF其他失败"],
-    ["compile_unknown", "c-compile", "未知", "编译失败 · 未知"]
-  ]],
-  ["运行失败", [
-    ["aclnn", "c-runtime", "aclNN单算子", "运行失败 · aclNN单算子"],
-    ["aicpu", "c-runtime", "AICPU", "运行失败 · AICPU"],
-    ["fused_kernel", "c-runtime", "融合算子", "运行失败 · 融合算子"],
-    ["runtime_unknown", "c-runtime", "未知", "运行失败 · 未知"]
-  ]],
-  ["精度结果", [
-    ["pass", "c-pass", "精度通过", "精度通过"],
-    ["accuracy_fail", "c-acc", "精度失败", "精度失败"],
-    ["unchecked", "c-uns", "未知", "精度结果 · 未知"]
-  ]],
-  ["其他", [
-    ["other", "c-uns", "不支持", "不支持"],
-    ["environment", "c-env", "环境问题", "环境问题"],
-    ["timeout", "c-env", "超时", "超时"],
-    ["unknown", "c-uns", "未知", "未知"],
-    ["unknown_retest", "c-uns", "未知·待复测", "存量证据不足 · 待复测"]
-  ]]
-];
-const RESULT_ITEMS = RESULT_GROUPS.flatMap(([, items]) => items);
-const DEFAULT_HIDDEN_RESULTS = new Set(["nnsmith", "gen_fail", "compile_unknown", "runtime_unknown", "unchecked", "aclnn", "aicpu",
-  ...RESULT_GROUPS.find(([name]) => name === "其他")[1].map(([key]) => key)]);
-const DEFAULT_RESULTS = RESULT_ITEMS.map(([key]) => key).filter(key => !DEFAULT_HIDDEN_RESULTS.has(key));
-const RESULT_COLORS = {"c-build":"var(--loss-build)","c-compile":"var(--loss-stage)","c-runtime":"#ef4444","c-env":"#f97316","c-acc":"var(--warn)","c-pass":"var(--ok)","c-uns":"var(--tie)"};
-
 // Capability matrix: one column per backend, one row per dimension, so a row compares the same
 // metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
-async function renderBackendTabs(box, lanes, arch, q) {
+async function renderBackendTabs(box, lanes, arch, filters, active) {
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  const saved = window.__afxCapabilityLegendV3;
-  const active = new Set(saved ? [...saved] : DEFAULT_RESULTS);
-  const legendNode = el("div", { class: "legend capability-legend" });
   let matrix;
   const redraw = () => {
     if (!matrix) return;
@@ -88,41 +46,9 @@ async function renderBackendTabs(box, lanes, arch, q) {
     });
     body.replaceChildren(el("div", { class: "cap-scroll" }, grid));
   };
-  const itemButtons = new Map(), groupButtons = [];
-  const updateLegend = () => {
-    for (const [key, button] of itemButtons) button.setAttribute("aria-pressed", String(active.has(key)));
-    for (const [button, items] of groupButtons) {
-      const selected = items.filter(([key]) => active.has(key)).length;
-      button.setAttribute("aria-pressed", selected === items.length ? "true" : selected ? "mixed" : "false");
-    }
-    window.__afxCapabilityLegendV3 = new Set(active);
-    redraw();
-  };
-  for (const [name, items] of RESULT_GROUPS) {
-    const groupButton = el("button", { type: "button", class: "legend-group-toggle", title: `切换整组：${name}` }, name);
-    groupButton.addEventListener("click", () => {
-      const hide = items.every(([key]) => active.has(key));
-      for (const [key] of items) { if (hide) active.delete(key); else active.add(key); }
-      updateLegend();
-    });
-    groupButtons.push([groupButton, items]);
-    const entries = el("div", { class: "legend-group-items" });
-    for (const [key, cls, text, description] of items) {
-      const item = el("button", { type: "button", class: "legend-toggle", "data-result": key,
-        "aria-label": description, title: description }, el("i", { class: cls }), text);
-      item.addEventListener("click", () => {
-        if (active.has(key)) active.delete(key); else active.add(key);
-        updateLegend();
-      });
-      itemButtons.set(key, item);
-      entries.append(item);
-    }
-    legendNode.append(el("div", { class: "legend-group", role: "group", "aria-label": name }, groupButton, entries));
-  }
-  updateLegend();
-  box.append(legendNode, body);
+  box.append(body);
   if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, "暂无数据")); return; }
-  try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, q })); }
+  try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, ...filters })); }
   catch (err) { body.replaceChildren(errorBox(err)); return; }
   redraw();
 }
@@ -133,7 +59,7 @@ function selectedTotal(group, active) { return [...active].reduce((n, key) => n 
 function selectedPassRate(group, active) {
   return pct(active.has("pass") ? stageMetric(group, "pass") : 0, selectedTotal(group, active));
 }
-function donutChart(result, backend, compact = false, active = new Set(DEFAULT_RESULTS)) {
+function donutChart(result, backend, compact = false, active = new Set(RESULT_ITEMS.map(([key]) => key))) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
   const total = selectedTotal(g, active);
@@ -153,7 +79,7 @@ function bucketValue(valueLabel) {
   return m[1] === ">" ? n + 0.5 : n;
 }
 function bucketCompare(a, b) { return bucketValue(a) - bucketValue(b); }
-function statusChart(result, backend, compact = false, order = null, active = new Set(DEFAULT_RESULTS)) {
+function statusChart(result, backend, compact = false, order = null, active = new Set(RESULT_ITEMS.map(([key]) => key))) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const limit = result.dim === "op_display" ? 24 : 14;
   let groups;
@@ -171,7 +97,7 @@ function statusChart(result, backend, compact = false, order = null, active = ne
     groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": RESULT_ITEMS.map(([key,,,title]) => title + " " + fmt(shown(key))).join(" · ") }, el("div", { class: "label" }, g.value), stackBar(RESULT_ITEMS.map(([key,cls,,title]) => [cls, shown(key), title]), total), el("div", { class: "muted" }, selectedPassRate(g, active))); }) : el("div", { class: "empty" }, "无数据"));
 }
 
-async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
+async function renderPerf(box, backends, arch, x, y, dim, custom = false, filters = {}) {
   if (custom) box.dataset.custom = "1";  // user picked backends/dimension: background refresh must not reset it
   const opts = backends.map(b => [b, label(b)]);
   if (!x || !y || x === y) {
@@ -179,11 +105,11 @@ async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
     return;
   }
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  box.replaceChildren(el("h2", {}, select(opts, x, v => renderPerf(box, backends, arch, v, y, dim, true)), "vs", select(opts, y, v => renderPerf(box, backends, arch, x, v, dim, true)),
-    el("button", { onclick: () => renderPerf(box, backends, arch, y, x, dim, true) }, "⇄ 交换"), "Kernel 性能统计分布", el("span", { class: "spacer" }),
-    select(Object.entries(DIM_LABEL).filter(([k]) => k !== "all"), dim, v => renderPerf(box, backends, arch, x, y, v, true))), body);
+  box.replaceChildren(el("h2", {}, select(opts, x, v => renderPerf(box, backends, arch, v, y, dim, true, filters)), "vs", select(opts, y, v => renderPerf(box, backends, arch, x, v, dim, true, filters)),
+    el("button", { onclick: () => renderPerf(box, backends, arch, y, x, dim, true, filters) }, "⇄ 交换"), "Kernel 性能统计分布", el("span", { class: "spacer" }),
+    select(Object.entries(DIM_LABEL).filter(([k]) => k !== "all"), dim, v => renderPerf(box, backends, arch, x, y, v, true, filters))), body);
   try {
-    const [all, byDim] = await Promise.all([api("/api/overview/perf" + qs({ x, y, dim: "all", arch })), api("/api/overview/perf" + qs({ x, y, dim, arch }))]);
+    const [all, byDim] = await Promise.all([api("/api/overview/perf" + qs({ x, y, dim: "all", arch, ...filters })), api("/api/overview/perf" + qs({ x, y, dim, arch, ...filters }))]);
     const g = all.groups[0];
     if (!g) { body.replaceChildren(el("div", { class: "empty" }, "两者都有 kernel 耗时的用例为 0。")); return; }
     const tiles = el("div", { class: "tiles" },

@@ -1,0 +1,68 @@
+"""Visual predicates intersect search on a single execution head."""
+import itertools
+import sqlite3
+
+import pytest
+
+from autofusex.server import search, queries
+from autofusex.server.result_categories import category, category_sql
+from test_platform import env, upload, body, item, case, SEED_A, SEED_B
+
+
+def test_category_sql_matches_authoritative_classifier():
+    conn = sqlite3.connect(':memory:')
+    statuses = ['pass', 'build_fail', 'gen_fail', 'ascgraph_fail', 'unsupported', 'timeout', 'compile_fail', 'runtime_fail', 'unknown']
+    stages = [None, '', 'unknown_retest', 'environment', 'nnsmith', 'mlir', 'schedule', 'legacy_codegen', 'triton_ascend', 'af_common', 'aclnn', 'aicpu', 'fused_kernel']
+    for status, stage, accuracy in itertools.product(statuses, stages, [None, '', 'pass', 'fail']):
+        actual = conn.execute('SELECT ' + category_sql() + ' FROM (SELECT ? function_status, ? fail_stage, ? accuracy_status) e',
+                              (status, stage, accuracy)).fetchone()[0]
+        assert actual == category(status, stage, accuracy)
+
+
+def test_filters_intersect_on_same_head_and_chip(env):
+    store, ingestor, principal = env
+    result = upload(ingestor, principal, body([
+        item('visual-a-mlir', kernel=100, c=case(fingerprint='1'*64)),
+        item('v-a-triton', backend='triton-npu', status='compile_fail', fail_stage='mlir', c=case(fingerprint='1'*64)),
+        item('visual-b-mlir', c=case(SEED_B, fingerprint='2'*64), kernel=200, npu_arch='950'),
+        item('v-b-triton', backend='triton-npu', c=case(SEED_B, fingerprint='2'*64), kernel=100, npu_arch='950'),
+    ]))
+    assert result["accepted"] == 4
+    with store.write() as conn:
+        conn.execute("UPDATE executions SET function_status='compile_fail',fail_stage='mlir' WHERE exec_uuid='v-a-triton'")
+    assert len(queries.case_page(store, chips='a2a3')['groups']) == 1
+    assert len(queries.case_page(store, chips='a5')['groups']) == 1
+    assert not queries.case_page(store, chips='none')['groups']
+    assert not queries.case_page(store, results='none')['groups']
+    assert not queries.case_page(store, q='backend:af-mlir', results='mlir')['groups']
+    assert not queries.case_page(store, q='stage:mlir', selected_backends='af-mlir')['groups']
+    assert not queries.case_page(store, q='arch:950', chips='a2a3')['groups']
+    assert queries.case_page(store, q='status:function_fail', results='mlir', chips='a2a3')['groups'][0]['case']['case_key'] == SEED_A
+    stats = queries.backend_stats(store, 'triton-npu', results='mlir', chips='a2a3')['groups']
+    assert stats[0]['results'] == {'mlir': 1}
+    assert not queries.perf_pair(store, 'af-mlir', 'triton-npu', chips='a2a3')['groups']
+    perf = queries.perf_pair(store, 'af-mlir', 'triton-npu', q='status:pass', chips='a5')['groups']
+    assert perf[0]['total'] == 1
+    assert perf[0]['slower'] == 1
+    assert not queries.perf_pair(store, 'af-mlir', 'triton-npu', results='mlir', chips='a5')['groups']
+
+
+def test_invalid_visual_filters_are_rejected():
+    for kwargs in ({'results': 'invalid'}, {'chips': "x' OR 1"}, {'selected_backends': 'a,,b'}):
+        with pytest.raises(search.SearchError):
+            search.visual_query(**kwargs)
+
+
+def test_visual_filters_reach_http_endpoints(env):
+    from fastapi.testclient import TestClient
+    from autofusex.server.server import create_app
+    store, ingestor, principal = env
+    upload(ingestor, principal, body([item('visual-http-001', kernel=100)]))
+    client = TestClient(create_app(store), base_url="http://127.0.0.1")
+    for endpoint in ('/api/cases', '/api/overview/pipeline', '/api/overview/matrix?backends=af-mlir', '/api/overview/perf?x=af-mlir&y=triton-npu'):
+        response = client.get(endpoint, params={'results': 'none', 'chips': 'a2a3', 'backends': 'af-mlir', 'x': 'af-mlir', 'y': 'triton-npu'})
+        assert response.status_code == 200, response.text
+    data = client.get('/api/overview/pipeline', params={'selected_backends': 'none', 'chips': 'a2a3'}).json()['data']
+    assert data['lanes'] == []
+    response = client.get('/api/cases', params={'q': 'status:pass', 'results': 'pass', 'chips': 'a2a3'})
+    assert response.json()['data']['groups'][0]['case']['case_key'] == SEED_A

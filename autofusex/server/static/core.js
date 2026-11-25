@@ -56,10 +56,6 @@ export const pct = (a, b) => b ? (100 * a / b).toFixed(1) + "%" : "—";
 export const label = b => BACKEND_LABEL[b] || b;
 export const archLabel = a => { if (!a) return a || "—"; const s = String(a).toLowerCase(); return s.includes("910") ? "A2A3" : s.includes("950") ? "A5" : a; };
 export const SEARCH_FIELDS = [
-  { name: "backend", label: "后端", example: "backend:af-mlir", enum: () => Object.keys(BACKEND_LABEL), text: label },
-  { name: "status", label: "结果", example: "status:fail", enum: () => Object.keys(SEARCH_RESULT_LABEL), text: v => SEARCH_RESULT_LABEL[v] || v },
-  { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => SEARCH_STAGES, text: v => STAGE_LABEL[v] || v },
-  { name: "arch", label: "芯片", example: "arch:910b", enum: () => searchFieldValues.arch || [], text: archLabel },
   { name: "user", label: "用户", example: "user:alice", enum: () => (searchFieldValues.user || []).map(v => v.id), text: v => ((searchFieldValues.user || []).find(u => u.id === v) || {}).name || v },
   { name: "op", label: "算子", example: "op:aten.add.Tensor", enum: () => searchFieldValues.op || [] },
   { name: "dtype", label: "数据类型", example: "dtype:bfloat16", enum: () => searchFieldValues.dtype || [] },
@@ -70,6 +66,10 @@ export const SEARCH_FIELDS = [
   { name: "dim", label: "最大维度", example: "dim:<=512", enum: () => searchFieldValues.dim || [] },
   { name: "error", label: "错误文本", example: "error:tiling", desc: "日志摘要中包含的文本，3..64 个字符" },
   { name: "case", label: "用例 ID", example: "case:E000000000000000000000000A", desc: "精确匹配一个用例 ID" },
+  { name: "backend", label: "后端", example: "backend:af-mlir", enum: () => Object.keys(BACKEND_LABEL), text: label },
+  { name: "status", label: "结果", example: "status:fail", enum: () => Object.keys(SEARCH_RESULT_LABEL), text: v => SEARCH_RESULT_LABEL[v] || v },
+  { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => SEARCH_STAGES, text: v => STAGE_LABEL[v] || v },
+  { name: "arch", label: "芯片", example: "arch:910b", enum: () => searchFieldValues.arch || [], text: archLabel },
 ];
 export const time = ms => ms ? new Date(ms).toLocaleString("zh-CN", { hour12: false }) : "—";
 export const ns = v => v == null ? "—" : v >= 1e9 ? (v / 1e9).toFixed(2) + "s" : v >= 1e6 ? (v / 1e6).toFixed(1) + "ms" : (v / 1e3).toFixed(1) + "µs";

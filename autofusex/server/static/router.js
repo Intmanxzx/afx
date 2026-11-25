@@ -3,6 +3,7 @@
 // Page modules register themselves into PAGES as a side effect of being
 // imported (see app.js), so this module never imports a page module itself.
 import { $, el, errorBox, ApiError, setQuietRefresh } from "./core.js";
+import { resultFilter } from "./result-filter.js";
 import { closeDrawer, hideActionBar, isMenuOpen } from "./ui.js";
 
 // ---------- routing ----------
@@ -15,6 +16,7 @@ export function go(page, params = {}) {
   const current = route().params;
   const merged = new URLSearchParams();
   if (current.get("q") && params.q === undefined) merged.set("q", current.get("q"));
+  for (const key of ["results", "backends", "chips"]) if (current.has(key) && params[key] === undefined) merged.set(key, current.get(key));
   for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined && v !== "") merged.set(k, v);
   const s = merged.toString();
   location.hash = page + (s ? "?" + s : "");
@@ -36,11 +38,15 @@ export async function render() {
   closeDrawer();
   hideActionBar();
   overviewRedraw = null;
+  document.querySelector(".result-filter")?.remove();
+  const filterable = ["overview", "discovery"].includes(page) && params.get("sub") !== "retests";
+  document.body.classList.toggle("has-result-filter", filterable);
+  if (filterable) document.body.append(resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes })));
   const main = $("#main");
   const q = params.get("q");
   const content = el("div");
   if (q) content.append(el("div", { class: "filter-note" }, "已过滤：", el("span", { class: "mono" }, q),
-    el("button", { onclick: () => go(page, { q: null }) }, "清除")));
+    el("button", { onclick: () => go(page, { ...Object.fromEntries(params), q: null }) }, "清除")));
   // Attach before rendering so canvases and widths measure real layout.
   main.replaceChildren(content);
   const ticket = ++renderToken;

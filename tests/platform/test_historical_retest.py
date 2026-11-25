@@ -123,7 +123,7 @@ def test_retest_legend_default_hidden_and_label():
     node = shutil.which('node')
     if not node:
         pytest.skip('node unavailable')
-    text = Path('autofusex/server/static/page-overview.js').read_text()
+    text = Path('autofusex/server/static/result-filter.js').read_text().replace('export ', '')
     constants = text[text.index('const RESULT_GROUPS'):text.index('const RESULT_COLORS')]
     script = constants + "\nif(DEFAULT_RESULTS.includes('unknown_retest')) throw Error('must start hidden');\n" + \
         "if(!RESULT_ITEMS.some(x=>x[0]==='unknown_retest' && x[2]==='未知·待复测')) throw Error('label missing');"

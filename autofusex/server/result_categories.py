@@ -15,3 +15,24 @@ def category(status, stage, accuracy):
     if status == 'runtime_fail':
         return stage if stage in {'aclnn','aicpu','fused_kernel'} else 'runtime_unknown'
     return 'unknown'
+
+
+RESULT_KEYS = {'nnsmith', 'gen_fail', 'ascgraph_fail', 'schedule', 'legacy_codegen', 'mlir',
+               'triton_ascend', 'af_common', 'compile_unknown', 'aclnn', 'aicpu', 'fused_kernel',
+               'runtime_unknown', 'pass', 'accuracy_fail', 'unchecked', 'other', 'environment',
+               'timeout', 'unknown', 'unknown_retest'}
+
+
+def category_sql():
+    """SQL equivalent of category(), including its precedence and NULL handling."""
+    return """CASE
+      WHEN e.fail_stage='unknown_retest' AND e.function_status NOT IN ('pass','unsupported','timeout') THEN 'unknown_retest'
+      WHEN e.function_status='pass' THEN CASE e.accuracy_status WHEN 'fail' THEN 'accuracy_fail' WHEN 'pass' THEN 'pass' ELSE 'unchecked' END
+      WHEN e.function_status IN ('build_fail','gen_fail') THEN CASE WHEN e.fail_stage='nnsmith' THEN 'nnsmith' ELSE 'gen_fail' END
+      WHEN e.function_status='ascgraph_fail' THEN 'ascgraph_fail'
+      WHEN e.function_status='unsupported' THEN 'other'
+      WHEN e.function_status='timeout' THEN 'timeout'
+      WHEN e.fail_stage='environment' THEN 'environment'
+      WHEN e.function_status='compile_fail' THEN CASE WHEN e.fail_stage IN ('schedule','legacy_codegen','mlir','triton_ascend','af_common') THEN e.fail_stage ELSE 'compile_unknown' END
+      WHEN e.function_status='runtime_fail' THEN CASE WHEN e.fail_stage IN ('aclnn','aicpu','fused_kernel') THEN e.fail_stage ELSE 'runtime_unknown' END
+      ELSE 'unknown' END"""
