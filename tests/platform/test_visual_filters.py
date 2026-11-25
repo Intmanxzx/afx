@@ -40,6 +40,12 @@ def test_filters_intersect_on_same_head_and_chip(env):
     assert not queries.case_page(store, q='stage:mlir', selected_backends='af-mlir')['groups']
     assert not queries.case_page(store, q='arch:950', chips='a2a3')['groups']
     assert queries.case_page(store, q='status:function_fail', results='mlir', chips='a2a3')['groups'][0]['case']['case_key'] == SEED_A
+    paged = queries.case_page(store, page=2, limit=1, chips='a2a3')
+    assert paged['total'] == paged['total_pages'] == paged['page'] == 1
+    assert paged['groups'][0]['case']['case_key'] == SEED_A
+    empty = queries.case_page(store, page=10, results='none')
+    assert empty == dict(groups=[], page=1, page_size=50, total=0, total_pages=0)
+
     stats = queries.backend_stats(store, 'triton-npu', results='mlir', chips='a2a3')['groups']
     assert stats[0]['results'] == {'mlir': 1}
     assert not queries.perf_pair(store, 'af-mlir', 'triton-npu', chips='a2a3')['groups']
@@ -68,6 +74,11 @@ def test_visual_filters_reach_http_endpoints(env):
     assert data['lanes'] == []
     response = client.get('/api/cases', params={'q': 'status:pass', 'results': 'pass', 'chips': 'a2a3'})
     assert response.json()['data']['groups'][0]['case']['case_key'] == SEED_A
+    response = client.get('/api/cases', params={'page': 1, 'limit': 1, 'results': 'pass', 'chips': 'a2a3'})
+    assert response.status_code == 200
+    assert response.json()['data']['total_pages'] == 1
+    assert client.get('/api/cases', params={'page': 0}).status_code == 400
+
 
 
 def test_visual_overview_reads_aggregates_without_scanning_executions(env):
