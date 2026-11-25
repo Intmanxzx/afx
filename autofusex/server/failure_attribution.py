@@ -36,7 +36,7 @@ def _local_failure_matches(summary, detail, matches):
     if indices:
         return all(matches(summaries.get(index, '') + '\n' +
                    str(_object(shapes.get(index)).get('error') or '')) for index in indices)
-    return bool(matches(summary or ''))
+    return bool(matches(summary or '') or matches(str(d.get('error_summary') or '')))
 
 
 def _object(value):

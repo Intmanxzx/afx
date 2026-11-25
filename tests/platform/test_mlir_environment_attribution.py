@@ -14,7 +14,7 @@ MARKER = 'AFX_MODULE_V1={"stage":"schedule"}\n'
 
 
 @pytest.mark.parametrize('status', ['compile_fail', 'runtime_fail', 'unsupported'])
-@pytest.mark.parametrize('source', ['summary', 'diagnostics', 'shape_results'])
+@pytest.mark.parametrize('source', ['summary', 'diagnostics', 'shape_results', 'execution_error'])
 def test_mlir_runtime_environment_outranks_schedule(status, source):
     detail = None
     summary = MARKER + ERROR
@@ -26,6 +26,9 @@ def test_mlir_runtime_environment_outranks_schedule(status, source):
         summary = 'Schedule failed'
         detail = {'shape_results': [{'shape_index': 0, 'correctness': 'error',
                                      'error_summary': MARKER + ERROR}]}
+    elif source == 'execution_error':
+        summary = None
+        detail = {'error_stage': 'capability', 'error_summary': ERROR, 'shape_results': []}
     assert classify(backend='af-mlir', declared_status=status, declared_stage='schedule',
                     summary=summary, detail=detail) == (
                         'runtime_fail', 'environment', 'infrastructure', VERSION)
