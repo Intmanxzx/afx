@@ -144,7 +144,7 @@ def test_server_reclassifies_first_call_dtype_failure(env):
                         log="Check dtype failed for graph_hint/cast1 Cast; input_dtypes: [DT_INT64]")], key="dtype-1")
     upload(ingestor, principal, payload)
     row = store.reader().execute("SELECT function_status, fail_stage, failure_owner, classifier_version FROM executions WHERE exec_uuid=?", ("exec-dtype01",)).fetchone()
-    assert tuple(row) == ("compile_fail", "graph_check", "autofuse_ascir", 1)
+    assert tuple(row) == ("compile_fail", "af_common", "autofuse", 2)
 
 
 def test_validation_rejects_bad_case_keys(env):
@@ -165,8 +165,8 @@ def test_environment_and_content_deduplicated(env):
     upload(ingestor, principal, body(items))
     conn = store.reader()
     assert conn.execute("SELECT COUNT(*) FROM environments").fetchone()[0] == 1
-    # five distinct specs + one shared log
-    assert conn.execute("SELECT COUNT(*) FROM content.contents").fetchone()[0] == 6
+    # five distinct specs + one shared log + five original upload envelopes
+    assert conn.execute("SELECT COUNT(*) FROM content.contents").fetchone()[0] == 11
     detail = queries.execution_detail(store, "exec-0000")
     assert detail["log"] == log and detail["env"]["cann"] == "8.2"
 

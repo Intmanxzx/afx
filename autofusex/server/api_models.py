@@ -166,6 +166,7 @@ class Case(Payload):
 
 
 class Execution(Payload):
+    capture_version: int = Field(default=1, ge=1)
     exec_uuid: str
     case: Case
     backend: str
@@ -188,6 +189,7 @@ class Execution(Payload):
 
 
 class Upload(RequestKey):
+    protocol_version: int = Field(default=1, ge=1)
     client: Client
     run: Run
     items: list[Execution] = Field(min_length=1, max_length=500)

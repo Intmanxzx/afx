@@ -12,7 +12,16 @@ def redact(text):
 
 
 def excerpt(exc):
-    return redact(''.join(traceback.format_exception(type(exc),exc,exc.__traceback__)))[-1600:]
+    text = redact(''.join(traceback.format_exception(type(exc),exc,exc.__traceback__)))
+    current, seen = exc, set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        fact = getattr(current, '_afx_module_failure', None)
+        if fact:
+            marker = 'AFX_MODULE_V1=' + json.dumps(fact, ensure_ascii=True) + '\n'
+            return marker + text[-(1600-len(marker)):]
+        current = current.__cause__ or current.__context__
+    return text[-1600:]
 
 
 def error_summary(exc):

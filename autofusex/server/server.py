@@ -472,6 +472,11 @@ def create_app(store: Store) -> FastAPI:
     def delete_client(client_id: int, principal=Depends(administrator)):
         return _success(ops.delete_client(store, principal, client_id))
 
+    @route('/api/client/protocol', dependencies=[Depends(writer)])
+    def upload_protocol():
+        return _success({"protocol_versions": [1, 2], "capture_versions": [1, 2],
+                         "preferred_protocol": 2, "classifier_version": 2})
+
     @route('/api/client/executions', 'POST')
     def upload(request: Request, body: m.Upload, principal=Depends(writer)):
         return _success(ingestor.upload(principal, data(body), request.state.raw))

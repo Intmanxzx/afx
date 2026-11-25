@@ -47,7 +47,7 @@ def pipeline(store: Store, arch: str | None = None, q: str | None = None) -> dic
         status = row["function_status"]
         if status == "pass":
             lane["accuracy_fail" if row["accuracy_status"] == "fail" else "pass"] += n
-        elif status == "build_fail":
+        elif status in {"build_fail", "gen_fail", "ascgraph_fail"}:
             lane["build_fail"] += n
         elif status == "unsupported":
             lane["unsupported"] += n
@@ -95,9 +95,12 @@ def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None
     for row in rows:
         group = groups.setdefault(row["dim_value"], {"value": row["dim_value"], "total": 0, "pass": 0,
                                                      "function_fail": 0, "accuracy_fail": 0, "unsupported": 0,
-                                                     "stage_fail": {}})
+                                                     "stage_fail": {}, "results": {}})
         n = row["n"]
         group["total"] += n
+        from autofusex.server.result_categories import category
+        result = category(row["function_status"], row["fail_stage"], row["accuracy_status"])
+        group["results"][result] = group["results"].get(result, 0) + n
         if row["function_status"] == "pass":
             group["accuracy_fail" if row["accuracy_status"] == "fail" else "pass"] += n
         elif row["function_status"] == "unsupported":

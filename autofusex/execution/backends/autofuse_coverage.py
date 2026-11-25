@@ -8,6 +8,8 @@ a normally completed scheduler with no candidate is an un-evaluable case.
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from unittest.mock import patch
+import builtins
+from contextlib import ExitStack
 
 
 class NoAutofuseCoverage(RuntimeError):
@@ -57,13 +59,48 @@ def observe_autofuse():
         return
 
     state.installed = True
+    sources = {}
+    try:
+        from torch_npu._inductor.ascendc.codegen import _asc_codegen
+    except ImportError:
+        _asc_codegen = None
+
+    def capture_compile(source, filename, mode, *args, **kwargs):
+        code = builtins.compile(source, filename, mode, *args, **kwargs)
+        if isinstance(source, str) and 'from autofuse.pyautofuse import' in source:
+            sources[code] = source.splitlines()
+        return code
 
     def traced_af(graph, *args, **kwargs):
         state.candidates += 1
         state.event('AF_CANDIDATE')
         # Record before ASCIR construction/schedule/codegen so those failures
         # are retained as AF-path failures rather than coverage skips.
-        result = original_af(graph, *args, **kwargs)
+        try:
+            from autofusex.execution.core_logs import capture_tail
+            with capture_tail(forward=True) as native_log:
+                result = original_af(graph, *args, **kwargs)
+        except Exception as exc:
+            from autofusex.execution.module_attribution import boundary_failure
+            fact = boundary_failure(exc, sources)
+            if fact:
+                import os
+                flags = os.environ.get('AUTOFUSE_DFX_FLAGS', '')
+                modes = [part.split('=', 1)[1] for part in flags.split(';')
+                         if part.strip().lstrip('-').startswith('mlir_codegen_config=')]
+                if fact['stage'] == 'codegen' and modes == ['none']:
+                    fact['stage'] = 'legacy_codegen'
+                elif fact['stage'] == 'codegen':
+                    from autofusex.execution.reporting.failure_origin import mlir_failed_line
+                    import re
+                    text = native_log()
+                    if mlir_failed_line(text) or re.search(r'(?:ERROR|error:)[^\n]*MLIR codegen:', text):
+                        fact['stage'] = 'mlir'
+                fact['graph'] = str(getattr(graph, 'name', ''))[:100]
+                exc._afx_module_failure = fact
+            raise
+        finally:
+            sources.clear()
         state.codegen_succeeded += 1
         state.event('AF_CODEGEN_OK')
         return result
@@ -97,6 +134,8 @@ def observe_autofuse():
             depth -= 1
 
     import torch._dynamo.config
-    with torch._dynamo.config.patch(suppress_errors=False), patch.object(af_codegen, 'codegen_kernel_def', traced_af), \
+    with ExitStack() as stack, torch._dynamo.config.patch(suppress_errors=False), patch.object(af_codegen, 'codegen_kernel_def', traced_af), \
          patch.object(Scheduler, 'codegen', traced_scheduler):
+        if _asc_codegen is not None:
+            stack.enter_context(patch.object(_asc_codegen, 'compile', capture_compile, create=True))
         yield state

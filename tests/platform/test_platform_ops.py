@@ -297,7 +297,7 @@ def test_client_failure_attribution_uses_real_error_lines():
                  "scheduled_x = fuser.schedule(x)\n Check dtype failed for graph_hint/cast Cast; input_dtypes: [DT_INT64]")
     assert af_error_line(generated).startswith("Check dtype failed")
     status, stage, line = function_status("af-mlir", "error", "first_call_combined", generated, None, -1)
-    assert (status, stage) == ("compile_fail", "graph_check") and line.startswith("Check dtype")
+    assert (status, stage) == ("compile_fail", "af_common") and line.startswith("Check dtype")
     assert function_status("af-mlir", "ok", "", "", None, -1) == ("pass", None, None)
     assert function_status("af-mlir", "unsupported", "", "", None, -1)[0] == "unsupported"
 
@@ -314,7 +314,7 @@ def test_npu_operator_error_at_first_call_is_runtime_failure_despite_lowering_wa
            "AclNN_Parameter_Error: Tensor self not implemented for DT_COMPLEX64")
     assert classify_failure(backend="af-legacy", declared_status="compile_fail",
                             declared_stage="lowering", summary=detail["shape_results"][0]["error_summary"],
-                            log=log, detail=detail)[:3] == ("runtime_fail", "first_call_combined", "npu_runtime")
+                            log=log, detail=detail)[:3] == ("runtime_fail", "aclnn", "npu_runtime")
 
 
 def test_http_static_reserved_and_security_headers(world):
@@ -544,7 +544,7 @@ def test_schedule_stage_from_optimize_module_logs():
     # ASCIR graph construction happens before schedule
     check = ("InductorError: RuntimeError: Failed to execute graph code:from autofuse.pyautofuse import ascir\n"
              "Check dtype failed for graph_hint/cast Cast; input_dtypes: [DT_INT64]\nRuntimeError: Optimize fail")
-    assert function_status("af-mlir", "error", "", check, None, -1)[1] == "graph_check"
+    assert function_status("af-mlir", "error", "", check, None, -1)[1] == "af_common"
 
 
 def test_plog_errors_by_worker_pid_and_window(tmp_path):

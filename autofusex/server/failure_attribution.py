@@ -6,23 +6,12 @@ failure means from the immutable evidence shipped with an execution.
 import json
 import re
 
-VERSION = 1
+VERSION = 2
 
 _TIMEOUT = re.compile(r"\b(?:timeout|timed ?out|TimeoutError)\b", re.I)
 _ENV = re.compile(r"device busy|out of memory|no space left|npu unavailable|torch_npu unavailable|another managed test", re.I)
 _TORCH = re.compile(r"UnsupportedIndexExpr|unknown SymPy node|torch\._dynamo\.exc|torch\._inductor\.exc|ConstraintViolationError|GuardOnDataDependentSymNode", re.I)
 _GRAPH = re.compile(r"Check (?:dtype|shape) failed|Infer dtype failed|infer shape failed", re.I)
-_SCHEDULE = re.compile(r"schedule|autoschedule|optimize module", re.I)
-_LOWER = re.compile(r"lower(?:ing)?", re.I)
-_TILING = re.compile(r"tiling", re.I)
-_CODEGEN = re.compile(r"codegen|generate kernel", re.I)
-# Errors raised by an NPU operator during the first execution are runtime
-# failures.  In particular, generated Inductor source often includes a
-# ``torch/_inductor/lowering.py`` warning; that filename is not evidence that
-# lowering itself failed.
-_NPU_RUNTIME = re.compile(
-    r"NPU function error|aclnn[A-Za-z0-9_]* failed|op[_ -]?plugin|"
-    r"Tensor self not implemented for DT_|AclNN_Parameter_Error", re.I)
 
 def _detail_text(detail):
     if not detail:
@@ -30,63 +19,55 @@ def _detail_text(detail):
     if isinstance(detail, (bytes, bytearray)):
         try: detail = json.loads(detail)
         except Exception: return detail.decode(errors="ignore")
+    if isinstance(detail, str):
+        try: return _detail_text(json.loads(detail))
+        except (ValueError, TypeError): return detail
+    if isinstance(detail, list):
+        return "\n".join(_detail_text(value) for value in detail)
     if not isinstance(detail, dict):
         return str(detail)
-    return json.dumps(detail, ensure_ascii=False, default=str)
-
-def _detail_stage(detail):
-    if isinstance(detail, (bytes, bytearray)):
-        try: detail = json.loads(detail)
-        except Exception: return None
-    if not isinstance(detail, dict): return None
-    for key in ("error_stage", "execution_stage"):
-        if isinstance(detail.get(key), str): return detail[key]
-    for key in ("attempt", "execution", "result"):
-        value = detail.get(key)
-        if isinstance(value, dict):
-            found = _detail_stage(value)
-            if found: return found
-    for value in detail.get("shape_results", ()) if isinstance(detail.get("shape_results"), list) else ():
-        if isinstance(value, dict) and isinstance(value.get("error_stage"), str): return value["error_stage"]
-    return None
+    return "\n".join(_detail_text(value) for value in detail.values())
 
 def classify(*, backend, declared_status, declared_stage=None, summary=None, log=None, detail=None):
     """Return (function_status, fail_stage, owner, version)."""
+    log = log.decode(errors="replace") if isinstance(log, bytes) else log
     evidence = "\n".join(str(x) for x in (summary, log, _detail_text(detail)) if x)
-    execution_stage = _detail_stage(detail) or declared_stage
-    if declared_status in ("ok", "fail", "pass") and not evidence:
-        return "pass", None, None, VERSION
     if declared_status in ("ok", "fail", "pass"):
         # A correctness failure is represented separately by accuracy_status.
         return "pass", None, None, VERSION
-    if declared_status in {"build_fail", "compile_fail", "runtime_fail", "timeout", "unsupported"} and not (
-            _TIMEOUT.search(evidence) or _ENV.search(evidence) or _TORCH.search(evidence) or
-            _GRAPH.search(evidence) or _LOWER.search(evidence) or _SCHEDULE.search(evidence) or
-            _TILING.search(evidence) or _CODEGEN.search(evidence)):
-        # Legacy uploads may not contain detail/log evidence. Preserve their
-        # explicit value until a historical reclassification has evidence.
-        return declared_status, declared_stage, "unknown", VERSION
-    if _TIMEOUT.search(evidence):
-        return "timeout", "timeout", "infrastructure", VERSION
-    if _ENV.search(evidence):
+    from autofusex.execution.module_attribution import classify_module
+    # Module markers identify the actual failing frame. Otherwise only the
+    # terminal summary may prove aclNN ownership; shared logs can contain
+    # unrelated failures from another shape or graph.
+    module = classify_module(evidence if 'AFX_MODULE_V1=' in evidence else (summary or ''), backend, declared_stage)
+    if module:
+        return (*module, VERSION)
+    if declared_status == "unsupported":
+        return "unsupported", None, None, VERSION
+    if declared_status == 'timeout' or _TIMEOUT.search(summary or ""):
+        return "timeout", "unknown", "infrastructure", VERSION
+    if _ENV.search(summary or ""):
         return "runtime_fail", "environment", "infrastructure", VERSION
-    if _TORCH.search(evidence):
-        return "build_fail", "torch", "torch", VERSION
-    # Prefer the recorded execution stage and concrete NPU runtime evidence
-    # over incidental warning text such as ``torch/_inductor/lowering.py``.
-    if execution_stage in {"first_call_combined", "kernel", "synchronize"} and _NPU_RUNTIME.search(evidence):
-        return "runtime_fail", execution_stage, "npu_runtime", VERSION
+    # Concrete native errors take precedence over the outer InductorError wrapper.
     if backend in {"af-mlir", "af-legacy"}:
-        if _GRAPH.search(evidence):
-            return "compile_fail", "graph_check", "autofuse_ascir", VERSION
-        if _LOWER.search(evidence):
-            return "compile_fail", "lowering", "autofuse", VERSION
-        if _SCHEDULE.search(evidence):
+        from autofusex.execution.reporting.failure_origin import mlir_failed_line
+        if mlir_failed_line(evidence):
+            return "compile_fail", "mlir", "autofuse", VERSION
+        if re.search(r"(?:ERROR|error:)[^\n]*MLIR codegen:", evidence):
+            return "compile_fail", "mlir", "autofuse", VERSION
+        if re.search(r"(?:Schedule|Optimize|optimize module)[^\n]*failed", summary or ""):
             return "compile_fail", "schedule", "autofuse", VERSION
-        if _TILING.search(evidence):
-            return "compile_fail", "tiling", "autofuse", VERSION
-        if _CODEGEN.search(evidence):
-            return "compile_fail", "codegen", "autofuse", VERSION
-    if execution_stage in {"first_call_combined", "kernel", "synchronize"}:
-        return "runtime_fail", execution_stage, "npu_runtime", VERSION
-    return "runtime_fail", execution_stage or "unknown", "unknown", VERSION
+        if _GRAPH.search("\n".join(x for x in (summary, log) if x)):
+            # Old graph-check diagnostics do not identify whether validation was
+            # in the frontend or inside schedule. Do not invent that boundary.
+            return "compile_fail", "af_common", "autofuse", VERSION
+    if _TORCH.search(summary or "") and 'InductorError' not in (summary or ""):
+        return "gen_fail", "inductor", "torch", VERSION
+    if declared_status == "build_fail":
+        return "gen_fail", "inductor" if declared_stage == "torch" else "unknown", "unknown", VERSION
+    if declared_status in {"gen_fail", "ascgraph_fail", "compile_fail", "runtime_fail", "timeout"}:
+        stages = {"inductor", "af_fronted", "schedule", "legacy_codegen", "mlir",
+                  "triton_ascend", "aclnn", "fused_kernel", "af_common", "environment", "unknown"}
+        stage = declared_stage if declared_stage in stages else "unknown"
+        return declared_status, stage, "unknown", VERSION
+    return "runtime_fail", "unknown", "unknown", VERSION

@@ -339,6 +339,13 @@ def function_status(backend, status, stage, summary, diagnostics, index, extra: 
     if status == "unsupported":
         return "unsupported", None, None
     evidence = _evidence(summary, diagnostics) + ("\n" + extra if extra else "")
+    from autofusex.execution.module_attribution import classify_module
+    local_diagnostics = _diagnostics(diagnostics)
+    local_error = (local_diagnostics.get('shapes', {}).get(str(index), {}).get('error', '')
+                   if isinstance(local_diagnostics, dict) else '')
+    module = classify_module((summary or '') + '\n' + local_error, backend, stage)
+    if module:
+        return module[0], module[1], None
     if re.search(r"\btimed? ?out\b|\btimeout\b", summary or "", re.I):
         return "timeout", "timeout", None
     if backend in AF_BACKENDS:
@@ -350,19 +357,14 @@ def function_status(backend, status, stage, summary, diagnostics, index, extra: 
     if kind == "environment_failed":
         return "runtime_fail", "environment", None
     if kind == "gen_failed":
-        return "build_fail", _STAGE.sub("_", (stage or "build").lower())[:32] or "build", None
+        return "gen_fail", "inductor" if stage not in {"generation", "reference"} else "unknown", None
     if kind == "function_failed":
         line = af_error_line(evidence)
         lowered = (line or "").lower()
-        # ASCIR graph construction (graph_check) runs before schedule; optimize errors mean schedule.
-        if "check dtype failed" in lowered or "check shape failed" in lowered:
-            return "compile_fail", "graph_check", line
-        for word, label in (("tiling", "tiling"), ("lower", "lowering"), ("codegen", "codegen")):
-            if word in lowered:
-                return "compile_fail", label, line
         if failure_path(backend, status, stage or "", summary or "", diagnostics, index) == "mlir_failed":
             return "compile_fail", "mlir", line
-        return "compile_fail", "autofuse", line
+        return "compile_fail", "af_common", line
+
     return "runtime_fail", _STAGE.sub("_", (stage or "unknown").lower())[:32] or "unknown", None
 
 
@@ -489,6 +491,7 @@ class Mapper:
                     "backend_version": versions.get(backend), "afx": environment.get("package_version"),
                     "nnsmith": self._static_env["nnsmith"], "os": self._static_env["os"],
                     "cpu_arch": environment.get("machine"), "gcc": self._static_env["gcc"]},
+            "capture_version": execution.get("capture_version", 1),
             "function_status": status, "fail_stage": stage,
             "accuracy_status": accuracy, "accuracy_ref": "cpu" if accuracy else None,
             "compile_ns": attempt["prepare_ns"],
@@ -596,8 +599,12 @@ def upload_new(api: API, mapper: Mapper, state: State, counters: Counters, *, ke
                 size += entry_size
             if chunk:
                 batches.append((key, run, info, chunk))
+        if batches:
+            capability = api.call("GET", "/api/client/protocol")
+            if 2 not in capability.get("protocol_versions", []):
+                raise APIError(426, "unsupported_protocol", "Server must support execution upload protocol 2; pending results retained")
         for (run_uuid, kind, machine), run, info, items in batches:
-            body = {"request_key": key_prefix + ":" + hashlib.sha256(
+            body = {"protocol_version": 2, "request_key": "p2:" + key_prefix + ":" + hashlib.sha256(
                         "|".join(sorted(i["exec_uuid"] for i in items)).encode()).hexdigest()[:40],
                     "client": {"machine_id": machine[:128], "hostname": socket.gethostname()[:128],
                                "npu_arch": info["npu_arch"], "afx_version": info["afx_version"]},
