@@ -474,8 +474,9 @@ def create_app(store: Store) -> FastAPI:
 
     @route('/api/client/protocol', dependencies=[Depends(writer)])
     def upload_protocol():
+        from autofusex.server.failure_attribution import VERSION
         return _success({"protocol_versions": [1, 2], "capture_versions": [1, 2],
-                         "preferred_protocol": 2, "classifier_version": 2})
+                         "preferred_protocol": 2, "classifier_version": VERSION})
 
     @route('/api/client/executions', 'POST')
     def upload(request: Request, body: m.Upload, principal=Depends(writer)):

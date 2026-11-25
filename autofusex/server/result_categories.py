@@ -1,8 +1,11 @@
 """Mutually exclusive overview buckets; stages never imply a second count."""
 def category(status, stage, accuracy):
+    if stage == 'unknown_retest' and status not in {'pass', 'unsupported', 'timeout'}:
+        return 'unknown_retest'
     if status == 'pass':
         return 'accuracy_fail' if accuracy == 'fail' else 'pass' if accuracy == 'pass' else 'unchecked'
-    if status in {'build_fail', 'gen_fail'}: return 'gen_fail'
+    if status in {'build_fail', 'gen_fail'}:
+        return 'nnsmith' if stage == 'nnsmith' else 'gen_fail'
     if status == 'ascgraph_fail': return 'ascgraph_fail'
     if status == 'unsupported': return 'other'
     if status == 'timeout': return 'timeout'

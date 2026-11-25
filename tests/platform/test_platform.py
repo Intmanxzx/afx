@@ -144,7 +144,8 @@ def test_server_reclassifies_first_call_dtype_failure(env):
                         log="Check dtype failed for graph_hint/cast1 Cast; input_dtypes: [DT_INT64]")], key="dtype-1")
     upload(ingestor, principal, payload)
     row = store.reader().execute("SELECT function_status, fail_stage, failure_owner, classifier_version FROM executions WHERE exec_uuid=?", ("exec-dtype01",)).fetchone()
-    assert tuple(row) == ("compile_fail", "af_common", "autofuse", 2)
+    from autofusex.server.failure_attribution import VERSION
+    assert tuple(row) == ("compile_fail", "af_common", "autofuse", VERSION)
 
 
 def test_validation_rejects_bad_case_keys(env):
