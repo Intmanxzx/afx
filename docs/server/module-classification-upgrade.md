@@ -149,3 +149,13 @@ ASCIR 不再使用 diagnostic_view.shape_log（这是异常文本）。客户端
 2026-11-25 已部署分类器 v8，并应用 native-runtime-20261125-v8：8 条旧 timeout/unknown 当前执行中，2 条改为 runtime_fail/aclnn、6 条改为 runtime_fail/aicpu。完整未归因失败扫描没有新增候选；83 条超时剩余 75 条。F0SQR0WLFHGE5JG59LC7MFU8PDR 的两条 AF 执行归 aclnn，F0SQR0WLFHGE5JG59LC7LWBNEGX 的两条 AF 执行归 aicpu。副本应用/回滚/重新应用、生产数据库完整性、原始事实与问题状态哈希、互斥总览计数通过。平台测试 187 passed；公开接口、stage:aicpu 搜索、静态文件哈希和服务状态均核对，AICPU 默认隐藏。备份、manifest 和审计报告位于 releases/0.5.0/native-runtime-v8-20261125。
 
 2026-11-25 已部署 v5，并分别应用 frontend-20261125-v5（20,026 条、当前执行头 20,014）与 nnsmith-20261125-v5（395 条）批次。副本应用/回滚/重新应用、数据库完整性与原始事实校验通过；线上服务恢复后目标用例、总览互斥计数、筛选和静态文件均已核对。此前 AF前端 v4 待部署规则已随本次上线。当前待复测结果剩余 3,249 条（AF-MLIR 1,837、AF-legacy 1,330、TritonNPU 82），已重新导出 remaining-retest.csv。备份和审计位于 releases/0.5.0/frontend-nnsmith-20261125；相关测试 62 passed。
+
+## AFIR 原生诊断归因（分类器 v12）
+
+MLIR 源码 dialect/AFIR/IR/AFIR.h 声明稳定诊断分类；LoopGenerate.cpp 使用 emitError 输出 InvalidSchedule: 'afir.<op>' <原因>，AFIR verifier 使用 emitOpError 输出 'afir.<op>' op <原因>。例如用例 E0SQR0WLFHGE5JG59LC7N9891FQ 的 af-legacy 执行 d84eed55-bfbc-4a49-8fe6-68c40df25f60 在 worker 异常中记录 InvalidSchedule: 'afir.load' result escapes its schedule scope，实际属于 compile_fail/mlir。
+
+新增规则仅识别完整原生 error 行（支持 loc 和文件行列位置），要求每个失败 shape 都有证据；没有 shape 结果时，可读取终端异常及 error_stage=worker 的执行诊断。共享日志、IR 文本、源码引用、只有 afir.xxx 或 InvalidSchedule 关键词不足以归因；明确的其他模块、运行环境或运行错误证据冲突时保留原有判定。规则适用于两条 AF 后端，后端配置名称不能替代实际报错来源。
+
+classification_mlir.py 支持只读清单预览、离线应用和回滚，只修正原阶段为空、unknown、unknown_retest 的 AF 失败记录；应用时复核范围、原值和诊断。保持执行 UUID、原始上报、客户端协议、capture_version、用例和问题状态，重建派生统计。
+
+2026-11-25：当前线上主机 afx 的 /srv/afx-platform 部署分类器 v12，应用 afir-diagnostics-20261125-v12 批次 15 条，全部为当前执行头（af-legacy 7、af-mlir 8）。指定执行已由 runtime_fail/unknown_retest 改为 compile_fail/mlir，公开执行与总览接口复核通过。平台测试 356 passed；私有完整备份、停写最终快照、副本应用/回滚/重新应用演练通过；生产三库 integrity_check、原始事实哈希及 191,249 个执行头互斥统计校验通过。备份、manifest 和报告保存在 /srv/afx-platform/private/afir-v12-20261125，原 v11 部署目录保留。

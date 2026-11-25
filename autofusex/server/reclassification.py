@@ -8,9 +8,31 @@ from autofusex.server.store import get_content
 from autofusex.server.triton_attribution import triton_failure
 from autofusex.server.native_runtime_attribution import native_runtime_failure
 from autofusex.server.local_failure_attribution import local_failure
+from autofusex.server.mlir_attribution import mlir_failure
 from autofusex.server.failure_attribution import classify, local_aclnn_failure, frontend_failure, nnsmith_failure, VERSION
 
 FIELDS = ('function_status','fail_stage','failure_owner','classifier_version')
+
+def mlir_plan(conn):
+    """Preview AFIR diagnostics only on currently unowned AF failures."""
+    changes = []
+    for row in conn.execute(
+            "SELECT e.*,c.case_key,(h.exec_id IS NOT NULL) AS is_head FROM executions e "
+            "JOIN cases c ON c.case_id=e.case_id LEFT JOIN execution_heads h ON h.exec_id=e.exec_id "
+            "WHERE e.backend IN ('af-legacy','af-mlir') "
+            "AND e.function_status IN ('gen_fail','ascgraph_fail','compile_fail','runtime_fail','build_fail') "
+            "AND COALESCE(e.fail_stage,'') IN ('','unknown','unknown_retest') ORDER BY e.exec_id"):
+        detail = get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None
+        result = mlir_failure(row['backend'], row['log_summary'], detail)
+        if result:
+            changes.append({'exec_id': row['exec_id'], 'exec_uuid': row['exec_uuid'],
+                            'case_key': row['case_key'], 'backend': row['backend'], 'is_head': bool(row['is_head']),
+                            'before': [row[k] for k in FIELDS], 'after': [*result, VERSION]})
+    return changes
+
+
+def apply_mlir(store, batch_id, changes):
+    return _apply_scoped(store, batch_id, changes, 'mlir')
 
 
 def local_failure_plan(conn):
@@ -159,7 +181,14 @@ def _apply_scoped(store, batch_id, changes, rule):
                     or [row[k] for k in FIELDS] != change['before']):
                 raise ValueError('record changed after preview')
             detail = get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None
-            if rule == 'local_failure':
+            if rule == 'mlir':
+                if (row['backend'] not in ('af-legacy', 'af-mlir')
+                        or row['function_status'] not in
+                        ('gen_fail', 'ascgraph_fail', 'compile_fail', 'runtime_fail', 'build_fail')
+                        or row['fail_stage'] not in (None, '', 'unknown', 'unknown_retest')):
+                    raise ValueError('record is outside MLIR correction scope')
+                result = mlir_failure(row['backend'], row['log_summary'], detail)
+            elif rule == 'local_failure':
                 if (row['fail_stage'] != 'unknown_retest' or row['function_status'] not in
                         ('build_fail', 'gen_fail', 'ascgraph_fail', 'compile_fail', 'runtime_fail')):
                     raise ValueError('record is outside local failure correction scope')
