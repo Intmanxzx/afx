@@ -293,6 +293,18 @@ def test_case_page_filters_and_cursor(env):
     assert len(failing["groups"]) == 3
     with pytest.raises(queries.QueryError):
         queries.case_page(store, status="fail")
+    first = queries.case_page(store, page=1, limit=4)
+    last = queries.case_page(store, page=2, limit=4)
+    assert (first['total'], first['total_pages'], first['page']) == (6, 2, 1)
+    assert first['groups'] == page['groups']
+    assert last['groups'] == rest['groups']
+    assert queries.case_page(store, page=10**30, limit=4) == last
+    filtered = queries.case_page(store, page=2, limit=2, backend='af-mlir', status='function_fail')
+    assert filtered['total'] == 3 and filtered['total_pages'] == 2 and len(filtered['groups']) == 1
+    for kwargs in [dict(page=0), dict(page=-1), dict(page=True), dict(page=1, after=1)]:
+        with pytest.raises(queries.QueryError):
+            queries.case_page(store, **kwargs)
+
 
 
 # -- HTTP ----------------------------------------------------------------------

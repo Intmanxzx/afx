@@ -318,11 +318,11 @@ def create_app(store: Store) -> FastAPI:
         return _success({'user_id': principal.user_id, 'role': principal.role})
 
     @route('/api/cases')
-    def cases(after: Optional[int] = None, limit: int = 50, backend: QueryValue = None,
+    def cases(after: Optional[int] = None, limit: int = 50, page: Optional[int] = None, backend: QueryValue = None,
               status: QueryValue = None, arch: QueryValue = None, case_key: QueryValue = None,
               case_id: Optional[int] = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
         return _success(queries.case_page(store, after=after, limit=limit, backend=backend, status=status,
-                                          arch=arch, case_key=case_key, case_id=case_id, q=q, results=results, selected_backends=selected_backends, chips=chips))
+                                          arch=arch, case_key=case_key, case_id=case_id, q=q, results=results, selected_backends=selected_backends, chips=chips, page=page))
 
     @route('/api/cases/{case_key:path}/history')
     def case_history(case_key: str, after: Optional[int] = None, limit: int = 50, principal=Depends(identity)):

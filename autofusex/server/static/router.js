@@ -43,7 +43,7 @@ export async function render() {
   document.querySelector(".result-filter")?.remove();
   const filterable = ["overview", "discovery"].includes(page) && params.get("sub") !== "retests";
   document.body.classList.toggle("has-result-filter", filterable);
-  if (filterable) document.body.append(resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes })));
+  if (filterable) document.body.append(resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes, page: null })));
   const main = $("#main");
   const q = params.get("q");
   const content = el("div");

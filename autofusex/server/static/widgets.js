@@ -14,8 +14,8 @@ export function select(options, value, onchange, attrs = {}) {
   return s;
 }
 
-export function pagination(current, pages, total, onchange) {
-  const nav = el("nav", { class: "issue-pagination", "aria-label": "问题列表分页" },
+export function pagination(current, pages, total, onchange, subject = "问题") {
+  const nav = el("nav", { class: "issue-pagination", "aria-label": subject + "列表分页" },
     el("span", { class: "muted small", role: "status" }, `共 ${fmt(total)} 条 · 共 ${fmt(pages)} 页 · 当前第 ${pages ? current : 0} 页`));
   const button = (n, text, disabled = false) => el("button", { type: "button", disabled,
     "aria-label": text || `第 ${n} 页`, "aria-current": !text && n === current ? "page" : null,

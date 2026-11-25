@@ -172,7 +172,8 @@ _EXEC_COLUMNS = ("e.exec_id, e.exec_uuid, e.case_revision, e.backend, e.npu_arch
 
 def case_page(store: Store, *, after: int | None = None, limit: int = 50, backend: str | None = None,
               status: str | None = None, arch: str | None = None, case_key: str | None = None,
-              case_id: int | None = None, q: str | None = None, results=None, selected_backends=None, chips=None) -> dict:
+              case_id: int | None = None, q: str | None = None, results=None, selected_backends=None, chips=None,
+              page: int | None = None) -> dict:
     """Case groups newest first, each with its latest executions (design 6.3)."""
     if not 1 <= limit <= MAX_PAGE:
         raise QueryError(f"limit must be 1..{MAX_PAGE}")
@@ -180,36 +181,59 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
         raise QueryError("status must be pass, fail, function_fail or accuracy_fail")
     if status is not None and backend is None:
         raise QueryError("status filter requires backend")
+    if page is not None and (isinstance(page, bool) or not isinstance(page, int) or page < 1):
+        raise QueryError("page must be a positive integer")
+    if page is not None and after is not None:
+        raise QueryError("page and after cannot be combined")
     conn = store.reader()
     cursor = after if after is not None else 1 << 62
     query = search.visual_query(q, results, selected_backends, chips)
+    args = []
     if case_id is not None:
-        ids = [row[0] for row in conn.execute("SELECT case_id FROM cases WHERE case_id=?", (case_id,))]
+        selector, args = "SELECT case_id FROM cases WHERE case_id=?", [case_id]
     elif case_key is not None:
-        ids = [row[0] for row in conn.execute("SELECT case_id FROM cases WHERE case_key=?", (case_key,))]
+        selector, args = "SELECT case_id FROM cases WHERE case_key=?", [case_key]
     elif query is not None:
         if backend is not None or status is not None:
             raise QueryError("combine backend/status into q, e.g. backend:af-mlir status:fail")
-        ids = search.filtered_cases(conn, query, cursor, limit)
+        case_sql, case_args = query.case_sql()
+        if query.needs_heads:
+            head_sql, head_args = query.head_sql()
+            selector = ("SELECT DISTINCT h.case_id FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
+                        f"JOIN cases c ON c.case_id=h.case_id WHERE {head_sql} AND {case_sql}")
+            args = [*head_args, *case_args]
+        else:
+            selector, args = f"SELECT c.case_id FROM cases c WHERE {case_sql}", case_args
     elif backend is None:
-        ids = [row[0] for row in conn.execute(
-            "SELECT case_id FROM cases WHERE case_id<? ORDER BY case_id DESC LIMIT ?", (cursor, limit))]
+        selector = "SELECT case_id FROM cases"
     else:
-        where, args = ["h.backend=?", "h.case_id<?"], [backend, cursor]
+        where, args = ["h.backend=?"], [backend]
         if arch is not None:
             where.append("h.npu_arch=?")
             args.append(arch)
-        if status == "pass":
-            where.append("e.function_status='pass' AND COALESCE(e.accuracy_status,'')<>'fail'")
-        elif status == "function_fail":
-            where.append("e.function_status NOT IN ('pass','unsupported')")
-        elif status == "accuracy_fail":
-            where.append("e.function_status='pass' AND e.accuracy_status='fail'")
-        elif status == "fail":
-            where.append("(e.function_status NOT IN ('pass','unsupported') OR e.accuracy_status='fail')")
-        ids = [row[0] for row in conn.execute(
-            "SELECT DISTINCT h.case_id FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
-            f"WHERE {' AND '.join(where)} ORDER BY h.case_id DESC LIMIT ?", args + [limit])]
+        if status is not None:
+            where.append(search.STATUS[status])
+        selector = ("SELECT DISTINCT h.case_id FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
+                    f"WHERE {' AND '.join(where)}")
+    if page is None:
+        with search.time_limit(conn):
+            ids = [r[0] for r in conn.execute(
+                f"SELECT case_id FROM ({selector}) WHERE case_id<? ORDER BY case_id DESC LIMIT ?",
+                [*args, cursor, limit])]
+    else:
+        # One WAL snapshot for exact filtered count and page IDs. Only this page's
+        # cases/executions are hydrated below; no preceding pages cross into Python.
+        conn.execute("BEGIN")
+        try:
+            with search.time_limit(conn):
+                total = conn.execute(f"SELECT COUNT(*) FROM ({selector})", args).fetchone()[0]
+                total_pages = (total + limit - 1) // limit
+                page = min(page, max(1, total_pages))
+                ids = [r[0] for r in conn.execute(
+                    f"SELECT case_id FROM ({selector}) ORDER BY case_id DESC LIMIT ? OFFSET ?",
+                    [*args, limit, (page - 1) * limit])]
+        finally:
+            conn.execute("ROLLBACK")
     groups = []
     for cid in ids:
         case = dict(conn.execute(f"SELECT {_CASE_COLUMNS} FROM cases WHERE case_id=?", (cid,)).fetchone())
@@ -225,6 +249,9 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
         groups.append({"case": case, "executions": executions[:MAX_EXECUTIONS_PER_CASE],
                        "more_executions": len(executions) > MAX_EXECUTIONS_PER_CASE})
     next_cursor = ids[-1] if len(ids) == limit and case_key is None and case_id is None else None
+    if page is not None:
+        return {"groups": groups, "page": page, "page_size": limit,
+                "total": total, "total_pages": total_pages}
     return {"groups": groups, "next_cursor": next_cursor}
 
 

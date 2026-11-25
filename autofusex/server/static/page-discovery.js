@@ -2,7 +2,7 @@
 // 问题发现: execution records grouped by case (expanded/pivot views) + manual retests.
 import { el, store, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
 import { resultFilterParams } from "./result-filter.js";
-import { select, stackBar, statusChip } from "./widgets.js";
+import { select, stackBar, statusChip, pagination } from "./widgets.js";
 import { PAGES, go, render, caseDrawer, openCase } from "./router.js";
 import { isAdmin } from "./auth.js";
 import { showActionBar, hideActionBar, popMenu, openDrawer } from "./ui.js";
@@ -33,22 +33,23 @@ PAGES.discovery = async (root, params) => {
   root.append(panel);
   const selected = new Set();
   const table = el("div", { class: "table-wrap" });
+  const pagerTop = el("div", { class: "toolbar" });
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
   const colpick = el("div", { class: "colpick hidden" }, COLUMNS.map(([k, t]) => el("label", {},
     el("input", { type: "checkbox", checked: visible.has(k), onchange: e => { e.target.checked ? visible.add(k) : visible.delete(k); store.set(COLS_KEY, [...visible]); redraw(); } }), t)));
   panel.append(el("h2", {}, "执行记录", el("span", { class: "spacer" }),
     select([["expanded", "展开视图"], ["pivot", "后端透视"]], view, v => { store.set(VIEW_KEY, v); render(); }),
-    el("button", { onclick: () => { colpick.classList.toggle("hidden"); if (colpick.classList.contains("hidden")) delete panel.dataset.custom; else panel.dataset.custom = "1"; } }, "显示列")), colpick, table, more);
+    el("button", { onclick: () => { colpick.classList.toggle("hidden"); if (colpick.classList.contains("hidden")) delete panel.dataset.custom; else panel.dataset.custom = "1"; } }, "显示列")), colpick, pagerTop, table, more);
   let groups = [];
-  let cursor = null, loadedOnce = false;
+  const requestedPage = Number(params.get("page") || 1);
+  const pageNumber = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
   const load = async () => {
-    const page = await api("/api/cases" + qs({ ...filters, after: cursor, limit: 30 }));
-    groups = groups.concat(page.groups);
-    cursor = page.next_cursor;
-    if (loadedOnce) panel.dataset.custom = "1";  // extra pages loaded: a refresh would drop them
-    loadedOnce = true;
+    const page = await api("/api/cases" + qs({ ...filters, page: pageNumber, limit: 30 }));
+    groups = page.groups;
     redraw();
-    more.replaceChildren(cursor ? el("button", { onclick: load }, "加载更多") : el("span", { class: "muted small" }, groups.length ? "已全部加载" : ""));
+    for (const target of [pagerTop, more]) target.replaceChildren(
+      pagination(page.page, page.total_pages, page.total, targetPage =>
+        go("discovery", { ...Object.fromEntries(params), page: targetPage }), "用例"));
   };
   const updateBar = () => {
     if (selected.size) panel.dataset.custom = "1"; else delete panel.dataset.custom;  // keep the selection through auto refresh
