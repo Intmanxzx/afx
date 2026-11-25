@@ -528,6 +528,15 @@ CREATE TABLE classification_changes(
  batch_id TEXT NOT NULL, exec_id INTEGER NOT NULL, before_json TEXT NOT NULL,
  after_json TEXT NOT NULL, PRIMARY KEY(batch_id,exec_id));
 """),
+    # Match the list ordering so page jumps walk narrow index entries.
+    (19, """
+CREATE INDEX issues_page ON issues(
+ CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END, case_count DESC, issue_no DESC);
+CREATE INDEX issues_page_dimension ON issues(dimension,
+ CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END, case_count DESC, issue_no DESC);
+CREATE INDEX issues_page_status ON issues(dimension, status,
+ CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END, case_count DESC, issue_no DESC);
+"""),
 ]
 
 CONTENT = [

@@ -339,10 +339,12 @@ def function_status(backend, status, stage, summary, diagnostics, index, extra: 
     if status == "unsupported":
         return "unsupported", None, None
     evidence = _evidence(summary, diagnostics) + ("\n" + extra if extra else "")
-    from autofusex.execution.module_attribution import classify_module
+    from autofusex.execution.module_attribution import classify_module, torch_guard_failure
     local_diagnostics = _diagnostics(diagnostics)
     local_error = (local_diagnostics.get('shapes', {}).get(str(index), {}).get('error', '')
                    if isinstance(local_diagnostics, dict) else '')
+    if torch_guard_failure((summary or '') + '\n' + local_error):
+        return 'gen_fail', 'inductor', None
     module = classify_module((summary or '') + '\n' + local_error, backend, stage)
     if module:
         return module[0], module[1], None
@@ -497,7 +499,7 @@ class Mapper:
             "compile_ns": attempt["prepare_ns"],
             "kernel_ns": int(sum(kernels) / len(kernels)) if kernels and evaluation.get("performance") else None,
             "e2e_ns": max(1, e2e),
-            "log_summary": plog_summary(plog),
+            "log_summary": summary_line(summary_text) or plog_summary(plog),
             "log": log_text[:MAX_LOG] if log_text and status != "pass" else None,
             "shapes": shape_items[:8],
             "created_at": _ms(attempt["created_at"]),

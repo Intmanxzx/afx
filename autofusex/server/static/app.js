@@ -21,10 +21,17 @@ import "./page-models.js";
 import "./page-users.js";
 
 window.addEventListener("hashchange", render);
+for (const link of document.querySelectorAll("#nav a[data-page]")) {
+  link.addEventListener("click", event => {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    go(link.dataset.page);
+  });
+}
 $("#search-form").addEventListener("submit", e => {
   e.preventDefault();
-  const { page } = route();
-  go(page === "models" ? "discovery" : page, { q: $("#search").value.trim() || null });
+  const { page, params } = route();
+  go(page === "models" ? "discovery" : page, { ...Object.fromEntries(params), after: null, q: $("#search").value.trim() || null });
   hideSearchPanel();
 });
 $("#logout").addEventListener("click", () => {

@@ -144,7 +144,8 @@ def test_server_reclassifies_first_call_dtype_failure(env):
                         log="Check dtype failed for graph_hint/cast1 Cast; input_dtypes: [DT_INT64]")], key="dtype-1")
     upload(ingestor, principal, payload)
     row = store.reader().execute("SELECT function_status, fail_stage, failure_owner, classifier_version FROM executions WHERE exec_uuid=?", ("exec-dtype01",)).fetchone()
-    assert tuple(row) == ("compile_fail", "af_common", "autofuse", 2)
+    from autofusex.server.failure_attribution import VERSION
+    assert tuple(row) == ("compile_fail", "af_common", "autofuse", VERSION)
 
 
 def test_validation_rejects_bad_case_keys(env):
@@ -176,7 +177,7 @@ def test_pipeline_and_head_replacement(env):
     store, ingestor, principal = env
     upload(ingestor, principal, body([
         item("exec-0001", backend="cpu"),
-        item("exec-0002", backend="af-mlir", status="compile_fail", fail_stage="schedule", created=1000),
+        item("exec-0002", backend="af-mlir", status="compile_fail", fail_stage="schedule", log_summary="Schedule failed", created=1000),
         item("exec-0003", backend="af-legacy", accuracy="fail"),
         item("exec-0004", backend="af-mlir", c=case(key=SEED_B)),
     ]))

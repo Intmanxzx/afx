@@ -82,7 +82,9 @@ def _execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape
             row['_timings']['input_binding']=time.perf_counter_ns()-started
             stage = "first_call_combined"
             started = time.perf_counter_ns()
-            output = adapter.invoke(prepared, inputs)
+            from autofusex.execution.ascir import shape_scope
+            with shape_scope(index):
+                output = adapter.invoke(prepared, inputs)
             adapter.synchronize()
             row["first_call_combined_ns"] = time.perf_counter_ns() - started
             row['_timings']['first_call_combined']=row['first_call_combined_ns']

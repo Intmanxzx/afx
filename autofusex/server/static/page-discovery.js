@@ -1,6 +1,7 @@
 "use strict";
 // 问题发现: execution records grouped by case (expanded/pivot views) + manual retests.
 import { el, store, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
+import { resultFilterParams } from "./result-filter.js";
 import { select, stackBar, statusChip } from "./widgets.js";
 import { PAGES, go, render, caseDrawer, openCase } from "./router.js";
 import { isAdmin } from "./auth.js";
@@ -25,7 +26,7 @@ PAGES.discovery = async (root, params) => {
     el("button", { class: params.get("sub") === "retests" ? "active" : "", onclick: () => go("discovery", { sub: "retests" }) }, "复测记录"));
   root.append(tabs);
   if (params.get("sub") === "retests") return renderRetests(root);
-  const q = params.get("q");
+  const filters = resultFilterParams(params);
   const view = store.get(VIEW_KEY, "expanded");
   const visible = new Set(store.get(COLS_KEY, COLUMNS.map(c => c[0]).filter(k => k !== "client" && k !== "run")));
   const panel = el("section", { class: "panel" });
@@ -41,7 +42,7 @@ PAGES.discovery = async (root, params) => {
   let groups = [];
   let cursor = null, loadedOnce = false;
   const load = async () => {
-    const page = await api("/api/cases" + qs({ q, after: cursor, limit: 30 }));
+    const page = await api("/api/cases" + qs({ ...filters, after: cursor, limit: 30 }));
     groups = groups.concat(page.groups);
     cursor = page.next_cursor;
     if (loadedOnce) panel.dataset.custom = "1";  // extra pages loaded: a refresh would drop them
@@ -98,21 +99,24 @@ function expandedTable(groups, visible, selected, updateBar) {
       if (i === 0) tr.append(caseCell(group, selected, updateBar, rows.length));
       if (!e) { tr.append(el("td", { colspan: cols.length, class: "muted" }, "暂无执行")); body.append(tr); return; }
       const cls = batchOf(e.run_id);
-      for (const [k] of cols) tr.append(el("td", { class: cls + (k === cols[0][0] ? " batch" : "") }, execValue(e, k)));
+      for (const [k] of cols) tr.append(el("td", { class: cls + (k === cols[0][0] ? " batch" : "") }, execValue(e, k, group.case.case_key)));
       body.append(tr);
     });
     if (group.more_executions) body.append(el("tr", {}, el("td", { colspan: cols.length + 1, class: "muted small" }, "仅显示最近 10 条，更多见用例详情")));
   }
   return el("table", { class: "grid" }, el("thead", {}, el("tr", {}, el("th", {}, "用例"), cols.map(([, t]) => el("th", {}, t)))), body);
 }
-export function execValue(e, k) {
+function executionLink(e, caseKey) {
+  return el("a", { class: "execution-link", href: "#case?key=" + encodeURIComponent(caseKey) + "&exec=" + encodeURIComponent(e.exec_uuid),
+    title: "查看执行详情", "aria-label": "查看执行详情" }, statusChip(e));
+}
+export function execValue(e, k, caseKey = e.case_key) {
   switch (k) {
     case "backend": return el("span", {}, label(e.backend), e.is_head ? null : el("span", { class: "muted small", title: "非当前结果（历史/复测/验证）" }, " ·历史"), e.stale_graph ? el("span", { class: "chip gray" }, "旧图") : null);
-    case "status": return statusChip(e);
+    case "status": return executionLink(e, caseKey);
     case "log_summary":
-      if (e.backend === "cpu" || e.backend === "cpu-compile" ||
-          (e.function_status === "pass" && e.accuracy_status !== "fail")) return "";
-      return el("span", { class: "small mono", title: e.log_summary || "" }, (e.log_summary || "未采集到 CANN plog ERROR").slice(0, 80));
+      if (e.function_status === "pass") return "";
+      return el("span", { class: "small mono", title: e.log_summary || "" }, (e.log_summary || "未采集到错误日志").slice(0, 80));
     case "compile_ns": case "kernel_ns": case "e2e_ns": return ns(e[k]);
     case "run": return el("span", {}, `#${e.run_id}`, e.run_kind !== "fuzz" ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, { retest: "复测", verify: "验证", regress: "回归", import: "导入" }[e.run_kind] || e.run_kind) : null);
     case "created_at": return el("span", { class: "small" }, time(e.created_at));
@@ -135,7 +139,7 @@ function pivotTable(groups, selected, updateBar) {
       if (i === 0) tr.append(caseCell(group, selected, updateBar, Math.max(1, runs.length)));
       const any = Object.values(cells)[0];
       tr.append(el("td", { class: run ? batchOf(run) + " batch" : "" }, run ? `#${run}` : "—", any ? el("div", { class: "muted small" }, `${any.user_name || any.user_id} · ${any.client_name || ""} · ${time(any.created_at)}`) : null));
-      for (const b of backends) { const e = cells[b]; tr.append(el("td", { class: run ? batchOf(run) : "" }, e ? el("div", {}, statusChip(e), el("div", { class: "muted small" }, e.kernel_ns ? "kernel " + ns(e.kernel_ns) : "")) : "—")); }
+      for (const b of backends) { const e = cells[b]; tr.append(el("td", { class: run ? batchOf(run) : "" }, e ? el("div", {}, executionLink(e, group.case.case_key), el("div", { class: "muted small" }, e.kernel_ns ? "kernel " + ns(e.kernel_ns) : "")) : "—")); }
       body.append(tr);
     });
   }

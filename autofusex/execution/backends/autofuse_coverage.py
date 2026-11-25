@@ -40,6 +40,7 @@ def observe_autofuse():
     silently treating it as no coverage.
     """
     state = Coverage()
+    state.ascir_sources = []
     try:
         # Importing torch_npu._inductor initializes the selected backend.
         # Select AscendC before observation, just as torch.compile will;
@@ -60,6 +61,7 @@ def observe_autofuse():
 
     state.installed = True
     sources = {}
+    graph_name = ''
     try:
         from torch_npu._inductor.ascendc.codegen import _asc_codegen
     except ImportError:
@@ -69,9 +71,21 @@ def observe_autofuse():
         code = builtins.compile(source, filename, mode, *args, **kwargs)
         if isinstance(source, str) and 'from autofuse.pyautofuse import' in source:
             sources[code] = source.splitlines()
+            try:
+                from autofusex.execution.ascir import construction_source, SHAPE, MAX_SOURCES
+                import json
+                text = construction_source(source)
+                entry = {'shape_index': SHAPE.get(), 'graph': graph_name, 'source': text}
+                if (text and len(state.ascir_sources) < 16 and entry not in state.ascir_sources
+                        and len(json.dumps(state.ascir_sources + [entry])) <= MAX_SOURCES):
+                    state.ascir_sources.append(entry)
+            except (ValueError, TypeError, RecursionError):
+                pass  # Optional presentation data must not turn a successful compile into a failure.
         return code
 
     def traced_af(graph, *args, **kwargs):
+        nonlocal graph_name
+        previous_name, graph_name = graph_name, str(getattr(graph, 'name', ''))[:100]
         state.candidates += 1
         state.event('AF_CANDIDATE')
         # Record before ASCIR construction/schedule/codegen so those failures
@@ -101,6 +115,7 @@ def observe_autofuse():
             raise
         finally:
             sources.clear()
+            graph_name = previous_name
         state.codegen_succeeded += 1
         state.event('AF_CODEGEN_OK')
         return result

@@ -131,6 +131,8 @@ def perform(job, device_transition=None):
     with coverage_context as coverage:
         with capture_tail(forward=True) as log:
             result = execute(bundle, adapter, evaluation, deferred=True, outputs=outputs, shape_starts=starts)
+    if coverage and coverage.ascir_sources:
+        result['execution']['ascir_sources'] = json.dumps(coverage.ascir_sources)
     if result['status'] in {'error','unsupported'} and log():
         diag = json.loads(result['execution']['diagnostics']); diag['error'] = log()
         result['execution']['diagnostics'] = json.dumps(diag)

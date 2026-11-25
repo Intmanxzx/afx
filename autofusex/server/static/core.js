@@ -10,13 +10,16 @@ export const COLS_KEY = "afx.discovery.columns";
 export const FLEET_SCOPE_KEY = "afx.fleet.scope";
 export const VIEW_KEY = "afx.discovery.view";
 export const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "Legacy", "af-mlir": "MLIR", "triton-npu": "TritonNPU" };
-export const STAGE_LABEL = { inductor: "Inductor", af_fronted: "AF前端", legacy_codegen: "Legacy Codegen", triton_ascend: "TritonAscend", aclnn: "aclNN单算子执行失败", fused_kernel: "融合算子执行失败", af_common: "AF其他失败",  schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
-  tiling: "Tiling", autofuse: "AF 其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知" };
+export const STAGE_LABEL = { inductor: "Inductor", nnsmith: "NNSmith", af_fronted: "AF前端", legacy_codegen: "Legacy Codegen", triton_ascend: "TritonNPU", aclnn: "aclNN单算子", fused_kernel: "融合算子", af_common: "AF其他", environment: "环境", schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
+  tiling: "Tiling", autofuse: "AF其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知", unknown_retest: "未知·待复测", aicpu: "AICPU" };
+// Offer current attribution stages; legacy labels above still render old records.
+const SEARCH_STAGES = ["nnsmith", "inductor", "af_fronted", "schedule", "legacy_codegen", "mlir",
+  "triton_ascend", "af_common", "aclnn", "aicpu", "fused_kernel", "environment", "unknown", "unknown_retest"];
 export const DIM_LABEL = { all: "全部", op_category: "算子类别", op_display: "算子覆盖", dtype: "数据类型", dim_bucket: "最大维度", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
 export const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "op_category", "dynamic", "source"];
 export const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };
 
-// ---------- global search field catalog (mirrors autofusex/platform/search.py) ----------
+// ---------- global search field catalog (mirrors autofusex/server/search.py) ----------
 export const SEARCH_RESULT_LABEL = { pass: "通过", fail: "失败（功能或精度）", function_fail: "功能失败", accuracy_fail: "精度失败", unsupported: "不支持" };
 export const SEARCH_SOURCE_LABEL = { nnsmith: "NNSmith 随机生成", baize_tf: "Baize TF 导入", baize_torch: "Baize Torch 导入", model: "整网模型导入" };
 export const SEARCH_DYNAMIC_LABEL = { dynamic: "动态 Shape", static: "静态 Shape" };
@@ -53,10 +56,6 @@ export const pct = (a, b) => b ? (100 * a / b).toFixed(1) + "%" : "—";
 export const label = b => BACKEND_LABEL[b] || b;
 export const archLabel = a => { if (!a) return a || "—"; const s = String(a).toLowerCase(); return s.includes("910") ? "A2A3" : s.includes("950") ? "A5" : a; };
 export const SEARCH_FIELDS = [
-  { name: "backend", label: "后端", example: "backend:af-mlir", enum: () => Object.keys(BACKEND_LABEL), text: label },
-  { name: "status", label: "结果", example: "status:fail", enum: () => Object.keys(SEARCH_RESULT_LABEL), text: v => SEARCH_RESULT_LABEL[v] || v },
-  { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => Object.keys(STAGE_LABEL), text: v => STAGE_LABEL[v] || v },
-  { name: "arch", label: "芯片", example: "arch:910b", enum: () => searchFieldValues.arch || [], text: archLabel },
   { name: "user", label: "用户", example: "user:alice", enum: () => (searchFieldValues.user || []).map(v => v.id), text: v => ((searchFieldValues.user || []).find(u => u.id === v) || {}).name || v },
   { name: "op", label: "算子", example: "op:aten.add.Tensor", enum: () => searchFieldValues.op || [] },
   { name: "dtype", label: "数据类型", example: "dtype:bfloat16", enum: () => searchFieldValues.dtype || [] },
@@ -67,6 +66,10 @@ export const SEARCH_FIELDS = [
   { name: "dim", label: "最大维度", example: "dim:<=512", enum: () => searchFieldValues.dim || [] },
   { name: "error", label: "错误文本", example: "error:tiling", desc: "日志摘要中包含的文本，3..64 个字符" },
   { name: "case", label: "用例 ID", example: "case:E000000000000000000000000A", desc: "精确匹配一个用例 ID" },
+  { name: "backend", label: "后端", example: "backend:af-mlir", enum: () => Object.keys(BACKEND_LABEL), text: label },
+  { name: "status", label: "结果", example: "status:fail", enum: () => Object.keys(SEARCH_RESULT_LABEL), text: v => SEARCH_RESULT_LABEL[v] || v },
+  { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => SEARCH_STAGES, text: v => STAGE_LABEL[v] || v },
+  { name: "arch", label: "芯片", example: "arch:910b", enum: () => searchFieldValues.arch || [], text: archLabel },
 ];
 export const time = ms => ms ? new Date(ms).toLocaleString("zh-CN", { hour12: false }) : "—";
 export const ns = v => v == null ? "—" : v >= 1e9 ? (v / 1e9).toFixed(2) + "s" : v >= 1e6 ? (v / 1e6).toFixed(1) + "ms" : (v / 1e3).toFixed(1) + "µs";
@@ -112,6 +115,11 @@ export async function api(path, { method = "GET", body, raw = false } = {}) {
 export const qs = obj => { const p = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) if (v !== null && v !== undefined && v !== "") p.set(k, v); const s = p.toString(); return s ? "?" + s : ""; };
 export function errorBox(err) { return el("div", { class: "error-box" }, err instanceof ApiError ? `${err.message}（${err.status} ${err.code}）` : String(err)); }
 
+let archesRequest = null, archesExpires = 0;
 export async function archOptions() {
-  return (await api("/api/overview/pipeline")).arches;
+  if (!archesRequest || Date.now() >= archesExpires) {
+    archesExpires = Date.now() + 60000;
+    archesRequest = api("/api/overview/pipeline").then(data => data.arches).catch(error => { archesRequest = null; throw error; });
+  }
+  return archesRequest;
 }

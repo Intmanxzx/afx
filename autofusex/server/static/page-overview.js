@@ -1,49 +1,48 @@
 "use strict";
 // 总览: pipeline/capability tabs + Kernel performance comparison.
-import { el, svg, api, qs, errorBox, archLabel, label, fmt, pct, archOptions, DIM_LABEL, DIM_ORDER } from "./core.js";
+import { el, svg, api, qs, errorBox, label, fmt, pct, DIM_LABEL, DIM_ORDER } from "./core.js";
 import { select, stackBar, legend } from "./widgets.js";
-import { PAGES, go } from "./router.js";
+import { RESULT_ITEMS, RESULT_COLORS, selectedResults, resultFilterParams } from "./result-filter.js";
+import { PAGES } from "./router.js";
 
+// Cache the complete result distribution for a search/chip cohort. Result and
+// backend toggles are projections of this snapshot, rather than new SQL scans.
+const overviewCache = new Map();
+function overviewData(path) {
+  const cached = overviewCache.get(path);
+  if (cached && Date.now() - cached.at < 60000) return cached.promise;
+  const entry = { at: Date.now(), promise: api(path) };
+  overviewCache.set(path, entry);
+  entry.promise.catch(() => { if (overviewCache.get(path) === entry) overviewCache.delete(path); });
+  if (overviewCache.size > 32) overviewCache.delete(overviewCache.keys().next().value);
+  return entry.promise;
+}
 PAGES.overview = async (root, params) => {
-  const q = params.get("q");
-  const arches = await archOptions();
-  const arch = params.get("arch") || arches[0] || "";
-  const pipeline = await api("/api/overview/pipeline" + qs({ arch, q }));
-  const head = el("h2", {}, "基础能力统计分布", el("span", { class: "spacer" }),
-    arches.length ? select(arches.map(a => [a, archLabel(a)]), arch, v => go("overview", { arch: v })) : null);
+  if (root.forceRefresh) overviewCache.clear();
+  const filters = resultFilterParams(params);
+  const active = selectedResults(params);
+  const arch = "";
+  const cohort = { q: filters.q, chips: filters.chips };
+  const pipeline = await overviewData("/api/overview/pipeline" + qs({ arch, ...cohort }));
+  const selectedBackends = filters.selected_backends ? new Set(filters.selected_backends.split(",")) : null;
+  const shown = pipeline.lanes.filter(l => !selectedBackends || selectedBackends.has(l.backend));
+  const head = el("h2", {}, "基础能力统计分布");
   const box = el("section", { class: "panel hero" }, head); root.append(box);
-  const lanes = pipeline.lanes.filter(l => !l.baseline).map(l => l.backend);
-  const tabsDone = renderBackendTabs(box, lanes, arch, q);
+  const lanes = shown.filter(l => !l.baseline).map(l => l.backend);
+  const tabsDone = renderBackendTabs(box, lanes, arch, cohort, active, pipeline.lanes.filter(l => !l.baseline).map(l => l.backend));
   const perfBox = el("section", { class: "panel" }); root.append(perfBox);
-  const npuBackends = pipeline.lanes.map(l => l.backend).filter(b => b !== "cpu");
-  const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]), params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category");
+  const npuBackends = shown.map(l => l.backend).filter(b => b !== "cpu");
+  const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]), params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category", false, filters);
   root.settled = Promise.all([tabsDone, perfDone]);
 };
 
 const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-legacy)", "triton-npu": "var(--lane-triton)", "eager-npu": "var(--lane-eager)" };
 
-const RESULT_ITEMS = [
-  ["gen_fail", "c-build", "构图失败"], ["ascgraph_fail", "c-build", "AscGraph构图失败"],
-  ["af_common", "c-compile", "AF其他失败"], ["schedule", "c-compile", "Schedule 失败"],
-  ["legacy_codegen", "c-compile", "Legacy Codegen 失败"], ["mlir", "c-compile", "MLIR 失败"],
-  ["triton_ascend", "c-compile", "TritonAscend 编译失败"], ["compile_unknown", "c-compile", "编译失败 · 未知"],
-  ["aclnn", "c-runtime", "aclNN单算子执行失败"], ["fused_kernel", "c-runtime", "融合算子执行失败"],
-  ["runtime_unknown", "c-runtime", "运行失败 · 未知"], ["environment", "c-env", "环境问题"],
-  ["timeout", "c-env", "超时"], ["accuracy_fail", "c-acc", "精度失败"],
-  ["pass", "c-pass", "精度通过"], ["unchecked", "c-uns", "功能通过 · 精度未检查"],
-  ["other", "c-uns", "不支持"], ["unknown", "c-uns", "未知"]
-];
-const DEFAULT_RESULTS = RESULT_ITEMS.map(([key]) => key);
-const RESULT_COLORS = {"c-build":"var(--loss-build)","c-compile":"var(--loss-stage)","c-runtime":"#ef4444","c-env":"#f97316","c-acc":"var(--warn)","c-pass":"var(--ok)","c-uns":"var(--tie)"};
-
 // Capability matrix: one column per backend, one row per dimension, so a row compares the same
 // metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
-async function renderBackendTabs(box, lanes, arch, q) {
+async function renderBackendTabs(box, lanes, arch, filters, active, allLanes = lanes) {
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  const statusItems = RESULT_ITEMS;
-  const saved = window.__afxCapabilityLegendV2;
-  const active = new Set(saved ? [...saved] : DEFAULT_RESULTS);
-  const legendNode = el("div", { class: "legend capability-legend" });
+  let matrix;
   const redraw = () => {
     if (!matrix) return;
     const dims = ["all", ...DIM_ORDER.filter(d => matrix.dims.includes(d))];
@@ -63,20 +62,9 @@ async function renderBackendTabs(box, lanes, arch, q) {
     });
     body.replaceChildren(el("div", { class: "cap-scroll" }, grid));
   };
-  statusItems.forEach(([key, cls, text]) => {
-    const item = el("button", { type: "button", class: "legend-toggle", "aria-pressed": active.has(key) ? "true" : "false", title: `切换${text}` }, el("i", { class: cls }), text);
-    item.addEventListener("click", () => {
-      if (active.has(key)) active.delete(key); else active.add(key);
-      window.__afxCapabilityLegendV2 = new Set(active);
-      item.setAttribute("aria-pressed", active.has(key));
-      redraw();
-    });
-    legendNode.append(item);
-  });
-  box.replaceChildren(el("h2", {}, "基础能力统计分布"), legendNode, body);
+  box.append(body);
   if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, "暂无数据")); return; }
-  let matrix;
-  try { matrix = await api("/api/overview/matrix" + qs({ backends: lanes.join(","), arch, q })); }
+  try { matrix = await overviewData("/api/overview/matrix" + qs({ backends: allLanes.join(","), arch, ...filters })); }
   catch (err) { body.replaceChildren(errorBox(err)); return; }
   redraw();
 }
@@ -84,16 +72,19 @@ function stageMetric(group, key) {
   return (group.results || {})[key] || 0;
 }
 function selectedTotal(group, active) { return [...active].reduce((n, key) => n + stageMetric(group, key), 0); }
-function donutChart(result, backend, compact = false, active = new Set(DEFAULT_RESULTS)) {
+function selectedPassRate(group, active) {
+  return pct(active.has("pass") ? stageMetric(group, "pass") : 0, selectedTotal(group, active));
+}
+function donutChart(result, backend, compact = false, active = new Set(RESULT_ITEMS.map(([key]) => key))) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
   const total = selectedTotal(g, active);
-  const parts = RESULT_ITEMS.map(([key, cls, title]) => [key, title, stageMetric(g,key), RESULT_COLORS[cls]]).filter(p => active.has(p[0]) && p[2] > 0);
+  const parts = RESULT_ITEMS.map(([key, cls,, title]) => [key, title, stageMetric(g,key), RESULT_COLORS[cls]]).filter(p => active.has(p[0]) && p[2] > 0);
   const R = 78, r = 48, C = 100, root = svg("svg", { viewBox: "0 0 200 200", width: 200, height: 200, role: "img", "aria-label": "正确性分布" });
   let angle = -Math.PI / 2;
   for (const [, name, n, color] of parts) { const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0; const p = (rad,a) => `${C + rad*Math.cos(a)} ${C + rad*Math.sin(a)}`; root.append(svg("path", { d:`M ${p(R,angle)} A ${R} ${R} 0 ${large} 1 ${p(R,end)} L ${p(r,end)} A ${r} ${r} 0 ${large} 0 ${p(r,angle)} Z`, fill:color, "data-tooltip":`${name} ${fmt(n)}（${pct(n,total)}）` })); angle += sweep; }
-  root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, pct(stageMetric(g,"pass"), g.total)));
-  return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "muted small" }, `${fmt(total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), root);
+  root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, selectedPassRate(g, active)));
+  return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "muted small" }, `显示 ${fmt(total)} / ${fmt(g.total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), root);
 }
 
 const BUCKET_DIMS = ["dim_bucket", "size_bucket"];
@@ -104,7 +95,7 @@ function bucketValue(valueLabel) {
   return m[1] === ">" ? n + 0.5 : n;
 }
 function bucketCompare(a, b) { return bucketValue(a) - bucketValue(b); }
-function statusChart(result, backend, compact = false, order = null, active = new Set(DEFAULT_RESULTS)) {
+function statusChart(result, backend, compact = false, order = null, active = new Set(RESULT_ITEMS.map(([key]) => key))) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const limit = result.dim === "op_display" ? 24 : 14;
   let groups;
@@ -119,10 +110,10 @@ function statusChart(result, backend, compact = false, order = null, active = ne
   const title = compact ? (note ? el("div", { class: "muted small" }, note.replace(/[（）]/g, "")) : null)
     : el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`);
   return el("div", { class: "chart" + (result.dim === "op_display" && !compact ? " wide" : "") }, title,
-    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": RESULT_ITEMS.map(([key,,title]) => title + " " + fmt(shown(key))).join(" · ") }, el("div", { class: "label" }, g.value), stackBar(RESULT_ITEMS.map(([key,cls,title]) => [cls, shown(key), title]), total), el("div", { class: "muted" }, g.total ? pct(stageMetric(g,"pass"), g.total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
+    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": RESULT_ITEMS.map(([key,,,title]) => title + " " + fmt(shown(key))).join(" · ") }, el("div", { class: "label" }, g.value), stackBar(RESULT_ITEMS.map(([key,cls,,title]) => [cls, shown(key), title]), total), el("div", { class: "muted" }, selectedPassRate(g, active))); }) : el("div", { class: "empty" }, "无数据"));
 }
 
-async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
+async function renderPerf(box, backends, arch, x, y, dim, custom = false, filters = {}) {
   if (custom) box.dataset.custom = "1";  // user picked backends/dimension: background refresh must not reset it
   const opts = backends.map(b => [b, label(b)]);
   if (!x || !y || x === y) {
@@ -130,11 +121,11 @@ async function renderPerf(box, backends, arch, x, y, dim, custom = false) {
     return;
   }
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  box.replaceChildren(el("h2", {}, select(opts, x, v => renderPerf(box, backends, arch, v, y, dim, true)), "vs", select(opts, y, v => renderPerf(box, backends, arch, x, v, dim, true)),
-    el("button", { onclick: () => renderPerf(box, backends, arch, y, x, dim, true) }, "⇄ 交换"), "Kernel 性能统计分布", el("span", { class: "spacer" }),
-    select(Object.entries(DIM_LABEL).filter(([k]) => k !== "all"), dim, v => renderPerf(box, backends, arch, x, y, v, true))), body);
+  box.replaceChildren(el("h2", {}, select(opts, x, v => renderPerf(box, backends, arch, v, y, dim, true, filters)), "vs", select(opts, y, v => renderPerf(box, backends, arch, x, v, dim, true, filters)),
+    el("button", { onclick: () => renderPerf(box, backends, arch, y, x, dim, true, filters) }, "⇄ 交换"), "Kernel 性能统计分布", el("span", { class: "spacer" }),
+    select(Object.entries(DIM_LABEL).filter(([k]) => k !== "all"), dim, v => renderPerf(box, backends, arch, x, y, v, true, filters))), body);
   try {
-    const [all, byDim] = await Promise.all([api("/api/overview/perf" + qs({ x, y, dim: "all", arch })), api("/api/overview/perf" + qs({ x, y, dim, arch }))]);
+    const [all, byDim] = await Promise.all([overviewData("/api/overview/perf" + qs({ x, y, dim: "all", arch, ...filters })), overviewData("/api/overview/perf" + qs({ x, y, dim, arch, ...filters }))]);
     const g = all.groups[0];
     if (!g) { body.replaceChildren(el("div", { class: "empty" }, "两者都有 kernel 耗时的用例为 0。")); return; }
     const tiles = el("div", { class: "tiles" },

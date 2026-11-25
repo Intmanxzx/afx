@@ -3,6 +3,7 @@
 // Page modules register themselves into PAGES as a side effect of being
 // imported (see app.js), so this module never imports a page module itself.
 import { $, el, errorBox, ApiError, setQuietRefresh } from "./core.js";
+import { resultFilter, cancelFilterChange } from "./result-filter.js";
 import { closeDrawer, hideActionBar, isMenuOpen } from "./ui.js";
 
 // ---------- routing ----------
@@ -15,6 +16,7 @@ export function go(page, params = {}) {
   const current = route().params;
   const merged = new URLSearchParams();
   if (current.get("q") && params.q === undefined) merged.set("q", current.get("q"));
+  for (const key of ["results", "backends", "chips"]) if (current.has(key) && params[key] === undefined) merged.set(key, current.get(key));
   for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined && v !== "") merged.set(k, v);
   const s = merged.toString();
   location.hash = page + (s ? "?" + s : "");
@@ -29,21 +31,34 @@ let renderToken = 0;
 let overviewRedraw = null;
 let loadingTimer = null, loadingToast = null;
 export async function render() {
+  cancelFilterChange();
   $("#top").classList.remove("hidden");
   const { page, params } = route();
+  const ticket = ++renderToken;
   for (const a of document.querySelectorAll("#nav a")) a.classList.toggle("active", a.dataset.page === page);
   $("#search").value = params.get("q") || "";
   closeDrawer();
   hideActionBar();
   overviewRedraw = null;
+  document.querySelector(".result-filter")?.remove();
+  const filterable = ["overview", "discovery"].includes(page) && params.get("sub") !== "retests";
+  document.body.classList.toggle("has-result-filter", filterable);
+  if (filterable) document.body.append(resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes })));
   const main = $("#main");
   const q = params.get("q");
   const content = el("div");
   if (q) content.append(el("div", { class: "filter-note" }, "已过滤：", el("span", { class: "mono" }, q),
-    el("button", { onclick: () => go(page, { q: null }) }, "清除")));
-  // Attach before rendering so canvases and widths measure real layout.
-  main.replaceChildren(content);
-  const ticket = ++renderToken;
+    el("button", { onclick: () => go(page, { ...Object.fromEntries(params), q: null }) }, "清除")));
+  const visualKeys = new Set(["results", "backends", "chips"]);
+  const samePage = view && view.page === page && view.content.isConnected;
+  const visualChange = samePage && [...new Set([...params.keys(), ...view.params.keys()])]
+    .every(key => visualKeys.has(key) || params.get(key) === view.params.get(key));
+  // Keep existing charts/rows visible while a new filter cohort is loading.
+  if (!visualChange) main.replaceChildren(content);
+  else {
+    content.style.cssText = "position:absolute;left:-100000px;visibility:hidden;width:" + view.content.getBoundingClientRect().width + "px";
+    main.append(content);
+  }
   clearTimeout(loadingTimer);
   loadingToast?.remove();
   loadingToast = null;
@@ -55,6 +70,7 @@ export async function render() {
   }, 200);
   try {
     await (PAGES[page] || PAGES.overview)(content, params);
+    if (visualChange && content.settled) await content.settled;
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) content.append(errorBox(err));
   } finally {
@@ -65,10 +81,11 @@ export async function render() {
     }
   }
   if (ticket === renderToken) {
+    if (visualChange) { content.style.cssText = ""; main.replaceChildren(content); }
     overviewRedraw = content.redraw || null;
     view = { ticket, page: PAGES[page] ? page : "overview", params, content };
     lastRefresh = Date.now();
-  }
+  } else content.remove();
 }
 
 // Mobile browsers fire resize on every scroll as the URL bar collapses/expands (height only).
@@ -106,6 +123,7 @@ export async function softRefresh(manual = false) {
   staging.style.cssText = `position:absolute;left:0;top:-100000px;visibility:hidden;pointer-events:none;width:${content.getBoundingClientRect().width}px`;
   try {
     $("#main").append(staging);
+    staging.forceRefresh = manual;
     await PAGES[view.page](staging, params);
     if (staging.settled) await staging.settled;
     // Pages that fill sections lazily: give them a moment to leave their loading placeholder.

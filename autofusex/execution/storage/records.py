@@ -73,6 +73,10 @@ def normalize(result, environment):
         from autofusex.execution.telemetry import validate
         contexts['execution']['telemetry'] = validate(telemetry)
     diagnostics=result.get('execution',{}).get('diagnostics')
+    ascir_sources = result.get('execution', {}).get('ascir_sources')
+    if ascir_sources is not None:
+        from autofusex.execution.ascir import validate_sources
+        contexts['execution']['ascir_sources'] = validate_sources(ascir_sources)
     if diagnostics is not None:
         from autofusex.execution.failure_details import validate as validate_diagnostics
         contexts['execution']['diagnostics']=validate_diagnostics(diagnostics)

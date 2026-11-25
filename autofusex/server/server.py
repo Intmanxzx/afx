@@ -73,13 +73,14 @@ _HASHED_ASSETS = ("bootstrap.js", "app.css", "favicon.svg")
 def _versioned_index(html: bytes) -> bytes:
     """Reference assets by content hash so CDN/browser caches can never serve a stale script."""
     import hashlib
-    key = hashlib.sha256(html).hexdigest()
+    assets = {asset: _static(asset) for asset in _HASHED_ASSETS}
+    key = (hashlib.sha256(html).hexdigest(), tuple(
+        (asset, hashlib.sha256(found[0]).hexdigest()[:12] if found else None)
+        for asset, found in assets.items()))
     if key not in _INDEX_CACHE:
         out = html
-        for asset in _HASHED_ASSETS:
-            found = _static(asset)
-            if found:
-                digest = hashlib.sha256(found[0]).hexdigest()[:12]
+        for asset, digest in key[1]:
+            if digest:
                 out = out.replace(f'"{asset}"'.encode(), f'"{asset}?v={digest}"'.encode())
         _INDEX_CACHE.clear()
         _INDEX_CACHE[key] = out
@@ -319,9 +320,9 @@ def create_app(store: Store) -> FastAPI:
     @route('/api/cases')
     def cases(after: Optional[int] = None, limit: int = 50, backend: QueryValue = None,
               status: QueryValue = None, arch: QueryValue = None, case_key: QueryValue = None,
-              case_id: Optional[int] = None, q: QueryText = None, principal=Depends(identity)):
+              case_id: Optional[int] = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
         return _success(queries.case_page(store, after=after, limit=limit, backend=backend, status=status,
-                                          arch=arch, case_key=case_key, case_id=case_id, q=q))
+                                          arch=arch, case_key=case_key, case_id=case_id, q=q, results=results, selected_backends=selected_backends, chips=chips))
 
     @route('/api/cases/{case_key:path}/history')
     def case_history(case_key: str, after: Optional[int] = None, limit: int = 50, principal=Depends(identity)):
@@ -352,9 +353,9 @@ def create_app(store: Store) -> FastAPI:
 
     @route('/api/issues')
     def issue_list(dimension: QueryValue = None, backend: QueryValue = None, status: QueryValue = None,
-                   q: QueryText = None, after: QueryValue = None, limit: int = 50,
+                   q: QueryText = None, after: QueryValue = None, limit: int = 50, page: int | None = None,
                    principal=Depends(identity)):
-        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status, q=q, after=after, limit=limit))
+        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status, q=q, after=after, limit=limit, page=page))
 
     @route('/api/issues/claim', 'POST')
     def claim(body: m.Claim, principal=Depends(writer)):
@@ -474,8 +475,9 @@ def create_app(store: Store) -> FastAPI:
 
     @route('/api/client/protocol', dependencies=[Depends(writer)])
     def upload_protocol():
+        from autofusex.server.failure_attribution import VERSION
         return _success({"protocol_versions": [1, 2], "capture_versions": [1, 2],
-                         "preferred_protocol": 2, "classifier_version": 2})
+                         "preferred_protocol": 2, "classifier_version": VERSION})
 
     @route('/api/client/executions', 'POST')
     def upload(request: Request, body: m.Upload, principal=Depends(writer)):
@@ -598,29 +600,29 @@ def create_app(store: Store) -> FastAPI:
         return _success(accounts.manage(store, principal, data(body)))
 
     @route('/api/overview/pipeline', dependencies=[Depends(aggregate)])
-    def pipeline(arch: QueryValue = None, q: QueryText = None, principal=Depends(identity)):
-        return _success(queries.pipeline(store, arch, q))
+    def pipeline(arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+        return _success(queries.pipeline(store, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/backend', dependencies=[Depends(aggregate)])
-    def backend(backend: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, principal=Depends(identity)):
-        return _success(queries.backend_stats(store, backend, dim, arch, q))
+    def backend(backend: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+        return _success(queries.backend_stats(store, backend, dim, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/perf', dependencies=[Depends(aggregate)])
-    def perf(x: RequiredValue, y: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, principal=Depends(identity)):
-        return _success(queries.perf_pair(store, x, y, dim, arch))
+    def perf(x: RequiredValue, y: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
+        return _success(queries.perf_pair(store, x, y, dim, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/dims', dependencies=[Depends(aggregate)])
     def dims(principal=Depends(identity)):
         return _success(queries.dims(store))
 
     @route('/api/overview/matrix', dependencies=[Depends(aggregate)])
-    def matrix(backends: str, arch: QueryValue = None, q: QueryText = None, principal=Depends(identity)):
+    def matrix(backends: str, arch: QueryValue = None, q: QueryText = None, results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None, principal=Depends(identity)):
         names = [b for b in backends.split(',') if b][:8]
         if not names or not all(re.fullmatch('[A-Za-z0-9_.:/+<>=-]{1,256}', b) for b in names):
             raise HTTPError(400, 'invalid', 'backends must be a comma separated list of backend names')
         dimensions = queries.dims(store)
         return _success({'dims': dimensions, 'backends': names,
-                         'cells': {b: {d: queries.backend_stats(store, b, d, arch, q) for d in dimensions} for b in names}})
+                         'cells': {b: {d: queries.backend_stats(store, b, d, arch, q, results, selected_backends, chips) for d in dimensions} for b in names}})
 
     @route('/api/profile/axes')
     def axes(principal=Depends(identity)):

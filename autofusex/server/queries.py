@@ -26,9 +26,9 @@ def _arch_clause(arch):
     return ("", ()) if arch is None else (" AND npu_arch=?", (arch,))
 
 
-def pipeline(store: Store, arch: str | None = None, q: str | None = None) -> dict:
+def pipeline(store: Store, arch: str | None = None, q: str | None = None, results=None, selected_backends=None, chips=None) -> dict:
     conn = store.reader()
-    query = search.parse(q)
+    query = search.visual_query(q, results, selected_backends, chips)
     if query is not None:
         rows = search.filtered_buckets(conn, query, arch=arch)
     else:
@@ -81,9 +81,9 @@ def pipeline(store: Store, arch: str | None = None, q: str | None = None) -> dic
 
 
 def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None = None,
-                  q: str | None = None) -> dict:
+                  q: str | None = None, results=None, selected_backends=None, chips=None) -> dict:
     conn = store.reader()
-    query = search.parse(q)
+    query = search.visual_query(q, results, selected_backends, chips)
     if query is not None:
         rows = search.filtered_buckets(conn, query, backend=backend, arch=arch, dim=dim)
     else:
@@ -113,7 +113,7 @@ def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None
             "groups": sorted(groups.values(), key=lambda g: -g["total"])}
 
 
-def perf_pair(store: Store, x: str, y: str, dim: str = "all", arch: str | None = None) -> dict:
+def perf_pair(store: Store, x: str, y: str, dim: str = "all", arch: str | None = None, q=None, results=None, selected_backends=None, chips=None) -> dict:
     """x measured against baseline y; buckets are stored once per unordered pair."""
     if x == y:
         raise QueryError("x and y must differ")
@@ -121,9 +121,13 @@ def perf_pair(store: Store, x: str, y: str, dim: str = "all", arch: str | None =
     bx, by = (y, x) if flip else (x, y)
     conn = store.reader()
     clause, args = _arch_clause(arch)
-    rows = conn.execute(
-        "SELECT dim_value, verdict, ratio_bin, SUM(count) AS n, SUM(sum_log) AS s FROM stats.perf_pair_buckets "
-        f"WHERE backend_x=? AND backend_y=? AND dim=?{clause} GROUP BY 1,2,3", (bx, by, dim) + args).fetchall()
+    query = search.visual_query(q, results, selected_backends, chips)
+    if query:
+        rows = search.filtered_perf(conn, query, bx, by, dim, arch, store.setting(conn, "perf.tie_threshold"))
+    else:
+        rows = conn.execute(
+            "SELECT dim_value, verdict, ratio_bin, SUM(count) AS n, SUM(sum_log) AS s FROM stats.perf_pair_buckets "
+            f"WHERE backend_x=? AND backend_y=? AND dim=?{clause} GROUP BY 1,2,3", (bx, by, dim) + args).fetchall()
     swap = {"faster": "slower", "slower": "faster", "tie": "tie"}
     groups = {}
     for row in rows:
@@ -168,7 +172,7 @@ _EXEC_COLUMNS = ("e.exec_id, e.exec_uuid, e.case_revision, e.backend, e.npu_arch
 
 def case_page(store: Store, *, after: int | None = None, limit: int = 50, backend: str | None = None,
               status: str | None = None, arch: str | None = None, case_key: str | None = None,
-              case_id: int | None = None, q: str | None = None) -> dict:
+              case_id: int | None = None, q: str | None = None, results=None, selected_backends=None, chips=None) -> dict:
     """Case groups newest first, each with its latest executions (design 6.3)."""
     if not 1 <= limit <= MAX_PAGE:
         raise QueryError(f"limit must be 1..{MAX_PAGE}")
@@ -178,7 +182,7 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
         raise QueryError("status filter requires backend")
     conn = store.reader()
     cursor = after if after is not None else 1 << 62
-    query = search.parse(q)
+    query = search.visual_query(q, results, selected_backends, chips)
     if case_id is not None:
         ids = [row[0] for row in conn.execute("SELECT case_id FROM cases WHERE case_id=?", (case_id,))]
     elif case_key is not None:
@@ -231,8 +235,7 @@ def execution_detail(store: Store, exec_uuid: str, *, log_limit: int = 64 * 1024
     if row is None:
         return None
     out = dict(row)
-    # The UI has one public summary only: issue log_summary from CANN plog.
-    out.pop("log_summary", None)
+    fallback_summary = conn.execute('SELECT log_summary FROM executions WHERE exec_id=?', (out['exec_id'],)).fetchone()[0]
     env = conn.execute("SELECT * FROM environments WHERE env_id=?", (out.pop("env_id"),)).fetchone()
     out["env"] = {k: env[k] for k in env.keys() if k not in ("env_id", "env_hash")}
     out["case_key"] = conn.execute("SELECT case_key FROM cases WHERE case_id=?", (out["case_id"],)).fetchone()[0]
@@ -252,6 +255,9 @@ def execution_detail(store: Store, exec_uuid: str, *, log_limit: int = 64 * 1024
         else:
             out["log"] = data[:log_limit].decode(errors="replace")
             out["log_truncated"] = len(data) > log_limit
+    from autofusex.server.error_logs import presentation, summary
+    out['diagnostics'] = presentation(out.get('detail'), out.get('log'), fallback_summary)
+    out['log_summary'] = summary(out.get('detail'), out.get('log'), fallback_summary)
     return out
 
 
