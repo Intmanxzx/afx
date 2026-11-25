@@ -110,7 +110,7 @@ def _has_result(database, task):
         if (row['seed'] != task['seed'] or row['workload_id'] != expected_workload or
                 row['oracle_id'] not in expected_oracles or
                 row['backend'] != json.loads(task['execution'])['backend'] or
-                {k:v for k,v in saved_execution.items() if k not in {'telemetry','diagnostics','case_spec'}} != task_execution or
+                {k:v for k,v in saved_execution.items() if k not in {'telemetry','diagnostics','case_spec','capture_version'}} != task_execution or
                 contexts['evaluation'] != json.loads(task['evaluation'])):
             raise ValueError('saved attempt conflicts with task; refusing acknowledgement')
         return True
