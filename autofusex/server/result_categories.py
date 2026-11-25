@@ -13,5 +13,5 @@ def category(status, stage, accuracy):
     if status == 'compile_fail':
         return stage if stage in {'schedule','legacy_codegen','mlir','triton_ascend','af_common'} else 'compile_unknown'
     if status == 'runtime_fail':
-        return stage if stage in {'aclnn','fused_kernel'} else 'runtime_unknown'
+        return stage if stage in {'aclnn','aicpu','fused_kernel'} else 'runtime_unknown'
     return 'unknown'

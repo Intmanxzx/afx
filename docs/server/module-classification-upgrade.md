@@ -114,4 +114,28 @@ reclassification.aclnn_plan 只预览满足该规则、尚未归 aclNN 的失败
 
 分类器 v6 移除 HintGraph 关键词匹配，仅保留 pyascir 来源和终端异常证据；新增 HintGraph 独立错误不触发 AF前端规则的回归验证。此次升级不改变上传协议、capture_version 或客户端代码；已正确分类的历史记录保留原审计版本，不重复刷新。
 
+### TritonNPU 编译归因（分类器 v7）
+
+仅对 triton-npu 的失败执行判定 compile_fail/triton_ascend，显示“编译失败 · TritonNPU”。每个失败 shape 都必须具有以下证据之一：终端 triton.compiler.errors.CompilationError/MLIRCompilationError；dtype_guard.py 调用栈加实际 operator 不支持 dtype 及 supported dtypes on Atlas 消息；Triton 原生 ERROR 块或编译调用栈加 BiShengHIR/BiShengIR 流水线失败、BiShengLIR 编译失败、二进制重定位失败或 external hivmc 编译失败。异常头被截断时允许使用 ERROR 块的 END 边界，但不能仅凭编译器路径、MLIR/hivm 关键词、生成代码或共享日志归因。
+
+局部模块 marker、aclNN、NNSmith 输出契约及明确环境故障冲突时不使用该规则；混合或缺失 shape 证据保留未知。明确证据先于 unknown_retest 保留逻辑；历史 triage 也排除已证明的 TritonNPU 编译失败。triton_plan/apply_triton 仅补正 TritonNPU 中 unknown/unknown_retest/inductor 或空阶段的失败记录，逐条核对原值和证据并记录可回滚审计。协议、capture_version、客户端及原始日志保持不变。
+
+2026-11-25 完整读取线上 561 条 TritonNPU 失败执行（均为当前执行头）：244 条各失败 shape 有明确编译异常，另 31 条由原生编译错误补足，合计 275 条候选，原分类均为 runtime_fail/unknown。类型支持日志涉及 97 条，其中 96 条已被上述候选覆盖；另 1 条仍有未证明的 shape，不强行归因。异常只有共享日志、含路径的栈尾或外层 InductorError/SubprocException 时不充分。
+
+2026-11-25 已部署 v7，应用 triton-compile-20261125-v7 批次 275 条（全部为当前执行头）。副本完成应用、回滚、重新应用；生产逐条清单、数据库完整性、原始事实及问题状态哈希、互斥统计校验通过。公开接口确认上述两个示例均为 compile_fail/triton_ascend，运行未知从 277 降至 2；TritonNPU 待复测仍为 82，全后端合计 3,249。平台全量测试 171 passed，最后的应用范围校验修改另经 19 项专项测试通过。备份、manifest、演练和生产报告位于 releases/0.5.0/triton-attribution-v7-20261125。
+
+### 原生运行错误与 AICPU（分类器 v8）
+
+新增 runtime_fail/aicpu，页面显示“运行失败 · AICPU”，运行失败组默认不选中，搜索支持 stage:aicpu。aclNN 单算子证据优先于 AICPU 概括证据。每个失败 shape 明确指向 AICPU 执行失败时可归因；没有 shape 结果、error_stage=worker 的失败，使用采集器已按执行 PID/时间窗截取的 plog_errors，再核对唯一失败 NPU worker 的 PID。OP ERROR 中非零 errno 且 OpName 为 aclnn 算子，归 aclnn；否则 RUNTIME ERROR 明确报告 aicpu execute failed、AICPU execution exception 或 AI CPU kernel execution failed 等，归 aicpu。仅出现 AICPU 任务类型、同步 API 名、错误码、INFO 或其他 PID 日志均不足以归因。
+
+### 错误日志与 ASCIR 展示
+
+问题发现摘要从已保存的 Shape 异常、运行异常、Triton/AF 原生日志、CANN plog 和上报摘要提取具体错误，跳过外层 Inductor 包装；详情统一为“错误日志”，按来源保留完整已采集文本。读取时派生，不回写原始日志或分类，不需要刷新存量数据。旧客户端继续兼容。
+
+ASCIR 不再使用 diagnostic_view.shape_log（这是异常文本）。客户端在已有 Autofuse compile 观察点采集实际生成的 ASCIR 构图源码，按 Shape 独立保存于 execution.ascir_sources，单段 64 KiB、总计 128 KiB、最多 16 段；排除调度注释和 schedule/codegen 调用，不执行源码、不启用 dump。该可选字段沿既有 detail/context 上传，协议与 capture_version=2 的模块证据语义不变。现有服务端能保存可选 detail，新服务端识别并展示；要采集新图需要升级执行客户端。旧日志仅在完整构图段保留时提取，截断文本不伪造图。缓存命中或未进入 AF 时可能没有采集，不强制清缓存。此源码表示 Schedule 之前的构图程序，不是 Schedule 后的图快照。
+
+不依赖 507018、rtDeviceSynchronizeWithTimeout 或某条完整异常模板。明确的执行错误先于旧 timeout/unknown_retest 标签；成功、不支持和已有冲突模块证据不覆盖。native_runtime_plan/apply_native_runtime 逐条预览、复核和审计，只补正未明确归因的失败，保留原始 status/stage 上报事实及日志。旧分类器 v2 的两个示例没有 reported_status/raw_upload，无法反推最初误判发生在哪一步；现有客户端复现不会仅因 WithTimeout API 名归 timeout，服务端旧 timeout 保留和历史补正排除 timeout 才是当前未修正的直接原因。
+
+2026-11-25 已部署分类器 v8，并应用 native-runtime-20261125-v8：8 条旧 timeout/unknown 当前执行中，2 条改为 runtime_fail/aclnn、6 条改为 runtime_fail/aicpu。完整未归因失败扫描没有新增候选；83 条超时剩余 75 条。F0SQR0WLFHGE5JG59LC7MFU8PDR 的两条 AF 执行归 aclnn，F0SQR0WLFHGE5JG59LC7LWBNEGX 的两条 AF 执行归 aicpu。副本应用/回滚/重新应用、生产数据库完整性、原始事实与问题状态哈希、互斥总览计数通过。平台测试 187 passed；公开接口、stage:aicpu 搜索、静态文件哈希和服务状态均核对，AICPU 默认隐藏。备份、manifest 和审计报告位于 releases/0.5.0/native-runtime-v8-20261125。
+
 2026-11-25 已部署 v5，并分别应用 frontend-20261125-v5（20,026 条、当前执行头 20,014）与 nnsmith-20261125-v5（395 条）批次。副本应用/回滚/重新应用、数据库完整性与原始事实校验通过；线上服务恢复后目标用例、总览互斥计数、筛选和静态文件均已核对。此前 AF前端 v4 待部署规则已随本次上线。当前待复测结果剩余 3,249 条（AF-MLIR 1,837、AF-legacy 1,330、TritonNPU 82），已重新导出 remaining-retest.csv。备份和审计位于 releases/0.5.0/frontend-nnsmith-20261125；相关测试 62 passed。

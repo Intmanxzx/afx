@@ -104,15 +104,18 @@ function tensorText(shapes = {}, weights = [], types = {}) {
 
 function renderExecution(d, shape) {
   const detail = d.detail || {};
-  const view = (detail.shape_views || {})[String(shape)] || detail.diagnostic_view || {};
+  const diagnostics = d.diagnostics || {};
   const out = [el("h2", {}, `执行详情 · ${label(d.backend)}`, " ", statusChip(d), el("span", { class: "muted small" }, ` · ${d.user_name || d.user_id} · ${d.client_name || ""} · ${time(d.created_at)}`))];
   // per-shape results
   if (d.shapes && d.shapes.length) out.push(el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Shape", "功能", "精度", "最大绝对误差", "最大相对误差", "Kernel", "E2E"].map(t => el("th", {}, t)))),
     el("tbody", {}, d.shapes.map(x => el("tr", { class: x.shape_index === shape ? "bt0" : "" }, el("td", {}, "S" + x.shape_index), el("td", {}, x.function_status), el("td", {}, x.accuracy_status || "—"),
       el("td", {}, x.max_abs_err ?? "—"), el("td", {}, x.max_rel_err ?? "—"), el("td", {}, ns(x.kernel_ns)), el("td", {}, ns(x.e2e_ns)))))));
-  // Keep one failure summary only: the CANN plog ERROR list below.
-  if ((detail.plog_errors || []).length) out.push(el("h3", {}, "CANN plog 错误"), el("pre", { class: "log" }, detail.plog_errors.join("\n")));
-  out.push(el("h3", {}, "ASCIR 表达的图结构"), el("pre", { class: "log" }, view.shape_log || "未保存当前 Shape 的 ASCIR / 图结构文本"));
+  const logs = diagnostics.error_logs || [];
+  out.push(el("h3", {}, "错误日志"), ...(logs.length ? logs.map(s =>
+    el("details", { open: true }, el("summary", {}, s.name), el("pre", { class: "log" }, s.text))) : [el("div", { class: "muted" }, "未保存错误日志")]));
+  const graphs = (diagnostics.ascir_graphs || []).filter(g => g.shape_index === shape);
+  out.push(el("h3", {}, "ASCIR 表达的图结构"), el("div", { class: "muted small" }, "编译时实际生成的 ASCIR 构图代码（Schedule 之前）。"),
+    el("pre", { class: "log" }, graphs.map(g => g.source).join("\n\n") || "未采集当前 Shape 的 ASCIR 构图代码（旧客户端、编译缓存命中或未进入 AF 构图）。错误日志不足以还原完整图结构。"));
   // provenance
   const env = (detail.contexts || {}).environment || {};
   const envRows = [["用户", d.user_name || d.user_id], ["节点", d.client_name], ["芯片", archLabel(d.npu_arch || env.device_model)], ["CANN", d.env.cann || env.cann], ["Torch", d.env.torch || env.torch],

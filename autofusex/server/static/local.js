@@ -459,10 +459,10 @@ function renderFailureDetails(result){
  if(path?.path==='mlir_failed')view.explanation='MLIR 路径失败（'+(path.scope==='shape'?'当前 Shape':'单 Shape 运行日志')+'）：'+path.evidence;
  else if(path?.path==='unconfirmed')view.explanation='已确认 AF 功能失败，但现有日志不能确认是 MLIR 路径失败。';
  function section(id,title,content){const box=$(id);box.replaceChildren();const heading=document.createElement('h3'),pre=document.createElement('pre');heading.textContent=title;pre.textContent=content;box.append(heading,pre);return box;}
- section('ascir-detail','ASCIR 表达的图结构',view.shape_log||'未保存当前 Shape 的 ASCIR / 图结构文本');
+ section('ascir-detail','ASCIR 表达的图结构',result.ascir_source||'未采集当前 Shape 的 ASCIR 构图代码');
  // Full saved run log already contains its extracted shared lines; do not repeat them.
- const log=view.run_log||view.shared_log||view.shared_lines?.join('\n')||view.summary||'未保存报错日志';
- const box=section('failure-details','报错日志摘要',log);
+ const log=[...new Set([view.shape_log,view.run_log||view.shared_log,view.summary].filter(Boolean))].join('\n\n')||'未保存错误日志';
+ const box=section('failure-details','错误日志',log);
 
 }
 

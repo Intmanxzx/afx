@@ -5,9 +5,52 @@ Call only on a stopped server or an isolated consistent snapshot.
 import json
 from autofusex.server import aggregates
 from autofusex.server.store import get_content
+from autofusex.server.triton_attribution import triton_failure
+from autofusex.server.native_runtime_attribution import native_runtime_failure
 from autofusex.server.failure_attribution import classify, local_aclnn_failure, frontend_failure, nnsmith_failure, VERSION
 
 FIELDS = ('function_status','fail_stage','failure_owner','classifier_version')
+
+
+def triton_plan(conn):
+    changes = []
+    for row in conn.execute(
+            "SELECT e.*,c.case_key,(h.exec_id IS NOT NULL) AS is_head FROM executions e "
+            "JOIN cases c ON c.case_id=e.case_id LEFT JOIN execution_heads h ON h.exec_id=e.exec_id "
+            "WHERE e.backend='triton-npu' AND e.function_status IN ('gen_fail','compile_fail','runtime_fail') "
+            "AND COALESCE(e.fail_stage,'') IN ('','unknown','unknown_retest','inductor') ORDER BY e.exec_id"):
+        detail = get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None
+        result = triton_failure(row['backend'], row['log_summary'], detail)
+        if result:
+            changes.append({'exec_id': row['exec_id'], 'exec_uuid': row['exec_uuid'],
+                            'case_key': row['case_key'], 'backend': row['backend'], 'is_head': bool(row['is_head']),
+                            'before': [row[k] for k in FIELDS], 'after': [*result, VERSION]})
+    return changes
+
+
+def apply_triton(store, batch_id, changes):
+    return _apply_scoped(store, batch_id, changes, 'triton')
+
+
+def native_runtime_plan(conn):
+    """Correct only unowned failures with attempt-local native runtime evidence."""
+    changes = []
+    for row in conn.execute(
+            "SELECT e.*,c.case_key,(h.exec_id IS NOT NULL) AS is_head FROM executions e "
+            "JOIN cases c ON c.case_id=e.case_id LEFT JOIN execution_heads h ON h.exec_id=e.exec_id "
+            "WHERE e.function_status IN ('gen_fail','compile_fail','runtime_fail','timeout') "
+            "AND COALESCE(e.fail_stage,'') IN ('','unknown','unknown_retest','environment','af_common') ORDER BY e.exec_id"):
+        detail = get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None
+        result = native_runtime_failure(detail, row['backend'])
+        if result:
+            changes.append({'exec_id': row['exec_id'], 'exec_uuid': row['exec_uuid'],
+                            'case_key': row['case_key'], 'backend': row['backend'], 'is_head': bool(row['is_head']),
+                            'before': [row[k] for k in FIELDS], 'after': [*result, VERSION]})
+    return changes
+
+
+def apply_native_runtime(store, batch_id, changes):
+    return _apply_scoped(store, batch_id, changes, 'native_runtime')
 
 
 def aclnn_plan(conn):
@@ -17,9 +60,14 @@ def aclnn_plan(conn):
             "SELECT e.*,c.case_key,(h.exec_id IS NOT NULL) AS is_head FROM executions e "
             "JOIN cases c ON c.case_id=e.case_id LEFT JOIN execution_heads h "
             "ON h.case_id=e.case_id AND h.backend=e.backend AND h.npu_arch=e.npu_arch AND h.exec_id=e.exec_id "
-            "WHERE e.function_status IN ('build_fail','gen_fail','ascgraph_fail','compile_fail','runtime_fail') "
+            "WHERE e.function_status IN ('build_fail','gen_fail','ascgraph_fail','compile_fail','runtime_fail','timeout') "
             "AND COALESCE(e.fail_stage,'')<>'aclnn' AND e.detail_content_id IS NOT NULL ORDER BY e.exec_id"):
-        result = local_aclnn_failure(get_content(conn, row['detail_content_id']), row['backend'])
+        detail = get_content(conn, row['detail_content_id'])
+        result = native_runtime_failure(detail, row['backend'])
+        if result and result[1] != 'aclnn':
+            result = None
+        if result is None and row['function_status'] != 'timeout':
+            result = local_aclnn_failure(detail, row['backend'])
         if result is not None:
             changes.append({'exec_id': row['exec_id'], 'exec_uuid': row['exec_uuid'],
                             'case_key': row['case_key'], 'backend': row['backend'], 'is_head': bool(row['is_head']),
@@ -88,11 +136,26 @@ def _apply_scoped(store, batch_id, changes, rule):
                 raise ValueError('record changed after preview')
             detail = get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None
             if rule == 'aclnn':
-                result = local_aclnn_failure(detail, row['backend'])
+                result = native_runtime_failure(detail, row['backend'])
+                if result and result[1] != 'aclnn':
+                    result = None
+                if result is None and row['function_status'] != 'timeout':
+                    result = local_aclnn_failure(detail, row['backend'])
             elif rule == 'frontend':
                 result = frontend_failure(row['backend'], row['log_summary'], detail)
             elif rule == 'nnsmith':
                 result = nnsmith_failure(row['log_summary'], detail)
+            elif rule == 'triton':
+                if (row['backend'] != 'triton-npu'
+                        or row['function_status'] not in ('gen_fail', 'compile_fail', 'runtime_fail')
+                        or row['fail_stage'] not in (None, '', 'unknown', 'unknown_retest', 'inductor')):
+                    raise ValueError('record is outside Triton correction scope')
+                result = triton_failure(row['backend'], row['log_summary'], detail)
+            elif rule == 'native_runtime':
+                if (row['function_status'] not in ('gen_fail', 'compile_fail', 'runtime_fail', 'timeout')
+                        or row['fail_stage'] not in (None, '', 'unknown', 'unknown_retest', 'environment', 'af_common')):
+                    raise ValueError('record is outside native runtime correction scope')
+                result = native_runtime_failure(detail, row['backend'])
             else:
                 raise ValueError('unknown classification rule')
             if result is None or change['after'] != [*result, VERSION]:

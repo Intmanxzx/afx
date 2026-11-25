@@ -156,6 +156,10 @@ class ResultQueries:
             result.get('error_stage', ''), result.get('error_summary', ''), diagnostics,
             shape_index if shape_index is not None else -1, result['shape_count'])
         result['diagnostic_view'] = diagnostic_view(diagnostics, shape_index, result.get('error_summary', ''))
+        from autofusex.execution.ascir import construction_source
+        sources = json.loads(result['contexts']['execution'].get('ascir_sources') or '[]')
+        result['ascir_source'] = '\n\n'.join(construction_source(r.get('source')) for r in sources
+            if r.get('shape_index') == shape_index)
         return result
 
     def case_page(self, *, limit=50, after=0, seed=None, status=None, user_id=None, q=None, _include_cursors=False, _history=False, shape=None, snapshot=None, _timeout=30):

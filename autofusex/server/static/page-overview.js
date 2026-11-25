@@ -38,6 +38,7 @@ const RESULT_GROUPS = [
   ]],
   ["运行失败", [
     ["aclnn", "c-runtime", "aclNN单算子", "运行失败 · aclNN单算子"],
+    ["aicpu", "c-runtime", "AICPU", "运行失败 · AICPU"],
     ["fused_kernel", "c-runtime", "融合算子", "运行失败 · 融合算子"],
     ["runtime_unknown", "c-runtime", "未知", "运行失败 · 未知"]
   ]],
@@ -55,7 +56,7 @@ const RESULT_GROUPS = [
   ]]
 ];
 const RESULT_ITEMS = RESULT_GROUPS.flatMap(([, items]) => items);
-const DEFAULT_HIDDEN_RESULTS = new Set(["gen_fail", "compile_unknown", "runtime_unknown", "unchecked", "aclnn",
+const DEFAULT_HIDDEN_RESULTS = new Set(["nnsmith", "gen_fail", "compile_unknown", "runtime_unknown", "unchecked", "aclnn", "aicpu",
   ...RESULT_GROUPS.find(([name]) => name === "其他")[1].map(([key]) => key)]);
 const DEFAULT_RESULTS = RESULT_ITEMS.map(([key]) => key).filter(key => !DEFAULT_HIDDEN_RESULTS.has(key));
 const RESULT_COLORS = {"c-build":"var(--loss-build)","c-compile":"var(--loss-stage)","c-runtime":"#ef4444","c-env":"#f97316","c-acc":"var(--warn)","c-pass":"var(--ok)","c-uns":"var(--tie)"};
@@ -129,6 +130,9 @@ function stageMetric(group, key) {
   return (group.results || {})[key] || 0;
 }
 function selectedTotal(group, active) { return [...active].reduce((n, key) => n + stageMetric(group, key), 0); }
+function selectedPassRate(group, active) {
+  return pct(active.has("pass") ? stageMetric(group, "pass") : 0, selectedTotal(group, active));
+}
 function donutChart(result, backend, compact = false, active = new Set(DEFAULT_RESULTS)) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
@@ -137,7 +141,7 @@ function donutChart(result, backend, compact = false, active = new Set(DEFAULT_R
   const R = 78, r = 48, C = 100, root = svg("svg", { viewBox: "0 0 200 200", width: 200, height: 200, role: "img", "aria-label": "正确性分布" });
   let angle = -Math.PI / 2;
   for (const [, name, n, color] of parts) { const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0; const p = (rad,a) => `${C + rad*Math.cos(a)} ${C + rad*Math.sin(a)}`; root.append(svg("path", { d:`M ${p(R,angle)} A ${R} ${R} 0 ${large} 1 ${p(R,end)} L ${p(r,end)} A ${r} ${r} 0 ${large} 0 ${p(r,angle)} Z`, fill:color, "data-tooltip":`${name} ${fmt(n)}（${pct(n,total)}）` })); angle += sweep; }
-  root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, pct(stageMetric(g,"pass"), g.total)));
+  root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, selectedPassRate(g, active)));
   return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "muted small" }, `显示 ${fmt(total)} / ${fmt(g.total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), root);
 }
 
@@ -164,7 +168,7 @@ function statusChart(result, backend, compact = false, order = null, active = ne
   const title = compact ? (note ? el("div", { class: "muted small" }, note.replace(/[（）]/g, "")) : null)
     : el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`);
   return el("div", { class: "chart" + (result.dim === "op_display" && !compact ? " wide" : "") }, title,
-    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": RESULT_ITEMS.map(([key,,,title]) => title + " " + fmt(shown(key))).join(" · ") }, el("div", { class: "label" }, g.value), stackBar(RESULT_ITEMS.map(([key,cls,,title]) => [cls, shown(key), title]), total), el("div", { class: "muted" }, g.total ? pct(stageMetric(g,"pass"), g.total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
+    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": RESULT_ITEMS.map(([key,,,title]) => title + " " + fmt(shown(key))).join(" · ") }, el("div", { class: "label" }, g.value), stackBar(RESULT_ITEMS.map(([key,cls,,title]) => [cls, shown(key), title]), total), el("div", { class: "muted" }, selectedPassRate(g, active))); }) : el("div", { class: "empty" }, "无数据"));
 }
 
 async function renderPerf(box, backends, arch, x, y, dim, custom = false) {

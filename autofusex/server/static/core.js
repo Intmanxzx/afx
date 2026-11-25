@@ -11,10 +11,10 @@ export const FLEET_SCOPE_KEY = "afx.fleet.scope";
 export const VIEW_KEY = "afx.discovery.view";
 export const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "Legacy", "af-mlir": "MLIR", "triton-npu": "TritonNPU" };
 export const STAGE_LABEL = { inductor: "Inductor", nnsmith: "NNSmith", af_fronted: "AF前端", legacy_codegen: "Legacy Codegen", triton_ascend: "TritonNPU", aclnn: "aclNN单算子", fused_kernel: "融合算子", af_common: "AF其他", environment: "环境", schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
-  tiling: "Tiling", autofuse: "AF其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知", unknown_retest: "未知·待复测" };
+  tiling: "Tiling", autofuse: "AF其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知", unknown_retest: "未知·待复测", aicpu: "AICPU" };
 // Offer current attribution stages; legacy labels above still render old records.
 const SEARCH_STAGES = ["nnsmith", "inductor", "af_fronted", "schedule", "legacy_codegen", "mlir",
-  "triton_ascend", "af_common", "aclnn", "fused_kernel", "environment", "unknown", "unknown_retest"];
+  "triton_ascend", "af_common", "aclnn", "aicpu", "fused_kernel", "environment", "unknown", "unknown_retest"];
 export const DIM_LABEL = { all: "全部", op_category: "算子类别", op_display: "算子覆盖", dtype: "数据类型", dim_bucket: "最大维度", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
 export const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "op_category", "dynamic", "source"];
 export const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };

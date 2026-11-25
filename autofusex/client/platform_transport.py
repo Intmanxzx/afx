@@ -499,7 +499,7 @@ class Mapper:
             "compile_ns": attempt["prepare_ns"],
             "kernel_ns": int(sum(kernels) / len(kernels)) if kernels and evaluation.get("performance") else None,
             "e2e_ns": max(1, e2e),
-            "log_summary": plog_summary(plog),
+            "log_summary": summary_line(summary_text) or plog_summary(plog),
             "log": log_text[:MAX_LOG] if log_text and status != "pass" else None,
             "shapes": shape_items[:8],
             "created_at": _ms(attempt["created_at"]),

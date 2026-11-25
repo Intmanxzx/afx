@@ -10,6 +10,8 @@ from autofusex.execution.module_attribution import classify_module
 from autofusex.execution.reporting.failure_origin import TORCH_CAUSES
 from autofusex.server import aggregates
 from autofusex.server.failure_attribution import frontend_failure
+from autofusex.server.triton_attribution import triton_failure
+from autofusex.server.native_runtime_attribution import native_runtime_failure
 from autofusex.server.reclassification import FIELDS
 from autofusex.server.store import get_content
 
@@ -77,6 +79,10 @@ def reason(row, detail):
         return None
     d = _object(detail)
     if frontend_failure(row['backend'], row['log_summary'], d):
+        return None
+    if triton_failure(row['backend'], row['log_summary'], d):
+        return None
+    if native_runtime_failure(d, row['backend']):
         return None
     contexts = _object(d.get("contexts"))
     execution = _object(contexts.get("execution") or d.get("execution"))

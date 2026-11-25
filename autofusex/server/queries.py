@@ -231,8 +231,7 @@ def execution_detail(store: Store, exec_uuid: str, *, log_limit: int = 64 * 1024
     if row is None:
         return None
     out = dict(row)
-    # The UI has one public summary only: issue log_summary from CANN plog.
-    out.pop("log_summary", None)
+    fallback_summary = conn.execute('SELECT log_summary FROM executions WHERE exec_id=?', (out['exec_id'],)).fetchone()[0]
     env = conn.execute("SELECT * FROM environments WHERE env_id=?", (out.pop("env_id"),)).fetchone()
     out["env"] = {k: env[k] for k in env.keys() if k not in ("env_id", "env_hash")}
     out["case_key"] = conn.execute("SELECT case_key FROM cases WHERE case_id=?", (out["case_id"],)).fetchone()[0]
@@ -252,6 +251,9 @@ def execution_detail(store: Store, exec_uuid: str, *, log_limit: int = 64 * 1024
         else:
             out["log"] = data[:log_limit].decode(errors="replace")
             out["log_truncated"] = len(data) > log_limit
+    from autofusex.server.error_logs import presentation, summary
+    out['diagnostics'] = presentation(out.get('detail'), out.get('log'), fallback_summary)
+    out['log_summary'] = summary(out.get('detail'), out.get('log'), fallback_summary)
     return out
 
 
