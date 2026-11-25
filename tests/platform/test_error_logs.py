@@ -126,6 +126,8 @@ assert(!log.includes('CANN plog 错误') && !log.includes('WRONG ERROR AS GRAPH'
 assert(log.includes('GRAPH_ONE') && !log.includes('GRAPH_ZERO'));
 assert(text(execValue({backend:'cpu',function_status:'gen_fail',log_summary:'ValueError: cpu error'},'log_summary')).includes('cpu error'));
 assert(text(execValue({function_status:'runtime_fail'},'log_summary')).includes('未采集到错误日志'));
+assert.equal(execValue({function_status:'pass',accuracy_status:'fail'},'log_summary'),'');
+assert.equal(execValue({function_status:'pass',accuracy_status:'fail',log_summary:'accuracy mismatch'},'log_summary'),'');
 d.diagnostics.error_log='';
 assert(renderExecution(d,1).every(n=>n instanceof E));
 assert(text(renderExecution(d,1)).includes('未保存错误日志'));
