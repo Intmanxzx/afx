@@ -41,13 +41,9 @@ class Store:
     """Owns the data directory. One writer at a time; readers use their own connections."""
 
     def __init__(self, data_dir: str | os.PathLike):
-        self.dir = Path(data_dir).resolve()
+        self._initialize(data_dir)
+        self.readonly = False
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.core_path = self.dir / "core.db"
-        self.content_path = self.dir / "content.db"
-        self.stats_path = self.dir / "stats.db"
-        self.write_lock = threading.Lock()
-        self._local = threading.local()
         self.secret = self._load_secret()
         with self.connect(readonly=False) as conn:
             schema.apply(conn, "main", schema.CORE)
@@ -55,8 +51,29 @@ class Store:
             schema.apply(conn, "stats", schema.STATS)
             self._seed_settings(conn)
 
+    def _initialize(self, data_dir):
+        self.dir = Path(data_dir).resolve()
+        self.core_path = self.dir / "core.db"
+        self.content_path = self.dir / "content.db"
+        self.stats_path = self.dir / "stats.db"
+        self.write_lock = threading.Lock()
+        self._local = threading.local()
+        from autofusex.server.read_cache import ReadCache
+        self.summary_cache = ReadCache(max_entries=8192, max_bytes=8 * 1024 * 1024,
+                                       size=lambda value: len((value[0] or '').encode()) + 256 if value[1] else 0)
+
+    @classmethod
+    def open_readonly(cls, data_dir):
+        """Open existing databases without migrations, secrets or a write path."""
+        store = cls.__new__(cls)
+        store._initialize(data_dir)
+        store.readonly = True
+        return store
+
     # -- connections -------------------------------------------------------
     def _open(self, readonly: bool) -> sqlite3.Connection:
+        if not readonly and self.readonly:
+            raise RuntimeError('read worker cannot open a writer')
         if readonly:
             uri = f"file:{self.core_path}?mode=ro"
             conn = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
@@ -73,7 +90,7 @@ class Store:
             conn.execute("PRAGMA foreign_keys=ON")
         conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA cache_size=-32768")  # 32 MiB per connection; the server box has 1 GiB RAM
+        conn.execute("PRAGMA cache_size=-32768")  # 32 MiB per connection; readers are cached per thread.
         conn.row_factory = sqlite3.Row
         return conn
 

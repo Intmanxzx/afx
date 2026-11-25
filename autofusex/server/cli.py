@@ -14,6 +14,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="run the HTTP API (loopback; put a TLS proxy in front)")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8100)
+    serve.add_argument("--read-processes", type=int, choices=range(9), default=0,
+                       help="dedicated read-only overview processes (0 runs in the API process)")
 
     user = sub.add_parser("user", help="manage users").add_subparsers(dest="action", required=True)
     add = user.add_parser("add")
@@ -87,7 +89,7 @@ def main(argv=None) -> int:
     try:
         if args.command == "serve":
             from autofusex.server.server import create_server
-            server = create_server(args.data, args.host, args.port)
+            server = create_server(args.data, args.host, args.port, read_processes=args.read_processes)
             print(f"afx server listening on http://{args.host}:{args.port}", file=sys.stderr)
             try:
                 server.serve_forever()

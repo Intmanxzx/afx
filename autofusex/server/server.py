@@ -32,6 +32,7 @@ from autofusex.server import api_models as m
 from autofusex.server.auth import ANONYMOUS, AuthError, authenticate
 from autofusex.server.ingest import Ingestor, UploadError, check_stats, update_settings
 from autofusex.server.store import Store
+from autofusex.server.read_cache import ReadCache
 
 MAX_UPLOAD_BODY = 2 * 1024 * 1024
 MAX_BODY = 64 * 1024
@@ -167,13 +168,14 @@ def data(body):
     return body.model_dump(exclude_unset=True)
 
 
-def create_app(store: Store) -> FastAPI:
+def create_app(store: Store, read_pool=None) -> FastAPI:
     app = FastAPI(title='AutofuseX Platform API', version='1', docs_url=None, redoc_url=None,
                   redirect_slashes=False)
     app.state.store = store
     ingestor = Ingestor(store)
     slots = threading.BoundedSemaphore(MAX_CONCURRENT)
     aggregate_slots = threading.BoundedSemaphore(MAX_AGGREGATE_CONCURRENT)
+    overview_cache = ReadCache(max_entries=128, max_bytes=32 * 1024 * 1024, size=len)
     read_limit, upload_limit = RateLimiter(600), RateLimiter(1200)
     application_limit, application_global_limit, receipt_limit = RateLimiter(3), RateLimiter(30), RateLimiter(60)
 
@@ -314,6 +316,25 @@ def create_app(store: Store) -> FastAPI:
             yield
         finally:
             aggregate_slots.release()
+
+    def overview(key):
+        from autofusex.server import overview as reads
+        conn = store.reader()
+        conn.execute('BEGIN')
+        try:
+            current = reads.version(conn)
+            def load():
+                if read_pool is not None:
+                    content = read_pool.submit(reads.read_overview, key, current).result()
+                    if content is not None:
+                        return content
+                # A write can advance the worker's snapshot between dispatch and
+                # execution. Compute against this request's original snapshot.
+                return reads.encode(store, key)
+            content = overview_cache.get((current, key), load)
+        finally:
+            conn.execute('ROLLBACK')
+        return Response(content, media_type='application/json')
 
     @route('/api/me')
     def me(principal=Depends(writer)):
@@ -603,28 +624,26 @@ def create_app(store: Store) -> FastAPI:
 
     @route('/api/overview/pipeline', dependencies=[Depends(aggregate)])
     def pipeline(arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
-        return _success(queries.pipeline(store, arch, q, results, selected_backends, chips))
+        return overview(('pipeline', arch, q, results, selected_backends, chips))
 
     @route('/api/overview/backend', dependencies=[Depends(aggregate)])
     def backend(backend: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
-        return _success(queries.backend_stats(store, backend, dim, arch, q, results, selected_backends, chips))
+        return overview(('backend', backend, dim, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/perf', dependencies=[Depends(aggregate)])
     def perf(x: RequiredValue, y: RequiredValue, dim: RequiredValue = 'all', arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
-        return _success(queries.perf_pair(store, x, y, dim, arch, q, results, selected_backends, chips))
+        return overview(('perf', x, y, dim, arch, q, results, selected_backends, chips))
 
     @route('/api/overview/dims', dependencies=[Depends(aggregate)])
     def dims(principal=Depends(identity)):
-        return _success(queries.dims(store))
+        return overview(('dims',))
 
     @route('/api/overview/matrix', dependencies=[Depends(aggregate)])
     def matrix(backends: str, arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         names = [b for b in backends.split(',') if b][:8]
         if not names or not all(re.fullmatch('[A-Za-z0-9_.:/+<>=-]{1,256}', b) for b in names):
             raise HTTPError(400, 'invalid', 'backends must be a comma separated list of backend names')
-        dimensions = queries.dims(store)
-        return _success({'dims': dimensions, 'backends': names,
-                         'cells': {b: {d: queries.backend_stats(store, b, d, arch, q, results, selected_backends, chips) for d in dimensions} for b in names}})
+        return overview(('matrix', tuple(names), arch, q, results, selected_backends, chips))
 
     @route('/api/profile/axes')
     def axes(principal=Depends(identity)):
@@ -688,9 +707,26 @@ def create_app(store: Store) -> FastAPI:
 
 class PlatformServer:
     """Uvicorn lifecycle adapter preserving the CLI and embedded-server API."""
-    def __init__(self, store: Store, address):
+    def __init__(self, store: Store, address, *, read_processes=0):
+        if not 0 <= read_processes <= 8:
+            raise ValueError('read_processes must be between 0 and 8')
         self.store = store
-        self.app = create_app(store)
+        self._read_pool = None
+        if read_processes:
+            from concurrent.futures import ProcessPoolExecutor
+            import multiprocessing
+            from autofusex.server.overview import initialize_worker, worker_ready
+            self._read_pool = ProcessPoolExecutor(
+                read_processes, mp_context=multiprocessing.get_context('spawn'),
+                initializer=initialize_worker, initargs=(str(store.dir),))
+            try:
+                ready = [self._read_pool.submit(worker_ready) for _ in range(read_processes)]
+                for future in ready:
+                    future.result(timeout=30)
+            except BaseException:
+                self._read_pool.shutdown(wait=True, cancel_futures=True)
+                raise
+        self.app = create_app(store, self._read_pool)
         self.socket = socket.socket(socket.AF_INET6 if ':' in address[0] else socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind(address)
@@ -717,9 +753,12 @@ class PlatformServer:
     def server_close(self):
         self.shutdown()
         self.socket.close()
+        if self._read_pool is not None:
+            self._read_pool.shutdown(wait=True, cancel_futures=True)
+            self._read_pool = None
 
 
-def create_server(data_dir, host='127.0.0.1', port=8100):
+def create_server(data_dir, host='127.0.0.1', port=8100, *, read_processes=0):
     store = Store(data_dir)
     check_stats(store)
-    return PlatformServer(store, (host, port))
+    return PlatformServer(store, (host, port), read_processes=read_processes)
