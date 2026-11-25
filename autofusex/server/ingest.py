@@ -23,7 +23,7 @@ CASE_SOURCES = ("nnsmith", "baize_tf", "baize_torch", "model")
 RUN_KINDS = ("fuzz", "retest", "verify", "regress", "import")
 # Candidate fix versions (verify/regress) never become the current result.
 HEAD_RUN_KINDS = ("fuzz", "retest", "import")
-FUNCTION_STATUS = ("pass", "build_fail", "compile_fail", "runtime_fail", "timeout", "unsupported")
+FUNCTION_STATUS = ("pass", "build_fail", "gen_fail", "ascgraph_fail", "compile_fail", "runtime_fail", "timeout", "unsupported")
 ACCURACY_STATUS = ("pass", "fail", "skipped")
 ACCURACY_REFS = ("cpu", "eager-npu")
 ENV_FIELDS = ("cann", "python", "torch", "torch_npu", "backend_version", "afx", "nnsmith", "os", "cpu_arch", "gcc")
@@ -207,12 +207,16 @@ def validate_item(item) -> dict:
 def validate_request(body) -> dict:
     if not isinstance(body, dict):
         raise UploadError("invalid", "body must be an object")
+    from autofusex.execution.upload_protocol import version
+    try: protocol = version(body.get("protocol_version", 1))
+    except ValueError as exc: raise UploadError("unsupported_protocol", str(exc), 426) from exc
     client, run, items = body.get("client"), body.get("run"), body.get("items")
     if not isinstance(client, dict) or not isinstance(run, dict):
         raise UploadError("invalid", "client and run are required objects")
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS:
         raise UploadError("invalid", f"items must be a list of 1..{MAX_ITEMS}")
     return {
+        "protocol_version": protocol,
         "request_key": _str(body, "request_key", limit=128),
         "client": {
             "machine_id": _str(client, "machine_id", limit=128),
@@ -242,6 +246,14 @@ class Ingestor:
         for index, item in enumerate(request["items"]):
             try:
                 clean = validate_item(item)
+                from autofusex.execution.upload_protocol import version
+                try: capture = version(item.get("capture_version", 1))
+                except ValueError as exc: raise UploadError("unsupported_capture", str(exc), 426) from exc
+                if request["protocol_version"] == 1 and capture != 1:
+                    raise UploadError("invalid", "capture version 2 requires upload protocol 2")
+                clean["upload_protocol_version"] = request["protocol_version"]
+                clean["capture_version"] = capture
+                clean["raw_upload"] = canonical_json(item)
                 clean["content_hash"] = hashlib.sha256(canonical_json(item)).digest()
                 prepared.append((index, clean, None))
             except UploadError as exc:
@@ -433,6 +445,7 @@ class Ingestor:
                                 (item["exec_uuid"],)).fetchone()
         if existing is not None:
             return ("duplicate" if existing[0] == item["content_hash"] else "conflict"), False
+        reported_status, reported_stage = item['function_status'], item['fail_stage']
         case_id, revision, current = self._case(conn, item["case"], tie)
         # Classification is server authoritative. Detail contains the raw
         # client execution record, including error_stage and diagnostics.
@@ -455,6 +468,9 @@ class Ingestor:
              item["accuracy_status"], item["accuracy_ref"], item["max_abs_err"], item["max_rel_err"],
              item["compile_ns"], item["kernel_ns"], item["e2e_ns"], item["log_summary"], log_id,
              item["created_at"], now_ms(), item["classifier_version"], item["failure_owner"])).lastrowid
+        raw_id = put_content(conn, item['raw_upload'])
+        conn.execute("UPDATE executions SET upload_protocol_version=?,capture_version=?,reported_status=?,reported_stage=?,raw_upload_content_id=? WHERE exec_id=?",
+                     (item['upload_protocol_version'], item['capture_version'], reported_status, reported_stage, raw_id, exec_id))
         if detail_id is not None:
             conn.execute("UPDATE executions SET detail_content_id=? WHERE exec_id=?", (detail_id, exec_id))
         if item["shapes"]:

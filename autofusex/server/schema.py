@@ -518,6 +518,16 @@ CREATE TABLE source_jobs(job_id TEXT PRIMARY KEY, owner TEXT NOT NULL, case_key 
 CREATE INDEX source_jobs_pending ON source_jobs(state, created_at);
 CREATE TABLE source_artifacts(job_id TEXT NOT NULL,path TEXT NOT NULL,content_id INTEGER NOT NULL,PRIMARY KEY(job_id,path));
 """),
+    (18, """
+ALTER TABLE executions ADD COLUMN upload_protocol_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE executions ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE executions ADD COLUMN reported_status TEXT;
+ALTER TABLE executions ADD COLUMN reported_stage TEXT;
+ALTER TABLE executions ADD COLUMN raw_upload_content_id INTEGER;
+CREATE TABLE classification_changes(
+ batch_id TEXT NOT NULL, exec_id INTEGER NOT NULL, before_json TEXT NOT NULL,
+ after_json TEXT NOT NULL, PRIMARY KEY(batch_id,exec_id));
+"""),
 ]
 
 CONTENT = [

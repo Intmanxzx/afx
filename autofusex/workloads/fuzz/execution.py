@@ -18,6 +18,7 @@ def execute(bundle, adapter, evaluation, *, deferred=False, outputs=None, shape_
         stages = result.pop('_timings', {})
         stages['execution_total'] = time.perf_counter_ns()-started
         diagnostics = result.pop('_diagnostics', {'version':1,'shapes':{}})
+        result.setdefault('execution', {})['capture_version'] = 2
         result.setdefault('execution', {})['diagnostics'] = json.dumps(diagnostics)
         shapes = {str(row['shape_index']): row.pop('_timings', {}) for row in result['shape_results']}
         result.setdefault('execution', {})['telemetry'] = json.dumps({'version':2,'stages':stages,'shapes':shapes})

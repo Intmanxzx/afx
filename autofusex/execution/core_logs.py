@@ -20,7 +20,7 @@ class _Tail:
         if b'mlir codegen result' in b' '.join(line.lower().split()):
             self.verdicts.extend(line + b'\n')
             del self.verdicts[:-600]
-        if any(word in line.lower() for word in (b'error:', b'af_mlir_strict', b'unsupportedoperation', b'fatal')):
+        if any(word in line.lower() for word in (b'error:', b'mlir codegen:', b'af_mlir_strict', b'unsupportedoperation', b'fatal')):
             self.context_lines = 3
         if self.context_lines:
             self.important.extend(line + b'\n')

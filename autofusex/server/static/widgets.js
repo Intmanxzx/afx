@@ -20,6 +20,6 @@ export function statusChip(e) {
     return el("span", { class: "chip ok" }, e.accuracy_status === "pass" ? "通过" : "功能通过");
   }
   if (e.function_status === "unsupported") return el("span", { class: "chip gray" }, "不支持");
-  const map = { build_fail: "构图失败", compile_fail: "编译失败", runtime_fail: "运行失败", timeout: "超时" };
+  const map = { gen_fail: "构图失败", ascgraph_fail: "AscGraph构图失败", build_fail: "构图失败", compile_fail: "编译失败", runtime_fail: "运行失败", timeout: "超时" };
   return el("span", { class: "chip bad", title: e.fail_stage || "" }, (map[e.function_status] || e.function_status) + (e.fail_stage ? " · " + (STAGE_LABEL[e.fail_stage] || e.fail_stage) : ""));
 }

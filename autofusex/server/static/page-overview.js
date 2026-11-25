@@ -22,13 +22,27 @@ PAGES.overview = async (root, params) => {
 
 const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-legacy)", "triton-npu": "var(--lane-triton)", "eager-npu": "var(--lane-eager)" };
 
+const RESULT_ITEMS = [
+  ["gen_fail", "c-build", "构图失败"], ["ascgraph_fail", "c-build", "AscGraph构图失败"],
+  ["af_common", "c-compile", "AF其他失败"], ["schedule", "c-compile", "Schedule 失败"],
+  ["legacy_codegen", "c-compile", "Legacy Codegen 失败"], ["mlir", "c-compile", "MLIR 失败"],
+  ["triton_ascend", "c-compile", "TritonAscend 编译失败"], ["compile_unknown", "c-compile", "编译失败 · 未知"],
+  ["aclnn", "c-runtime", "aclNN单算子执行失败"], ["fused_kernel", "c-runtime", "融合算子执行失败"],
+  ["runtime_unknown", "c-runtime", "运行失败 · 未知"], ["environment", "c-env", "环境问题"],
+  ["timeout", "c-env", "超时"], ["accuracy_fail", "c-acc", "精度失败"],
+  ["pass", "c-pass", "精度通过"], ["unchecked", "c-uns", "功能通过 · 精度未检查"],
+  ["other", "c-uns", "不支持"], ["unknown", "c-uns", "未知"]
+];
+const DEFAULT_RESULTS = RESULT_ITEMS.map(([key]) => key);
+const RESULT_COLORS = {"c-build":"var(--loss-build)","c-compile":"var(--loss-stage)","c-runtime":"#ef4444","c-env":"#f97316","c-acc":"var(--warn)","c-pass":"var(--ok)","c-uns":"var(--tie)"};
+
 // Capability matrix: one column per backend, one row per dimension, so a row compares the same
 // metric across backends. Scrolls horizontally when the backends do not fit (desktop and mobile).
 async function renderBackendTabs(box, lanes, arch, q) {
   const body = el("div", {}, el("div", { class: "empty" }, "加载中…"));
-  const statusItems = [["build_fail", "c-build", "构图失败"], ["environment", "c-env", "环境问题"], ["compile_fail", "c-compile", "编译失败"], ["runtime_fail", "c-runtime", "运行失败"], ["accuracy_fail", "c-acc", "精度失败"], ["pass", "c-pass", "精度通过"], ["other", "c-uns", "其他"]];
-  const saved = window.__afxCapabilityLegend;
-  const active = new Set(saved ? [...saved] : ["compile_fail", "runtime_fail", "accuracy_fail", "pass"]);
+  const statusItems = RESULT_ITEMS;
+  const saved = window.__afxCapabilityLegendV2;
+  const active = new Set(saved ? [...saved] : DEFAULT_RESULTS);
   const legendNode = el("div", { class: "legend capability-legend" });
   const redraw = () => {
     if (!matrix) return;
@@ -53,7 +67,7 @@ async function renderBackendTabs(box, lanes, arch, q) {
     const item = el("button", { type: "button", class: "legend-toggle", "aria-pressed": active.has(key) ? "true" : "false", title: `切换${text}` }, el("i", { class: cls }), text);
     item.addEventListener("click", () => {
       if (active.has(key)) active.delete(key); else active.add(key);
-      window.__afxCapabilityLegend = new Set(active);
+      window.__afxCapabilityLegendV2 = new Set(active);
       item.setAttribute("aria-pressed", active.has(key));
       redraw();
     });
@@ -67,74 +81,19 @@ async function renderBackendTabs(box, lanes, arch, q) {
   redraw();
 }
 function stageMetric(group, key) {
-  if (key === "pass" || key === "accuracy_fail") return group[key] || 0;
-  const stages = group.stage_fail || {};
-  if (key === "build_fail") return stages.generation || stages.reference || 0;
-  if (key === "compile_fail") return Object.entries(stages).filter(([s]) => !["generation","reference","backend","environment","first_call_combined"].includes(s)).reduce((n,[,v]) => n + v, 0);
-  if (key === "environment") return stages.environment || 0;
-  if (key === "runtime_fail") return (stages.backend || 0) + (stages.unknown || 0) + (stages.timeout || 0);
-  if (key === "other") return group.unsupported || 0;
-  return group[key] || 0;
+  return (group.results || {})[key] || 0;
 }
 function selectedTotal(group, active) { return [...active].reduce((n, key) => n + stageMetric(group, key), 0); }
-function compilePie(parts, centerText) {
-  const root = svg("svg", { viewBox: "0 0 160 160", width: 160, height: 160, role: "img", "aria-label": "编译失败阶段分布" });
-  const total = parts.reduce((n, p) => n + p[1], 0); let angle = -Math.PI / 2;
-  for (const [name, n, color] of parts) {
-    const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0;
-    const p = (rad, a) => `${80 + rad * Math.cos(a)} ${80 + rad * Math.sin(a)}`;
-    root.append(svg("path", { d: `M ${p(62, angle)} A 62 62 0 ${large} 1 ${p(62, end)} L ${p(38, end)} A 38 38 0 ${large} 0 ${p(38, angle)} Z`, fill: color, "data-tooltip": `${name} ${fmt(n)}` })); angle = end;
-  }
-  root.append(svg("text", { x: 80, y: 84, "text-anchor": "middle", class: "donut-center compile-donut-center" }, centerText || fmt(total))); return root;
-}
-
-const COMPILE_STAGES = [
-  { key: "graph_check", label: "图校验", color: "#0ea5e9" },
-  { key: "lowering", label: "Lowering", color: "#8b5cf6" },
-  { key: "schedule", label: "Schedule", color: "#64748b" },
-  { key: "codegen", label: "Codegen", color: "#e11d48" },
-  { key: "tiling", label: "Tiling", color: "#d946ef" },
-  { key: "mlir", label: "MLIR", color: "#f59e0b" },
-  { key: "autofuse", label: "其他", color: "#be123c" },
-];
-function renderCompileMini(group, backend) {
-  const available = COMPILE_STAGES.filter(stage => (group.stage_fail || {})[stage.key] > 0);
-  const states = window.__afxCompileLegend || (window.__afxCompileLegend = new Map());
-  let active = states.get(backend);
-  if (!active) { active = new Set(available.map(stage => stage.key)); states.set(backend, active); }
-  const parts = available.filter(stage => active.has(stage.key)).map(stage => [stage.label, (group.stage_fail || {})[stage.key], stage.color]);
-  const box = el("div", { class: "compile-mini" },
-    el("div", { class: "compile-mini-title" }, fmt(stageMetric(group, "compile_fail")) + " 个编译失败用例"),
-    available.length ? compilePie(parts, "编译失败") : el("div", { class: "compile-mini-empty" }, "无"));
-  if (available.length) {
-    const legendBox = el("div", { class: "legend capability-legend compile-mini-legend" });
-    for (const stage of available) {
-      const selected = active.has(stage.key);
-      const item = el("button", { type: "button", class: "legend-toggle", "aria-pressed": selected ? "true" : "false", title: "切换" + stage.label },
-        el("i", { class: "compile-legend-mark", style: { background: stage.color } }), stage.label);
-      item.addEventListener("click", () => {
-        if (active.has(stage.key)) active.delete(stage.key); else active.add(stage.key);
-        states.set(backend, active);
-        box.replaceWith(renderCompileMini(group, backend));
-      });
-      legendBox.append(item);
-    }
-    box.append(legendBox);
-  }
-  return box;
-}
-
-function donutChart(result, backend, compact = false, active = new Set(["compile_fail","runtime_fail","accuracy_fail","pass"])) {
+function donutChart(result, backend, compact = false, active = new Set(DEFAULT_RESULTS)) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
   const total = selectedTotal(g, active);
-  const parts = [["build_fail", "构图失败", stageMetric(g,"build_fail"), "var(--loss-build)"], ["environment", "环境问题", stageMetric(g,"environment"), "#f97316"], ["compile_fail", "编译失败", stageMetric(g,"compile_fail"), "var(--loss-stage)"], ["runtime_fail", "运行失败", stageMetric(g,"runtime_fail"), "#ef4444"], ["accuracy_fail", "精度失败", stageMetric(g,"accuracy_fail"), "var(--warn)"], ["pass", "精度通过", stageMetric(g,"pass"), "var(--ok)"], ["other", "其他", stageMetric(g,"other"), "var(--tie)"]].filter(p => active.has(p[0]) && p[2] > 0);
+  const parts = RESULT_ITEMS.map(([key, cls, title]) => [key, title, stageMetric(g,key), RESULT_COLORS[cls]]).filter(p => active.has(p[0]) && p[2] > 0);
   const R = 78, r = 48, C = 100, root = svg("svg", { viewBox: "0 0 200 200", width: 200, height: 200, role: "img", "aria-label": "正确性分布" });
   let angle = -Math.PI / 2;
   for (const [, name, n, color] of parts) { const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0; const p = (rad,a) => `${C + rad*Math.cos(a)} ${C + rad*Math.sin(a)}`; root.append(svg("path", { d:`M ${p(R,angle)} A ${R} ${R} 0 ${large} 1 ${p(R,end)} L ${p(r,end)} A ${r} ${r} 0 ${large} 0 ${p(r,angle)} Z`, fill:color, "data-tooltip":`${name} ${fmt(n)}（${pct(n,total)}）` })); angle += sweep; }
-  root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, pct(stageMetric(g,"pass"), total)));
-  const compileMini = renderCompileMini(g, backend);
-  return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "muted small" }, `${fmt(total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), root, compileMini);
+  root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, pct(stageMetric(g,"pass"), g.total)));
+  return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "muted small" }, `${fmt(total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), root);
 }
 
 const BUCKET_DIMS = ["dim_bucket", "size_bucket"];
@@ -145,7 +104,7 @@ function bucketValue(valueLabel) {
   return m[1] === ">" ? n + 0.5 : n;
 }
 function bucketCompare(a, b) { return bucketValue(a) - bucketValue(b); }
-function statusChart(result, backend, compact = false, order = null, active = new Set(["compile_fail", "runtime_fail", "accuracy_fail", "pass"])) {
+function statusChart(result, backend, compact = false, order = null, active = new Set(DEFAULT_RESULTS)) {
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const limit = result.dim === "op_display" ? 24 : 14;
   let groups;
@@ -160,7 +119,7 @@ function statusChart(result, backend, compact = false, order = null, active = ne
   const title = compact ? (note ? el("div", { class: "muted small" }, note.replace(/[（）]/g, "")) : null)
     : el("h3", {}, `${label(backend)} · ${DIM_LABEL[result.dim] || result.dim}${note}`);
   return el("div", { class: "chart" + (result.dim === "op_display" && !compact ? " wide" : "") }, title,
-    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": `构图 ${fmt(shown("build_fail"))} · 环境 ${fmt(shown("environment"))} · 编译 ${fmt(shown("compile_fail"))} · 运行 ${fmt(shown("runtime_fail"))} · 精度失败 ${fmt(shown("accuracy_fail"))} · 精度通过 ${fmt(shown("pass"))} · 其他 ${fmt(shown("other"))}` }, el("div", { class: "label" }, g.value), stackBar([["c-build", shown("build_fail"), "构图失败"], ["c-env", shown("environment"), "环境问题"], ["c-compile", shown("compile_fail"), "编译失败"], ["c-runtime", shown("runtime_fail"), "运行失败"], ["c-acc", shown("accuracy_fail"), "精度失败"], ["c-pass", shown("pass"), "精度通过"], ["c-uns", shown("other"), "其他"]], total), el("div", { class: "muted" }, total ? pct(shown("pass"), total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
+    groups.length ? groups.map(g => { const total = selectedTotal(g, active); const shown = key => active.has(key) ? stageMetric(g, key) : 0; return el("div", { class: "hbar", "data-tooltip": RESULT_ITEMS.map(([key,,title]) => title + " " + fmt(shown(key))).join(" · ") }, el("div", { class: "label" }, g.value), stackBar(RESULT_ITEMS.map(([key,cls,title]) => [cls, shown(key), title]), total), el("div", { class: "muted" }, g.total ? pct(stageMetric(g,"pass"), g.total) : "—")); }) : el("div", { class: "empty" }, "无数据"));
 }
 
 async function renderPerf(box, backends, arch, x, y, dim, custom = false) {

@@ -114,7 +114,7 @@ def seed_failures(world):
 
 def test_clustering_groups_same_normalized_error(world):
     by_category = seed_failures(world)
-    assert set(by_category) == {"schedule", "runtime_fail"}
+    assert set(by_category) == {"schedule", "unknown"}
     schedule = by_category["schedule"]
     assert schedule["case_count"] == 2 and schedule["status"] == "open" and re.fullmatch(r"F\d+", schedule["issue_id"])
     assert schedule["dimension"] == "function" and schedule["backend"] == "af-mlir"
@@ -128,7 +128,7 @@ def test_function_title_new_and_legacy(world):
     world.upload([item('exec-title', 301, status='compile_fail', fail_stage='lowering',
                        summary=summary, c=case(301, 'view'))])
     row = issues.list_issues(world.store)['issues'][0]
-    expected = '[af-mlir] lowering: Operator Reshape failed: shape [3, 4], axis 2 (view)'
+    expected = '[af-mlir] unknown: Operator Reshape failed: shape [3, 4], axis 2 (view)'
     assert row['title'] == expected
     assert row['log_summary'] == summary
     with world.store.write() as conn:
