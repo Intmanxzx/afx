@@ -12,11 +12,14 @@ export const VIEW_KEY = "afx.discovery.view";
 export const BACKEND_LABEL = { "cpu": "CPU", "eager-npu": "EagerNPU", "af-legacy": "Legacy", "af-mlir": "MLIR", "triton-npu": "TritonNPU" };
 export const STAGE_LABEL = { inductor: "Inductor", nnsmith: "NNSmith", af_fronted: "AF前端", legacy_codegen: "Legacy Codegen", triton_ascend: "TritonNPU", aclnn: "aclNN单算子", fused_kernel: "融合算子", af_common: "AF其他", environment: "环境", schedule: "Schedule", graph_check: "图校验", mlir: "MLIR", lowering: "Lowering", codegen: "Codegen",
   tiling: "Tiling", autofuse: "AF其他", first_call_combined: "首次调用", timeout: "超时", unknown: "未知", unknown_retest: "未知·待复测" };
+// Offer current attribution stages; legacy labels above still render old records.
+const SEARCH_STAGES = ["nnsmith", "inductor", "af_fronted", "schedule", "legacy_codegen", "mlir",
+  "triton_ascend", "af_common", "aclnn", "fused_kernel", "environment", "unknown", "unknown_retest"];
 export const DIM_LABEL = { all: "全部", op_category: "算子类别", op_display: "算子覆盖", dtype: "数据类型", dim_bucket: "最大维度", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
 export const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "op_category", "dynamic", "source"];
 export const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };
 
-// ---------- global search field catalog (mirrors autofusex/platform/search.py) ----------
+// ---------- global search field catalog (mirrors autofusex/server/search.py) ----------
 export const SEARCH_RESULT_LABEL = { pass: "通过", fail: "失败（功能或精度）", function_fail: "功能失败", accuracy_fail: "精度失败", unsupported: "不支持" };
 export const SEARCH_SOURCE_LABEL = { nnsmith: "NNSmith 随机生成", baize_tf: "Baize TF 导入", baize_torch: "Baize Torch 导入", model: "整网模型导入" };
 export const SEARCH_DYNAMIC_LABEL = { dynamic: "动态 Shape", static: "静态 Shape" };
@@ -55,7 +58,7 @@ export const archLabel = a => { if (!a) return a || "—"; const s = String(a).t
 export const SEARCH_FIELDS = [
   { name: "backend", label: "后端", example: "backend:af-mlir", enum: () => Object.keys(BACKEND_LABEL), text: label },
   { name: "status", label: "结果", example: "status:fail", enum: () => Object.keys(SEARCH_RESULT_LABEL), text: v => SEARCH_RESULT_LABEL[v] || v },
-  { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => Object.keys(STAGE_LABEL), text: v => STAGE_LABEL[v] || v },
+  { name: "stage", label: "失败阶段", example: "stage:schedule", enum: () => SEARCH_STAGES, text: v => STAGE_LABEL[v] || v },
   { name: "arch", label: "芯片", example: "arch:910b", enum: () => searchFieldValues.arch || [], text: archLabel },
   { name: "user", label: "用户", example: "user:alice", enum: () => (searchFieldValues.user || []).map(v => v.id), text: v => ((searchFieldValues.user || []).find(u => u.id === v) || {}).name || v },
   { name: "op", label: "算子", example: "op:aten.add.Tensor", enum: () => searchFieldValues.op || [] },
