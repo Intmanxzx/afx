@@ -628,6 +628,13 @@ def test_http_issue_flow(world):
         assert call("GET", "/api/issues?page=abc")[0] == 400
         status, claimed = call("POST", "/api/issues/claim", {"request_key": "h1", "agent_id": "a"})
         issue_id, lease = claimed["data"]["issue_id"], claimed["data"]["lease_id"]
+        status, current = call('GET', f'/api/issues/{issue_id}/cases?scope=current&limit=1')
+        assert status == 200 and len(current['data']['cases']) == 1
+        assert current['data']['cases'][0]['is_current'] == 1
+        assert current['data']['next_cursor'] == 1
+        assert call('GET', f'/api/issues/{issue_id}/cases?scope=history')[1]['data']['cases'] == []
+        assert call('GET', f'/api/issues/{issue_id}/cases?scope=bad')[0] == 400
+        assert call('GET', f'/api/issues/{issue_id}/cases?limit=0')[0] == 400
         status, verify = call("POST", f"/api/issues/{issue_id}/verify",
                               dict(FIX, request_key="h2", lease_id=lease))
         assert status == 200 and verify["data"]["status"] == "verifying"

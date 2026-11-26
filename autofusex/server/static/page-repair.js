@@ -128,7 +128,7 @@ function caseList(cases, mode = "evidence") {
       el("td", {}, c.result || "—", c.stale ? " · 旧图" : "", c.pick_reason ? " · " + c.pick_reason : "")])))));
 }
 function caseSection(issueId, page, scope, title) {
-  const content = el("div", {}, page.cases.length ? caseList(page.cases, scope === "current" ? "current" : "evidence")
+  const content = el("div", {class:"table-wrap"}, page.cases.length ? caseList(page.cases, scope === "current" ? "current" : "evidence")
     : el("div", {class:"muted"}, "无"));
   const next = el("button", {class:"icon-btn", onclick:async () => {
     const query = scope === "regression" ? "role=regression" : "scope=" + scope;
