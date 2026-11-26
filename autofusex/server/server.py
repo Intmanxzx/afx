@@ -584,14 +584,15 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
 
     @route('/api/admin/classification/rules')
     def classification_rules(principal=Depends(administrator)):
-        from autofusex.server.classification_rules import load_or_builtin, BUILTIN_RULES
-        return _success({'rules': load_or_builtin(store), 'builtin_rules': BUILTIN_RULES})
+        from autofusex.server.classification_rules import load_or_builtin, BUILTIN_RULES, history, KEY
+        return _success({'rules': load_or_builtin(store), 'builtin_rules': BUILTIN_RULES,
+                         'revision': store.settings()[KEY]['revision'], 'history': history(store)})
 
     @route('/api/admin/classification/rules', 'PUT')
     def put_classification_rules(body: m.ClassificationRules, principal=Depends(administrator)):
         from autofusex.server.classification_rules import validate, KEY
         rules = validate(data(body)['rules'])
-        return _success(update_settings(store, principal.user_id, {KEY: rules}, {KEY: store.settings()[KEY]['revision']}))
+        return _success(update_settings(store, principal.user_id, {KEY: rules}, {KEY: body.base_revision}))
 
     @route('/api/admin/classification/refresh', 'POST')
     def refresh_classification(body: m.ClassificationRefresh, principal=Depends(administrator)):
