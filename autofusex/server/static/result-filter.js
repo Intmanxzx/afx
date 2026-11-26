@@ -50,11 +50,13 @@ export function cancelFilterChange() { clearTimeout(filterTimer); }
 let collapsed = matchMedia("(max-width:760px)").matches;
 export const ISSUE_CATEGORIES = ["Reduce", "Transpose", "Concat", "Split", "Gather", "Scatter", "View", "Reshape", "Broadcast", "Elementwise"];
 export const TREATMENTS = [["ignore", "忽略"], ["low", "低级"], ["normal", "中等"], ["high", "高级"]];
+export const REPAIR_DEFAULT_RESULTS = ["mlir", "fused_kernel"];
+export const REPAIR_DEFAULT_STATUSES = Object.keys(STATUS_LABEL).filter(key => !["resolved", "closed"].includes(key));
 export function resultFilter(params, change, arches = [], options = {}) {
   const repair = options.repair;
   const groups = repair ? RESULT_GROUPS.filter(([name]) => name !== "精度结果") : RESULT_GROUPS;
   const items = groups.flatMap(([, entries]) => entries);
-  const defaults = repair ? items.map(([key]) => key) : DEFAULT_RESULTS;
+  const defaults = repair ? REPAIR_DEFAULT_RESULTS : DEFAULT_RESULTS;
   params = new URLSearchParams(params);
   const notify = change;
   change = patch => {
@@ -63,7 +65,10 @@ export function resultFilter(params, change, arches = [], options = {}) {
     const fresh = resultFilter(params, notify, arches, options);
     aside.replaceWith(fresh); fresh.scrollTop = scroll;
     clearTimeout(filterTimer);
-    filterTimer = setTimeout(() => notify({ ...Object.fromEntries(params), backends: params.get("backends"), chips: params.get("chips"), results: params.get("results") }), 180);
+    filterTimer = setTimeout(() => notify({ ...Object.fromEntries(params),
+      ...Object.fromEntries(["q", "backends", "chips", "results",
+        ...(repair ? ["categories", "treatment", "status", "scope"] : [])].map(key => [key, params.get(key)]))
+    }), 180);
   };
   const active = new Set(params.has("results") ? params.get("results").split(",").filter(k => items.some(([v]) => v === k)) : defaults);
   const aside = el("aside", { class: "result-filter", "aria-label": "数据筛选" });
@@ -84,16 +89,26 @@ export function resultFilter(params, change, arches = [], options = {}) {
       }, text))));
   }
   const backendOptions = Object.entries(BACKEND_LABEL);
-  const chipOptions = [["a2a3", "A2A3"], ["a5", "A5"], ...arches.filter(a => !/910|950/i.test(a)).map(a => [a, a])];
+  let chipOptions = [["a2a3", "A2A3"], ["a5", "A5"], ...arches.filter(a => !/910|950/i.test(a)).map(a => [a, a])];
+  const allFilters = selected => ({
+    backends: selected ? backendOptions.map(([key]) => key).join(",") : "none",
+    chips: selected ? chipOptions.map(([key]) => key).join(",") : "none",
+    results: selected ? items.map(([key]) => key).join(",") : "none",
+    ...(repair ? {
+      ...(selected ? { scope: "all" } : {}),
+      categories: selected ? ISSUE_CATEGORIES.join(",") : "none",
+      treatment: selected ? TREATMENTS.map(([key]) => key).join(",") : "none",
+      status: selected ? Object.keys(STATUS_LABEL).join(",") : "none"
+    } : {})
+  });
+  body.append(el("div", { class: "toolbar result-filter-actions", role: "group", "aria-label": "全部筛选操作" },
+    el("button", { type: "button", onclick: () => change(allFilters(true)) }, "全部选择"),
+    el("button", { type: "button", onclick: () => change(allFilters(false)) }, "全部清空"),
+    el("button", { type: "button", onclick: () => change({ backends: null, chips: null, results: null,
+      ...(repair ? { categories: null, treatment: null, status: null, scope: null } : {}) }) }, "恢复默认")));
   body.append(
     field("后端", "backends", backendOptions, params.has("backends") ? params.get("backends").split(",") : backendOptions.map(([v]) => v)),
-    field("芯片", "chips", chipOptions, (params.get("chips") || (repair ? chipOptions.map(([v]) => v).join(",") : "a2a3")).split(",")),
-    el("h3", {}, "结果与阶段"),
-    el("div", { class: "toolbar" },
-      el("button", { type: "button", onclick: () => change({ results: items.map(([key]) => key).join(",") }) }, "全选"),
-      el("button", { type: "button", onclick: () => change({ results: "none" }) }, "清空选择"),
-      el("button", { type: "button", onclick: () => change({ results: null }) }, "恢复默认"),
-      el("span", { class: "muted small" }, "已选 " + active.size + "/" + items.length)));
+    field("芯片", "chips", chipOptions, (params.get("chips") || (repair ? chipOptions.map(([v]) => v).join(",") : "a2a3")).split(",")));
   const legend = el("div", { class: "legend capability-legend" });
   const commit = () => change({ results: [...active].join(",") || "none" });
   for (const [name, items] of groups) {
@@ -106,25 +121,22 @@ export function resultFilter(params, change, arches = [], options = {}) {
         onclick: () => { active.has(key) ? active.delete(key) : active.add(key); commit(); }
       }, el("i", { class: cls }), text)))));
   }
-  if (!repair || (params.get("dimension") || "function") === "function") body.append(legend);
-  else {
-    // Accuracy/performance tabs already select their result dimension.
-    const resultHeading = [...body.children].find(n => n.tagName === "H3");
-    resultHeading?.remove(); body.querySelector(".toolbar")?.remove();
-  }
+  if (!repair || (params.get("dimension") || "function") === "function") body.append(
+    el("h3", {}, "结果与阶段"),
+    el("div", { class: "muted small" }, "已选 " + active.size + "/" + items.length), legend);
   if (repair) {
     body.append(field("算子类别", "categories", ISSUE_CATEGORIES.map(v => [v, v]),
       params.has("categories") ? params.get("categories").split(",") : ISSUE_CATEGORIES),
       field("处理标签", "treatment", TREATMENTS, (params.get("treatment") || "low,normal,high").split(",")),
-      field("修复状态", "status", Object.entries(STATUS_LABEL), params.has("status") ? params.get("status").split(",") : Object.keys(STATUS_LABEL)));
-    body.append(el("button", {type:"button", onclick:()=>change({scope:"all",results:null,backends:null,chips:null,categories:null,treatment:"ignore,low,normal,high",status:null,q:null})}, "全部 issue"));
+      field("修复状态", "status", Object.entries(STATUS_LABEL), params.has("status") ? params.get("status").split(",") : REPAIR_DEFAULT_STATUSES));
   }
   aside.append(toggle, body);
   aside.addEventListener("keydown", e => { if (e.key === "Escape") { collapsed = true; update(); toggle.focus(); } });
   archOptions().then(values => {
     if (!aside.isConnected) return;
-    const options = [["a2a3", "A2A3"], ["a5", "A5"], ...values.filter(a => !/910|950/i.test(a)).map(a => [a, a])];
-    body.querySelectorAll(".visual-filter-field")[1].replaceWith(field("芯片", "chips", options, (params.get("chips") || (repair ? options.map(([v]) => v).join(",") : "a2a3")).split(",")));
+    arches = values;
+    chipOptions = [["a2a3", "A2A3"], ["a5", "A5"], ...values.filter(a => !/910|950/i.test(a)).map(a => [a, a])];
+    body.querySelectorAll(".visual-filter-field")[1].replaceWith(field("芯片", "chips", chipOptions, (params.get("chips") || (repair ? chipOptions.map(([v]) => v).join(",") : "a2a3")).split(",")));
   }).catch(() => {});
   update(); return aside;
 }
