@@ -455,7 +455,8 @@ class Ingestor:
             declared_stage=item.get("fail_stage"), summary=item.get("log_summary"),
             log=item.get("log"), detail=raw_detail)
         from autofusex.server.classification_rules import load_or_builtin, match
-        configured = match(load_or_builtin(self.store), item["backend"], item.get("log_summary") or "")
+        configured = match(load_or_builtin(self.store), item["backend"], item.get("log_summary") or "",
+                           current=(status, phase))
         if configured:
             status, phase, owner, classifier_version = configured[:4]
         item["function_status"], item["fail_stage"], item["failure_owner"] = status, phase, owner
