@@ -569,9 +569,15 @@ def update_settings(store: Store, actor: str, changes: dict, base_revisions: dic
             if key not in DEFAULT_SETTINGS:
                 raise UploadError("invalid", f"unknown setting {key}")
             _check_setting(key, value)
-            row = conn.execute("SELECT revision FROM platform_settings WHERE key=?", (key,)).fetchone()
+            row = conn.execute("SELECT revision,value FROM platform_settings WHERE key=?", (key,)).fetchone()
             if base_revisions.get(key) != row["revision"]:
                 raise UploadError("conflict", f"{key} changed since revision {base_revisions.get(key)}", 409)
+            if key == 'classification.rules':
+                from autofusex.server.classification_rules import merge_builtins
+                conn.execute('INSERT INTO audit_log(at,actor,action,detail) VALUES(?,?,?,?)',
+                             (now_ms(), actor, 'classification.rules.backup',
+                              json.dumps({'revision': row['revision'], 'rules': json.loads(row['value'])})))
+                value = merge_builtins(value)
             conn.execute("UPDATE platform_settings SET value=?, revision=revision+1, updated_by=?, updated_at=? "
                          "WHERE key=?", (json.dumps(value), actor, now_ms(), key))
             conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",

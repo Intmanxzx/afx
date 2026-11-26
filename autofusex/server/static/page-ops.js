@@ -130,15 +130,46 @@ async function settingsPanel() {
     shareInputs[k] = el("input", { type: "number", min: 0, max: 100, value: shares[k], style: { width: "70px" } }); return el("label", {}, t, " ", shareInputs[k]); }))));
   const out = el("div");
   const rulesText = el("textarea", { rows: 8, style: { width: "100%", fontFamily: "monospace" }, value: JSON.stringify(ruleData.rules || [], null, 2) });
-  const ruleOut = el("div");
+  rulesText.value = JSON.stringify(ruleData.rules || [], null, 2);
+  const ruleOut = el("div", {role: "status", "aria-live": "polite", class: "panel"}, "预览结果将在这里显示。预览不会修改数据。");
+  let ruleBusy = false;
+  let ruleRevision = ruleData.revision;
+  const backups = el("select", {}, el("option", {value:""}, "选择历史备份"), (ruleData.history || []).map(h => el("option", {value:String(h.id)}, "版本 " + h.revision + " · " + time(h.at))));
+  const restoreBackup = () => {
+    const h = (ruleData.history || []).find(h => String(h.id) === backups.value);
+    if (h) { rulesText.value = JSON.stringify(h.rules, null, 2); ruleOut.textContent = "已载入备份，保存后恢复生效"; }
+  };
   const saveRules = async apply => {
+    if (ruleBusy) return;
+    ruleBusy = true;
+    ruleOut.textContent = !apply ? "正在预览，请稍候……只读取日志摘要，不会修改数据。" : "正在保存规则，请稍候……";
     try {
       const rules = JSON.parse(rulesText.value);
-      if (!apply) { const r = await api("/api/admin/classification/refresh", { method: "POST", body: { rules, apply: false } }); ruleOut.textContent = `预览命中 ${r.count} 条`; return; }
-      await api("/api/admin/classification/rules", { method: "PUT", body: { rules } });
+      if (!apply) {
+        const r = await api("/api/admin/classification/refresh", { method: "POST", body: { rules, apply: false } });
+        const counts = new Map();
+        for (const c of r.changes || []) counts.set(c.rule_id, (counts.get(c.rule_id) || 0) + 1);
+        ruleOut.replaceChildren(el("h4", {}, `预览完成：待更新 ${r.count} 条`),
+          el("p", {}, r.count ? "预览未修改数据。以下展示前 50 条记录。" : "没有需要更新的记录：规则未命中，或命中记录已是目标分类。"),
+          el("div", {class:"toolbar"}, [...counts].map(([id,n]) => el("span", {class:"chip info"}, `${id}：${n}`))),
+          el("div", {class:"table-wrap"}, el("table", {class:"grid"},
+            el("thead", {}, el("tr", {}, ["用例","规则","原分类","新分类","日志摘要"].map(x => el("th", {}, x)))),
+            el("tbody", {}, (r.changes || []).slice(0,50).map(c => el("tr", {},
+              el("td", {}, el("a", {href:"#case?key=" + encodeURIComponent(c.case_key) + "&exec=" + encodeURIComponent(c.exec_uuid)}, c.case_key || c.exec_uuid)),
+              el("td", {}, c.rule_id), el("td", {}, c.before.slice(0,3).join(" / ")), el("td", {}, c.after.slice(0,3).join(" / ")), el("td", {}, c.log_summary)))))));
+        return;
+      }
+      const saved = await api("/api/admin/classification/rules", { method: "PUT", body: { rules, base_revision: ruleRevision } });
+      ruleRevision = saved["classification.rules"].revision;
+      rulesText.value = JSON.stringify(saved["classification.rules"].value, null, 2);
+      const latest = await api("/api/admin/classification/rules");
+      ruleData.history = latest.history;
+      backups.replaceChildren(el("option", {value:""}, "选择历史备份"), latest.history.map(h => el("option", {value:String(h.id)}, "版本 " + h.revision + " · " + time(h.at))));
+      if (apply === "save") { ruleOut.textContent = "已保存并自动备份上一版本，新上报数据立即生效"; return; }
       const r = await api("/api/admin/classification/refresh", { method: "POST", body: { apply: true } });
       ruleOut.textContent = `已应用 ${r.count} 条（批次 ${r.batch_id}）`;
-    } catch (err) { ruleOut.textContent = String(err.message || err); }
+    } catch (err) { ruleOut.replaceChildren(el("div", {class:"error-box",role:"alert"}, String(err.message || err))); }
+    finally { ruleBusy = false; }
   };
   const save = async () => {
     const changes = {}, base = {};
@@ -149,9 +180,15 @@ async function settingsPanel() {
     try { await api("/api/admin/settings", { method: "PUT", body: { changes, base_revisions: base } }); out.replaceChildren(el("span", { class: "chip ok" }, "已保存")); }
     catch (err) { out.replaceChildren(el("div", { class: "error-box" }, String(err.message || err))); }
   };
-  const loadBuiltin = () => { rulesText.value = JSON.stringify(ruleData.builtin_rules || [], null, 2); ruleOut.textContent = "已载入内置规则，可继续编辑"; };
+  const loadBuiltin = () => {
+    try {
+      const current = JSON.parse(rulesText.value), ids = new Set(current.map(r => r.id));
+      rulesText.value = JSON.stringify([...current, ...(ruleData.builtin_rules || []).filter(r => !ids.has(r.id))], null, 2);
+      ruleOut.textContent = "已补全内置规则，现有编辑已保留";
+    } catch (err) { ruleOut.textContent = err.message; }
+  };
   return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
-    el("h3", {}, "日志分类规则"), el("p", { class: "config-intro" }, "规则会同时用于新上报数据和存量刷新；匹配字段是页面显示的日志摘要。"), el("div", { class: "config-actions" }, el("button", { onclick: loadBuiltin }, "载入内置规则")), rulesText, el("div", { class: "config-actions" }, el("button", { onclick: () => saveRules(false) }, "预览命中"), el("button", { class: "primary", onclick: () => saveRules(true) }, "保存并刷新"), ruleOut),
+    el("h3", {}, "日志分类规则"), el("p", { class: "config-intro" }, "规则会同时用于新上报数据和存量刷新；匹配字段是页面显示的日志摘要。"), el("div", { class: "config-actions" }, el("button", { onclick: loadBuiltin }, "补全内置规则"), backups, el("button", {onclick:restoreBackup}, "载入备份")), rulesText, el("div", { class: "config-actions" }, el("button", { onclick: () => saveRules(false) }, "预览命中"), el("button", {onclick:() => saveRules("save")}, "保存规则"), el("button", { class: "primary", onclick: () => saveRules(true) }, "保存并刷新"), ruleOut),
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
