@@ -171,6 +171,25 @@ def nnsmith_plan(conn):
 def apply_nnsmith(store, batch_id, changes):
     return _apply_scoped(store, batch_id, changes, 'nnsmith')
 
+def apply_rule_changes(store, batch_id, changes):
+    """Apply administrator-reviewed log-rule matches in one audited transaction."""
+    with store.write() as conn:
+        if conn.execute('SELECT 1 FROM classification_changes WHERE batch_id=?', (batch_id,)).fetchone():
+            raise ValueError('batch already exists; use a new batch or rollback')
+        for change in changes:
+            row = conn.execute('SELECT * FROM executions WHERE exec_id=?', (change['exec_id'],)).fetchone()
+            if row is None or row['exec_uuid'] != change['exec_uuid'] or [row[k] for k in FIELDS] != change['before']:
+                raise ValueError('record changed after planning')
+            conn.execute('INSERT INTO classification_changes VALUES(?,?,?,?)',
+                         (batch_id, row['exec_id'], json.dumps(change['before']), json.dumps(change['after'])))
+            conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',
+                         (*change['after'], row['exec_id']))
+        if changes:
+            refresh_classified_executions(conn, [c['exec_id'] for c in changes])
+            aggregates.rebuild(conn, store.setting(conn, 'perf.tie_threshold'))
+            aggregates.advance_seq(conn)
+    return len(changes)
+
 
 def _apply_scoped(store, batch_id, changes, rule):
     with store.write() as conn:

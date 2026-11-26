@@ -203,6 +203,14 @@ class Settings(Payload):
     changes: dict[str, Any]
     base_revisions: dict[str, int]
 
+class ClassificationRules(Payload):
+    rules: list[dict[str, Any]]
+
+class ClassificationRefresh(Payload):
+    rules: Optional[list[dict[str, Any]]] = None
+    apply: bool = False
+    batch_id: Optional[str] = None
+
 
 class Application(Payload):
     user_id: str

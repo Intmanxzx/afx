@@ -114,7 +114,7 @@ function hourly(series) {
   return root;
 }
 async function settingsPanel() {
-  const [settings, pins] = await Promise.all([api("/api/settings"), api("/api/regression/pins")]);
+  const [settings, pins, ruleData] = await Promise.all([api("/api/settings"), api("/api/regression/pins"), api("/api/admin/classification/rules")]);
   const fields = [["perf.tie_threshold", "Kernel 持平阈值", "number", "0.01", "判定性能差异接近持平的比例阈值。"], ["regression.budget", "回归默认预算", "number", "1", "每个问题默认抽取的回归用例总数。"], ["regression.max_budget", "单问题回归上限", "number", "1", "单个问题允许的最大回归用例数。"],
     ["issue.perf_anchor", "性能对比基准后端", "select", null, "自定义性能对比的基准后端，不是测试任务的执行后端。", ["cpu", "af-legacy", "af-mlir", "triton-npu", "eager-npu"]], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1", "被测后端慢于基准达到该倍数时生成性能问题。"], ["issue.lease_days", "问题租约（天）", "number", "1", "Agent 领取问题后的最长占用时间。"], ["verify.max_cases", "单轮验证用例上限", "number", "1", "一次验证最多执行多少个用例。"]];
   const inputs = {};
@@ -129,6 +129,17 @@ async function settingsPanel() {
   grid.append(el("label", {class:"config-field config-share-field"}, el("span", {class:"config-label"}, "回归四层占比"), el("span", {class:"config-help"}, "控制邻域、哨兵、历史和随机用例在回归任务中的比例。"), el("span", {class:"toolbar"}, Object.entries({ neighbor: "邻域", sentinel: "哨兵", history: "历史", random: "随机" }).map(([k, t]) => {
     shareInputs[k] = el("input", { type: "number", min: 0, max: 100, value: shares[k], style: { width: "70px" } }); return el("label", {}, t, " ", shareInputs[k]); }))));
   const out = el("div");
+  const rulesText = el("textarea", { rows: 8, style: { width: "100%", fontFamily: "monospace" }, value: JSON.stringify(ruleData.rules || [], null, 2) });
+  const ruleOut = el("div");
+  const saveRules = async apply => {
+    try {
+      const rules = JSON.parse(rulesText.value);
+      if (!apply) { const r = await api("/api/admin/classification/refresh", { method: "POST", body: { rules, apply: false } }); ruleOut.textContent = `预览命中 ${r.count} 条`; return; }
+      await api("/api/admin/classification/rules", { method: "PUT", body: { rules } });
+      const r = await api("/api/admin/classification/refresh", { method: "POST", body: { apply: true } });
+      ruleOut.textContent = `已应用 ${r.count} 条（批次 ${r.batch_id}）`;
+    } catch (err) { ruleOut.textContent = String(err.message || err); }
+  };
   const save = async () => {
     const changes = {}, base = {};
     for (const [key, , type] of fields) { const v = type === "number" ? Number(inputs[key].value) : inputs[key].value.trim(); if (JSON.stringify(v) !== JSON.stringify(settings[key].value)) { changes[key] = v; base[key] = settings[key].revision; } }
@@ -139,6 +150,7 @@ async function settingsPanel() {
     catch (err) { out.replaceChildren(el("div", { class: "error-box" }, String(err.message || err))); }
   };
   return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
+    el("h3", {}, "日志分类规则"), el("p", { class: "config-intro" }, "每条规则包含 id、pattern、result；先预览命中数量，再保存并刷新存量数据。"), rulesText, el("div", { class: "config-actions" }, el("button", { onclick: () => saveRules(false) }, "预览命中"), el("button", { class: "primary", onclick: () => saveRules(true) }, "保存并刷新"), ruleOut),
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {

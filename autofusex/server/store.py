@@ -15,6 +15,7 @@ from pathlib import Path
 from autofusex.server import schema
 
 DEFAULT_SETTINGS = {
+    "classification.rules": [],
     # Kernel ratio x/y inside [1/(1+t), 1+t] counts as a tie (design 6.2).
     "perf.tie_threshold": 0.05,
     # Regression selection budget and layer shares (design 2.1); used from P1.
