@@ -130,7 +130,9 @@ async function settingsPanel() {
     shareInputs[k] = el("input", { type: "number", min: 0, max: 100, value: shares[k], style: { width: "70px" } }); return el("label", {}, t, " ", shareInputs[k]); }))));
   const out = el("div");
   const rulesText = el("textarea", { rows: 8, style: { width: "100%", fontFamily: "monospace" }, value: JSON.stringify(ruleData.rules || [], null, 2) });
-  const ruleOut = el("div");
+  rulesText.value = JSON.stringify(ruleData.rules || [], null, 2);
+  const ruleOut = el("div", {role: "status", "aria-live": "polite", class: "panel"}, "预览结果将在这里显示。预览不会修改数据。");
+  let ruleBusy = false;
   let ruleRevision = ruleData.revision;
   const backups = el("select", {}, el("option", {value:""}, "选择历史备份"), (ruleData.history || []).map(h => el("option", {value:String(h.id)}, "版本 " + h.revision + " · " + time(h.at))));
   const restoreBackup = () => {
@@ -138,9 +140,25 @@ async function settingsPanel() {
     if (h) { rulesText.value = JSON.stringify(h.rules, null, 2); ruleOut.textContent = "已载入备份，保存后恢复生效"; }
   };
   const saveRules = async apply => {
+    if (ruleBusy) return;
+    ruleBusy = true;
+    ruleOut.textContent = !apply ? "正在预览，请稍候……只读取日志摘要，不会修改数据。" : "正在保存规则，请稍候……";
     try {
       const rules = JSON.parse(rulesText.value);
-      if (!apply) { const r = await api("/api/admin/classification/refresh", { method: "POST", body: { rules, apply: false } }); ruleOut.textContent = `预览命中 ${r.count} 条`; return; }
+      if (!apply) {
+        const r = await api("/api/admin/classification/refresh", { method: "POST", body: { rules, apply: false } });
+        const counts = new Map();
+        for (const c of r.changes || []) counts.set(c.rule_id, (counts.get(c.rule_id) || 0) + 1);
+        ruleOut.replaceChildren(el("h4", {}, `预览完成：待更新 ${r.count} 条`),
+          el("p", {}, r.count ? "预览未修改数据。以下展示前 50 条记录。" : "没有需要更新的记录：规则未命中，或命中记录已是目标分类。"),
+          el("div", {class:"toolbar"}, [...counts].map(([id,n]) => el("span", {class:"chip info"}, `${id}：${n}`))),
+          el("div", {class:"table-wrap"}, el("table", {class:"grid"},
+            el("thead", {}, el("tr", {}, ["用例","规则","原分类","新分类","日志摘要"].map(x => el("th", {}, x)))),
+            el("tbody", {}, (r.changes || []).slice(0,50).map(c => el("tr", {},
+              el("td", {}, el("a", {href:"#case?key=" + encodeURIComponent(c.case_key) + "&exec=" + encodeURIComponent(c.exec_uuid)}, c.case_key || c.exec_uuid)),
+              el("td", {}, c.rule_id), el("td", {}, c.before.slice(0,3).join(" / ")), el("td", {}, c.after.slice(0,3).join(" / ")), el("td", {}, c.log_summary)))))));
+        return;
+      }
       const saved = await api("/api/admin/classification/rules", { method: "PUT", body: { rules, base_revision: ruleRevision } });
       ruleRevision = saved["classification.rules"].revision;
       rulesText.value = JSON.stringify(saved["classification.rules"].value, null, 2);
@@ -150,7 +168,8 @@ async function settingsPanel() {
       if (apply === "save") { ruleOut.textContent = "已保存并自动备份上一版本，新上报数据立即生效"; return; }
       const r = await api("/api/admin/classification/refresh", { method: "POST", body: { apply: true } });
       ruleOut.textContent = `已应用 ${r.count} 条（批次 ${r.batch_id}）`;
-    } catch (err) { ruleOut.textContent = String(err.message || err); }
+    } catch (err) { ruleOut.replaceChildren(el("div", {class:"error-box",role:"alert"}, String(err.message || err))); }
+    finally { ruleBusy = false; }
   };
   const save = async () => {
     const changes = {}, base = {};
