@@ -42,11 +42,13 @@ def match(rules, backend, text):
             r = rule['result']; return r['function_status'], r['fail_stage'], r['failure_owner'], VERSION, rule['id']
     return None
 
-def plan(store, rules):
+def plan(store, rules, *, summary_only=True):
     rules = validate(rules); changes = []
     with store.connect(readonly=True) as conn:
         for row in conn.execute('SELECT * FROM executions WHERE classifier_version IS NULL OR classifier_version<>?', (VERSION,)):
-            text = '\n'.join(str(x) for x in (row['log_summary'], get_content(conn, row['log_content_id']) if row['log_content_id'] else None, get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None) if x)
+            text = str(row['log_summary'] or '')
+            if not summary_only:
+                text += '\n' + '\n'.join(str(x) for x in (get_content(conn, row['log_content_id']) if row['log_content_id'] else None, get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None) if x)
             result = match(rules, row['backend'], text)
             if not result: continue
             after = list(result[:4]); before = [row[k] for k in FIELDS]
