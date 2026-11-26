@@ -200,8 +200,8 @@ def add_pins(store, principal, body: dict):
         raise IssueError("invalid", "scope must be global or feature (issue pins go through the issue API)")
     if scope == "feature" and (not isinstance(value, str) or value.count("=") != 1 or len(value) > 128):
         raise IssueError("invalid", "feature scope_value must look like op_category=reduce")
-    if not isinstance(keys, list) or not 1 <= len(keys) <= 500 or not all(isinstance(k, str) for k in keys):
-        raise IssueError("invalid", "case_keys must be a list of 1..500 strings")
+    if not isinstance(keys, list) or not 1 <= len(keys) <= 200000 or not all(isinstance(k, str) for k in keys):
+        raise IssueError("invalid", "case_keys must be a list of 1..200000 strings")
     reason = body.get("reason") if isinstance(body.get("reason"), str) else None
 
     def action(conn):

@@ -106,6 +106,18 @@ def _synchronize(client, home):
         saved = request(home, {'action': 'platform_retest', 'task': task})
         if saved.get('delivered'):
             continue
+        ledger = TaskLedger(Path(saved['queue']))
+        rows = [ledger.get(identity) for identity in saved['task_ids']]
+        if all(row['state'] in {'completed', 'cancelled'} for row in rows) and any(row['state'] == 'cancelled' for row in rows):
+            reason = '; '.join(sorted({row['reason'] or 'cancelled' for row in rows if row['state'] == 'cancelled'}))
+            client.api.call('POST', f"/api/client/retests/{task['task_id']}/complete", {
+                'request_key': f"terminal-{task['task_id']}-{task['lease_id'][:8]}",
+                'lease_id': task['lease_id'], 'exec_uuids': [], 'installed': installed,
+                'terminal_reason': reason[:500]})
+            saved['delivered'] = True
+            atomic(retest_directory(home) / ('task-' + str(task['task_id']) + '.json'), saved)
+            finished += 1
+            continue
         ids = completed(saved)
         if not ids:
             continue

@@ -563,6 +563,11 @@ CREATE INDEX issue_current_exec ON issue_current(exec_id);
 CREATE UNIQUE INDEX issues_cluster_v2 ON issues(dimension,signature) WHERE cluster_generation=2;
 """),
 
+    (21, """
+ALTER TABLE retest_tasks ADD COLUMN assigned_user TEXT;
+UPDATE retest_tasks SET assigned_user=requested_by WHERE issue_id='';
+CREATE INDEX retest_tasks_assignee ON retest_tasks(assigned_user,status,npu_arch,required_backend);
+"""),
 ]
 
 CONTENT = [

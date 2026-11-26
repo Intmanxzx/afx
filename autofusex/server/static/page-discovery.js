@@ -1,10 +1,10 @@
 "use strict";
 // 问题发现: execution records grouped by case (expanded/pivot views) + manual retests.
-import { el, store, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
+import { el, store, BACKEND_LABEL, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
 import { resultFilterParams } from "./result-filter.js";
 import { select, stackBar, statusChip, pagination } from "./widgets.js";
 import { PAGES, go, render, caseDrawer, openCase } from "./router.js";
-import { isAdmin } from "./auth.js";
+import { isAdmin, me } from "./auth.js";
 import { showActionBar, hideActionBar, popMenu, openDrawer } from "./ui.js";
 
 // Keep copied commands tied to the backend represented by the row.
@@ -20,6 +20,7 @@ export const COLUMNS = [
   ["user_id", "用户"], ["client", "节点"], ["backend", "后端"], ["npu_arch", "芯片"], ["status", "结果"], ["log_summary", "日志摘要"],
   ["compile_ns", "编译"], ["kernel_ns", "Kernel"], ["e2e_ns", "E2E"], ["run", "批次"], ["created_at", "时间"],
 ];
+let discoverySelection = { filter: null, keys: new Set() };
 PAGES.discovery = async (root, params) => {
   const tabs = el("div", { class: "tabs" },
     el("button", { class: params.get("sub") !== "retests" ? "active" : "", onclick: () => go("discovery", {}) }, "执行记录"),
@@ -31,7 +32,9 @@ PAGES.discovery = async (root, params) => {
   const visible = new Set(store.get(COLS_KEY, COLUMNS.map(c => c[0]).filter(k => k !== "client" && k !== "run")));
   const panel = el("section", { class: "panel" });
   root.append(panel);
-  const selected = new Set();
+  const filterKey = JSON.stringify([me?.user_id, filters]);
+  if (discoverySelection.filter !== filterKey) discoverySelection = { filter: filterKey, keys: new Set() };
+  const selected = discoverySelection.keys;
   const table = el("div", { class: "table-wrap" });
   const pagerTop = el("div", { class: "toolbar" });
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
@@ -40,6 +43,23 @@ PAGES.discovery = async (root, params) => {
   panel.append(el("h2", {}, "执行记录", el("span", { class: "spacer" }),
     select([["expanded", "展开视图"], ["pivot", "后端透视"]], view, v => { store.set(VIEW_KEY, v); render(); }),
     el("button", { onclick: () => { colpick.classList.toggle("hidden"); if (colpick.classList.contains("hidden")) delete panel.dataset.custom; else panel.dataset.custom = "1"; } }, "显示列")), colpick, pagerTop, table, more);
+  let selecting = false;
+  let selectionGeneration = 0;
+  const clearSelection = () => { selectionGeneration++; selected.clear(); redraw(); updateBar(); };
+  const selectAll = el("button", { title: "选择当前筛选命中的全部用例（包括其他页）", onclick: async () => {
+    const generation = ++selectionGeneration;
+    selecting = true; selectAll.disabled = true; selectAll.textContent = "选择中…";
+    panel.dataset.custom = "1";
+    try {
+      const result = await api("/api/cases/selection" + qs(filters));
+      if (!panel.isConnected || generation !== selectionGeneration) return;
+      selected.clear(); for (const key of result.case_keys) selected.add(key);
+      redraw();
+    } catch (err) { alert(err.message); }
+    finally { selecting = false; selectAll.disabled = false; selectAll.textContent = "选择全部"; if (panel.isConnected) updateBar(); }
+  } }, "选择全部");
+  panel.insertBefore(el("div", { class: "toolbar" }, selectAll,
+    el("button", { onclick: clearSelection }, "清空选择")), pagerTop);
   let groups = [];
   const requestedPage = Number(params.get("page") || 1);
   const pageNumber = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -52,18 +72,19 @@ PAGES.discovery = async (root, params) => {
         go("discovery", { ...Object.fromEntries(params), page: targetPage }), "用例"));
   };
   const updateBar = () => {
-    if (selected.size) panel.dataset.custom = "1"; else delete panel.dataset.custom;  // keep the selection through auto refresh
+    if (selected.size || selecting) panel.dataset.custom = "1"; else delete panel.dataset.custom;  // keep the selection through auto refresh
     if (!selected.size) return hideActionBar();
     showActionBar(el("span", {}, `已选 ${selected.size} 个用例`),
       el("button", { onclick: () => retestDrawer([...selected], groups) }, "复测"),
       isAdmin() ? el("button", { onclick: () => pinGlobal([...selected]) }, "加入回归集") : null,
-      el("button", { onclick: () => { selected.clear(); redraw(); hideActionBar(); } }, "取消"));
+      el("button", { onclick: clearSelection }, "取消"));
   };
   const redraw = () => {
     table.replaceChildren(groups.length ? (view === "pivot" ? pivotTable(groups, selected, updateBar) : expandedTable(groups, visible, selected, updateBar))
       : el("div", { class: "empty" }, "没有匹配的用例"));
   };
   await load();
+  updateBar();
 };
 
 function caseCell(group, selected, updateBar, rowSpan) {
@@ -147,25 +168,54 @@ function pivotTable(groups, selected, updateBar) {
   return el("table", { class: "grid" }, el("thead", {}, el("tr", {}, el("th", {}, "用例"), el("th", {}, "批次"), backends.map(b => el("th", {}, label(b))))), body);
 }
 
-export function retestDrawer(keys, groups) {
+export async function retestDrawer(keys, groups) {
   const known = new Set(groups.flatMap(g => g.executions.map(e => e.backend)).filter(b => b !== "cpu"));
-  const backends = [...(known.size ? known : new Set(["af-mlir"]))];
-  const checks = backends.map(b => el("label", {}, el("input", { type: "checkbox", value: b, checked: b.startsWith("af-") }), " ", label(b)));
+  const backends = Object.keys(BACKEND_LABEL).filter(b => b !== "cpu");
+  const checks = backends.map(b => el("label", {}, el("input", { type: "checkbox", value: b, checked: known.size ? known.has(b) : b === "af-mlir" }), " ", label(b)));
   const reps = el("input", { type: "number", min: 1, max: 5, value: 1, style: { width: "80px" } });
   const out = el("div");
+  const userPanel = el("div");
+  const userChecks = [];
+  const admin = isAdmin();
+  let usersReady = !admin;
+  let submitted = false;
+  const requestKey = rkey();
   const submit = async () => {
+    if (submitted || !usersReady) return;
     const chosen = checks.map(c => c.querySelector("input")).filter(i => i.checked).map(i => i.value);
     if (!chosen.length) { out.replaceChildren(errorBox("至少选择一个后端")); return; }
+    const users = userChecks.filter(i => i.checked).map(i => i.value);
+    if (admin && !users.length) { out.replaceChildren(errorBox("至少选择一个复跑用户")); return; }
+    submitted = true; submitButton.disabled = true;
     try {
-      const res = await api("/api/retests", { method: "POST", body: { request_key: rkey(), case_keys: keys, backends: chosen, repetitions: Number(reps.value) || 1 } });
-      out.replaceChildren(...[el("div", { class: "chip ok" }, `已创建 ${res.tasks} 个复测任务`), res.skipped_without_arch ? el("div", { class: "muted small" }, `${res.skipped_without_arch} 个用例没有该后端的执行记录，无法确定芯片`) : null,
+      const res = await api("/api/retests", { method: "POST", body: { request_key: requestKey, case_keys: keys, ...(admin ? { user_ids: users } : {}), backends: chosen, repetitions: Number(reps.value) || 1 } });
+      out.replaceChildren(...[el("div", { class: "chip ok" }, `已创建 ${res.tasks} 个复测任务`), res.skipped_without_arch ? el("div", { class: "muted small" }, `${res.skipped_without_arch} 项任务没有可用的 NPU 执行记录，无法确定芯片`) : null,
         el("div", { class: "toolbar" }, el("button", { onclick: () => go("discovery", { sub: "retests" }) }, "查看复测记录"))].filter(Boolean));
-    } catch (err) { out.replaceChildren(errorBox(err)); }
+    } catch (err) { submitted = false; submitButton.disabled = false; out.replaceChildren(errorBox(err)); }
   };
+  const submitButton = el("button", { class: "primary", onclick: submit, disabled: !usersReady }, "提交复测");
   openDrawer(el("h2", {}, `复测 ${keys.length} 个用例`),
     el("div", { class: "muted small" }, "任务派发给对应芯片上在线的客户端，复测结果会作为新批次出现在原用例下，并更新当前结果。"),
     el("div", { class: "form-grid", style: { marginTop: "12px" } }, el("div", {}, "后端"), el("div", { class: "toolbar" }, checks), el("div", {}, "重复次数"), reps),
-    el("div", { class: "toolbar", style: { marginTop: "12px" } }, el("button", { class: "primary", onclick: submit }, "提交复测")), out);
+    userPanel, el("div", { class: "toolbar", style: { marginTop: "12px" } }, submitButton), out);
+  if (admin) {
+    userPanel.textContent = "正在加载复跑用户…";
+    try {
+      const data = await api("/api/admin/users");
+      const users = data.users.filter(u => u.status === "active" && ["admin", "developer"].includes(u.role));
+      const labels = users.map(u => {
+        const input = el("input", { type: "checkbox", value: u.user_id, checked: u.user_id === me?.user_id });
+        userChecks.push(input); return el("label", {}, input, " ", u.user_id);
+      });
+      userPanel.replaceChildren(el("h3", {}, "复跑用户"),
+        el("div", { class: "muted small" }, "任务平均分配到所选用户；更换客户端后仍可领取。用户需要有匹配后端和芯片的客户端。"),
+        el("div", { class: "toolbar" },
+          el("button", { onclick: () => userChecks.forEach(i => { i.checked = true; }) }, "全选"),
+          el("button", { onclick: () => userChecks.forEach(i => { i.checked = false; }) }, "清空选择")),
+        el("div", { class: "toolbar" }, labels));
+      usersReady = true; submitButton.disabled = false;
+    } catch (err) { userPanel.replaceChildren(errorBox(err)); }
+  }
 }
 export async function pinGlobal(keys) {
   const reason = prompt(`把 ${keys.length} 个用例加入全局必选回归集，原因：`);
@@ -181,10 +231,12 @@ async function renderRetests(root) {
     const detailId = "retest-details-" + encodeURIComponent(r.batch);
     const detail = el("tr", { class: "retest-details", id: detailId },
       el("td", { colspan: 8 }, el("div", { class: "retest-details-inner" },
+          el("div", { class: "muted small" }, (r.assignments || []).map(a => a.user_id + ": " + a.tasks + " 个任务").join(" · ")),
+          r.items_truncated ? el("div", { class: "muted small" }, "仅显示前 100 个任务，统计包含整个批次。") : null,
           el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Seed", "后端 / 芯片", "状态", "结果详情"].map(t => el("th", {}, t)))),
             el("tbody", {}, (r.items || []).map(t => el("tr", {},
               el("td", {}, el("a", { class: "mono small", href: "#case?key=" + encodeURIComponent(t.case_key), onclick: e => { e.preventDefault(); openCase(t.case_key); } }, t.case_key)),
-              el("td", {}, t.backends.split(",").map(label).join(" / "), el("div", { class: "muted small" }, archLabel(t.npu_arch))),
+              el("td", {}, t.backends.split(",").map(label).join(" / "), el("div", { class: "muted small" }, archLabel(t.npu_arch)), el("div", { class: "muted small" }, "分配用户：" + (t.assigned_user || "—"))),
               el("td", {}, ({ pass: "通过", fail: "失败", invalid: "无效", skip: "跳过" }[t.result] || { pending: "待执行", leased: "执行中", done: "已完成", invalid: "无效" }[t.status] || t.status),
                 t.detail ? el("div", { class: "muted small" }, t.detail) : null),
               el("td", {}, t.executions.length ? t.executions.map(x => el("a", { href: "#case?key=" + encodeURIComponent(t.case_key) + "&exec=" + encodeURIComponent(x.exec_uuid), style: { marginRight: "10px" } }, label(x.backend) + " 详情")) : "暂无执行结果")

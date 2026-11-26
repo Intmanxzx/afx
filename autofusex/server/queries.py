@@ -173,7 +173,7 @@ _EXEC_COLUMNS = ("e.exec_id, e.exec_uuid, e.case_revision, e.backend, e.npu_arch
 def case_page(store: Store, *, after: int | None = None, limit: int = 50, backend: str | None = None,
               status: str | None = None, arch: str | None = None, case_key: str | None = None,
               case_id: int | None = None, q: str | None = None, results=None, selected_backends=None, chips=None,
-              page: int | None = None) -> dict:
+              page: int | None = None, keys_only: bool = False) -> dict:
     """Case groups newest first, each with its latest executions (design 6.3)."""
     if not 1 <= limit <= MAX_PAGE:
         raise QueryError(f"limit must be 1..{MAX_PAGE}")
@@ -215,6 +215,11 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
             where.append(search.STATUS[status])
         selector = ("SELECT DISTINCT h.case_id FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
                     f"WHERE {' AND '.join(where)}")
+    if keys_only:
+        with search.time_limit(conn):
+            keys = [r[0] for r in conn.execute(
+                f"SELECT case_key FROM cases WHERE case_id IN ({selector}) ORDER BY case_id DESC", args)]
+        return {"case_keys": keys}
     if page is None:
         with search.time_limit(conn):
             ids = [r[0] for r in conn.execute(

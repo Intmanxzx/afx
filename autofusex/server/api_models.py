@@ -88,19 +88,21 @@ class ClaimRetests(RequestKey):
 class CompleteRetest(Lease):
     installed: dict[str, Installed]
     exec_uuids: list[str]
+    terminal_reason: Optional[str] = Field(default=None, max_length=500)
 
 
 class ManualRetest(RequestKey):
-    case_keys: list[str] = Field(min_length=1, max_length=200)
+    case_keys: list[str] = Field(min_length=1, max_length=200000)
     backends: list[str] = Field(min_length=1, max_length=4)
     npu_arch: Optional[str] = None
+    user_ids: Optional[list[str]] = None
     repetitions: int = Field(default=1, ge=1, le=5)
 
 
 class Pins(RequestKey):
     scope: Literal['global', 'feature']
     scope_value: str = ''
-    case_keys: list[str] = Field(min_length=1, max_length=500)
+    case_keys: list[str] = Field(min_length=1, max_length=200000)
     reason: Optional[str] = None
 
 
