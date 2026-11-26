@@ -159,3 +159,11 @@ MLIR 源码 dialect/AFIR/IR/AFIR.h 声明稳定诊断分类；LoopGenerate.cpp �
 classification_mlir.py 支持只读清单预览、离线应用和回滚，只修正原阶段为空、unknown、unknown_retest 的 AF 失败记录；应用时复核范围、原值和诊断。保持执行 UUID、原始上报、客户端协议、capture_version、用例和问题状态，重建派生统计。
 
 2026-11-25：当前线上主机 afx 的 /srv/afx-platform 部署分类器 v12，应用 afir-diagnostics-20261125-v12 批次 15 条，全部为当前执行头（af-legacy 7、af-mlir 8）。指定执行已由 runtime_fail/unknown_retest 改为 compile_fail/mlir，公开执行与总览接口复核通过。平台测试 356 passed；私有完整备份、停写最终快照、副本应用/回滚/重新应用演练通过；生产三库 integrity_check、原始事实哈希及 191,249 个执行头互斥统计校验通过。备份、manifest 和报告保存在 /srv/afx-platform/private/afir-v12-20261125，原 v11 部署目录保留。
+
+### 分类刷新任务与运维分栏
+
+运维页顶部的客户端、用户运行概览、吞吐图保持公开。登录用户可访问任务配置；平台配置、分类规则、刷新记录仅管理员可访问。
+
+“保存并刷新”先保存规则，再 POST /api/admin/classification/jobs（request_key、规则快照）。请求立即返回持久化 job_id，页面跳转 #ops?tab=jobs&job=ID；每三秒读取任务状态，支持刷新或收藏此地址。GET 同路径列出最近 30 个任务，GET /ID 返回进度、失败原因、每条规则的更新数量与前 50 条结果样本。
+
+任务依次显示扫描摘要、更新分类、更新关联问题、重建统计、完成/失败。同一时间只允许一个活动任务。同一用户重复提交同 request_key 和同规则返回同一任务，不会重复写入。规则快照与状态保存在 core.db.classification_jobs；最终完成状态和分类修改在同一个事务提交。服务重启后继续未完成任务；尚未提交的事务由 SQLite 回滚后重新规划。保存规则成功而提交任务失败时，规则仍对新上报数据生效，可在刷新记录确认没有活动任务后重新提交。

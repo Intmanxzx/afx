@@ -173,6 +173,9 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
                   redirect_slashes=False)
     app.state.store = store
     ingestor = Ingestor(store)
+    from autofusex.server.classification_jobs import RefreshJobs
+    refresh_jobs = RefreshJobs(store)
+    app.add_event_handler('startup', refresh_jobs.start)
     slots = threading.BoundedSemaphore(MAX_CONCURRENT)
     aggregate_slots = threading.BoundedSemaphore(MAX_AGGREGATE_CONCURRENT)
     overview_cache = ReadCache(max_entries=128, max_bytes=32 * 1024 * 1024, size=len)
@@ -605,6 +608,19 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
         if not body.apply: return _success({'changes': changes, 'count': len(changes), 'applied': False})
         batch = body.batch_id or ('classification-rules-' + str(int(time.time())))
         return _success({'count': apply_rule_changes(store, batch, changes), 'batch_id': batch, 'applied': True})
+
+    @route('/api/admin/classification/jobs', 'POST')
+    def submit_classification_job(body: m.ClassificationJob, principal=Depends(administrator)):
+        from autofusex.server.classification_rules import load
+        return _success(refresh_jobs.submit(principal.user_id, body.request_key, body.rules if body.rules is not None else load(store)))
+
+    @route('/api/admin/classification/jobs')
+    def classification_jobs(principal=Depends(administrator)):
+        return _success(refresh_jobs.list())
+
+    @route('/api/admin/classification/jobs/{job_id}')
+    def classification_job(job_id: str, principal=Depends(administrator)):
+        return _success(refresh_jobs.get(job_id))
 
     @route('/api/config/operators')
     def operators(principal=Depends(writer)):

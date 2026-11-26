@@ -570,6 +570,17 @@ CREATE INDEX retest_tasks_assignee ON retest_tasks(assigned_user,status,npu_arch
 """),
 ]
 
+CORE.append((22, """
+CREATE TABLE classification_jobs(
+ job_id TEXT PRIMARY KEY, actor TEXT NOT NULL, request_key TEXT NOT NULL,
+ rules TEXT NOT NULL, status TEXT NOT NULL, phase TEXT NOT NULL,
+ scanned INTEGER NOT NULL DEFAULT 0, matched INTEGER NOT NULL DEFAULT 0,
+ result TEXT, error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ UNIQUE(actor,request_key)
+);
+CREATE UNIQUE INDEX classification_jobs_active ON classification_jobs((1)) WHERE status IN ('queued','running');
+"""))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(

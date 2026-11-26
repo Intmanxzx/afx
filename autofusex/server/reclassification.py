@@ -171,7 +171,7 @@ def nnsmith_plan(conn):
 def apply_nnsmith(store, batch_id, changes):
     return _apply_scoped(store, batch_id, changes, 'nnsmith')
 
-def apply_rule_changes(store, batch_id, changes):
+def apply_rule_changes(store, batch_id, changes, *, progress=None, complete=None):
     """Apply administrator-reviewed log-rule matches in one audited transaction."""
     with store.write() as conn:
         if conn.execute('SELECT 1 FROM classification_changes WHERE batch_id=?', (batch_id,)).fetchone():
@@ -185,9 +185,12 @@ def apply_rule_changes(store, batch_id, changes):
             conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',
                          (*change['after'], row['exec_id']))
         if changes:
+            if progress: progress('issues')
             refresh_classified_executions(conn, [c['exec_id'] for c in changes])
+            if progress: progress('statistics')
             aggregates.rebuild(conn, store.setting(conn, 'perf.tie_threshold'))
             aggregates.advance_seq(conn)
+        if complete: complete(conn)
     return len(changes)
 
 
