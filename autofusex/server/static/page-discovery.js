@@ -172,6 +172,7 @@ export async function retestDrawer(keys, groups) {
   const known = new Set(groups.flatMap(g => g.executions.map(e => e.backend)).filter(b => b !== "cpu"));
   const backends = Object.keys(BACKEND_LABEL).filter(b => b !== "cpu");
   const checks = backends.map(b => el("label", {}, el("input", { type: "checkbox", value: b, checked: known.size ? known.has(b) : b === "af-mlir" }), " ", label(b)));
+  const force = el("input", { type: "checkbox" });
   const reps = el("input", { type: "number", min: 1, max: 5, value: 1, style: { width: "80px" } });
   const out = el("div");
   const userPanel = el("div");
@@ -188,8 +189,8 @@ export async function retestDrawer(keys, groups) {
     if (admin && !users.length) { out.replaceChildren(errorBox("至少选择一个复跑用户")); return; }
     submitted = true; submitButton.disabled = true;
     try {
-      const res = await api("/api/retests", { method: "POST", body: { request_key: requestKey, case_keys: keys, ...(admin ? { user_ids: users } : {}), backends: chosen, repetitions: Number(reps.value) || 1 } });
-      out.replaceChildren(...[el("div", { class: "chip ok" }, `已创建 ${res.tasks} 个复测任务`), res.skipped_without_arch ? el("div", { class: "muted small" }, `${res.skipped_without_arch} 项任务没有可用的 NPU 执行记录，无法确定芯片`) : null,
+      const res = await api("/api/retests", { method: "POST", body: { request_key: requestKey, case_keys: keys, ...(admin ? { user_ids: users } : {}), backends: chosen, force: force.checked, repetitions: Number(reps.value) || 1 } });
+      out.replaceChildren(...[el("div", { class: "chip ok" }, `已创建 ${res.tasks} 个复测任务`), res.skipped_no_coverage ? el("div", { class: "muted small" }, "已跳过 " + res.skipped_no_coverage + " 个无 Autofuse 覆盖的目标") : null, res.skipped_without_arch ? el("div", { class: "muted small" }, `${res.skipped_without_arch} 项任务没有可用的 NPU 执行记录，无法确定芯片`) : null,
         el("div", { class: "toolbar" }, el("button", { onclick: () => go("discovery", { sub: "retests" }) }, "查看复测记录"))].filter(Boolean));
     } catch (err) { submitted = false; submitButton.disabled = false; out.replaceChildren(errorBox(err)); }
   };
@@ -197,6 +198,7 @@ export async function retestDrawer(keys, groups) {
   openDrawer(el("h2", {}, `复测 ${keys.length} 个用例`),
     el("div", { class: "muted small" }, "任务派发给对应芯片上在线的客户端，复测结果会作为新批次出现在原用例下，并更新当前结果。"),
     el("div", { class: "form-grid", style: { marginTop: "12px" } }, el("div", {}, "后端"), el("div", { class: "toolbar" }, checks), el("div", {}, "重复次数"), reps),
+    el("label", {}, force, " 强制复测已标记无 Autofuse 覆盖的目标"),
     userPanel, el("div", { class: "toolbar", style: { marginTop: "12px" } }, submitButton), out);
   if (admin) {
     userPanel.textContent = "正在加载复跑用户…";

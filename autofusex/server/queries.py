@@ -302,6 +302,9 @@ def case_history(store: Store, case_key: str, *, after=None, limit: int = 50) ->
     if case is None:
         raise QueryError("case not found")
     case = dict(case)
+    case['coverage_exclusions'] = [dict(r) for r in conn.execute(
+        "SELECT backend,npu_arch,reason,task_id,installed,observed_at FROM case_coverage "
+        "WHERE case_id=? AND case_revision=?", (case['case_id'], case['case_revision']))]
     rows = [dict(r) for r in conn.execute(
         f"SELECT {_EXEC_COLUMNS} FROM executions e WHERE e.case_id=? AND e.exec_id<? ORDER BY e.exec_id DESC LIMIT ?",
         (case["case_id"], after if after is not None else 1 << 62, limit))]

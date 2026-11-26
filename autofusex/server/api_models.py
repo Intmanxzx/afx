@@ -92,6 +92,7 @@ class CompleteRetest(Lease):
 
 
 class ManualRetest(RequestKey):
+    force: bool = False
     case_keys: list[str] = Field(min_length=1, max_length=200000)
     backends: list[str] = Field(min_length=1, max_length=4)
     npu_arch: Optional[str] = None

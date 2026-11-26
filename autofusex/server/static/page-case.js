@@ -40,6 +40,8 @@ PAGES.case = async (root, params) => {
     el("div", { class: "kv" }, [["来源", c.case_source], ["形态", c.is_dynamic ? `动态（${c.shape_count} 个 Shape）` : "静态"], ["节点数", c.node_count ?? "—"],
       ["算子", (c.op_display || c.op_types || "—").split(",").join(" · ")], ["数据类型", (c.dtypes || "—").split(",").join(" · ")], ["最大维度 / 张量元素", `${fmt(c.max_dim)} / ${fmt(c.max_numel)}`],
       ["首次出现", time(c.first_seen_at)], ["执行次数", fmt(history.total)]].flat().map(v => el("div", {}, v)))));
+  for (const observation of c.coverage_exclusions || []) root.append(el("div", { class: "panel muted" },
+    label(observation.backend) + " / " + observation.npu_arch + "：无 Autofuse 覆盖，默认跳过后续复测。观测时间：" + time(observation.observed_at)));
   // Shape selector + DAG
   const dagBox = el("section", { class: "panel" });
   root.append(dagBox);
