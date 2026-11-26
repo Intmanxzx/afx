@@ -113,3 +113,24 @@ def test_no_coverage_receipt_finishes_without_fabricating_execution(tmp_path):
     assert retests.complete(w.store, w.client, task['task_id'], dict(body))['result'] == 'invalid'
     assert w.claim_tasks() == []
     assert w.store.reader().execute('SELECT COUNT(*) FROM executions').fetchone()[0] == 1
+
+
+def test_new_retest_backends_inherit_case_chip(tmp_path):
+    w = World(tmp_path)
+    w.upload([item('only-mlir-original', 1)])
+    result = retests.create_manual(w.store, w.client, dict(request_key='all-backends',
+        case_keys=[seed(1)], backends=['af-mlir', 'af-legacy', 'triton-npu', 'eager-npu']))
+    assert result['tasks'] == 4 and result['skipped_without_arch'] == 0
+    rows = w.store.reader().execute('SELECT required_backend,npu_arch FROM retest_tasks').fetchall()
+    assert {(r[0], r[1]) for r in rows} == {(b, '910b') for b in ('af-mlir', 'af-legacy', 'triton-npu', 'eager-npu')}
+    installed = {b: {'version':'1', 'sha256':'a'*64} for b in ('af-legacy','triton-npu','eager-npu')}
+    tasks = w.claim_tasks(installed=installed)
+    assert {t['required']['backend'] for t in tasks} == set(installed)
+
+
+def test_new_backend_explicit_chip_overrides_history(tmp_path):
+    w = World(tmp_path)
+    w.upload([item('original-chip', 1)])
+    retests.create_manual(w.store, w.client, dict(request_key='explicit-chip',
+        case_keys=[seed(1)], backends=['triton-npu'], npu_arch='950'))
+    assert w.store.reader().execute('SELECT npu_arch FROM retest_tasks').fetchone()[0] == '950'

@@ -331,6 +331,11 @@ def create_manual(store: Store, principal: Principal, body: dict):
             for backend in dict.fromkeys(backends):
                 arches = [arch] if arch else [r[0] for r in conn.execute(
                     "SELECT DISTINCT npu_arch FROM execution_heads WHERE case_id=? AND backend=?", (case_id, backend))]
+                if not arches and arch is None:
+                    # A newly selected backend inherits this case's known NPU chips.
+                    arches = [r[0] for r in conn.execute(
+                        "SELECT DISTINCT npu_arch FROM execution_heads WHERE case_id=? "
+                        "AND backend<>'cpu' AND npu_arch<>'' ORDER BY npu_arch", (case_id,))]
                 if not arches:
                     skipped.append(case_id)
                     continue

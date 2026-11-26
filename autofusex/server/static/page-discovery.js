@@ -1,6 +1,6 @@
 "use strict";
 // 问题发现: execution records grouped by case (expanded/pivot views) + manual retests.
-import { el, store, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
+import { el, store, BACKEND_LABEL, VIEW_KEY, COLS_KEY, api, qs, rkey, errorBox, label, archLabel, time, ns } from "./core.js";
 import { resultFilterParams } from "./result-filter.js";
 import { select, stackBar, statusChip, pagination } from "./widgets.js";
 import { PAGES, go, render, caseDrawer, openCase } from "./router.js";
@@ -170,8 +170,8 @@ function pivotTable(groups, selected, updateBar) {
 
 export async function retestDrawer(keys, groups) {
   const known = new Set(groups.flatMap(g => g.executions.map(e => e.backend)).filter(b => b !== "cpu"));
-  const backends = [...(known.size ? known : new Set(["af-mlir"]))];
-  const checks = backends.map(b => el("label", {}, el("input", { type: "checkbox", value: b, checked: b.startsWith("af-") }), " ", label(b)));
+  const backends = Object.keys(BACKEND_LABEL).filter(b => b !== "cpu");
+  const checks = backends.map(b => el("label", {}, el("input", { type: "checkbox", value: b, checked: known.size ? known.has(b) : b === "af-mlir" }), " ", label(b)));
   const reps = el("input", { type: "number", min: 1, max: 5, value: 1, style: { width: "80px" } });
   const out = el("div");
   const userPanel = el("div");
@@ -189,7 +189,7 @@ export async function retestDrawer(keys, groups) {
     submitted = true; submitButton.disabled = true;
     try {
       const res = await api("/api/retests", { method: "POST", body: { request_key: requestKey, case_keys: keys, ...(admin ? { user_ids: users } : {}), backends: chosen, repetitions: Number(reps.value) || 1 } });
-      out.replaceChildren(...[el("div", { class: "chip ok" }, `已创建 ${res.tasks} 个复测任务`), res.skipped_without_arch ? el("div", { class: "muted small" }, `${res.skipped_without_arch} 个用例没有该后端的执行记录，无法确定芯片`) : null,
+      out.replaceChildren(...[el("div", { class: "chip ok" }, `已创建 ${res.tasks} 个复测任务`), res.skipped_without_arch ? el("div", { class: "muted small" }, `${res.skipped_without_arch} 项任务没有可用的 NPU 执行记录，无法确定芯片`) : null,
         el("div", { class: "toolbar" }, el("button", { onclick: () => go("discovery", { sub: "retests" }) }, "查看复测记录"))].filter(Boolean));
     } catch (err) { submitted = false; submitButton.disabled = false; out.replaceChildren(errorBox(err)); }
   };
