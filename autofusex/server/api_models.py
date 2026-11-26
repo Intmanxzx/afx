@@ -215,6 +215,9 @@ class ClassificationRefresh(Payload):
     apply: bool = False
     batch_id: Optional[str] = None
 
+class ClassificationJob(RequestKey):
+    rules: Optional[list[dict[str, Any]]] = None
+
 
 class Application(Payload):
     user_id: str

@@ -2,10 +2,10 @@
 // 平台运维: client fleet, per-user throughput, hourly chart, platform settings and
 // per-user task configuration.
 import { el, svg, api, qs, rkey, store, FLEET_SCOPE_KEY, time, fmt, label, archLabel, BACKEND_LABEL } from "./core.js";
-import { PAGES, render, openCase } from "./router.js";
+import { PAGES, render, openCase, go } from "./router.js";
 import { me, isAdmin } from "./auth.js";
 
-PAGES.ops = async root => {
+PAGES.ops = async (root, params) => {
   const fleetScope = isAdmin() || !me ? "all" : store.get(FLEET_SCOPE_KEY, "all");
   const data = await api("/api/ops/summary" + qs({ scope: fleetScope === "all" ? "all" : null }));
   const mb = Object.values(data.db_bytes).reduce((a, b) => a + b, 0) / 1048576;
@@ -55,8 +55,12 @@ PAGES.ops = async root => {
       el("tbody", {}, overviewRows.length ? overviewRows : [el("tr", {}, el("td", { colspan: 12, class: "empty" }, "暂无用户运行数据"))]))));
   root.append(overviewPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（用例/小时）"), hourly(data.hourly)));
-  if (me) { const taskPanel = await taskConfigurationPanel(); taskPanel.dataset.custom = "1"; root.append(taskPanel); }
-  if (isAdmin()) { const sp = await settingsPanel(); sp.dataset.custom = "1"; root.append(sp); }  // forms: never overwrite edits
+  if (!me) return;
+  const selected = params.get("tab") || "tasks";
+  const tabs = [["tasks","任务配置"], ...(isAdmin() ? [["platform","平台配置"],["rules","分类规则"],["jobs","刷新记录"]] : [])];
+  root.append(el("nav", {class:"toolbar", role:"tablist"}, tabs.map(([id,title]) => el("button", {role:"tab", "aria-selected":selected===id ? "true":"false", class:selected===id ? "primary":"", onclick:() => go("ops", {tab:id})},title))));
+  const panel = selected === "tasks" ? await taskConfigurationPanel() : isAdmin() ? selected === "jobs" ? await classificationJobsPanel(params.get("job")) : await settingsPanel(selected) : el("p", {}, "仅管理员可访问");
+  panel.dataset.custom = "1"; root.append(panel);
 };
 function clientControls(client, latestVersion) {
   const fresh = client.online && client.daemon_state_at && Date.now() - client.daemon_state_at < 300000;
@@ -113,7 +117,7 @@ function hourly(series) {
   root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max} 个用例/小时`));
   return root;
 }
-async function settingsPanel() {
+async function settingsPanel(mode = "platform") {
   const [settings, pins, ruleData] = await Promise.all([api("/api/settings"), api("/api/regression/pins"), api("/api/admin/classification/rules")]);
   const fields = [["perf.tie_threshold", "Kernel 持平阈值", "number", "0.01", "判定性能差异接近持平的比例阈值。"], ["regression.budget", "回归默认预算", "number", "1", "每个问题默认抽取的回归用例总数。"], ["regression.max_budget", "单问题回归上限", "number", "1", "单个问题允许的最大回归用例数。"],
     ["issue.perf_anchor", "性能对比基准后端", "select", null, "自定义性能对比的基准后端，不是测试任务的执行后端。", ["cpu", "af-legacy", "af-mlir", "triton-npu", "eager-npu"]], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1", "被测后端慢于基准达到该倍数时生成性能问题。"], ["issue.lease_days", "问题租约（天）", "number", "1", "Agent 领取问题后的最长占用时间。"], ["verify.max_cases", "单轮验证用例上限", "number", "1", "一次验证最多执行多少个用例。"]];
@@ -166,8 +170,8 @@ async function settingsPanel() {
       ruleData.history = latest.history;
       backups.replaceChildren(el("option", {value:""}, "选择历史备份"), latest.history.map(h => el("option", {value:String(h.id)}, "版本 " + h.revision + " · " + time(h.at))));
       if (apply === "save") { ruleOut.textContent = "已保存并自动备份上一版本，新上报数据立即生效"; return; }
-      const r = await api("/api/admin/classification/refresh", { method: "POST", body: { apply: true } });
-      ruleOut.textContent = `已应用 ${r.count} 条（批次 ${r.batch_id}）`;
+      const job = await api("/api/admin/classification/jobs", {method:"POST", body:{request_key:rkey(), rules:saved["classification.rules"].value}});
+      go("ops", {tab:"jobs", job:job.job_id});
     } catch (err) { ruleOut.replaceChildren(el("div", {class:"error-box",role:"alert"}, String(err.message || err))); }
     finally { ruleBusy = false; }
   };
@@ -187,8 +191,9 @@ async function settingsPanel() {
       ruleOut.textContent = "已补全内置规则，现有编辑已保留";
     } catch (err) { ruleOut.textContent = err.message; }
   };
-  return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
-    el("h3", {}, "日志分类规则"), el("p", { class: "config-intro" }, "规则会同时用于新上报数据和存量刷新；匹配字段是页面显示的日志摘要。"), el("div", { class: "config-actions" }, el("button", { onclick: loadBuiltin }, "补全内置规则"), backups, el("button", {onclick:restoreBackup}, "载入备份")), rulesText, el("div", { class: "config-actions" }, el("button", { onclick: () => saveRules(false) }, "预览命中"), el("button", {onclick:() => saveRules("save")}, "保存规则"), el("button", { class: "primary", onclick: () => saveRules(true) }, "保存并刷新"), ruleOut),
+  const platform = el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid);
+  if (mode === "rules") return el("section", {class:"panel config-panel"}, el("h3", {}, "日志分类规则"), el("p", { class: "config-intro" }, "规则会同时用于新上报数据和存量刷新；匹配字段是页面显示的日志摘要。"), el("div", { class: "config-actions" }, el("button", { onclick: loadBuiltin }, "补全内置规则"), backups, el("button", {onclick:restoreBackup}, "载入备份")), rulesText, el("div", { class: "config-actions" }, el("button", { onclick: () => saveRules(false) }, "预览命中"), el("button", {onclick:() => saveRules("save")}, "保存规则"), el("button", { class: "primary", onclick: () => saveRules(true) }, "保存并刷新"), ruleOut));
+  return el("div", {}, platform,
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
@@ -289,4 +294,31 @@ async function taskConfigurationPanel() {
     el("button",{onclick:async()=>{try {await api("/api/config/"+target.value,{method:"POST",body:{config:null}});await load();}catch(err){notice.textContent=err.message;}}},"恢复默认"));
   panel.append(actions,body,notice);
   await load();return panel;
+}
+
+async function classificationJobsPanel(jobId) {
+  const panel = el("section", {class:"panel"}, el("h2", {}, "分类刷新任务"));
+  const content = el("div", {role:"status", "aria-live":"polite"}); panel.append(content);
+  const phases = {queued:"等待执行",scanning:"扫描日志摘要",applying:"更新分类",issues:"更新关联问题",statistics:"重建统计",completed:"已完成",failed:"失败"};
+  const load = async () => {
+    try {
+      const jobs = await api("/api/admin/classification/jobs");
+      const job = jobId ? await api("/api/admin/classification/jobs/" + encodeURIComponent(jobId)) : null;
+      content.replaceChildren(el("div", {class:"toolbar"}, el("button", {onclick:load}, "刷新状态"), el("a", {href:"#ops?tab=rules"}, "返回分类规则")),
+        el("table", {class:"grid"}, el("thead", {}, el("tr", {}, ["任务","阶段","已扫描","待更新","提交时间"].map(x => el("th", {}, x)))),
+          el("tbody", {}, jobs.map(j => el("tr", {}, el("td", {}, el("a", {href:"#ops?tab=jobs&job="+j.job_id},j.job_id)), el("td", {}, phases[j.phase] || j.phase), el("td", {},fmt(j.scanned)), el("td", {},fmt(j.matched)), el("td", {},time(j.created_at)))))));
+      if (job) {
+        content.append(el("h3", {}, "任务 " + job.job_id), el("p", {}, phases[job.phase] || job.phase), el("p", {}, "离开或刷新页面不会取消任务。服务重启后会继续处理未完成任务。"));
+        if (job.error) content.append(el("div", {class:"error-box"},job.error));
+        if (job.result) {
+          content.append(el("p", {}, "已完成：更新 " + job.result.count + " 条；审计批次 " + job.result.batch_id),
+            el("div", {class:"toolbar"},Object.entries(job.result.rules).map(([id,n]) => el("span", {class:"chip info"},id+"："+n))),
+            el("h4", {}, "结果样本（最多 50 条）"),
+            el("table", {class:"grid"}, el("tbody", {},job.result.samples.map(c => el("tr", {},el("td", {},el("a", {href:"#case?key="+encodeURIComponent(c.case_key)+"&exec="+c.exec_uuid},c.case_key)),el("td", {},c.rule_id),el("td", {},c.before.slice(0,3).join(" / ")),el("td", {},c.after.slice(0,3).join(" / ")))))));
+        }
+      }
+      if (jobs.some(j => ["queued","running"].includes(j.status))) setTimeout(() => { if (panel.isConnected) load(); },3000);
+    } catch (err) { content.replaceChildren(el("div", {class:"error-box"},err.message),el("button",{onclick:load},"重试")); }
+  };
+  await load(); return panel;
 }

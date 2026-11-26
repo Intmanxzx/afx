@@ -73,13 +73,14 @@ def match(rules, backend, text):
             r = rule['result']; return r['function_status'], r['fail_stage'], r['failure_owner'], VERSION, rule['id']
     return None
 
-def plan(store, rules, *, summary_only=True):
+def plan(store, rules, *, summary_only=True, progress=None):
     rules = merge_builtins(rules); changes = []
     with store.connect(readonly=True) as conn:
         # Rules are corrective evidence and must be able to repair records
         # already stamped with the current classifier version.  Restricting
         # this scan to old versions would preserve earlier misclassifications.
-        for row in conn.execute("SELECT e.*,c.case_key FROM executions e JOIN cases c ON c.case_id=e.case_id WHERE function_status IN ('gen_fail','ascgraph_fail','compile_fail','runtime_fail','build_fail','timeout')"):
+        for scanned, row in enumerate(conn.execute("SELECT e.*,c.case_key FROM executions e JOIN cases c ON c.case_id=e.case_id WHERE function_status IN ('gen_fail','ascgraph_fail','compile_fail','runtime_fail','build_fail','timeout')"), 1):
+            if progress and scanned % 1000 == 0: progress(scanned, len(changes))
             text = str(row['log_summary'] or '')
             if not summary_only:
                 text += '\n' + '\n'.join(str(x) for x in (get_content(conn, row['log_content_id']) if row['log_content_id'] else None, get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None) if x)
@@ -87,4 +88,5 @@ def plan(store, rules, *, summary_only=True):
             if not result: continue
             after = list(result[:4]); before = [row[k] for k in FIELDS]
             if before != after: changes.append({'exec_id': row['exec_id'], 'exec_uuid': row['exec_uuid'], 'case_key': row['case_key'], 'backend': row['backend'], 'log_summary': text, 'before': before, 'after': after, 'rule_id': result[4]})
+        if progress: progress(locals().get('scanned', 0), len(changes))
     return changes
