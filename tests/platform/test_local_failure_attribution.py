@@ -43,6 +43,8 @@ ATT_GE = ('[ERROR] GE(1155915,python):2026-11-25-23:49:16.821.942 '
 VECTOR_CORE = '[Error]: The vector core execution is abnormal.'
 MLIR_KERNEL = ('AF_MLIR_STRICT gate=none shortfall=no graph=autofused_add_abc\n'
                "RuntimeError: Failed to build ascend kernel, trigger bug by following command: 'cmd'")
+INDUCTOR_KERNEL = ('torch._inductor.exc.InductorError: RuntimeError: Failed to build ascend kernel, '
+                   "trigger bug by following command: 'cmd'")
 
 
 def detail(*errors, serialized=True):
@@ -102,6 +104,7 @@ def test_source_literals_do_not_create_traceback_evidence():
     (ATT_GE, 'compile_fail', 'af_common', 'af-legacy'),
     (VECTOR_CORE, 'runtime_fail', 'fused_kernel', 'af-mlir'),
     (MLIR_KERNEL, 'runtime_fail', 'fused_kernel', 'af-mlir'),
+    (INDUCTOR_KERNEL, 'runtime_fail', 'fused_kernel', 'af-mlir'),
 ])
 def test_af_native_shape_signatures(error, status, stage, backend):
     assert local_failure(detail(error), backend)[:2] == (status, stage)
