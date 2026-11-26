@@ -8,6 +8,7 @@ from autofusex.execution.ascir import construction_source, saved_construction_so
 
 _ERROR = re.compile(r'\b(?:[\w.]*Error|[\w.]*Exception):|\[(?:ERROR|FATAL)\]|\berror:|\bfatal:', re.I)
 _WRAPPER = re.compile(r'Failed to execute graph code|BackendCompilerFailed|^torch\._dynamo\.exc\.|^InductorError:|Traceback \(most recent call last\)', re.I)
+_CONCRETE = re.compile(r'^(?:.*\b)?(?:error|fatal):\s+.+$', re.I)
 
 
 def obj(value):
@@ -55,6 +56,14 @@ def sections(detail=None, log=None, fallback=None):
 def summary(detail=None, log=None, fallback=None):
     entries = sections(detail, log, fallback)
     # Prefer the concrete exception/native failure over outer compiler wrappers.
+    candidates = []
+    for section in entries:
+        for line in section['text'].splitlines():
+            line = line.strip()
+            if _CONCRETE.match(line) and not _WRAPPER.search(line):
+                candidates.append(line)
+    if candidates:
+        return candidates[0][:500]
     candidates = []
     for section in entries:
         for line in section['text'].splitlines():
