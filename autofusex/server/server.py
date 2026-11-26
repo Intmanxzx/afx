@@ -190,7 +190,7 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
             if length is not None and not length.isdigit():
                 raise HTTPError(400, 'invalid', 'invalid Content-Length')
             path = request.url.path
-            limit = (MAX_UPLOAD_BODY if path in {'/api/client/executions','/api/source-cases','/api/source-results'} or path.startswith('/api/source-jobs/') else
+            limit = (16 * 1024 * 1024 if path in {'/api/retests', '/api/regression/pins'} else MAX_UPLOAD_BODY if path in {'/api/client/executions','/api/source-cases','/api/source-results'} or path.startswith('/api/source-jobs/') else
                      MAX_HEARTBEAT_BODY if path == '/api/client/heartbeat' else MAX_BODY)
             if length is not None and int(length) > limit:
                 raise HTTPError(413, 'too_large', f'body exceeds {limit} bytes')
@@ -346,6 +346,13 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
               case_id: Optional[int] = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         return _success(queries.case_page(store, after=after, limit=limit, backend=backend, status=status,
                                           arch=arch, case_key=case_key, case_id=case_id, q=q, results=results, selected_backends=selected_backends, chips=chips, page=page))
+
+    @route('/api/cases/selection')
+    def case_selection(q: QueryText = None, results: QuerySelection = None,
+                       selected_backends: QuerySelection = None, chips: QuerySelection = None,
+                       principal=Depends(writer)):
+        return _success(queries.case_page(store, q=q, results=results,
+                         selected_backends=selected_backends, chips=chips, keys_only=True))
 
     @route('/api/cases/{case_key:path}/history')
     def case_history(case_key: str, after: Optional[int] = None, limit: int = 50, principal=Depends(identity)):

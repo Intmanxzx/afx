@@ -102,13 +102,13 @@ def claim(store: Store, principal: Principal, body: dict):
         lease_ms = _setting(conn, "retest.lease_minutes") * 60_000
         tasks = []
         for backend, (version, sha) in installed.items():
-            # Manual retests run on the requester's clients, on any matching build.
+            # Manual retests belong to a user, independently of client identity.
             # Issue rounds retain their exact candidate-package matching.
             rows = conn.execute(
                 "SELECT t.*, COALESCE(r.kind, t.task_kind) AS kind FROM retest_tasks t LEFT JOIN issue_rounds r "
                 "ON r.issue_id=t.issue_id AND r.round_no=t.round_no WHERE t.status='pending' AND t.npu_arch=? "
                 "AND t.required_backend=? AND ((t.required_version=? AND t.required_sha256=?) "
-                "OR t.required_version='*') AND (t.issue_id<>'' OR t.requested_by=?) "
+                "OR t.required_version='*') AND (t.issue_id<>'' OR t.assigned_user=?) "
                 "ORDER BY t.task_id LIMIT ?",
                 (arch, backend, version, sha, principal.user_id, limit - len(tasks))).fetchall()
             for row in rows:
@@ -142,8 +142,11 @@ def _task_payload(conn, row, lease_id):
 
 def complete(store: Store, principal: Principal, task_id: int, body: dict):
     principal.require_write()
+    terminal_reason = body.get("terminal_reason")
+    if terminal_reason is not None and (not isinstance(terminal_reason, str) or not 1 <= len(terminal_reason) <= 500):
+        raise IssueError("invalid", "terminal_reason must be 1..500 characters")
     exec_uuids = body.get("exec_uuids")
-    if not isinstance(exec_uuids, list) or not 1 <= len(exec_uuids) <= 8 \
+    if not isinstance(exec_uuids, list) or not (0 if terminal_reason else 1) <= len(exec_uuids) <= 8 \
             or not all(isinstance(u, str) and len(u) <= 64 for u in exec_uuids):
         raise IssueError("invalid", "exec_uuids must list 1..8 uploaded execution ids")
     installed = _installed(body)
@@ -158,6 +161,15 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         if task["status"] != "leased" or task["lease_id"] != body.get("lease_id") or client is None \
                 or client["user_id"] != principal.user_id:
             raise IssueError("lease_lost", "task lease is not held by this caller", 409)
+        if terminal_reason:
+            if exec_uuids:
+                raise IssueError("invalid", "terminal_reason cannot accompany executions")
+            conn.execute("UPDATE retest_tasks SET status='invalid',result='invalid',detail=?,finished_at=?, "
+                         "lease_id=NULL,lease_expires_at=NULL WHERE task_id=?",
+                         (terminal_reason, now_ms(), task_id))
+            if task["issue_id"]:
+                _maybe_finish(conn, task["issue_id"], task["round_no"])
+            return {"task_id": task_id, "result": "invalid", "detail": terminal_reason}
         rows = []
         for exec_uuid in dict.fromkeys(exec_uuids):
             row = conn.execute("SELECT * FROM executions WHERE exec_uuid=?", (exec_uuid,)).fetchone()
@@ -285,11 +297,11 @@ def round_tasks(store: Store, issue_id: str, round_no: int) -> list:
 
 # -- manual retests from the discovery page (design 6.3) -------------------------
 def create_manual(store: Store, principal: Principal, body: dict):
-    """Re-run cases on the requester's matching clients; results become current heads."""
+    """Re-run cases on assigned users' matching clients; results become current heads."""
     principal.require_write()
     keys, backends = body.get("case_keys"), body.get("backends")
-    if not isinstance(keys, list) or not 1 <= len(keys) <= 200 or not all(isinstance(k, str) for k in keys):
-        raise IssueError("invalid", "case_keys must be a list of 1..200 strings")
+    if not isinstance(keys, list) or not 1 <= len(keys) <= 200000 or not all(isinstance(k, str) for k in keys):
+        raise IssueError("invalid", "case_keys must be a list of 1..200000 strings")
     if not isinstance(backends, list) or not 1 <= len(backends) <= 4 \
             or not all(isinstance(b, str) and _NAME.match(b) and b != "cpu" for b in backends):
         raise IssueError("invalid", "backends must list 1..4 NPU backends")
@@ -299,13 +311,24 @@ def create_manual(store: Store, principal: Principal, body: dict):
     repetitions = body.get("repetitions", 1)
     if isinstance(repetitions, bool) or not isinstance(repetitions, int) or not 1 <= repetitions <= 5:
         raise IssueError("invalid", "repetitions must be 1..5")
+    users = body.get("user_ids")
+    if users is not None:
+        principal.require_admin()
+        if not isinstance(users, list) or not users or not all(isinstance(u, str) for u in users):
+            raise IssueError("invalid", "user_ids must be a nonempty user list")
+        users = list(dict.fromkeys(users))
+    else:
+        users = [principal.user_id]
     request_key = body.get("request_key")
 
     def action(conn):
         from autofusex.server.issues import _case_ids
+        for user in users:
+            if not conn.execute("SELECT 1 FROM users WHERE user_id=? AND status='active' AND role IN ('admin','developer')", (user,)).fetchone():
+                raise IssueError("invalid", f"inactive or unknown user: {user}")
         now, created, skipped = now_ms(), 0, []
         for case_id in _case_ids(conn, keys):
-            for backend in backends:
+            for backend in dict.fromkeys(backends):
                 arches = [arch] if arch else [r[0] for r in conn.execute(
                     "SELECT DISTINCT npu_arch FROM execution_heads WHERE case_id=? AND backend=?", (case_id, backend))]
                 if not arches:
@@ -315,9 +338,9 @@ def create_manual(store: Store, principal: Principal, body: dict):
                     for _ in range(repetitions):
                         conn.execute(
                             "INSERT INTO retest_tasks(issue_id, round_no, case_id, npu_arch, backends, required_backend, "
-                            "required_version, required_sha256, status, created_at, task_kind, requested_by, batch) "
-                            "VALUES('', 0, ?,?,?,?, '*', '*', 'pending', ?, 'retest', ?, ?)",
-                            (case_id, target_arch, f"cpu,{backend}", backend, now, principal.user_id, request_key))
+                            "required_version, required_sha256, status, created_at, task_kind, requested_by, batch, assigned_user) "
+                            "VALUES('', 0, ?,?,?,?, '*', '*', 'pending', ?, 'retest', ?, ?, ?)",
+                            (case_id, target_arch, f"cpu,{backend}", backend, now, principal.user_id, request_key, users[created % len(users)]))
                         created += 1
         return {"batch": request_key, "tasks": created, "skipped_without_arch": len(skipped)}
     return idempotent(store, principal, "retest-manual", body.pop("request_key", None), body, action)
@@ -336,10 +359,15 @@ def list_manual(store: Store, principal: Principal, limit: int = 50) -> list:
     conn = store.reader()
     for batch in batches:
         tasks = conn.execute(
-            "SELECT t.task_id, c.case_key, t.backends, t.npu_arch, t.status, t.result, t.detail "
+            "SELECT t.task_id, c.case_key, t.backends, t.npu_arch, t.status, t.result, t.detail, t.assigned_user "
             "FROM retest_tasks t JOIN cases c ON c.case_id=t.case_id "
-            "WHERE t.requested_by=? AND t.batch=? ORDER BY t.task_id",
+            "WHERE t.requested_by=? AND t.batch=? ORDER BY t.task_id LIMIT 100",
             (principal.user_id, batch['batch'])).fetchall()
+        batch['items_truncated'] = batch['tasks'] > 100
+        batch['assignments'] = [dict(r) for r in conn.execute(
+            "SELECT assigned_user AS user_id, COUNT(*) AS tasks FROM retest_tasks "
+            "WHERE requested_by=? AND batch=? GROUP BY assigned_user",
+            (principal.user_id, batch['batch']))]
         batch['items'] = []
         for row in tasks:
             task = dict(row)

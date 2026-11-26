@@ -41,3 +41,22 @@ def test_saved_database_path_is_used_without_cli_option(tmp_path):
     (tmp_path / 'client.json').write_text(json.dumps({'platform': {'results': str(configured)}}))
     assert results_database(tmp_path) == configured
     assert results_database(tmp_path, tmp_path / 'override.sqlite') == tmp_path / 'override.sqlite'
+
+
+def test_cancelled_retest_reports_terminal_receipt(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from autofusex.client import retest_queue, platform_transport, daemon
+    task = dict(task_id=202, lease_id='lease', case_source='nnsmith')
+    saved = dict(queue=str(tmp_path/'tasks.sqlite'), task_ids=['local'])
+    api = Mock(); api.call.return_value = {'tasks': [task]}
+    client = SimpleNamespace(api=api, devices=['npu:0'], environment=lambda: {}, identity=lambda: {})
+    monkeypatch.setattr(platform_transport, 'installed_packages', lambda _: {'af-mlir': {'version':'1','sha256':'a'*64}})
+    monkeypatch.setattr(daemon, 'request', lambda *a: saved)
+    ledger = Mock(); ledger.get.return_value = dict(state='cancelled', reason='no_autofuse_coverage')
+    monkeypatch.setattr(retest_queue, 'TaskLedger', lambda _: ledger)
+    assert retest_queue._synchronize(client, tmp_path) == 1
+    body = api.call.call_args.args[2]
+    assert body['terminal_reason'] == 'no_autofuse_coverage'
+    assert body['exec_uuids'] == []
+    assert saved['delivered']
