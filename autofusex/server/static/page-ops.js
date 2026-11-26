@@ -149,8 +149,9 @@ async function settingsPanel() {
     try { await api("/api/admin/settings", { method: "PUT", body: { changes, base_revisions: base } }); out.replaceChildren(el("span", { class: "chip ok" }, "已保存")); }
     catch (err) { out.replaceChildren(el("div", { class: "error-box" }, String(err.message || err))); }
   };
+  const loadBuiltin = () => { rulesText.value = JSON.stringify(ruleData.builtin_rules || [], null, 2); ruleOut.textContent = "已载入内置规则，可继续编辑"; };
   return el("section", { class: "panel config-panel" }, el("h2", {}, "平台配置"), el("div", { class: "config-actions config-actions-top" }, el("button", { class: "primary", onclick: save }, "保存配置"), out), grid,
-    el("h3", {}, "日志分类规则"), el("p", { class: "config-intro" }, "每条规则包含 id、pattern、result；先预览命中数量，再保存并刷新存量数据。"), rulesText, el("div", { class: "config-actions" }, el("button", { onclick: () => saveRules(false) }, "预览命中"), el("button", { class: "primary", onclick: () => saveRules(true) }, "保存并刷新"), ruleOut),
+    el("h3", {}, "日志分类规则"), el("p", { class: "config-intro" }, "规则会同时用于新上报数据和存量刷新；匹配字段是页面显示的日志摘要。"), el("div", { class: "config-actions" }, el("button", { onclick: loadBuiltin }, "载入内置规则")), rulesText, el("div", { class: "config-actions" }, el("button", { onclick: () => saveRules(false) }, "预览命中"), el("button", { class: "primary", onclick: () => saveRules(true) }, "保存并刷新"), ruleOut),
     el("h3", {}, `全局与特征必选回归用例（${pins.length}）`),
     pins.length ? el("table", { class: "grid" }, el("tbody", {}, pins.map(p => el("tr", {}, el("td", {}, p.scope === "global" ? "全局" : p.scope_value), el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(p.case_key); } }, p.case_key)),
       el("td", { class: "small" }, p.reason || ""), el("td", { class: "small" }, p.added_by), el("td", {}, el("button", { class: "danger", onclick: async () => {
