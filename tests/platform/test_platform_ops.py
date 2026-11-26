@@ -70,6 +70,11 @@ def test_search_parser_rejects_unsafe_input():
             search.parse(bad)
     query = search.parse("backend:af-mlir,af-legacy -stage:schedule category:reduce status:fail error:tiling")
     assert len(query.head) == 4 and len(query.case) == 1
+    quoted = search.parse("error:\"AttributeError: 'SymInt' object has no attribute\"")
+    assert quoted.head[0][1] == ["%AttributeError: 'SymInt' object has no attribute%"]
+    assert search.parse("error:'foo bar'").head[0][1] == ['%foo bar%']
+    with pytest.raises(search.SearchError):
+        search.parse('error:\"unterminated value')
     # user text only ever travels as bound parameters
     assert all("tiling" not in sql and "af-mlir" not in sql for sql, _ in query.head + query.case)
 
