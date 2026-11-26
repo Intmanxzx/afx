@@ -45,7 +45,10 @@ def match(rules, backend, text):
 def plan(store, rules, *, summary_only=True):
     rules = validate(rules); changes = []
     with store.connect(readonly=True) as conn:
-        for row in conn.execute('SELECT * FROM executions WHERE classifier_version IS NULL OR classifier_version<>?', (VERSION,)):
+        # Rules are corrective evidence and must be able to repair records
+        # already stamped with the current classifier version.  Restricting
+        # this scan to old versions would preserve earlier misclassifications.
+        for row in conn.execute("SELECT * FROM executions WHERE function_status IN ('gen_fail','ascgraph_fail','compile_fail','runtime_fail','build_fail','timeout')"):
             text = str(row['log_summary'] or '')
             if not summary_only:
                 text += '\n' + '\n'.join(str(x) for x in (get_content(conn, row['log_content_id']) if row['log_content_id'] else None, get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None) if x)
