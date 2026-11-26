@@ -407,8 +407,9 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
         return _success(issues.issue_detail(store, issue_id))
 
     @route('/api/issues/{issue_id}/cases')
-    def issue_cases(issue_id: str, role: RequiredValue = 'affected', after: Optional[int] = None, principal=Depends(identity)):
-        return _success(issues.issue_cases(store, issue_id, role, after))
+    def issue_cases(issue_id: str, role: RequiredValue = 'affected', after: Optional[int] = None,
+                    scope: str = 'all', limit: int = 100, principal=Depends(identity)):
+        return _success(issues.issue_cases(store, issue_id, role, after, limit, scope))
 
     @route('/api/issues/{issue_id}/rounds/{round_no}/tasks')
     def round_tasks(issue_id: str, round_no: int, principal=Depends(identity)):
