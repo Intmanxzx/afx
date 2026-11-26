@@ -604,15 +604,17 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
         from autofusex.server.classification_rules import load, plan
         from autofusex.server.reclassification import apply_rule_changes
         rules = body.rules if body.rules is not None else load(store)
+        if not body.apply: return _success(refresh_jobs.preview(principal.user_id, rules))
         changes = plan(store, rules)
-        if not body.apply: return _success({'changes': changes, 'count': len(changes), 'applied': False})
         batch = body.batch_id or ('classification-rules-' + str(int(time.time())))
         return _success({'count': apply_rule_changes(store, batch, changes), 'batch_id': batch, 'applied': True})
 
     @route('/api/admin/classification/jobs', 'POST')
     def submit_classification_job(body: m.ClassificationJob, principal=Depends(administrator)):
         from autofusex.server.classification_rules import load
-        return _success(refresh_jobs.submit(principal.user_id, body.request_key, body.rules if body.rules is not None else load(store)))
+        if body.preview_id is None:
+            raise HTTPError(409, 'preview_required', '请先预览，再提交已确认的记录')
+        return _success(refresh_jobs.submit(principal.user_id, body.request_key, body.rules if body.rules is not None else load(store), body.preview_id))
 
     @route('/api/admin/classification/jobs')
     def classification_jobs(principal=Depends(administrator)):

@@ -60,7 +60,8 @@ def test_admin_job_endpoints(http, env):
     assert http('GET','/api/admin/classification/jobs',token=None)[0] == 401
     assert http('GET','/api/admin/classification/jobs')[0] == 403
     token = auth.issue_token(store,'root')
-    code, body = http('POST','/api/admin/classification/jobs',{'request_key':'api-job','rules':[]}, token=token)
+    preview = http('POST','/api/admin/classification/refresh',{'rules':[]},token=token)[1]['data']
+    code, body = http('POST','/api/admin/classification/jobs',{'request_key':'api-job','rules':[], 'preview_id':preview['preview_id']}, token=token)
     assert code == 200, body
     job_id = body['data']['job_id']
     deadline = time.monotonic()+5
@@ -71,3 +72,22 @@ def test_admin_job_endpoints(http, env):
     assert result['data']['status'] == 'completed', result
     assert http('GET','/api/admin/classification/jobs',token=token)[1]['data'][0]['job_id'] == job_id
     assert http('GET','/api/admin/classification/jobs/not-found',token=token)[0] == 404
+
+
+def test_preview_applies_exact_set_without_rescan(env, monkeypatch):
+    store, ingestor, principal = env
+    rules=[{'id':'snapshot-rule','pattern':'snapshot marker','result':{'function_status':'gen_fail','fail_stage':'inductor','failure_owner':'torch'}}]
+    upload(ingestor,principal,body([item('snapshot-first',status='runtime_fail',log_summary='snapshot marker')]))
+    jobs=RefreshJobs(store); preview=jobs.preview('admin',rules)
+    assert preview['count']==1
+    upload(ingestor,principal,body([item('snapshot-later',status='runtime_fail',log_summary='snapshot marker')],key='second-upload'))
+    import autofusex.server.classification_jobs as module
+    def no_scan(*args,**kwargs): raise AssertionError('must not scan again')
+    monkeypatch.setattr(module,'plan',no_scan)
+    job=jobs.submit('admin','snapshot-submit',rules,preview['preview_id'])
+    result=wait(jobs,job['job_id'])
+    assert result['status']=='completed',result
+    assert result['result']['count']==1
+    assert store.reader().execute('SELECT fail_stage FROM executions WHERE exec_uuid=?',('snapshot-later',)).fetchone()[0]=='unknown_retest'
+    with pytest.raises(ValueError): jobs.submit('other','request',rules,preview['preview_id'])
+    with pytest.raises(ValueError): jobs.submit('admin','changed',[],preview['preview_id'])
