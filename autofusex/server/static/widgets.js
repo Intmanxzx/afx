@@ -36,6 +36,7 @@ export function pagination(current, pages, total, onchange, subject = "问题") 
   return nav;
 }
 export function statusChip(e) {
+  if (e.function_status === "unsupported" && e.invalid_reason === "no_autofuse_coverage") return el("span", { class: "chip gray", title: e.invalid_reason || "无 Autofuse 覆盖" }, "不支持 · 无 AF 覆盖");
   if (e.backend === "cpu" && e.function_status === "pass") return el("span", { class: "chip gray", "data-tooltip": "CPU 结果作为精度标杆" }, "参考");
   if (e.function_status === "pass") {
     if (e.accuracy_status === "fail") return el("span", {}, el("span", { class: "chip warn" }, "精度失败"), e.accuracy_ref === "eager-npu" ? el("span", { class: "float-tag", title: "CPU 不支持，以 EagerNPU 为标杆" }, "EagerNPU") : null);

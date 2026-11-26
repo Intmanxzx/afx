@@ -135,7 +135,7 @@ def performance_signature(backend, anchor, ratio, traits):
 
 
 def failure_dimension(execution) -> str | None:
-    if execution["function_status"] not in ("pass", "unsupported"):
+    if execution["function_status"] not in ("pass", "unsupported", "invalid"):
         return "function"
     if execution["function_status"] == "pass" and execution["accuracy_status"] == "fail":
         return "accuracy"

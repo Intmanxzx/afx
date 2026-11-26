@@ -37,6 +37,8 @@ def create_tasks(conn, issue, round_no: int, targets, version: str, sha: str, ro
                 "INSERT INTO retest_tasks(issue_id,round_no,case_id,npu_arch,backends,required_backend,"
                 "required_version,required_sha256,status,created_at) VALUES(?,?,?,?,?,?,?,?,'pending',?)",
                 (issue["issue_id"],round_no,case_id,arch,",".join(backends),backend,version,sha,now))
+            conn.execute("UPDATE retest_tasks SET case_revision=(SELECT case_revision FROM cases WHERE case_id=?) "
+                         "WHERE task_id=last_insert_rowid()", (case_id,))
             if role == "regression":
                 conn.execute("INSERT OR IGNORE INTO issue_cases(issue_id,case_id,role,npu_arch,backend,case_revision,added_at) "
                              "SELECT ?,case_id,'regression',?,?,case_revision,? FROM cases WHERE case_id=?",
@@ -167,6 +169,12 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
             conn.execute("UPDATE retest_tasks SET status='invalid',result='invalid',detail=?,finished_at=?, "
                          "lease_id=NULL,lease_expires_at=NULL WHERE task_id=?",
                          (terminal_reason, now_ms(), task_id))
+            if terminal_reason == 'no_autofuse_coverage' and task['required_backend'] in {'af-mlir', 'af-legacy'} and task['case_revision'] is not None:
+                conn.execute("INSERT OR REPLACE INTO case_coverage VALUES(?,?,?,?,?,?,?,?)",
+                             (task['case_id'], task['case_revision'], task['required_backend'], task['npu_arch'],
+                              terminal_reason, task_id, json.dumps(installed, sort_keys=True), now_ms()))
+                mark_unsupported_head(conn, task)
+
             if task["issue_id"]:
                 _maybe_finish(conn, task["issue_id"], task["round_no"])
             return {"task_id": task_id, "result": "invalid", "detail": terminal_reason}
@@ -189,6 +197,9 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         if any(r["case_revision"] != current_revision for r in rows):
             raise IssueError("mismatch", "execution uses an obsolete case revision", 409)
         result, detail = _judge(conn, task, rows, installed)
+        if result != 'invalid':
+            conn.execute("DELETE FROM case_coverage WHERE case_id=? AND case_revision=? AND backend=? AND npu_arch=?",
+                         (task['case_id'], current_revision, task['required_backend'], task['npu_arch']))
         target = next((r for r in rows if r["backend"] == task["required_backend"]), None)
         if result != "invalid" and target is not None:
             from autofusex.server.issues import reconcile
@@ -212,6 +223,25 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         _maybe_finish(conn, task["issue_id"], task["round_no"])
         return {"task_id": task_id, "result": result, "detail": detail}
     return idempotent(store, principal, f"retest-complete:{task_id}", body.pop("request_key", None), body, action)
+
+
+def mark_unsupported_head(conn, task):
+    """Mark the matching current result unsupported and update its derived statistics."""
+    from autofusex.server import aggregates, issues
+    row = conn.execute("SELECT e.* FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
+                       "WHERE h.case_id=? AND h.backend=? AND h.npu_arch=? AND e.case_revision=?",
+                       (task['case_id'], task['required_backend'], task['npu_arch'], task['case_revision'])).fetchone()
+    if row is None or row['invalid_reason'] or row['created_at'] > task['created_at']:
+        return
+    dims = aggregates.case_dims(conn, row['case_id'])
+    aggregates.apply_stat(conn, row, dims, -1)
+    aggregates.apply_perf(conn, row, dims, -1, _setting(conn, 'perf.tie_threshold'))
+    conn.execute("UPDATE executions SET pre_invalid_status=function_status,function_status='unsupported', "
+                 "invalid_reason='no_autofuse_coverage' WHERE exec_id=?", (row['exec_id'],))
+    updated = aggregates.head_row(conn, row['exec_id'])
+    aggregates.apply_stat(conn, updated, dims, 1)
+    issues.on_head(conn, row['case_id'], row['exec_id'])
+    aggregates.advance_seq(conn)
 
 
 def _judge(conn, task, rows, installed):
@@ -311,6 +341,8 @@ def create_manual(store: Store, principal: Principal, body: dict):
     repetitions = body.get("repetitions", 1)
     if isinstance(repetitions, bool) or not isinstance(repetitions, int) or not 1 <= repetitions <= 5:
         raise IssueError("invalid", "repetitions must be 1..5")
+    if type(body.get("force", False)) is not bool:
+        raise IssueError("invalid", "force must be boolean")
     users = body.get("user_ids")
     if users is not None:
         principal.require_admin()
@@ -326,7 +358,7 @@ def create_manual(store: Store, principal: Principal, body: dict):
         for user in users:
             if not conn.execute("SELECT 1 FROM users WHERE user_id=? AND status='active' AND role IN ('admin','developer')", (user,)).fetchone():
                 raise IssueError("invalid", f"inactive or unknown user: {user}")
-        now, created, skipped = now_ms(), 0, []
+        now, created, skipped, excluded = now_ms(), 0, [], 0
         for case_id in _case_ids(conn, keys):
             for backend in dict.fromkeys(backends):
                 arches = [arch] if arch else [r[0] for r in conn.execute(
@@ -340,14 +372,21 @@ def create_manual(store: Store, principal: Principal, body: dict):
                     skipped.append(case_id)
                     continue
                 for target_arch in arches:
+                    revision = conn.execute("SELECT case_revision FROM cases WHERE case_id=?", (case_id,)).fetchone()[0]
+                    if not body.get('force', False) and conn.execute(
+                            "SELECT 1 FROM case_coverage WHERE case_id=? AND case_revision=? AND backend=? AND npu_arch=?",
+                            (case_id, revision, backend, target_arch)).fetchone():
+                        excluded += 1
+                        continue
                     for _ in range(repetitions):
                         conn.execute(
                             "INSERT INTO retest_tasks(issue_id, round_no, case_id, npu_arch, backends, required_backend, "
                             "required_version, required_sha256, status, created_at, task_kind, requested_by, batch, assigned_user) "
                             "VALUES('', 0, ?,?,?,?, '*', '*', 'pending', ?, 'retest', ?, ?, ?)",
                             (case_id, target_arch, f"cpu,{backend}", backend, now, principal.user_id, request_key, users[created % len(users)]))
+                        conn.execute("UPDATE retest_tasks SET case_revision=? WHERE task_id=last_insert_rowid()", (revision,))
                         created += 1
-        return {"batch": request_key, "tasks": created, "skipped_without_arch": len(skipped)}
+        return {"batch": request_key, "tasks": created, "skipped_without_arch": len(skipped), "skipped_no_coverage": excluded}
     return idempotent(store, principal, "retest-manual", body.pop("request_key", None), body, action)
 
 

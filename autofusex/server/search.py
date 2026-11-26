@@ -25,9 +25,10 @@ FEATURE_FIELDS = {"op": ("op", "op_display"), "dtype": ("dtype",), "category": (
                   "source": ("source",), "dynamic": ("dynamic",), "size": ("size_bucket",), "dim": ("dim_bucket",)}
 STATUS = {
     "pass": "(e.function_status='pass' AND COALESCE(e.accuracy_status,'')<>'fail')",
-    "fail": "(e.function_status NOT IN ('pass','unsupported') OR e.accuracy_status='fail')",
-    "function_fail": "e.function_status NOT IN ('pass','unsupported')",
+    "fail": "(e.function_status<>'invalid' AND (e.function_status NOT IN ('pass','unsupported') OR e.accuracy_status='fail'))",
+    "function_fail": "e.function_status NOT IN ('pass','unsupported','invalid')",
     "accuracy_fail": "(e.function_status='pass' AND e.accuracy_status='fail')",
+    "invalid": "e.function_status='invalid'",
     "unsupported": "e.function_status='unsupported'",
 }
 _VALUE = re.compile(r"^[A-Za-z0-9_.:/+<>=*-]{1,64}$")

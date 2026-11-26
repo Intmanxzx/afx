@@ -568,6 +568,33 @@ ALTER TABLE retest_tasks ADD COLUMN assigned_user TEXT;
 UPDATE retest_tasks SET assigned_user=requested_by WHERE issue_id='';
 CREATE INDEX retest_tasks_assignee ON retest_tasks(assigned_user,status,npu_arch,required_backend);
 """),
+    (22, """
+ALTER TABLE retest_tasks ADD COLUMN case_revision INTEGER;
+UPDATE retest_tasks SET case_revision=(SELECT case_revision FROM cases c WHERE c.case_id=retest_tasks.case_id);
+CREATE TABLE case_coverage(
+ case_id INTEGER NOT NULL, case_revision INTEGER NOT NULL, backend TEXT NOT NULL, npu_arch TEXT NOT NULL,
+ reason TEXT NOT NULL, task_id INTEGER NOT NULL, installed TEXT NOT NULL, observed_at INTEGER NOT NULL,
+ PRIMARY KEY(case_id,case_revision,backend,npu_arch));
+INSERT OR IGNORE INTO case_coverage
+ SELECT t.case_id,t.case_revision,t.required_backend,t.npu_arch,t.detail,t.task_id,'{}',t.finished_at
+ FROM retest_tasks t JOIN cases c ON c.case_id=t.case_id
+ WHERE t.result='invalid' AND t.detail='no_autofuse_coverage'
+ AND t.required_backend IN ('af-mlir','af-legacy') AND t.created_at>=c.updated_at;
+"""),
+    (23, """
+ALTER TABLE executions ADD COLUMN invalid_reason TEXT;
+ALTER TABLE executions ADD COLUMN pre_invalid_status TEXT;
+UPDATE executions SET invalid_reason='no_autofuse_coverage',pre_invalid_status=function_status,function_status='invalid' WHERE exec_id IN (
+ SELECT h.exec_id FROM execution_heads h JOIN case_coverage c
+ ON c.case_id=h.case_id AND c.backend=h.backend AND c.npu_arch=h.npu_arch
+ JOIN executions e ON e.exec_id=h.exec_id AND e.case_revision=c.case_revision);
+UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='ingest_seq';
+"""),
+    (24, """
+UPDATE executions SET function_status='unsupported'
+ WHERE function_status='invalid' AND invalid_reason='no_autofuse_coverage';
+UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='ingest_seq';
+"""),
 ]
 
 CONTENT = [

@@ -39,13 +39,15 @@ def pipeline(store: Store, arch: str | None = None, q: str | None = None, result
     lanes = {}
     for row in rows:
         lane = lanes.setdefault(row["backend"], {"backend": row["backend"], "family": FAMILIES.get(row["backend"]),
-                                                 "baseline": row["backend"] in BASELINES, "executed": 0,
+                                                 "baseline": row["backend"] in BASELINES, "executed": 0, "invalid": 0,
                                                  "build_fail": 0, "compile_fail": 0, "runtime_fail": 0, "stage_fail": {}, "runtime_origin": {}, "function_fail": 0,
                                                  "accuracy_fail": 0, "unsupported": 0, "pass": 0})
         n = row["n"]
         lane["executed"] += n
         status = row["function_status"]
-        if status == "pass":
+        if status == "invalid":
+            lane["invalid"] += n
+        elif status == "pass":
             lane["accuracy_fail" if row["accuracy_status"] == "fail" else "pass"] += n
         elif status in {"build_fail", "gen_fail", "ascgraph_fail"}:
             lane["build_fail"] += n
@@ -101,7 +103,9 @@ def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None
         from autofusex.server.result_categories import category
         result = category(row["function_status"], row["fail_stage"], row["accuracy_status"])
         group["results"][result] = group["results"].get(result, 0) + n
-        if row["function_status"] == "pass":
+        if row["function_status"] == "invalid":
+            group["invalid"] = group.get("invalid", 0) + n
+        elif row["function_status"] == "pass":
             group["accuracy_fail" if row["accuracy_status"] == "fail" else "pass"] += n
         elif row["function_status"] == "unsupported":
             group["unsupported"] += n
@@ -109,6 +113,9 @@ def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None
             group["function_fail"] += n
             stage = row["fail_stage"] or row["function_status"]
             group["stage_fail"][stage] = group["stage_fail"].get(stage, 0) + n
+    for group in groups.values():
+        group['invalid'] = group.get('invalid', 0)
+        group['valid_total'] = group['total'] - group['invalid'] - group['unsupported']
     return {"backend": backend, "dim": dim, "npu_arch": arch,
             "groups": sorted(groups.values(), key=lambda g: -g["total"])}
 
@@ -163,7 +170,7 @@ _CASE_COLUMNS = ("case_id, case_key, case_source, case_revision, is_dynamic, sha
                  "ON r.feature_id=f.feature_id JOIN feature_values v ON v.value_id=f.value_id "
                  "WHERE f.case_id=cases.case_id AND r.name='op_display') AS op_display")
 _EXEC_COLUMNS = ("e.exec_id, e.exec_uuid, e.case_revision, e.backend, e.npu_arch, e.user_id, e.client_id, "
-                 "e.run_id, e.run_kind, e.function_status, e.fail_stage, e.accuracy_status, e.accuracy_ref, "
+                 "e.run_id, e.run_kind, e.invalid_reason, e.function_status, e.fail_stage, e.accuracy_status, e.accuracy_ref, "
                  "e.max_abs_err, e.max_rel_err, e.compile_ns, e.kernel_ns, e.e2e_ns, e.created_at, "
                  "(SELECT COALESCE(u.display_name, u.user_id) FROM users u WHERE u.user_id=e.user_id) AS user_name, "
                  "(SELECT c.display_name FROM clients c WHERE c.client_id=e.client_id) AS client_name, "
@@ -302,6 +309,9 @@ def case_history(store: Store, case_key: str, *, after=None, limit: int = 50) ->
     if case is None:
         raise QueryError("case not found")
     case = dict(case)
+    case['coverage_exclusions'] = [dict(r) for r in conn.execute(
+        "SELECT backend,npu_arch,reason,task_id,installed,observed_at FROM case_coverage "
+        "WHERE case_id=? AND case_revision=?", (case['case_id'], case['case_revision']))]
     rows = [dict(r) for r in conn.execute(
         f"SELECT {_EXEC_COLUMNS} FROM executions e WHERE e.case_id=? AND e.exec_id<? ORDER BY e.exec_id DESC LIMIT ?",
         (case["case_id"], after if after is not None else 1 << 62, limit))]

@@ -1,5 +1,6 @@
 """Mutually exclusive overview buckets; stages never imply a second count."""
 def category(status, stage, accuracy):
+    if status == 'invalid': return 'invalid'
     if stage == 'unknown_retest' and status not in {'pass', 'unsupported', 'timeout'}:
         return 'unknown_retest'
     if status == 'pass':
@@ -17,7 +18,7 @@ def category(status, stage, accuracy):
     return 'unknown'
 
 
-RESULT_KEYS = {'nnsmith', 'gen_fail', 'ascgraph_fail', 'schedule', 'legacy_codegen', 'mlir',
+RESULT_KEYS = {'invalid', 'nnsmith', 'gen_fail', 'ascgraph_fail', 'schedule', 'legacy_codegen', 'mlir',
                'triton_ascend', 'af_common', 'compile_unknown', 'aclnn', 'aicpu', 'fused_kernel',
                'runtime_unknown', 'pass', 'accuracy_fail', 'unchecked', 'other', 'environment',
                'timeout', 'unknown', 'unknown_retest'}
@@ -26,6 +27,7 @@ RESULT_KEYS = {'nnsmith', 'gen_fail', 'ascgraph_fail', 'schedule', 'legacy_codeg
 def category_sql():
     """SQL equivalent of category(), including its precedence and NULL handling."""
     return """CASE
+      WHEN e.function_status='invalid' THEN 'invalid'
       WHEN e.fail_stage='unknown_retest' AND e.function_status NOT IN ('pass','unsupported','timeout') THEN 'unknown_retest'
       WHEN e.function_status='pass' THEN CASE e.accuracy_status WHEN 'fail' THEN 'accuracy_fail' WHEN 'pass' THEN 'pass' ELSE 'unchecked' END
       WHEN e.function_status IN ('build_fail','gen_fail') THEN CASE WHEN e.fail_stage='nnsmith' THEN 'nnsmith' ELSE 'gen_fail' END

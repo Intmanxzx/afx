@@ -56,7 +56,7 @@ def test_filters_intersect_on_same_head_and_chip(env):
 
 
 def test_invalid_visual_filters_are_rejected():
-    for kwargs in ({'results': 'invalid'}, {'chips': "x' OR 1"}, {'selected_backends': 'a,,b'}):
+    for kwargs in ({'results': 'not_a_result'}, {'chips': "x' OR 1"}, {'selected_backends': 'a,,b'}):
         with pytest.raises(search.SearchError):
             search.visual_query(**kwargs)
 
@@ -109,7 +109,7 @@ def test_all_result_categories_reach_http_endpoints(env, endpoint, params):
         actual_data.pop('q')
         expected_data.pop('q')
     assert actual_data == expected_data
-    for invalid in (results + ',invalid', results + '\n', 'x' * 4097):
+    for invalid in (results + ',not_a_result', results + '\n', 'x' * 4097):
         response = client.get(endpoint, params={**params, 'results': invalid})
         assert response.status_code == 400, response.text
 

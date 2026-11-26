@@ -93,7 +93,7 @@ def test_existing_tasks_migrate_to_requesting_user(tmp_path):
     import sqlite3
     from autofusex.server import schema
     conn = sqlite3.connect(tmp_path / 'old.sqlite', isolation_level=None)
-    schema.apply(conn, 'main', schema.CORE[:-1])
+    schema.apply(conn, 'main', [(v, sql) for v, sql in schema.CORE if v < 21])
     conn.execute("INSERT INTO retest_tasks(issue_id,round_no,case_id,npu_arch,backends,required_backend,required_version,required_sha256,status,created_at,requested_by) VALUES('',0,1,'910b','af-mlir','af-mlir','*','*','pending',1,'dev')")
     schema.apply(conn, 'main', schema.CORE)
     assert conn.execute('SELECT assigned_user FROM retest_tasks').fetchone()[0] == 'dev'
@@ -134,3 +134,115 @@ def test_new_backend_explicit_chip_overrides_history(tmp_path):
     retests.create_manual(w.store, w.client, dict(request_key='explicit-chip',
         case_keys=[seed(1)], backends=['triton-npu'], npu_arch='950'))
     assert w.store.reader().execute('SELECT npu_arch FROM retest_tasks').fetchone()[0] == '950'
+
+
+def test_no_coverage_persists_and_skips_only_matching_target(tmp_path):
+    w = World(tmp_path)
+    w.upload([item('coverage-observation', 1)])
+    def create(key, **extra):
+        return retests.create_manual(w.store, w.client, dict(request_key=key,
+            case_keys=[seed(1)], backends=['af-mlir'], **extra))
+    create('first')
+    task = w.claim_tasks()[0]
+    retests.complete(w.store, w.client, task['task_id'], dict(request_key='noaf',
+        lease_id=task['lease_id'], installed=INSTALLED, exec_uuids=[], terminal_reason='no_autofuse_coverage'))
+    observations = queries.case_history(w.store, seed(1))['case']['coverage_exclusions']
+    assert observations[0]['reason'] == 'no_autofuse_coverage'
+    assert observations[0]['task_id'] == task['task_id']
+    assert create('skip')['skipped_no_coverage'] == 1
+    assert create('skip-again')['tasks'] == 0
+    assert retests.create_manual(w.store, w.client, dict(request_key='other-backend',
+        case_keys=[seed(1)], backends=['af-legacy']))['tasks'] == 1
+    assert create('other-chip', npu_arch='950')['tasks'] == 1
+    assert create('force', force=True)['tasks'] == 1
+    # A later valid retest clears the observation, enabling ordinary replay again.
+    tasks = [t for t in w.claim_tasks() if t['required']['backend'] == 'af-mlir']
+    w.run_tasks(tasks, lambda _: 'pass')
+    assert create('after-pass')['tasks'] == 1
+
+
+def test_no_coverage_is_revision_scoped(tmp_path):
+    w = World(tmp_path)
+    w.upload([item('queued-coverage', 1)])
+    for key in ('queued-one',):
+        retests.create_manual(w.store, w.client, dict(request_key=key,
+            case_keys=[seed(1)], backends=['af-mlir']))
+    task = w.claim_tasks(limit=1)[0]
+    retests.complete(w.store, w.client, task['task_id'], dict(request_key='queued-finish',
+        lease_id=task['lease_id'], installed=INSTALLED, exec_uuids=[], terminal_reason='no_autofuse_coverage'))
+    assert w.claim_tasks() == []
+    assert w.store.reader().execute("SELECT COUNT(*) FROM retest_tasks WHERE status='invalid'").fetchone()[0] == 1
+    with w.store.write() as db:
+        db.execute('UPDATE cases SET case_revision=case_revision+1')
+    assert retests.create_manual(w.store, w.client, dict(request_key='new-revision',
+        case_keys=[seed(1)], backends=['af-mlir']))['tasks'] == 1
+
+
+def test_environment_terminal_does_not_exclude_case(tmp_path):
+    w = World(tmp_path)
+    w.upload([item('environment-coverage', 1)])
+    retests.create_manual(w.store, w.client, dict(request_key='env-first',
+        case_keys=[seed(1)], backends=['af-mlir']))
+    task = w.claim_tasks()[0]
+    retests.complete(w.store, w.client, task['task_id'], dict(request_key='env-finish',
+        lease_id=task['lease_id'], installed=INSTALLED, exec_uuids=[], terminal_reason='user_stop'))
+    assert not queries.case_history(w.store, seed(1))['case']['coverage_exclusions']
+    assert retests.create_manual(w.store, w.client, dict(request_key='env-retry',
+        case_keys=[seed(1)], backends=['af-mlir']))['tasks'] == 1
+
+
+def test_no_coverage_marks_current_result_unsupported_and_removes_pass_contribution(tmp_path):
+    w = World(tmp_path)
+    w.upload([item('invalid-denominator', 1)])
+    retests.create_manual(w.store, w.client, dict(request_key='mark-invalid',
+        case_keys=[seed(1)], backends=['af-mlir']))
+    task = w.claim_tasks()[0]
+    retests.complete(w.store, w.client, task['task_id'], dict(request_key='mark-invalid-done',
+        lease_id=task['lease_id'], installed=INSTALLED, exec_uuids=[], terminal_reason='no_autofuse_coverage'))
+    row = queries.case_history(w.store, seed(1))['executions'][0]
+    assert row['function_status'] == 'unsupported'
+    assert row['invalid_reason'] == 'no_autofuse_coverage'
+    group = queries.backend_stats(w.store, 'af-mlir')['groups'][0]
+    assert group['results'] == {'other': 1}
+    assert group['unsupported'] == 1 and group['valid_total'] == 0
+    assert group['pass'] == group['function_fail'] == 0
+    assert queries.case_page(w.store, results='other', keys_only=True)['case_keys'] == [seed(1)]
+    assert queries.case_page(w.store, q='status:fail', keys_only=True)['case_keys'] == []
+
+
+def test_existing_coverage_marks_heads_and_rebuilds_statistics(tmp_path):
+    from autofusex.server import schema
+    from autofusex.server.ingest import check_stats
+    w = World(tmp_path)
+    w.upload([item('historical-invalid-head', 1)])
+    with w.store.write() as db:
+        db.execute("INSERT INTO case_coverage VALUES(1,1,'af-mlir','910b','no_autofuse_coverage',1,'{}',1)")
+        db.execute('ALTER TABLE executions DROP COLUMN invalid_reason')
+        db.execute('ALTER TABLE executions DROP COLUMN pre_invalid_status')
+        db.execute('DELETE FROM schema_migrations WHERE version IN (23,24)')
+    with w.store.connect(readonly=False) as db:
+        schema.apply(db, 'main', schema.CORE)
+    assert check_stats(w.store)
+    group = queries.backend_stats(w.store, 'af-mlir')['groups'][0]
+    assert group['valid_total'] == 0 and group['unsupported'] == 1
+    assert w.store.reader().execute('SELECT pre_invalid_status FROM executions').fetchone()[0] == 'pass'
+
+
+def test_migrate_deployed_invalid_coverage_to_unsupported(tmp_path):
+    from autofusex.server import schema
+    from autofusex.server.ingest import check_stats
+    w = World(tmp_path)
+    w.upload([item('deployed-invalid-head', 1)])
+    with w.store.write() as db:
+        db.execute("UPDATE executions SET function_status='invalid', invalid_reason='no_autofuse_coverage', pre_invalid_status='pass'")
+        db.execute('DELETE FROM schema_migrations WHERE version=24')
+    with w.store.connect(readonly=False) as db:
+        schema.apply(db, 'main', schema.CORE)
+    assert check_stats(w.store)
+    row = queries.case_history(w.store, seed(1))['executions'][0]
+    assert row['function_status'] == 'unsupported'
+    assert row['invalid_reason'] == 'no_autofuse_coverage'
+    group = queries.backend_stats(w.store, 'af-mlir')['groups'][0]
+    assert group['results'] == {'other': 1}
+    assert group['valid_total'] == 0
+    assert w.store.reader().execute('SELECT pre_invalid_status FROM executions').fetchone()[0] == 'pass'
