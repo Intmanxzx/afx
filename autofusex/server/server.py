@@ -584,8 +584,8 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
 
     @route('/api/admin/classification/rules')
     def classification_rules(principal=Depends(administrator)):
-        from autofusex.server.classification_rules import load
-        return _success({'rules': load(store)})
+        from autofusex.server.classification_rules import load_or_builtin, BUILTIN_RULES
+        return _success({'rules': load_or_builtin(store), 'builtin_rules': BUILTIN_RULES})
 
     @route('/api/admin/classification/rules', 'PUT')
     def put_classification_rules(body: m.ClassificationRules, principal=Depends(administrator)):
