@@ -115,7 +115,7 @@ def backend_stats(store: Store, backend: str, dim: str = "all", arch: str | None
             group["stage_fail"][stage] = group["stage_fail"].get(stage, 0) + n
     for group in groups.values():
         group['invalid'] = group.get('invalid', 0)
-        group['valid_total'] = group['total'] - group['invalid']
+        group['valid_total'] = group['total'] - group['invalid'] - group['unsupported']
     return {"backend": backend, "dim": dim, "npu_arch": arch,
             "groups": sorted(groups.values(), key=lambda g: -g["total"])}
 

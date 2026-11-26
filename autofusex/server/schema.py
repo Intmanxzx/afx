@@ -590,6 +590,11 @@ UPDATE executions SET invalid_reason='no_autofuse_coverage',pre_invalid_status=f
  JOIN executions e ON e.exec_id=h.exec_id AND e.case_revision=c.case_revision);
 UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='ingest_seq';
 """),
+    (24, """
+UPDATE executions SET function_status='unsupported'
+ WHERE function_status='invalid' AND invalid_reason='no_autofuse_coverage';
+UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='ingest_seq';
+"""),
 ]
 
 CONTENT = [

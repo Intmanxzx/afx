@@ -25,7 +25,6 @@ export const RESULT_GROUPS = [
     ["unchecked", "c-uns", "未知", "精度结果 · 未知"]
   ]],
   ["其他", [
-    ["invalid", "c-uns", "无效用例", "无效 · 无 Autofuse 覆盖（不计通过率）"],
     ["other", "c-uns", "不支持", "不支持"],
     ["environment", "c-env", "环境问题", "环境问题"],
     ["timeout", "c-env", "超时", "超时"],
@@ -35,7 +34,7 @@ export const RESULT_GROUPS = [
 ];
 export const RESULT_ITEMS = RESULT_GROUPS.flatMap(([, items]) => items);
 export const DEFAULT_RESULTS = RESULT_ITEMS.map(([key]) => key).filter(key => ![
-  "invalid", "nnsmith", "gen_fail", "compile_unknown", "runtime_unknown", "unchecked", "aclnn", "aicpu",
+  "nnsmith", "gen_fail", "compile_unknown", "runtime_unknown", "unchecked", "aclnn", "aicpu",
   "other", "environment", "timeout", "unknown", "unknown_retest"
 ].includes(key));
 export const RESULT_COLORS = {"c-build":"var(--loss-build)","c-compile":"var(--loss-stage)","c-runtime":"#ef4444","c-env":"#f97316","c-acc":"var(--warn)","c-pass":"var(--ok)","c-uns":"var(--tie)"};

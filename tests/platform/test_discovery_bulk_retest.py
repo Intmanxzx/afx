@@ -191,7 +191,7 @@ def test_environment_terminal_does_not_exclude_case(tmp_path):
         case_keys=[seed(1)], backends=['af-mlir']))['tasks'] == 1
 
 
-def test_no_coverage_marks_current_result_invalid_and_removes_pass_contribution(tmp_path):
+def test_no_coverage_marks_current_result_unsupported_and_removes_pass_contribution(tmp_path):
     w = World(tmp_path)
     w.upload([item('invalid-denominator', 1)])
     retests.create_manual(w.store, w.client, dict(request_key='mark-invalid',
@@ -200,12 +200,13 @@ def test_no_coverage_marks_current_result_invalid_and_removes_pass_contribution(
     retests.complete(w.store, w.client, task['task_id'], dict(request_key='mark-invalid-done',
         lease_id=task['lease_id'], installed=INSTALLED, exec_uuids=[], terminal_reason='no_autofuse_coverage'))
     row = queries.case_history(w.store, seed(1))['executions'][0]
-    assert row['function_status'] == 'invalid'
+    assert row['function_status'] == 'unsupported'
     assert row['invalid_reason'] == 'no_autofuse_coverage'
     group = queries.backend_stats(w.store, 'af-mlir')['groups'][0]
-    assert group['results'] == {'invalid': 1}
+    assert group['results'] == {'other': 1}
+    assert group['unsupported'] == 1 and group['valid_total'] == 0
     assert group['pass'] == group['function_fail'] == 0
-    assert queries.case_page(w.store, results='invalid', keys_only=True)['case_keys'] == [seed(1)]
+    assert queries.case_page(w.store, results='other', keys_only=True)['case_keys'] == [seed(1)]
     assert queries.case_page(w.store, q='status:fail', keys_only=True)['case_keys'] == []
 
 
@@ -218,10 +219,30 @@ def test_existing_coverage_marks_heads_and_rebuilds_statistics(tmp_path):
         db.execute("INSERT INTO case_coverage VALUES(1,1,'af-mlir','910b','no_autofuse_coverage',1,'{}',1)")
         db.execute('ALTER TABLE executions DROP COLUMN invalid_reason')
         db.execute('ALTER TABLE executions DROP COLUMN pre_invalid_status')
-        db.execute('DELETE FROM schema_migrations WHERE version=23')
+        db.execute('DELETE FROM schema_migrations WHERE version IN (23,24)')
     with w.store.connect(readonly=False) as db:
         schema.apply(db, 'main', schema.CORE)
     assert check_stats(w.store)
     group = queries.backend_stats(w.store, 'af-mlir')['groups'][0]
-    assert group['valid_total'] == 0 and group['invalid'] == 1
+    assert group['valid_total'] == 0 and group['unsupported'] == 1
+    assert w.store.reader().execute('SELECT pre_invalid_status FROM executions').fetchone()[0] == 'pass'
+
+
+def test_migrate_deployed_invalid_coverage_to_unsupported(tmp_path):
+    from autofusex.server import schema
+    from autofusex.server.ingest import check_stats
+    w = World(tmp_path)
+    w.upload([item('deployed-invalid-head', 1)])
+    with w.store.write() as db:
+        db.execute("UPDATE executions SET function_status='invalid', invalid_reason='no_autofuse_coverage', pre_invalid_status='pass'")
+        db.execute('DELETE FROM schema_migrations WHERE version=24')
+    with w.store.connect(readonly=False) as db:
+        schema.apply(db, 'main', schema.CORE)
+    assert check_stats(w.store)
+    row = queries.case_history(w.store, seed(1))['executions'][0]
+    assert row['function_status'] == 'unsupported'
+    assert row['invalid_reason'] == 'no_autofuse_coverage'
+    group = queries.backend_stats(w.store, 'af-mlir')['groups'][0]
+    assert group['results'] == {'other': 1}
+    assert group['valid_total'] == 0
     assert w.store.reader().execute('SELECT pre_invalid_status FROM executions').fetchone()[0] == 'pass'
