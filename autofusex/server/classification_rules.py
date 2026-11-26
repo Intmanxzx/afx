@@ -89,7 +89,13 @@ def plan(store, rules, *, summary_only=True, progress=None):
         # this scan to old versions would preserve earlier misclassifications.
         for scanned, row in enumerate(conn.execute("SELECT e.*,c.case_key FROM executions e JOIN cases c ON c.case_id=e.case_id WHERE function_status IN ('gen_fail','ascgraph_fail','compile_fail','runtime_fail','build_fail','timeout')"), 1):
             if progress and scanned % 1000 == 0: progress(scanned, len(changes))
-            text = str(row['log_summary'] or '')
+            # The public detail/list APIs derive the displayed summary from
+            # saved Shape evidence; the originally reported summary may only
+            # contain an outer SubprocException/InductorError wrapper.
+            from .plog_summary import attach
+            displayed = dict(row)
+            attach(conn, displayed)
+            text = str(displayed['log_summary'] or '')
             if not summary_only:
                 text += '\n' + '\n'.join(str(x) for x in (get_content(conn, row['log_content_id']) if row['log_content_id'] else None, get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None) if x)
             result = match(rules, row['backend'], text, current=(row['function_status'], row['fail_stage']))

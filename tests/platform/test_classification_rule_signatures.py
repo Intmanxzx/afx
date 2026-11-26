@@ -65,3 +65,40 @@ def test_mlir_fallback_ingest_and_historical_preview(env):
     changes = plan(store, [])
     assert len(changes) == 1
     assert changes[0]['after'][:3] == ['runtime_fail', 'fused_kernel', 'npu_runtime']
+
+def test_kernel_build_preview_uses_displayed_shape_summary(env):
+    from test_platform import body, item, upload
+    from autofusex.server.classification_rules import plan
+    store, ingestor, principal = env
+    wrapper = 'InductorError: SubprocException: An exception occurred in a subprocess:'
+    error = "RuntimeError: Failed to build ascend kernel, trigger bug by following command: '/tmp/asc_kernel.py'"
+    detail = {'contexts': {'execution': {'diagnostics': {'shapes': {'0': {'error': error}}}}}}
+    upload(ingestor, principal, body([item('kernel-shape-preview', backend='af-legacy',
+        status='compile_fail', log_summary=wrapper, log=wrapper, detail=detail)]))
+    with store.write() as conn:
+        conn.execute("UPDATE executions SET function_status='compile_fail',fail_stage='unknown_retest',failure_owner='unknown'")
+    rule = {'id': 'ascend-kernel-build', 'pattern': 'Failed to build ascend kernel, trigger bug',
+            'backend': None, 'result': {'function_status': 'compile_fail',
+            'fail_stage': 'fused_kernel', 'failure_owner': 'npu_runtime'}}
+    changes = plan(store, [rule])
+    assert len(changes) == 1
+    assert changes[0]['rule_id'] == 'ascend-kernel-build'
+    assert changes[0]['log_summary'] == error
+    assert changes[0]['after'][:3] == ['compile_fail', 'fused_kernel', 'npu_runtime']
+
+
+def test_configured_kernel_rule_ingest_uses_displayed_shape_summary(env):
+    from test_platform import body, item, upload
+    from autofusex.server.ingest import update_settings
+    store, ingestor, principal = env
+    rule = {'id': 'ascend-kernel-build', 'pattern': 'Failed to build ascend kernel, trigger bug',
+            'backend': None, 'result': {'function_status': 'compile_fail',
+            'fail_stage': 'fused_kernel', 'failure_owner': 'npu_runtime'}}
+    update_settings(store, 'root', {'classification.rules': [rule]},
+                    {'classification.rules': store.settings()['classification.rules']['revision']})
+    detail = {'shape_results': [{'shape_index': 0, 'error_summary':
+              'RuntimeError: Failed to build ascend kernel, trigger bug by following command: test'}]}
+    upload(ingestor, principal, body([item('kernel-shape-ingest', backend='af-legacy',
+        status='compile_fail', log_summary='InductorError: SubprocException: outer wrapper', detail=detail)]))
+    row = store.reader().execute('SELECT function_status,fail_stage,failure_owner FROM executions').fetchone()
+    assert tuple(row) == ('compile_fail', 'fused_kernel', 'npu_runtime')
