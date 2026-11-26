@@ -570,7 +570,7 @@ CREATE INDEX retest_tasks_assignee ON retest_tasks(assigned_user,status,npu_arch
 """),
 ]
 
-CORE.append((22, """
+CORE.append((25, """
 CREATE TABLE classification_jobs(
  job_id TEXT PRIMARY KEY, actor TEXT NOT NULL, request_key TEXT NOT NULL,
  rules TEXT NOT NULL, status TEXT NOT NULL, phase TEXT NOT NULL,
