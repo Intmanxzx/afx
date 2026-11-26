@@ -35,6 +35,35 @@ _VALUE = re.compile(r"^[A-Za-z0-9_.:/+<>=*-]{1,64}$")
 _TERM = re.compile(r"^(-?)([a-z]+):(.+)$")
 
 
+def _terms(text: str) -> list[str]:
+    """Split query terms while allowing a quoted value to contain spaces.
+
+    Quotes are syntax only; their contents are passed to the existing field
+    validators. This is intentionally small rather than shell-like so that a
+    log message such as ``error:"AttributeError: 'SymInt' object ..."``
+    remains one search term.
+    """
+    terms, buf, quote = [], [], None
+    for char in text:
+        if quote:
+            if char == quote:
+                quote = None
+            else:
+                buf.append(char)
+        elif char in ("'", '"'):
+            quote = char
+        elif char.isspace():
+            if buf:
+                terms.append(''.join(buf)); buf = []
+        else:
+            buf.append(char)
+    if quote:
+        raise SearchError("unterminated quote")
+    if buf:
+        terms.append(''.join(buf))
+    return terms
+
+
 class SearchError(ValueError):
     def __init__(self, message, status=400, code="invalid_query"):
         super().__init__(message)
@@ -73,7 +102,7 @@ def parse(text: str | None) -> Query | None:
         return None
     if len(text) > MAX_LENGTH:
         raise SearchError(f"query longer than {MAX_LENGTH} characters")
-    terms = text.split()
+    terms = _terms(text)
     if len(terms) > MAX_TERMS:
         raise SearchError(f"at most {MAX_TERMS} terms")
     query = Query(text=text.strip())
