@@ -5,6 +5,7 @@ from .store import get_content
 from .failure_attribution import VERSION
 
 KEY = 'classification.rules'
+MLIR_FALLBACK = 'mlir-fused-runtime-fallback'
 FIELDS = ('function_status', 'fail_stage', 'failure_owner', 'classifier_version')
 BUILTIN_RULES = [
     {'id': 'nnsmith-fake-view', 'pattern': r'torch\._dynamo\.exc\.TorchRuntimeError:[\s\S]*Dynamo failed to run FX node with fake tensors:[\s\S]*aten\.view_copy\.default[\s\S]*Cannot view a tensor with shape', 'result': {'function_status': 'gen_fail', 'fail_stage': 'nnsmith', 'failure_owner': 'nnsmith'}},
@@ -20,6 +21,7 @@ BUILTIN_RULES = [
     {'id': 'mlir-vector-core', 'pattern': r'\[Error\]: The vector core execution is abnormal\.', 'backend': 'af-mlir', 'result': {'function_status': 'runtime_fail', 'fail_stage': 'fused_kernel', 'failure_owner': 'npu_runtime'}},
     {'id': 'ascend-kernel-build', 'pattern': r'Failed to build ascend kernel, trigger bug', 'backend': 'af-mlir', 'result': {'function_status': 'compile_fail', 'fail_stage': 'fused_kernel', 'failure_owner': 'npu_runtime'}},
     {'id': 'compiler-static-assert', 'pattern': r'error: static assertion failed.*SupportType.*Adds', 'result': {'function_status': 'compile_fail', 'fail_stage': 'af_common', 'failure_owner': 'autofuse'}},
+    {'id': MLIR_FALLBACK, 'pattern': r'AF_MLIR_STRICT\s+gate=none\s+shortfall=no\s+graph=autofused_\w+', 'backend': 'af-mlir', 'result': {'function_status': 'runtime_fail', 'fail_stage': 'fused_kernel', 'failure_owner': 'npu_runtime'}},
 ]
 DEFAULT_RULES = BUILTIN_RULES
 
@@ -66,8 +68,14 @@ def load_or_builtin(store):
     if not row: return merge_builtins([])
     return load(store)
 
-def match(rules, backend, text):
-    for rule in rules:
+def match(rules, backend, text, *, current=None):
+    # A saved editor payload can put the fallback anywhere. Always evaluate it
+    # last, and never replace an established attribution with this heuristic.
+    ordered = [r for r in rules if r['id'] != MLIR_FALLBACK] + [r for r in rules if r['id'] == MLIR_FALLBACK]
+    for rule in ordered:
+        if rule['id'] == MLIR_FALLBACK and current is not None and not (
+                current[0] == 'runtime_fail' and current[1] in {'unknown', 'unknown_retest', None}):
+            continue
         if not rule['enabled'] or (rule.get('backend') and rule['backend'] != backend): continue
         if re.search(rule['pattern'], text or '', re.I if rule.get('ignore_case', True) else 0):
             r = rule['result']; return r['function_status'], r['fail_stage'], r['failure_owner'], VERSION, rule['id']
@@ -84,7 +92,7 @@ def plan(store, rules, *, summary_only=True, progress=None):
             text = str(row['log_summary'] or '')
             if not summary_only:
                 text += '\n' + '\n'.join(str(x) for x in (get_content(conn, row['log_content_id']) if row['log_content_id'] else None, get_content(conn, row['detail_content_id']) if row['detail_content_id'] else None) if x)
-            result = match(rules, row['backend'], text)
+            result = match(rules, row['backend'], text, current=(row['function_status'], row['fail_stage']))
             if not result: continue
             after = list(result[:4]); before = [row[k] for k in FIELDS]
             if before != after: changes.append({'exec_id': row['exec_id'], 'exec_uuid': row['exec_uuid'], 'case_key': row['case_key'], 'backend': row['backend'], 'log_summary': text, 'before': before, 'after': after, 'rule_id': result[4]})
