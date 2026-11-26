@@ -6,7 +6,7 @@ failure means from the immutable evidence shipped with an execution.
 import json
 import re
 
-VERSION = 12
+VERSION = 13
 
 _NNSMITH_SIGNATURE = 'ValueError: materialized Torch graph differs from declared NNSmith output signature'
 
