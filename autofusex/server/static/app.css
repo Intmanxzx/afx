@@ -443,6 +443,8 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
 .result-filter-body p { margin: 6px 0 12px; }
 .result-filter .toolbar { gap: 6px; }
 .result-filter .toolbar button { padding: 3px 8px; font-size: 12px; }
+.result-filter-actions { flex-wrap: nowrap; padding-bottom: 12px; margin-bottom: 0; border-bottom: 1px solid var(--line); }
+.result-filter-actions button { flex: 1; white-space: nowrap; }
 .result-filter .capability-legend { margin: 0; gap: 10px; }
 .result-filter .legend-group { grid-template-columns: 1fr; gap: 2px; }
 .result-filter .legend-group-items { display: flex; flex-wrap: wrap; gap: 4px; }
