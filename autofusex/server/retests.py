@@ -173,6 +173,8 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
                 conn.execute("INSERT OR REPLACE INTO case_coverage VALUES(?,?,?,?,?,?,?,?)",
                              (task['case_id'], task['case_revision'], task['required_backend'], task['npu_arch'],
                               terminal_reason, task_id, json.dumps(installed, sort_keys=True), now_ms()))
+                mark_invalid_head(conn, task)
+
             if task["issue_id"]:
                 _maybe_finish(conn, task["issue_id"], task["round_no"])
             return {"task_id": task_id, "result": "invalid", "detail": terminal_reason}
@@ -221,6 +223,25 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         _maybe_finish(conn, task["issue_id"], task["round_no"])
         return {"task_id": task_id, "result": result, "detail": detail}
     return idempotent(store, principal, f"retest-complete:{task_id}", body.pop("request_key", None), body, action)
+
+
+def mark_invalid_head(conn, task):
+    """Mark the matching current result invalid and update its derived statistics."""
+    from autofusex.server import aggregates, issues
+    row = conn.execute("SELECT e.* FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
+                       "WHERE h.case_id=? AND h.backend=? AND h.npu_arch=? AND e.case_revision=?",
+                       (task['case_id'], task['required_backend'], task['npu_arch'], task['case_revision'])).fetchone()
+    if row is None or row['invalid_reason'] or row['created_at'] > task['created_at']:
+        return
+    dims = aggregates.case_dims(conn, row['case_id'])
+    aggregates.apply_stat(conn, row, dims, -1)
+    aggregates.apply_perf(conn, row, dims, -1, _setting(conn, 'perf.tie_threshold'))
+    conn.execute("UPDATE executions SET pre_invalid_status=function_status,function_status='invalid', "
+                 "invalid_reason='no_autofuse_coverage' WHERE exec_id=?", (row['exec_id'],))
+    updated = aggregates.head_row(conn, row['exec_id'])
+    aggregates.apply_stat(conn, updated, dims, 1)
+    issues.on_head(conn, row['case_id'], row['exec_id'])
+    aggregates.advance_seq(conn)
 
 
 def _judge(conn, task, rows, installed):

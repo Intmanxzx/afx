@@ -581,6 +581,15 @@ INSERT OR IGNORE INTO case_coverage
  WHERE t.result='invalid' AND t.detail='no_autofuse_coverage'
  AND t.required_backend IN ('af-mlir','af-legacy') AND t.created_at>=c.updated_at;
 """),
+    (23, """
+ALTER TABLE executions ADD COLUMN invalid_reason TEXT;
+ALTER TABLE executions ADD COLUMN pre_invalid_status TEXT;
+UPDATE executions SET invalid_reason='no_autofuse_coverage',pre_invalid_status=function_status,function_status='invalid' WHERE exec_id IN (
+ SELECT h.exec_id FROM execution_heads h JOIN case_coverage c
+ ON c.case_id=h.case_id AND c.backend=h.backend AND c.npu_arch=h.npu_arch
+ JOIN executions e ON e.exec_id=h.exec_id AND e.case_revision=c.case_revision);
+UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='ingest_seq';
+"""),
 ]
 
 CONTENT = [

@@ -20,7 +20,7 @@ export const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "o
 export const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };
 
 // ---------- global search field catalog (mirrors autofusex/server/search.py) ----------
-export const SEARCH_RESULT_LABEL = { pass: "通过", fail: "失败（功能或精度）", function_fail: "功能失败", accuracy_fail: "精度失败", unsupported: "不支持" };
+export const SEARCH_RESULT_LABEL = { invalid: "无效用例", pass: "通过", fail: "失败（功能或精度）", function_fail: "功能失败", accuracy_fail: "精度失败", unsupported: "不支持" };
 export const SEARCH_SOURCE_LABEL = { nnsmith: "NNSmith 随机生成", baize_tf: "Baize TF 导入", baize_torch: "Baize Torch 导入", model: "整网模型导入" };
 export const SEARCH_DYNAMIC_LABEL = { dynamic: "动态 Shape", static: "静态 Shape" };
 export let searchFieldValues = {};  // op/dtype/category/size/dim/arch/user, fetched lazily from /api/search/fields
