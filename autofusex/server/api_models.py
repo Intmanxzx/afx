@@ -217,6 +217,7 @@ class ClassificationRefresh(Payload):
 
 class ClassificationJob(RequestKey):
     rules: Optional[list[dict[str, Any]]] = None
+    preview_id: Optional[str] = None
 
 
 class Application(Payload):

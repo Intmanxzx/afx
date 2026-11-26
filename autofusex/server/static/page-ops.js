@@ -163,6 +163,7 @@ async function settingsPanel(mode = "platform", selectTab = (tab,job) => go("ops
   const ruleOut = el("div", {role: "status", "aria-live": "polite", class: "panel"}, "预览结果将在这里显示。预览不会修改数据。");
   let ruleBusy = false;
   let ruleRevision = ruleData.revision;
+  let preview = null;
   const backups = el("select", {}, el("option", {value:""}, "选择历史备份"), (ruleData.history || []).map(h => el("option", {value:String(h.id)}, "版本 " + h.revision + " · " + time(h.at))));
   const restoreBackup = () => {
     const h = (ruleData.history || []).find(h => String(h.id) === backups.value);
@@ -174,8 +175,10 @@ async function settingsPanel(mode = "platform", selectTab = (tab,job) => go("ops
     ruleOut.textContent = !apply ? "正在预览，请稍候……只读取日志摘要，不会修改数据。" : "正在保存规则，请稍候……";
     try {
       const rules = JSON.parse(rulesText.value);
+      if (apply === true && (!preview || preview.text !== rulesText.value)) throw new Error('请先预览当前规则，再提交已确认的记录');
       if (!apply) {
         const r = await api("/api/admin/classification/refresh", { method: "POST", body: { rules, apply: false } });
+        preview = {id:r.preview_id, text:rulesText.value};
         const counts = new Map();
         for (const c of r.changes || []) counts.set(c.rule_id, (counts.get(c.rule_id) || 0) + 1);
         ruleOut.replaceChildren(el("h4", {}, `预览完成：待更新 ${r.count} 条`),
@@ -195,7 +198,7 @@ async function settingsPanel(mode = "platform", selectTab = (tab,job) => go("ops
       ruleData.history = latest.history;
       backups.replaceChildren(el("option", {value:""}, "选择历史备份"), latest.history.map(h => el("option", {value:String(h.id)}, "版本 " + h.revision + " · " + time(h.at))));
       if (apply === "save") { ruleOut.textContent = "已保存并自动备份上一版本，新上报数据立即生效"; return; }
-      const job = await api("/api/admin/classification/jobs", {method:"POST", body:{request_key:rkey(), rules:saved["classification.rules"].value}});
+      const job = await api("/api/admin/classification/jobs", {method:"POST", body:{request_key:rkey(), rules:saved["classification.rules"].value, preview_id:preview.id}});
       await selectTab("jobs",job.job_id);
     } catch (err) { ruleOut.replaceChildren(el("div", {class:"error-box",role:"alert"}, String(err.message || err))); }
     finally { ruleBusy = false; }

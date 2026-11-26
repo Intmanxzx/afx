@@ -608,6 +608,13 @@ CREATE TABLE classification_jobs(
 CREATE UNIQUE INDEX classification_jobs_active ON classification_jobs((1)) WHERE status IN ('queued','running');
 """))
 
+CORE.append((26, """
+CREATE TABLE classification_previews(
+ preview_id TEXT PRIMARY KEY, actor TEXT NOT NULL, rules TEXT NOT NULL, changes TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+ALTER TABLE classification_jobs ADD COLUMN preview_id TEXT;
+"""))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(
