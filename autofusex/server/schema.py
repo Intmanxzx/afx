@@ -597,7 +597,7 @@ UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='ingest_seq';
 """),
 ]
 
-CORE.append((22, """
+CORE.append((25, """
 CREATE TABLE classification_jobs(
  job_id TEXT PRIMARY KEY, actor TEXT NOT NULL, request_key TEXT NOT NULL,
  rules TEXT NOT NULL, status TEXT NOT NULL, phase TEXT NOT NULL,
