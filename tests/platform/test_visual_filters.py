@@ -128,3 +128,24 @@ def test_visual_overview_reads_aggregates_without_scanning_executions(env):
     assert result['groups'][0]['total'] == 1
     assert any('stats.stat_buckets' in sql for sql in statements)
     assert not any('JOIN executions' in sql for sql in statements)
+
+
+def test_empty_results_selection_does_not_scan_heads(env):
+    store, ingestor, principal = env
+    upload(ingestor, principal, body([item('empty-filter-scan', kernel=100)]))
+    conn = store.reader()
+    # A regressed category expression fails rather than silently scanning a small fixture.
+    def authorize(action, table, column, database, trigger):
+        if action == sqlite3.SQLITE_READ and table == 'executions' and column in {'function_status', 'accuracy_status', 'fail_stage'}:
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+    conn.set_authorizer(authorize)
+    try:
+        assert queries.case_page(store, results='none', keys_only=True) == {'case_keys': []}
+        assert queries.case_page(store, results='none', page=1)['total'] == 0
+    finally:
+        conn.set_authorizer(None)
+    query = search.visual_query(results='none,pass')
+    assert query.head_sql()[1] == ['pass']
+    with pytest.raises(search.SearchError):
+        search.visual_query(results='none', chips="bad'")

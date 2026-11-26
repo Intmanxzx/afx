@@ -252,7 +252,13 @@ def visual_query(q=None, results=None, selected_backends=None, chips=None):
         from autofusex.server.result_categories import RESULT_KEYS, category_sql
         if not values or not set(values) <= RESULT_KEYS | {'none'}:
             raise SearchError('invalid result filter')
-        query.head.append((f"({category_sql()}) IN ({','.join('?' for _ in values)})", values))
+        # "none" is the empty UI selection, never a stored result category.
+        # A constant false predicate lets SQLite skip the entire head scan.
+        values = [value for value in values if value != 'none']
+        if values:
+            query.head.append((f"({category_sql()}) IN ({','.join('?' for _ in values)})", values))
+        else:
+            query.head.append(('0', []))
     return query if query.head or query.case else None
 
 
