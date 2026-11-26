@@ -590,6 +590,8 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
 
     @route('/api/admin/classification/rules', 'PUT')
     def put_classification_rules(body: m.ClassificationRules, principal=Depends(administrator)):
+        if body.base_revision is None:
+            raise HTTPError(409, 'stale_editor', '页面版本已更新，请复制当前规则后刷新页面，重新预览并保存。规则尚未保存，存量数据尚未修改。')
         from autofusex.server.classification_rules import validate, KEY
         rules = validate(data(body)['rules'])
         return _success(update_settings(store, principal.user_id, {KEY: rules}, {KEY: body.base_revision}))

@@ -28,3 +28,8 @@ def test_save_backup_restore_and_revision_conflict(env):
     update_settings(store, 'admin', {KEY: backup['rules']}, {KEY: rev + 1})
     assert load(store) == original
     assert len(history(store)) == 2
+
+
+def test_old_editor_payload_can_receive_explicit_conflict():
+    from autofusex.server.api_models import ClassificationRules
+    assert ClassificationRules(rules=[]).base_revision is None
