@@ -40,9 +40,10 @@ PAGES.discovery = async (root, params) => {
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
   const colpick = el("div", { class: "colpick hidden" }, COLUMNS.map(([k, t]) => el("label", {},
     el("input", { type: "checkbox", checked: visible.has(k), onchange: e => { e.target.checked ? visible.add(k) : visible.delete(k); store.set(COLS_KEY, [...visible]); redraw(); } }), t)));
-  panel.append(el("h2", {}, "执行记录", el("span", { class: "spacer" }),
+  const viewControls = el("div", { style: { marginLeft: "auto", display: "flex", gap: "8px", alignItems: "center" } },
     select([["expanded", "展开视图"], ["pivot", "后端透视"]], view, v => { store.set(VIEW_KEY, v); render(); }),
-    el("button", { onclick: () => { colpick.classList.toggle("hidden"); if (colpick.classList.contains("hidden")) delete panel.dataset.custom; else panel.dataset.custom = "1"; } }, "显示列")), colpick, pagerTop, table, more);
+    el("button", { onclick: () => { colpick.classList.toggle("hidden"); if (colpick.classList.contains("hidden")) delete panel.dataset.custom; else panel.dataset.custom = "1"; } }, "显示列"));
+  panel.append(colpick, pagerTop, table, more);
   let selecting = false;
   let selectionGeneration = 0;
   const clearSelection = () => { selectionGeneration++; selected.clear(); redraw(); updateBar(); };
@@ -59,7 +60,7 @@ PAGES.discovery = async (root, params) => {
     finally { selecting = false; selectAll.disabled = false; selectAll.textContent = "选择全部"; if (panel.isConnected) updateBar(); }
   } }, "选择全部");
   panel.insertBefore(el("div", { class: "toolbar" }, selectAll,
-    el("button", { onclick: clearSelection }, "清空选择")), pagerTop);
+    el("button", { onclick: clearSelection }, "清空选择"), viewControls), colpick);
   let groups = [];
   const requestedPage = Number(params.get("page") || 1);
   const pageNumber = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;

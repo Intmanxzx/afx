@@ -49,7 +49,7 @@ let filterTimer = null;
 export function cancelFilterChange() { clearTimeout(filterTimer); }
 let collapsed = matchMedia("(max-width:760px)").matches;
 export const ISSUE_CATEGORIES = ["Reduce", "Transpose", "Concat", "Split", "Gather", "Scatter", "View", "Reshape", "Broadcast", "Elementwise"];
-export const TREATMENTS = [["ignore", "忽略"], ["low", "低优先级"], ["normal", "普通优先级"], ["high", "高优先级"]];
+export const TREATMENTS = [["ignore", "忽略"], ["low", "低级"], ["normal", "中等"], ["high", "高级"]];
 export function resultFilter(params, change, arches = [], options = {}) {
   const repair = options.repair;
   const groups = repair ? RESULT_GROUPS.filter(([name]) => name !== "精度结果") : RESULT_GROUPS;

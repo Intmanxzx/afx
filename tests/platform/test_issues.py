@@ -142,6 +142,45 @@ def test_function_title_plain_missing_and_long_summary():
     assert len(issues.function_title('af-mlir', 'lowering', 'x' * 500, 'view')) == 300
 
 
+@pytest.mark.parametrize('legacy', ['af_fronted', 'graph_check', 'lowering'])
+def test_issue_classification_comes_from_execution_not_legacy_category(world, legacy):
+    world.upload([item('legacy-label', 302, status='compile_fail', fail_stage='schedule',
+                       summary='Schedule failed')])
+    issue_id = issues.list_issues(world.store)['issues'][0]['issue_id']
+    with world.store.write() as conn:
+        conn.execute('UPDATE issues SET category=? WHERE issue_id=?', (legacy, issue_id))
+    expected = dict(function_status='compile_fail', fail_stage='schedule',
+                    accuracy_status=None, accuracy_ref=None, invalid_reason=None)
+    assert issues.list_issues(world.store)['issues'][0]['classifications'] == [expected]
+    assert world.issue(issue_id)['classifications'] == [expected]
+    row = issues.issue_cases(world.store, issue_id)['cases'][0]
+    assert {key: row[key] for key in expected} == expected
+    with world.store.write() as conn:
+        conn.execute('DELETE FROM issue_current WHERE issue_id=?', (issue_id,))
+    assert world.issue(issue_id)['classifications'] == [expected]
+
+
+def test_issue_cases_keep_classification_per_backend_and_missing_regression(world):
+    world.upload([item('case-mlir', 303, status='compile_fail', fail_stage='schedule', summary='Schedule failed'),
+                  item('case-legacy', 303, backend='af-legacy', status='compile_fail', fail_stage='schedule',
+                       summary='Schedule failed'), item('case-regression', 304)])
+    issue_id = issues.list_issues(world.store)['issues'][0]['issue_id']
+    with world.store.write() as conn:
+        legacy_id = conn.execute("SELECT exec_id FROM executions WHERE exec_uuid='case-legacy'").fetchone()[0]
+        conn.execute("UPDATE executions SET function_status='runtime_fail',fail_stage='aclnn' WHERE exec_id=?",
+                     (legacy_id,))
+        regression_id = conn.execute('SELECT case_id FROM cases WHERE case_key=?', (seed(304),)).fetchone()[0]
+        retests.create_tasks(conn, dict(issue_id=issue_id, dimension='function'), 1,
+                            [(regression_id, '910b', 'af-mlir')], FIX['fix_version'], FIX['fix_sha256'], 'regression')
+    rows = {row['backend']: row for row in issues.issue_cases(world.store, issue_id)['cases']}
+    assert rows['af-mlir']['fail_stage'] == 'schedule'
+    assert rows['af-legacy']['function_status'] == 'runtime_fail'
+    assert rows['af-legacy']['fail_stage'] == 'aclnn'
+    assert len(world.issue(issue_id)['classifications']) == 2
+    regression_row = issues.issue_cases(world.store, issue_id, role='regression')['cases'][0]
+    assert regression_row['case_key'] == seed(304) and regression_row['function_status'] is None
+
+
 def test_reclassifies_case_when_failure_dimension_changes(world):
     world.upload([item("exec-reclass-f", 101, status="compile_fail", fail_stage="schedule",
                         summary="schedule failure")])

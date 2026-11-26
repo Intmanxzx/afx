@@ -9,6 +9,24 @@ import { openDrawer } from "./ui.js";
 import { knowledgeDrawer } from "./page-knowledge.js";
 
 const STATIONS = [["claimed", "领取"], ["verifying", "验证"], ["regressing", "回归"], ["summarizing", "总结"], ["resolved", "关闭"]];
+function issueClassification(issue) {
+  if (issue.dimension === "accuracy") return el("span", { class: "chip warn" }, "精度失败");
+  if (issue.dimension === "performance") return el("span", { class: "chip bad" }, "性能问题");
+  const classifications = issue.classifications || [];
+  return classifications.length ? el("span", {}, classifications.map(statusChip))
+    : el("span", { class: "chip gray" }, "未知");
+}
+function issueCell(issue) {
+  const reason = issue.dimension === "function" ? issue.log_summary || "" : issue.category || "";
+  return el("td", { class: "issue-cell" },
+    el("a", { href: "#", class: "issue-summary-link", "aria-label": `查看问题 ${issue.issue_id} 详情`,
+      onclick: e => { e.preventDefault(); issueDrawer(issue.issue_id); } },
+      el("span", { class: "issue-summary" },
+        el("span", { class: "issue-number" }, issue.issue_id),
+        el("span", { class: "chip info" }, new Map(TREATMENTS).get(issue.treatment)),
+        issueClassification(issue),
+        el("span", { class: "issue-reason", title: reason }, reason.slice(0, 110)))));
+}
 function subway(issue) {
   const index = { open: -1, claimed: 0, verifying: 1, regressing: 2, summarizing: 3, resolved: 4, closed: 4 }[issue.status];
   const lastRound = (issue.rounds || [])[issue.rounds ? issue.rounds.length - 1 : 0];
@@ -43,7 +61,7 @@ PAGES.repair = async (root, params) => {
   const load = async () => {
     const page = await api("/api/issues" + qs({ dimension, status, q, page: pageNumber, limit: 50, selected_backends:params.get("backends"), chips:params.get("chips"), results:dimension === "function" ? params.get("results") : null, categories:params.get("categories"), treatment:params.get("treatment") || "low,normal,high", scope:params.get("scope") || "current" }));
     for (const issue of page.issues) body.append(el("tr", {},
-      el("td", {}, el("a", { href: "#", onclick: e => { e.preventDefault(); issueDrawer(issue.issue_id); } }, issue.issue_id), el("div", { class: "small", title: issue.title }, issue.dimension === "function" ? statusChip({function_status:issue.category.split(":")[0],fail_stage:issue.category.split(":")[1]}) : null, " ", issue.dimension === "function" ? (issue.log_summary || "").slice(0,110) : issue.title.slice(0,110)), el("span", {class:"chip info"}, new Map(TREATMENTS).get(issue.treatment))),
+      issueCell(issue),
       el("td", {}, (issue.backends || [issue.backend]).map(label).join(" · ")), el("td", {}, fmt(issue.matched_case_count) + " / " + fmt(issue.case_count)), el("td", {}, subway(issue)),
       el("td", { class: "small" }, issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"), el("td", { class: "small" }, time(issue.updated_at))));
     if (!body.children.length) body.append(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "暂无问题")));
@@ -70,8 +88,8 @@ export async function issueDrawer(issueId) {
   const adminBox = isAdmin() && !["resolved", "closed"].includes(issue.status) ? el("div", { class: "toolbar" },
     el("button", { class: "danger", onclick: async () => { const reason = prompt("关闭原因（不修复/误报/重复）："); if (!reason) return; try { await api(`/api/admin/issues/${issueId}/close`, { method: "POST", body: { request_key: rkey(), reason } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "关闭问题"),
     el("button", { onclick: async () => { const into = prompt("合并到哪个问题 ID？"); if (!into) return; try { await api(`/api/admin/issues/${issueId}/merge`, { method: "POST", body: { request_key: rkey(), into: into.trim() } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "合并到…")) : null;
-  openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status])), el("div", {}, issue.title), subway(issue),
-    el("div", { class: "kv", style: { marginTop: "12px" } }, [["维度", { function: "功能", accuracy: "精度", performance: "性能" }[issue.dimension]], ["后端", (issue.backends || [issue.backend]).map(label).join(" · ")], ["分类", issue.dimension === "function" ? statusChip({function_status:issue.category.split(":")[0], fail_stage:issue.category.split(":")[1]}) : issue.category], ["主算子类别", issue.primary_category], ["处理标签", new Map(TREATMENTS).get(issue.treatment)],
+  openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status])), subway(issue),
+    el("div", { class: "kv", style: { marginTop: "12px" } }, [["维度", { function: "功能", accuracy: "精度", performance: "性能" }[issue.dimension]], ["后端", (issue.backends || [issue.backend]).map(label).join(" · ")], ["分类", issueClassification(issue)], ["主算子类别", issue.primary_category], ["处理标签", new Map(TREATMENTS).get(issue.treatment)],
       ["用例数", fmt(issue.case_count)], ["芯片", issue.arches.map(archLabel).join(", ") || "—"], ["领取", issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"],
       ["修复版本", issue.fix_version || "—"], ["代码链接", issue.fix_ref ? el("a", { href: issue.fix_ref, target: "_blank", rel: "noopener noreferrer" }, issue.fix_ref) : "—"],
       ["知识", issue.knowledge_id ? el("a", { href: "#", onclick: e => { e.preventDefault(); knowledgeDrawer(issue.knowledge_id); } }, issue.knowledge_id) : "—"],
@@ -87,8 +105,12 @@ export async function issueDrawer(issueId) {
     el("h3", {}, "事件"), el("ul", { class: "timeline" }, issue.events.map(e => el("li", {}, `${time(e.at)} · ${e.actor} · ${e.kind}`, e.to_status ? ` → ${STATUS_LABEL[e.to_status] || e.to_status}` : "", e.detail ? el("div", { class: "muted" }, e.detail) : null))));
 }
 function caseList(cases) {
-  return el("table", { class: "grid" }, el("tbody", {}, cases.map(c => el("tr", {},
+  return el("table", { class: "grid" },
+    el("thead", {}, el("tr", {}, ["用例", "芯片", "后端", "问题分类", "选取原因", "标记", "复测结果"].map(t => el("th", {}, t)))),
+    el("tbody", {}, cases.map(c => el("tr", {},
     el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
-    el("td", {}, archLabel(c.npu_arch)), el("td", {}, label(c.backend)), el("td", {}, c.pick_reason || ""), el("td", {}, c.result === "skip" ? el("span", { class: "chip warn" }, "Skip") : c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
+    el("td", {}, archLabel(c.npu_arch)), el("td", {}, label(c.backend)),
+    el("td", {}, c.function_status ? statusChip(c) : "—"),
+    el("td", {}, c.pick_reason || ""), el("td", {}, c.result === "skip" ? el("span", { class: "chip warn" }, "Skip") : c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
     el("td", {}, c.result ? el("span", { class: "chip " + (c.result === "pass" ? "ok" : c.result === "fail" ? "bad" : "warn") }, c.result) : "")))));
 }

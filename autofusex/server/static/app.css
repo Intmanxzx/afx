@@ -105,6 +105,15 @@ main { padding: 18px 20px 80px; max-width: 1500px; margin: 0 auto; }
 .capability-legend .legend-toggle[aria-pressed="false"] { opacity: .42; text-decoration: line-through; }
 .capability-legend .legend-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .issue-search { width: min(34vw, 300px); min-width: 180px; margin-right: 10px; }
+table.grid td.issue-cell { position: relative; padding: 0; }
+.issue-summary-link { display: block; padding: 8px; color: var(--text); }
+.issue-summary-link::after { content: ""; position: absolute; inset: 0; cursor: pointer; }
+.issue-summary-link:focus-visible { outline: none; }
+.issue-summary-link:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
+.issue-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px; }
+.issue-summary > :not(.issue-reason) { flex: none; }
+.issue-number { color: var(--accent); font-weight: 600; }
+.issue-reason { flex: 1 1 120px; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
 svg text { fill: var(--muted); font-size: 11px; }
 
 /* tables */
@@ -374,7 +383,8 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
 /* capability matrix: backends as columns, dimensions as rows */
 .cap-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px 6px; }
 .cap-grid { display: grid; gap: 10px 14px; align-items: start; }
-.cap-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 15px; padding: 6px 2px 8px; border-bottom: 2px solid var(--line); background: var(--panel); }
+.cap-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 750; font-size: 20px; text-align: center; padding: 6px 2px 8px; border-bottom: 2px solid var(--line); background: var(--panel); }
+.cap-case-count { font-size: 17px; font-weight: 650; line-height: 1.6; color: var(--text); text-align: center; font-variant-numeric: tabular-nums; }
 .cap-row-label { grid-column: 1 / -1; position: sticky; left: 0; width: max-content; margin-top: 10px; font-size: 13px; font-weight: 650; color: var(--muted); letter-spacing: .04em; }
 .cap-grid .chart { height: 100%; }
 
