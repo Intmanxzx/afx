@@ -11,12 +11,15 @@ _NATIVE = re.compile(r'^(?:loc\([^\n]*\): error:|\[ERROR\])\s*(?:'
                      r'Failed to relocate binary|External hivmc run fails)\b', re.M)
 _FRAME = re.compile(r'File "[^"\n]*/triton/(?:compiler/[^"\n]+|backends/ascend/[^"\n]+)", line \d+')
 _INFRA = re.compile(r'^(?:[\w.]*Error|[\w.]*Exception):[^\n]*(?:out of memory|no space left|permission denied|timed out|device busy)', re.M | re.I)
+_INDUCTOR_ASSERTION = re.compile(r'^AssertionError: n=copy_, n\.args\[0\]=mul_2, placeholders=\{[^\n]*\}, graph=graph\(\):', re.M)
 
 
 def compile_evidence(text):
     """Return the evidence family; a filename alone never proves ownership."""
     if classify_module(text, 'triton-npu') or _INFRA.search(text):
         return None
+    if _INDUCTOR_ASSERTION.search(text):
+        return 'inductor_assertion'
     if 'ValueError: materialized Torch graph differs from declared NNSmith output signature' in text:
         return None
     if _EXCEPTION.search(text):
@@ -47,6 +50,9 @@ def triton_failure(backend, summary=None, detail=None):
     else:
         # A terminal summary is sufficient; shared logs are not.
         texts = [summary or '']
-    if not all(compile_evidence(t) for t in texts):
+    families = [compile_evidence(t) for t in texts]
+    if not all(families):
         return None
+    if all(f == 'inductor_assertion' for f in families):
+        return 'gen_fail', 'inductor', 'torch'
     return 'compile_fail', 'triton_ascend', 'triton'

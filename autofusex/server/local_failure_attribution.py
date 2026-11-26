@@ -9,6 +9,12 @@ _ENVIRONMENT = ('runtime_fail', 'environment', 'infrastructure')
 _FUSED_KERNEL = ('runtime_fail', 'fused_kernel', 'npu_runtime')
 _AF_COMPILE = ('compile_fail', 'af_common', 'autofuse')
 _AF_BACKENDS = {'af-mlir', 'af-legacy'}
+_ATT_GE = re.compile(r'^\[ERROR\] GE\([^\n]*\).*\[[^\n]*autofuse/att/[^\n]*\].*\bErrorNo:\s*\d+\([^\n]*\)', re.M)
+_VECTOR_CORE = re.compile(r'^\[Error\]: The vector core execution is abnormal\.\s*$', re.M)
+_MLIR_KERNEL_BUILD = re.compile(r'AF_MLIR_STRICT\s+gate=none\s+shortfall=no\s+graph=autofused_[^\s]+.*RuntimeError:\s*Failed to build ascend kernel, trigger bug by following command:', re.S)
+_ASCEND_KERNEL_BUILD = re.compile(
+    r'(?:torch\._inductor\.exc\.)?InductorError:\s*RuntimeError:\s*'
+    r'Failed to build ascend kernel, trigger bug by following command:', re.M)
 
 # Match real traceback frame lines, not filenames mentioned in source strings.
 _FRAME = re.compile(r'^\s*File "([^"\n]+)", line \d+, in ([^\n]+)$', re.M)
@@ -51,16 +57,19 @@ def _shape_failure(text, backend):
             and _frame(frames, '/torch_npu/_inductor/ascendc/lowering/index_expr_lowering.py',
                        {'_validate_expression', '_reject_non_integer_atoms'})):
         return _INDUCTOR
-    if (_exception(text, r"(?:InductorError: )?LoweringException: RuntimeError: aten::pow\(\) "
-                   r"Expected a value of type 'Tensor' for argument 'exponent' but instead found type 'SymInt'\.")
-            and any(_frame(frames, path) for path in
-                    ('/torch/_inductor/lowering.py', '/torch/_inductor/ir.py'))):
+    if _exception(text, r"(?:InductorError: )?LoweringException: RuntimeError: aten::pow\(\) "
+                   r"Expected a value of type 'Tensor' for argument 'exponent' but instead found type 'SymInt'\."):
         return _INDUCTOR
     if (_exception(text, r'(?:InductorError: )?PermissionError: [^\n]+ '
                    r'must not be writable by group or others, but got 0o[0-7]+\s*$')
             and _frame(frames, '/torch_npu/_inductor/ascendc/common/utils.py', {'validate_lib'})):
         return _ENVIRONMENT
     if backend in _AF_BACKENDS:
+        if _ATT_GE.search(text):
+            return _AF_COMPILE
+        if backend == 'af-mlir' and (_VECTOR_CORE.search(text) or _MLIR_KERNEL_BUILD.search(text)
+                                      or _ASCEND_KERNEL_BUILD.search(text)):
+            return _FUSED_KERNEL
         if (_exception(text, r'RuntimeError: NPU kernel [^\n]*autofused_[^\n]+ '
                        r'(?:init failed|execution failed\(-?\d+\))\s*$')
                 and _frame(frames, '/torch_npu/_inductor/ascendc/compiler/_kernel.py',

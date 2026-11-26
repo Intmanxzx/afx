@@ -11,6 +11,7 @@ from test_platform import env, http, body, item, upload
 EXCEPTION = 'triton.compiler.errors.MLIRCompilationError: '
 DTYPE = "operator 'exp2' does not support dtype 'float64' (operand #1); supported dtypes on Atlas A2 products/Atlas A3 products: float32. Please cast the operand to a supported dtype via tl.cast before calling 'exp2'."
 NATIVE = 'loc("/tmp/kernel.mlir":1:1): error: Failed to compile BiShengLIR for device\n[ERROR] Failed to run BiShengIR pipeline\n///---[ERROR][Triton][END]---'
+INDUCTOR = 'AssertionError: n=copy_, n.args[0]=mul_2, placeholders={arg1_1, arg2_1, arg0_1}, graph=graph():'
 
 
 def detail(*errors):
@@ -23,13 +24,15 @@ def detail(*errors):
     ('triton.compiler.errors.CompilationError: at 8:11:\n'+DTYPE, 'compiler_exception'),
     ('File "/venv/triton/backends/ascend/dtype_guard.py", line 524\n'+DTYPE, 'dtype_guard'),
     (NATIVE, 'native_compiler'),
+    (INDUCTOR, 'inductor_assertion'),
     ('File "/venv/triton/compiler/compiler.py", line 347\n[ERROR] Failed to run BiShengHIR pipeline', 'native_compiler'),
 ])
 def test_compile_evidence(text, family):
     assert compile_evidence(text) == family
-    assert triton_failure('triton-npu', detail=detail(text)) == ('compile_fail', 'triton_ascend', 'triton')
+    expected = ('gen_fail', 'inductor', 'torch') if family == 'inductor_assertion' else ('compile_fail', 'triton_ascend', 'triton')
+    assert triton_failure('triton-npu', detail=detail(text)) == expected
     assert classify(backend='triton-npu', declared_status='runtime_fail', declared_stage='unknown_retest',
-                    detail=detail(text))[:3] == ('compile_fail', 'triton_ascend', 'triton')
+                    detail=detail(text))[:3] == expected
 
 
 @pytest.mark.parametrize('text', [
@@ -65,6 +68,7 @@ def test_shape_scope_and_backend_protection():
     assert classify(backend='triton-npu', declared_status='pass', detail=detail(EXCEPTION))[0] == 'pass'
     assert classify(backend='triton-npu', declared_status='timeout', detail=detail(EXCEPTION))[0] == 'timeout'
     assert classify(backend='triton-npu', declared_status='unsupported', detail=detail(EXCEPTION))[0] == 'unsupported'
+    assert triton_failure('triton-npu', detail=detail(INDUCTOR)) == ('gen_fail', 'inductor', 'torch')
 
 
 def test_scoped_plan_stale_checks_rollback_and_retest_exclusion(env):
