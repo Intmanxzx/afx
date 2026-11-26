@@ -1,6 +1,7 @@
 # 修复闭环：聚类、筛选与处置 API
 
-功能签名：首错误日志标准化结果 + function_status/fail_stage + 主算子类别。
+功能签名：首错误日志标准化结果 + function_status/fail_stage。主算子类别不参与功能签名；
+同一个错误不会因整张图包含 Reduce、View 或 Transpose 而拆分。
 精度与性能各自在自己的维度内仅按主算子类别聚类。后端、dtype、误差大小、
 性能倍数和分类器版本不参与签名。当前 issue.backends 配置仍决定哪些后端进入问题池。
 
@@ -111,6 +112,18 @@ issue_current 是当前 case/backend/芯片到 issue 的派生关联，独立于
 生产规模耗时需用一致快照验证。
 
 ## 显式重建存量
+
+功能签名移除主类别后，使用保留历史的专用迁移，不能用下方的清空重建替代：
+
+    PYTHONPATH=. python tools/issue_signatures.py DATA --offline
+    PYTHONPATH=. python tools/issue_signatures.py DATA --offline --apply
+
+停止服务写入并备份后执行。迁移保留 ID、日志、事件及修复轮次，优先选择已有修复进度的
+issue 为合并目标，将未处理副本关闭并记录 duplicate_of，旧签名作为别名继续路由。
+含 verifying、regressing 或 summarizing 状态的同错误组整组跳过，不改签名、
+用例关联、验证任务或历史执行签名；报告中标记 frozen verification group。
+有独立修复进度、终态证据或跨组人工合并的记录列为 deferred，保留其证据与租约；
+后续上传使用不含主类别的新签名。迁移支持预览和重复运行。精度、性能签名不受影响。
 
 升级 schema 不自动清理 issue。停止服务写入并创建包含 core/content/stats/secret 的
 私有一致备份，在隔离副本执行：
