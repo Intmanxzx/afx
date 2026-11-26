@@ -171,6 +171,25 @@ def nnsmith_plan(conn):
 def apply_nnsmith(store, batch_id, changes):
     return _apply_scoped(store, batch_id, changes, 'nnsmith')
 
+def apply_rule_changes(store, batch_id, changes):
+    """Apply administrator-reviewed log-rule matches in one audited transaction."""
+    with store.write() as conn:
+        if conn.execute('SELECT 1 FROM classification_changes WHERE batch_id=?', (batch_id,)).fetchone():
+            raise ValueError('batch already exists; use a new batch or rollback')
+        for change in changes:
+            row = conn.execute('SELECT * FROM executions WHERE exec_id=?', (change['exec_id'],)).fetchone()
+            if row is None or row['exec_uuid'] != change['exec_uuid'] or [row[k] for k in FIELDS] != change['before']:
+                raise ValueError('record changed after planning')
+            conn.execute('INSERT INTO classification_changes VALUES(?,?,?,?)',
+                         (batch_id, row['exec_id'], json.dumps(change['before']), json.dumps(change['after'])))
+            conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',
+                         (*change['after'], row['exec_id']))
+        if changes:
+            refresh_classified_executions(conn, [c['exec_id'] for c in changes])
+            aggregates.rebuild(conn, store.setting(conn, 'perf.tie_threshold'))
+            aggregates.advance_seq(conn)
+    return len(changes)
+
 
 def _apply_scoped(store, batch_id, changes, rule):
     with store.write() as conn:
@@ -230,11 +249,13 @@ def _apply_scoped(store, batch_id, changes, rule):
     return len(changes)
 
 def refresh(store, batch_id, *, apply=False):
+    # Planning is read-only and can be expensive because legacy uploads may
+    # require loading compressed detail/raw blobs.  Do not hold SQLite's
+    # IMMEDIATE writer lock during this scan; only the short apply phase needs
+    # exclusive write access.
     changes=[]
-    with store.write() as conn:
-        if conn.execute('SELECT 1 FROM classification_changes WHERE batch_id=?',(batch_id,)).fetchone():
-            raise ValueError('batch already exists; use a new batch or rollback')
-        for row in conn.execute('SELECT * FROM executions').fetchall():
+    with store.connect(readonly=True) as conn:
+        for row in conn.execute('SELECT * FROM executions'):
             if row['classifier_version']==VERSION: continue
             raw=get_content(conn,row['raw_upload_content_id']) if row['raw_upload_content_id'] else None
             original=json.loads(raw) if raw else {}
@@ -249,15 +270,22 @@ def refresh(store, batch_id, *, apply=False):
             before=[row[k] for k in FIELDS];after=list(result)
             if before==after:continue
             changes.append({'exec_id':row['exec_id'],'before':before,'after':after})
-        if apply:
+    if apply:
+        with store.write() as conn:
+            if conn.execute('SELECT 1 FROM classification_changes WHERE batch_id=?',(batch_id,)).fetchone():
+                raise ValueError('batch already exists; use a new batch or rollback')
             for change in changes:
+                row=conn.execute('SELECT * FROM executions WHERE exec_id=?',(change['exec_id'],)).fetchone()
+                if row is None or [row[k] for k in FIELDS] != change['before']:
+                    raise ValueError('record changed after refresh planning')
                 conn.execute('INSERT INTO classification_changes VALUES(?,?,?,?)',
                     (batch_id,change['exec_id'],json.dumps(change['before']),json.dumps(change['after'])))
                 conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',
                     (*change['after'],change['exec_id']))
-            refresh_classified_executions(conn, [c['exec_id'] for c in changes])
-            aggregates.rebuild(conn,store.setting(conn,'perf.tie_threshold'))
-            aggregates.advance_seq(conn)
+            if changes:
+                refresh_classified_executions(conn, [c['exec_id'] for c in changes])
+                aggregates.rebuild(conn,store.setting(conn,'perf.tie_threshold'))
+                aggregates.advance_seq(conn)
     return changes
 
 def rollback(store,batch_id):

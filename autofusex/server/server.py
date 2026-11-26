@@ -575,6 +575,27 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
     def change_settings(body: m.Settings, principal=Depends(administrator)):
         return _success(update_settings(store, principal.user_id, body.changes, body.base_revisions))
 
+    @route('/api/admin/classification/rules')
+    def classification_rules(principal=Depends(administrator)):
+        from autofusex.server.classification_rules import load
+        return _success({'rules': load(store)})
+
+    @route('/api/admin/classification/rules', 'PUT')
+    def put_classification_rules(body: m.ClassificationRules, principal=Depends(administrator)):
+        from autofusex.server.classification_rules import validate, KEY
+        rules = validate(data(body)['rules'])
+        return _success(update_settings(store, principal.user_id, {KEY: rules}, {KEY: store.settings()[KEY]['revision']}))
+
+    @route('/api/admin/classification/refresh', 'POST')
+    def refresh_classification(body: m.ClassificationRefresh, principal=Depends(administrator)):
+        from autofusex.server.classification_rules import load, plan
+        from autofusex.server.reclassification import apply_rule_changes
+        rules = body.rules if body.rules is not None else load(store)
+        changes = plan(store, rules)
+        if not body.apply: return _success({'changes': changes, 'count': len(changes), 'applied': False})
+        batch = body.batch_id or ('classification-rules-' + str(int(time.time())))
+        return _success({'count': apply_rule_changes(store, batch, changes), 'batch_id': batch, 'applied': True})
+
     @route('/api/config/operators')
     def operators(principal=Depends(writer)):
         from autofusex.workloads.fuzz.nnsmith.aten_catalog import RULES

@@ -578,7 +578,11 @@ def update_settings(store: Store, actor: str, changes: dict, base_revisions: dic
 
 
 def _check_setting(key, value):
-    if key == "perf.tie_threshold":
+    if key == "classification.rules":
+        from autofusex.server.classification_rules import validate
+        try: validate(value); ok = True
+        except ValueError: ok = False
+    elif key == "perf.tie_threshold":
         ok = isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 0.5
     elif key in ("regression.budget", "regression.max_budget"):
         ok = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5000
