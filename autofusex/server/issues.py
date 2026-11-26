@@ -103,7 +103,8 @@ def function_signature(execution, traits):
     status, stage = execution["function_status"], execution["fail_stage"] or "unknown"
     norm = normalize(execution["log_summary"]) or "No diagnostic evidence"
     attribution = status + ":" + stage
-    sig = _digest("function", attribution, norm, traits["primary"])
+    # Graph composition is a filter trait, not part of a functional failure.
+    sig = _digest("function", attribution, norm)
     return sig, attribution, f"{attribution}: {norm} ({traits['primary']})"[:300]
 
 
@@ -149,6 +150,14 @@ def execution_signature(conn, execution, traits=None):
         return None
     traits = traits or case_traits(conn, execution["case_id"])
     return (function_signature if dimension == "function" else accuracy_signature)(execution, traits)[0]
+
+
+def same_function_issue(conn, left, right):
+    """Concurrent pre-upgrade repairs can retain IDs for the same new signature."""
+    rows = conn.execute("SELECT category,log_summary FROM issues WHERE issue_id IN (?,?) "
+                        "AND dimension='function' AND cluster_generation=2", (left, right)).fetchall()
+    return len(rows) == 2 and rows[0]['category'] == rows[1]['category'] and (
+        normalize(rows[0]['log_summary']) == normalize(rows[1]['log_summary']))
 
 
 # -- clustering hook ------------------------------------------------------------
@@ -213,7 +222,15 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
             summary = f"kernel {ratio:.2f}x slower than {cfg['anchor']}"
     target_id = None
     if signature:
-        target_id = _attach(conn, dimension, execution["backend"], *signature, summary, execution, traits)
+        source = conn.execute("SELECT * FROM issues WHERE issue_id=?", (source_id,)).fetchone() if source_id else None
+        # Frozen pre-upgrade verification keeps its original ID and membership.
+        if (dimension == 'function' and source is not None and source['dimension'] == 'function'
+                and source['status'] in ('verifying', 'regressing', 'summarizing')
+                and source['category'] == signature[1]
+                and normalize(source['log_summary']) == normalize(summary)):
+            target_id = source_id
+        else:
+            target_id = _attach(conn, dimension, execution["backend"], *signature, summary, execution, traits)
     conn.execute("UPDATE executions SET issue_signature=? WHERE exec_id=?",
                  (signature[0] if signature else None, execution['exec_id']))
     if source_id is None:
@@ -243,7 +260,9 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
         if target_id is None and (execution["function_status"] != "pass" or
                                   row["dimension"] == "performance" and not measured):
             continue
-        result = "pass" if target_id is None else "fail" if row["issue_id"] == target_id else "skip"
+        same = row['issue_id'] == target_id or (source_id is not None and target_id is not None
+                                              and same_function_issue(conn, row['issue_id'], target_id))
+        result = "pass" if target_id is None else "fail" if same else "skip"
         reason = f"→ {target_id}" if result == "skip" else None
         conn.execute("UPDATE issue_cases SET result=?, pick_reason=?, last_exec_id=? WHERE issue_id=? "
                      "AND role='affected' AND case_id=? AND npu_arch=? AND backend=?",

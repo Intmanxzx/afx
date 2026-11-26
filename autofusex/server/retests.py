@@ -202,10 +202,11 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
                          (task['case_id'], current_revision, task['required_backend'], task['npu_arch']))
         target = next((r for r in rows if r["backend"] == task["required_backend"]), None)
         if result != "invalid" and target is not None:
-            from autofusex.server.issues import reconcile
+            from autofusex.server.issues import reconcile, same_function_issue
             anchor = next((r for r in rows if r["backend"] == _setting(conn, "issue.perf_anchor")), None)
             destination = reconcile(conn, target, anchor, source_id=task["issue_id"])
-            if task["issue_id"] and destination and destination != task["issue_id"]:
+            if (task["issue_id"] and destination and destination != task["issue_id"]
+                    and not same_function_issue(conn, task['issue_id'], destination)):
                 result, detail = "skip", f"→ {destination}"
 
         conn.execute("UPDATE retest_tasks SET status=?, result=?, detail=?, finished_at=?, lease_id=NULL, "

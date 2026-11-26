@@ -122,6 +122,97 @@ def test_clustering_groups_same_normalized_error(world):
         "Error at <address> in /usr/lib/x.so: shape [3, 4] 'foo'"
 
 
+def test_function_clustering_ignores_graph_primary_category(world):
+    summary = "error: 'afir.minimum' op has no supported Ascend implementation"
+    world.upload([item(f'minimum-{n}', n, status='compile_fail', fail_stage='mlir',
+                       summary=summary, c=case(n, category=category))
+                  for n, category in enumerate(['View', 'Elementwise', 'Transpose', 'Reduce'], 401)])
+    rows = issues.list_issues(world.store, scope='current')['issues']
+    assert len(rows) == 1 and rows[0]['current_case_count'] == 4
+    assert rows[0]['primary_category'] == 'View'
+    # Different failures and stages still have their own signatures.
+    execution = dict(function_status='compile_fail', fail_stage='mlir', log_summary=summary)
+    sig = issues.function_signature(execution, {'primary': 'Reduce'})[0]
+    assert sig != issues.function_signature(dict(execution, fail_stage='schedule'), {'primary': 'Reduce'})[0]
+    assert sig != issues.function_signature(dict(execution, log_summary=summary.replace('minimum', 'maximum')),
+                                            {'primary': 'Reduce'})[0]
+
+
+def test_function_signature_migration_preserves_repair_and_evidence(world, monkeypatch):
+    from autofusex.server.issue_signatures import migrate
+    current_signature = issues.function_signature
+
+    def old_signature(execution, traits):
+        _, attribution, title = current_signature(execution, traits)
+        return issues._digest('function', attribution, issues.normalize(execution['log_summary']),
+                              traits['primary']), attribution, title
+
+    with monkeypatch.context() as patch:
+        patch.setattr(issues, 'function_signature', old_signature)
+        world.upload([item(f'old-minimum-{n}', n, status='compile_fail', fail_stage='mlir',
+                           summary="error: 'afir.minimum' op has no supported Ascend implementation",
+                           c=case(n, category=category))
+                      for n, category in enumerate(['View', 'Elementwise', 'Reduce'], 501)])
+    rows = issues.list_issues(world.store)['issues']
+    target = next(r for r in rows if r['primary_category'] == 'Reduce')['issue_id']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=target,
+                                                       agent_id='repair-minimum'))
+    before = world.issue(target)
+    assert len(migrate(world.store)['merged']) == 2
+    assert len(issues.list_issues(world.store, scope='current')['issues']) == 3
+    report = migrate(world.store, apply=True)
+    assert len(report['merged']) == 2 and not report['deferred']
+    current = issues.list_issues(world.store, scope='current')['issues']
+    assert len(current) == 1 and current[0]['issue_id'] == target
+    assert current[0]['case_count'] == current[0]['current_case_count'] == 3
+    after = world.issue(target)
+    assert after['status'] == 'claimed' and after['agent_id'] == before['agent_id']
+    assert after['lease_expires_at'] == before['lease_expires_at']
+    assert all(world.issue(r['issue_id'])['duplicate_of'] == target for r in rows if r['issue_id'] != target)
+    assert migrate(world.store, apply=True)['merged'] == []
+    assert migrate(world.store)['updated'] == 0
+    world.upload([item('new-minimum', 504, status='compile_fail', fail_stage='mlir',
+                       summary=after['log_summary'], c=case(504, category='Transpose'))])
+    assert world.issue(target)['case_count'] == 4
+    issues.release(world.store, world.agent, target,
+                   dict(request_key=world.key(), lease_id=lease['lease_id']))
+
+
+@pytest.mark.parametrize('status', ['verifying', 'regressing', 'summarizing'])
+def test_function_migration_leaves_verification_group_untouched(world, monkeypatch, status):
+    from autofusex.server.issue_signatures import migrate
+    current_signature = issues.function_signature
+
+    def old_signature(execution, traits):
+        _, attribution, title = current_signature(execution, traits)
+        return issues._digest('function', attribution, issues.normalize(execution['log_summary']),
+                              traits['primary']), attribution, title
+
+    with monkeypatch.context() as patch:
+        patch.setattr(issues, 'function_signature', old_signature)
+        world.upload([item(f'frozen-{n}', n, status='compile_fail', fail_stage='mlir',
+                           summary="error: 'afir.minimum' op has no supported Ascend implementation",
+                           c=case(n, category=category))
+                      for n, category in enumerate(['View', 'Reduce'], 601)])
+    conn = world.store.reader()
+    target = conn.execute("SELECT issue_id FROM issues WHERE primary_category='Reduce'").fetchone()[0]
+    with world.store.write() as writer:
+        writer.execute('UPDATE issues SET status=? WHERE issue_id=?', (status, target))
+    tables = ['issues', 'issue_cases', 'issue_current', 'executions', 'issue_rounds',
+              'issue_events', 'issue_signature_alias', 'retest_tasks']
+    before = {table: [tuple(r) for r in conn.execute(f'SELECT * FROM {table}')] for table in tables}
+    report = migrate(world.store, apply=True)
+    assert not report['merged'] and report['updated'] == 0
+    assert report['deferred'][0]['reason'] == 'frozen verification group'
+    assert before == {table: [tuple(r) for r in conn.execute(f'SELECT * FROM {table}')] for table in tables}
+    # A same-error candidate failure stays a failure of the frozen issue, not a skip/new cluster.
+    with world.store.write() as writer:
+        execution = writer.execute("SELECT * FROM executions WHERE case_id=(SELECT case_id FROM "
+                                   "issue_cases WHERE issue_id=? LIMIT 1)", (target,)).fetchone()
+        assert issues.reconcile(writer, execution, source_id=target) == target
+        assert writer.execute('SELECT COUNT(*) FROM issues').fetchone()[0] == 2
+
+
 def test_function_title_new_and_legacy(world):
     summary = ('[ERROR] GE(12345,python):2026-11-20-18:00:00.123.456 '
                '[./autofuse/lowering/view.cpp:812]12345 Operator Reshape failed: shape [3, 4], axis 2')

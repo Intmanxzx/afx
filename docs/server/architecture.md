@@ -56,7 +56,7 @@
 - **两两对比**：每对 backend 只存一份（字典序 x<y），反向查询时翻转结论与直方图。只有两边都功能通过、精度不失败、且有 kernel 耗时的用例才参与对比。
 - **管道共享阶段**：接口按 backend 分别返回各阶段计数，并给出 `shared_stages` 配置；页面在同族 backend 计数一致时合并显示。按用例求同族交集需要单独的聚合，暂未实现。
 - **用例特征**：服务端自动补充 `source`、`dynamic`、`size_bucket` 三个离散特征和 `node_count`、`max_numel`、`max_dim`、`shape_count` 四个数值特征。可分组统计的维度为 `op_category`、`dtype`、`size_bucket`、`dynamic`、`source`。
-- **聚类粒度**：签名使用一个"主算子类别"（按 reduce > broadcast > view > compare > cast > elementwise 取最高者），不用全部类别的组合，避免多类别的图把同一个 bug 拆成几十类。精度问题在单算子图上使用精确算子集合，多节点图使用主类别。
+- **聚类粒度**：功能签名使用首错误日志标准化结果及 function_status/fail_stage，主算子类别不参与签名。精度和性能各自在自己的维度内按主算子类别聚类；主类别按 Reduce > Transpose > Concat > Split > Gather > Scatter > View > Reshape > Broadcast > Elementwise 取最高者。
 - **何时归类**：只有成为当前结果（fuzz/retest/import）的失败执行会归入问题。verify/regress 的失败执行只记录签名，不归入问题。
 - **重新打开**：已解决的问题只在新失败满足两个条件时重新打开：执行时间晚于解决时间；所在 backend 版本是修复版本，或不在解决前已知失败的版本里。修复合入前，旧版本持续失败是预期内的，不会反复打开问题。
 - **回归失败不另建问题**：回归跑的是尚未合入的候选包，用它的失败建新问题会污染问题池。失败用例记在该轮回归结果中（`issue_cases.result=fail`），问题退回修复中。`caused_by` 字段保留，等候选包合入后再考虑使用。
