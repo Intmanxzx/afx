@@ -67,6 +67,38 @@ issue 租约并返回 open，旧 worker 结果被拒绝。已完成结果保留�
 验证与回归仍走既有 claim/verify/complete/knowledge API。验证任务按 case + backend +
 芯片生成，候选制品的版本和 SHA 必须满足各后端任务；不会只验证首次出现的后端。
 
+## 主动归还已领取的问题
+
+`POST /api/issues/{issue_id}/release`，使用领取者自己的 Bearer token，
+`Content-Type: application/json`。请求中的 `lease_id` 取自 claim 响应；
+每次新操作使用新的 `request_key`，同一次请求重试保持请求体和 key 一致。
+
+```json
+{
+  "request_key": "release-F123-001",
+  "lease_id": "领取响应中的 lease_id"
+}
+```
+
+成功返回标准 envelope：
+
+```json
+{
+  "schema_version": 1,
+  "ok": true,
+  "data": {"issue_id": "F123", "status": "open"}
+}
+```
+
+归还会清空领取人、agent 与租约，并记录 `released` 事件。`claimed` 状态退回
+`open`，可再次自动或指定领取，原 agent 也可领取其他问题。若已进入验证、回归或
+总结阶段，保留阶段、轮次和复测任务；后续领取者可按 issue ID 接手。
+
+未登录返回 401，只读身份返回 403，缺少必填字段返回 400，不存在的问题返回 404。
+租约过期、已归还、已被接手或属于其他用户时返回 409 `lease_lost`；
+复用同一个 `request_key` 提交不同请求返回 409 `conflict`。
+完全相同的请求重试返回首次结果，不重复生成事件，也不影响之后的新领取。
+
 ## 归因变更与性能
 
 issue_current 是当前 case/backend/芯片到 issue 的派生关联，独立于验证轮次证据。

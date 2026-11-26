@@ -82,6 +82,7 @@ def test_visual_filters_reach_http_endpoints(env):
 
 @pytest.mark.parametrize('endpoint,params', [
     ('/api/cases', {}),
+    ('/api/issues', {'dimension': 'function', 'scope': 'current'}),
     ('/api/overview/pipeline', {}),
     ('/api/overview/backend', {'backend': 'af-mlir'}),
     ('/api/overview/matrix', {'backends': 'af-mlir'}),
@@ -97,6 +98,11 @@ def test_all_result_categories_reach_http_endpoints(env, endpoint, params):
         item('all-results-mlir', kernel=100),
         item('all-results-triton', backend='triton-npu', kernel=200),
     ]))
+    if endpoint == '/api/issues':
+        upload(ingestor, principal, body([item(
+            'all-results-failure', status='compile_fail', fail_stage='schedule',
+            c=case(SEED_B, fingerprint='2' * 64), log_summary='Schedule failed at tile 32',
+        )], key='all-results-failure'))
     client = TestClient(create_app(store), base_url='http://127.0.0.1')
     results = ','.join(sorted(RESULT_KEYS))
     assert len(results) > 128
@@ -104,6 +110,8 @@ def test_all_result_categories_reach_http_endpoints(env, endpoint, params):
     response = client.get(endpoint, params={**params, 'results': results})
     assert expected.status_code == response.status_code == 200, response.text
     actual_data, expected_data = response.json()['data'], expected.json()['data']
+    if endpoint == '/api/issues':
+        assert actual_data['issues']
     # The pipeline echoes whether a query was composed, even for an all-results filter.
     if endpoint == '/api/overview/pipeline':
         actual_data.pop('q')

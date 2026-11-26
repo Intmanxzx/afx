@@ -387,7 +387,7 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
     @route('/api/issues')
     def issue_list(dimension: QueryValue = None, backend: QueryValue = None, status: QueryText = None,
                    q: QueryText = None, after: QueryValue = None, limit: int = 50, page: int | None = None,
-                   results: QueryText = None, selected_backends: QueryText = None, chips: QueryText = None,
+                   results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None,
                    categories: QueryText = None, treatment: QueryText = None, scope: str = 'all',
                    case_q: QueryText = None, principal=Depends(identity)):
         return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status,
@@ -420,6 +420,13 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
 
     @route('/api/issues/{issue_id}/release', 'POST')
     def release(issue_id: str, body: m.Lease, principal=Depends(writer)):
+        """Return an issue held by the caller using the lease_id from claim.
+
+        Clears the owner and lease; claimed issues return to open and may be claimed
+        again. Verification, regression and summary stages keep their progress.
+        Identical request_key retries return the original response. A stale lease
+        or another user's lease returns 409 lease_lost.
+        """
         return _success(issues.release(store, principal, issue_id, data(body)))
 
     @route('/api/issues/{issue_id}/verify', 'POST')
