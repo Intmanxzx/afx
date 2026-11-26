@@ -169,6 +169,8 @@ def apply(store, batch_id, changes):
             conn.execute("UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?",
                          (*change["after"], row["exec_id"]))
         if changes:
+            from autofusex.server.issues import refresh_classified_executions
+            refresh_classified_executions(conn, [c['exec_id'] for c in changes])
             aggregates.rebuild(conn, store.setting(conn, "perf.tie_threshold"))
             aggregates.advance_seq(conn)
     return len(changes)

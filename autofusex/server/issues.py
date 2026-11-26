@@ -14,10 +14,11 @@ import secrets
 import sqlite3
 
 from autofusex.server.auth import Principal
-from autofusex.server.store import Store, now_ms
+from autofusex.server.store import Store, now_ms, get_content
 
 DIMENSION_PREFIX = {"function": "F", "accuracy": "A", "performance": "P"}
 DIMENSION_LABEL = {"function": "功能", "accuracy": "精度", "performance": "性能"}
+
 ACTIVE = ("claimed", "verifying", "regressing", "summarizing")
 TERMINAL = ("resolved", "closed")
 REPRO_LIMIT = 50
@@ -31,23 +32,21 @@ class IssueError(ValueError):
 
 # -- signatures -----------------------------------------------------------------
 _NORMALIZE = [
-    (re.compile(r"0x[0-9a-f]+"), "<hex>"),
+    (re.compile(r"0x[0-9a-fA-F]+"), "<address>"),
+    (re.compile(r"\b\d{4}-\d{2}-\d{2}[- T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)*"), "<time>"),
     (re.compile(r"graph=\S+"), "graph=<graph>"),
-    (re.compile(r"[0-9a-f]{12,}"), "<id>"),
-    (re.compile(r"(?:[a-z]:)?(?:/[\w.+-]+){2,}"), "<path>"),
-    (re.compile(r"'[^']*'|\"[^\"]*\""), "<str>"),
-    (re.compile(r"\[[\d,\s]*\]|\([\d,\s]+\)"), "<shape>"),
-    (re.compile(r"\d+"), "<n>"),
     (re.compile(r"\s+"), " "),
 ]
 
 
 def normalize(text: str | None) -> str:
-    """Strip the parts of an error line that vary between occurrences of one bug."""
-    text = (text or "").strip().splitlines()[0].lower() if (text or "").strip() else ""
-    for pattern, repl in _NORMALIZE:
-        text = pattern.sub(repl, text)
-    return text.strip()[:200]
+    """Normalize metadata only; preserve op names, dtypes, codes and values."""
+    text = next((line.strip() for line in (text or "").splitlines() if line.strip()), "")
+    text = re.sub(r"(\[ERROR\]\s+\w+)\([^)]*\):", r"\1:", text)
+    text = re.sub(r":\d+\]\d*", "]", text)
+    for pattern, replacement in _NORMALIZE:
+        text = pattern.sub(replacement, text)
+    return text.strip()
 
 
 def _digest(*parts) -> bytes:
@@ -55,14 +54,14 @@ def _digest(*parts) -> bytes:
 
 
 # Bugs usually live in the hardest op of a graph; one primary category keeps clusters coarse enough.
-CATEGORY_PRIORITY = ("reduce", "broadcast", "view", "compare", "cast", "elementwise")
+CATEGORY_PRIORITY = ("Reduce", "Transpose", "Concat", "Split", "Gather", "Scatter",
+                     "View", "Reshape", "Broadcast", "Elementwise")
 
 
 def primary_category(categories) -> str:
-    if not categories:
-        return "uncategorized"
-    rank = {name: i for i, name in enumerate(CATEGORY_PRIORITY)}
-    return min(categories, key=lambda c: (rank.get(c, len(rank)), c))
+    canonical = {name.lower(): name for name in CATEGORY_PRIORITY}
+    found = {canonical.get(str(value).lower(), "Unknown") for value in categories or []}
+    return next((name for name in CATEGORY_PRIORITY if name in found), "Unknown")
 
 
 def case_traits(conn, case_id: int) -> dict:
@@ -92,7 +91,7 @@ def _display_issue(row):
     out = dict(row)
     # Older rows store the normalized signature as their title. Rebuild from
     # the retained original summary so existing issues benefit without a migration.
-    if out["dimension"] == "function" and out["log_summary"]:
+    if out.get("cluster_generation", 1) == 1 and out["dimension"] == "function" and out["log_summary"]:
         category = re.search(r" \(([^()]*)\)$", out["title"])
         if category:
             out["title"] = function_title(out["backend"], out["category"],
@@ -101,11 +100,11 @@ def _display_issue(row):
 
 
 def function_signature(execution, traits):
-    stage = execution["fail_stage"] or execution["function_status"]
-    norm = normalize(execution["log_summary"])
-    sig = _digest("function", execution["backend"], stage, norm, traits["primary"])
-    title = function_title(execution["backend"], stage, execution["log_summary"], traits["primary"])
-    return sig, stage, title
+    status, stage = execution["function_status"], execution["fail_stage"] or "unknown"
+    norm = normalize(execution["log_summary"]) or "No diagnostic evidence"
+    attribution = status + ":" + stage
+    sig = _digest("function", attribution, norm, traits["primary"])
+    return sig, attribution, f"{attribution}: {norm} ({traits['primary']})"[:300]
 
 
 def accuracy_bucket(execution) -> str:
@@ -118,15 +117,8 @@ def accuracy_bucket(execution) -> str:
 
 
 def accuracy_signature(execution, traits):
-    # Single-op graphs keep the exact op; larger graphs group by primary category.
-    ops = traits["ops"] if traits["node_count"] == 1 else traits["primary"]
-    bucket = accuracy_bucket(execution)
-    ref = execution["accuracy_ref"] or "cpu"
-    sig = _digest("accuracy", execution["backend"], traits["dtypes"], ops, bucket)
-    label = {"severe": "严重", "mild": "轻微"}.get(bucket, "")
-    title = f"[{execution['backend']}] 精度{label}失败 {traits['dtypes']} {ops}" + (
-        " (EagerNPU 标杆)" if ref == "eager-npu" else "")
-    return sig, bucket, title
+    primary = traits["primary"]
+    return _digest("accuracy", primary), primary, f"精度失败 · {primary}"
 
 
 def slowdown_bucket(ratio: float) -> str:
@@ -138,15 +130,11 @@ def slowdown_bucket(ratio: float) -> str:
 
 
 def performance_signature(backend, anchor, ratio, traits):
-    bucket = slowdown_bucket(ratio)
-    sig = _digest("performance", backend, anchor, bucket, traits["primary"])
-    title = f"[{backend}] kernel 比 {anchor} 慢 {bucket} ({traits['primary']})"
-    return sig, bucket, title
+    primary = traits["primary"]
+    return _digest("performance", primary), primary, f"性能问题 · {primary}"
 
 
 def failure_dimension(execution) -> str | None:
-    if execution["fail_stage"] == "environment":
-        return None
     if execution["function_status"] not in ("pass", "unsupported"):
         return "function"
     if execution["function_status"] == "pass" and execution["accuracy_status"] == "fail":
@@ -173,7 +161,7 @@ def _setting(conn, key):
 def _execution(conn, exec_id):
     return conn.execute(
         "SELECT exec_id, case_id, case_revision, backend, npu_arch, function_status, fail_stage, accuracy_status, "
-        "accuracy_ref, max_abs_err, max_rel_err, kernel_ns, log_summary, created_at FROM executions WHERE exec_id=?",
+        "accuracy_ref, max_abs_err, max_rel_err, kernel_ns, log_summary, created_at, detail_content_id, log_content_id FROM executions WHERE exec_id=?",
         (exec_id,)).fetchone()
 
 
@@ -190,11 +178,10 @@ def on_head(conn: sqlite3.Connection, case_id: int, exec_id: int, cfg: dict | No
     backends, anchor = cfg["backends"], cfg["anchor"]
     if execution["backend"] not in backends and execution["backend"] != anchor:
         return
-    traits = case_traits(conn, case_id)
     heads = {row["backend"]: row for row in conn.execute(
         "SELECT e.* FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
         "WHERE h.case_id=? AND h.npu_arch=?", (case_id, execution["npu_arch"]))}
-    for backend in backends:
+    for backend in (backends if execution["backend"] == anchor else [execution["backend"]]):
         target = heads.get(backend)
         if target is not None:
             reconcile(conn, target, heads.get(anchor), cfg=cfg)
@@ -208,6 +195,12 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
         return None
     dimension = failure_dimension(execution)
     signature = None
+    execution = dict(execution)
+    if dimension == "function":
+        from autofusex.server.error_logs import issue_summary
+        detail = get_content(conn, execution['detail_content_id']) if execution.get('detail_content_id') else None
+        log = get_content(conn, execution['log_content_id']) if execution.get('log_content_id') else None
+        execution['log_summary'] = issue_summary(detail, log, execution['log_summary'], execution['function_status'])
     summary = execution["log_summary"]
     if dimension:
         signature = {"function": function_signature, "accuracy": accuracy_signature}[dimension](execution, traits)
@@ -221,9 +214,25 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
     target_id = None
     if signature:
         target_id = _attach(conn, dimension, execution["backend"], *signature, summary, execution, traits)
+    conn.execute("UPDATE executions SET issue_signature=? WHERE exec_id=?",
+                 (signature[0] if signature else None, execution['exec_id']))
+    if source_id is None:
+        previous = conn.execute("SELECT issue_id FROM issue_current WHERE case_id=? AND backend=? AND npu_arch=?",
+                                (execution['case_id'],execution['backend'],execution['npu_arch'])).fetchone()
+        if target_id:
+            conn.execute("INSERT INTO issue_current VALUES(?,?,?,?,?) ON CONFLICT(case_id,backend,npu_arch) "
+                         "DO UPDATE SET issue_id=excluded.issue_id,exec_id=excluded.exec_id",
+                         (execution['case_id'],execution['backend'],execution['npu_arch'],target_id,execution['exec_id']))
+        elif execution['function_status'] != 'pass' or measured or not previous or conn.execute(
+                "SELECT dimension FROM issues WHERE issue_id=?", (previous[0],)).fetchone()[0] != 'performance':
+            conn.execute("DELETE FROM issue_current WHERE case_id=? AND backend=? AND npu_arch=?",
+                         (execution['case_id'],execution['backend'],execution['npu_arch']))
+        if previous and previous[0] != target_id:
+            event(conn,previous[0],'system','current_membership_changed',None,None,
+                  f"case {execution['case_id']} {execution['backend']} → {target_id or 'none'}")
     rows = conn.execute(
         "SELECT ic.issue_id, i.dimension, i.status FROM issue_cases ic JOIN issues i USING(issue_id) "
-        "WHERE ic.case_id=? AND ic.npu_arch=? AND i.backend=? AND ic.role='affected' "
+        "WHERE ic.case_id=? AND ic.npu_arch=? AND ic.backend=? AND ic.role='affected' "
         "AND ic.stale=0 AND COALESCE(ic.result,'')<>'skip'",
         (execution["case_id"], execution["npu_arch"], execution["backend"])).fetchall()
     for row in rows:
@@ -237,8 +246,8 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
         result = "pass" if target_id is None else "fail" if row["issue_id"] == target_id else "skip"
         reason = f"→ {target_id}" if result == "skip" else None
         conn.execute("UPDATE issue_cases SET result=?, pick_reason=?, last_exec_id=? WHERE issue_id=? "
-                     "AND role='affected' AND case_id=? AND npu_arch=?",
-                     (result, reason, execution["exec_id"], row["issue_id"], execution["case_id"], execution["npu_arch"]))
+                     "AND role='affected' AND case_id=? AND npu_arch=? AND backend=?",
+                     (result, reason, execution["exec_id"], row["issue_id"], execution["case_id"], execution["npu_arch"], execution["backend"]))
         if result == "skip":
             event(conn, row["issue_id"], "system", "case_reclassified", None, None,
                   f"{traits['case_key']} ({execution['npu_arch']}) → {target_id}")
@@ -253,33 +262,35 @@ def _timed(row) -> bool:
 def _attach(conn, dimension, backend, sig, category, title, summary, execution, traits):
     now = now_ms()
     alias = conn.execute("SELECT issue_id FROM issue_signature_alias WHERE dimension=? AND backend=? AND signature=?",
-                         (dimension, backend, sig)).fetchone()
+                         (dimension, "", sig)).fetchone()
     if alias is not None:
         issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (alias[0],)).fetchone()
     else:
-        issue = conn.execute("SELECT * FROM issues WHERE dimension=? AND backend=? AND signature=?",
-                             (dimension, backend, sig)).fetchone()
+        issue = conn.execute("SELECT * FROM issues WHERE dimension=? AND cluster_generation=2 AND signature=?",
+                             (dimension, sig)).fetchone()
     if issue is None:
         cur = conn.execute(
             "INSERT INTO issues(issue_id, dimension, backend, signature, category, title, log_summary, status, "
             "first_seen_at, last_seen_at, updated_at) VALUES('', ?,?,?,?,?,?, 'open', ?,?,?)",
-            (dimension, backend, sig, category, title[:300], (summary or "")[:512], now, now, now))
+            (dimension, backend, sig, category, title[:300], (summary or ""), now, now, now))
         issue_id = f"{DIMENSION_PREFIX[dimension]}{cur.lastrowid}"  # e.g. F254: one token, easy to copy
-        conn.execute("UPDATE issues SET issue_id=? WHERE issue_no=?", (issue_id, cur.lastrowid))
+        conn.execute("UPDATE issues SET issue_id=?, primary_category=?, cluster_generation=2 WHERE issue_no=?", (issue_id, traits["primary"], cur.lastrowid))
         event(conn, issue_id, "system", "created", None, "open", title[:300])
         issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
     issue_id = issue["issue_id"]
+    new_case = conn.execute("SELECT 1 FROM issue_cases WHERE issue_id=? AND case_id=? AND role='affected' LIMIT 1",
+                            (issue_id,execution['case_id'])).fetchone() is None
     inserted = conn.execute(
         "INSERT OR IGNORE INTO issue_cases(issue_id, case_id, role, npu_arch, case_revision, first_exec_id, "
-        "last_exec_id, added_at, result) VALUES(?,?, 'affected', ?,?,?,?,?, 'fail')",
+        "last_exec_id, added_at, backend, result) VALUES(?,?, 'affected', ?,?,?,?,?,?, 'fail')",
         (issue_id, execution["case_id"], execution["npu_arch"], traits["revision"], execution["exec_id"],
-         execution["exec_id"], now)).rowcount
+         execution["exec_id"], now, backend)).rowcount
     if not inserted and issue["status"] not in ACTIVE:
         conn.execute("UPDATE issue_cases SET last_exec_id=?, case_revision=?, stale=0, result='fail', pick_reason=NULL WHERE issue_id=? "
-                     "AND role='affected' AND case_id=? AND npu_arch=?",
-                     (execution["exec_id"], traits["revision"], issue_id, execution["case_id"], execution["npu_arch"]))
-    conn.execute("UPDATE issues SET case_count=case_count+?, priority=case_count+?, last_seen_at=?, updated_at=? "
-                 "WHERE issue_id=?", (inserted, inserted, now, now, issue_id))
+                     "AND role='affected' AND case_id=? AND npu_arch=? AND backend=?",
+                     (execution["exec_id"], traits["revision"], issue_id, execution["case_id"], execution["npu_arch"], backend))
+    conn.execute("UPDATE issues SET case_count=case_count+?, last_seen_at=?, updated_at=? WHERE issue_id=?",
+                 (int(new_case), now, now, issue_id))
     if issue["status"] == "resolved" and _reopens(conn, issue, execution):
         conn.execute("UPDATE issues SET status='open', owner_user=NULL, agent_id=NULL, lease_id=NULL, "
                      "lease_expires_at=NULL, updated_at=? WHERE issue_id=?", (now, issue_id))
@@ -310,6 +321,7 @@ def _reopens(conn, issue, execution) -> bool:
 
 def mark_stale(conn, case_id: int, revision: int) -> None:
     """Imported case graph replaced: its old issue memberships no longer describe the case."""
+    conn.execute("DELETE FROM issue_current WHERE case_id=?", (case_id,))
     rows = conn.execute("SELECT DISTINCT issue_id FROM issue_cases WHERE case_id=? AND case_revision<? AND stale=0",
                         (case_id, revision)).fetchall()
     conn.execute("UPDATE issue_cases SET stale=1 WHERE case_id=? AND case_revision<?", (case_id, revision))
@@ -393,18 +405,18 @@ def claim(store: Store, principal: Principal, body: dict):
             issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (wanted,)).fetchone()
             if issue is None:
                 raise IssueError("not_found", "issue not found", 404)
-            if issue["status"] in TERMINAL or issue["lease_id"] is not None:
+            if issue["treatment"] == "ignore" or issue["status"] in TERMINAL or issue["lease_id"] is not None:
                 raise IssueError("unavailable", f"issue is {issue['status']} or held by someone else", 409)
         else:
-            where, args = ["status='open'", "lease_id IS NULL"], []
+            where, args = ["status='open'", "lease_id IS NULL", "treatment<>'ignore'", "EXISTS (SELECT 1 FROM issue_current cur WHERE cur.issue_id=issues.issue_id)"], []
             if dimension:
                 where.append("dimension=?")
                 args.append(dimension)
             if backend:
-                where.append("backend=?")
+                where.append("EXISTS (SELECT 1 FROM issue_cases ic WHERE ic.issue_id=issues.issue_id AND ic.backend=?)")
                 args.append(backend)
             issue = conn.execute(f"SELECT * FROM issues WHERE {' AND '.join(where)} "
-                                 "ORDER BY priority DESC, issue_no LIMIT 1", args).fetchone()
+                                 "ORDER BY CASE treatment WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, case_count DESC, issue_no LIMIT 1", args).fetchone()
             if issue is None:
                 return None
         lease_id = secrets.token_hex(16)
@@ -463,14 +475,14 @@ def verify(store: Store, principal: Principal, issue_id: str, body: dict):
         if issue["status"] != "claimed":
             raise IssueError("wrong_state", f"verify needs status claimed, issue is {issue['status']}", 409)
         cases = conn.execute(
-            "SELECT case_id, npu_arch FROM issue_cases WHERE issue_id=? AND role='affected' AND stale=0 AND COALESCE(result,'')<>'skip' "
-            "ORDER BY added_at DESC LIMIT ?", (issue_id, _setting(conn, "verify.max_cases"))).fetchall()
+            "SELECT case_id,npu_arch,backend FROM issue_current WHERE issue_id=? "
+            "ORDER BY exec_id DESC LIMIT ?", (issue_id, _setting(conn, "verify.max_cases"))).fetchall()
         if not cases:
             raise IssueError("no_cases", "issue has no current affected cases to verify", 409)
         round_no = issue["round_no"] + 1
         conn.execute("INSERT INTO issue_rounds(issue_id, round_no, kind, fix_version, fix_sha256, started_at) "
                      "VALUES(?,?, 'verify', ?,?,?)", (issue_id, round_no, version, sha, now_ms()))
-        tasks = retests.create_tasks(conn, issue, round_no, [(c["case_id"], c["npu_arch"]) for c in cases],
+        tasks = retests.create_tasks(conn, issue, round_no, [(c["case_id"], c["npu_arch"], c["backend"]) for c in cases],
                                      version, sha)
         _set_status(conn, issue, "verifying", principal.user_id, "verify_submitted",
                     f"round {round_no} version {version} tasks {tasks}", round_no=round_no, fix_version=version,
@@ -562,20 +574,21 @@ def merge(store: Store, principal: Principal, issue_id: str, body: dict):
         target = conn.execute("SELECT * FROM issues WHERE issue_id=?", (target_id,)).fetchone()
         if source is None or target is None or source["issue_id"] == target["issue_id"]:
             raise IssueError("invalid", "source and target must be two existing issues", 400)
-        if (source["dimension"], source["backend"]) != (target["dimension"], target["backend"]):
-            raise IssueError("invalid", "only issues of the same dimension and backend can merge", 400)
+        if source["dimension"] != target["dimension"]:
+            raise IssueError("invalid", "only issues of the same dimension can merge", 400)
         if source["status"] in ACTIVE or target["status"] in TERMINAL:
             raise IssueError("wrong_state", "source must not be in progress and target must be open", 409)
         moved = conn.execute(
             "INSERT OR IGNORE INTO issue_cases(issue_id, case_id, role, npu_arch, case_revision, stale, first_exec_id, "
-            "last_exec_id, added_at) SELECT ?, case_id, role, npu_arch, case_revision, stale, first_exec_id, "
-            "last_exec_id, added_at FROM issue_cases WHERE issue_id=? AND role='affected'",
+            "last_exec_id, added_at, backend) SELECT ?, case_id, role, npu_arch, case_revision, stale, first_exec_id, "
+            "last_exec_id, added_at, backend FROM issue_cases WHERE issue_id=? AND role='affected'",
             (target_id, issue_id)).rowcount
         conn.execute("INSERT OR REPLACE INTO issue_signature_alias VALUES(?,?,?,?)",
-                     (source["dimension"], source["backend"], source["signature"], target_id))
+                     (source["dimension"], "", source["signature"], target_id))
         conn.execute("UPDATE issue_signature_alias SET issue_id=? WHERE issue_id=?", (target_id, issue_id))
-        conn.execute("UPDATE issues SET case_count=case_count+?, priority=case_count+?, updated_at=? WHERE issue_id=?",
-                     (moved, moved, now_ms(), target_id))
+        conn.execute("UPDATE issue_current SET issue_id=? WHERE issue_id=?", (target_id,issue_id))
+        conn.execute("UPDATE issues SET case_count=(SELECT COUNT(DISTINCT case_id) FROM issue_cases WHERE issue_id=? "
+                     "AND role='affected'), updated_at=? WHERE issue_id=?", (target_id,now_ms(),target_id))
         _cancel_tasks(conn, issue_id)
         _set_status(conn, source, "closed", principal.user_id, "merged", target_id, duplicate_of=target_id,
                     close_reason=f"merged into {target_id}")
@@ -593,84 +606,111 @@ def _cancel_tasks(conn, issue_id):
 _ISSUE_COLUMNS = ("issue_id, dimension, backend, category, title, log_summary, status, priority, case_count, "
                   "owner_user, agent_id, lease_expires_at, fix_version, fix_sha256, fix_ref, knowledge_id, caused_by, "
                   "duplicate_of, close_reason, round_no, first_seen_at, last_seen_at, claimed_at, resolved_at, "
-                  "updated_at")
+                  "updated_at, treatment, primary_category, cluster_generation")
 
 
 _ISSUE_RANK = "CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END"
 _ISSUE_ORDER = f"{_ISSUE_RANK} ASC, case_count DESC, issue_no DESC"
 
 
-def list_issues(store: Store, *, dimension=None, backend=None, status=None, q=None, after=None, limit=50, page=None) -> dict:
-    """List claimed work first, then unclaimed issues by affected-case count."""
-    if not 1 <= limit <= 200:
-        raise IssueError("invalid", "limit must be 1..200")
-    if page is not None and (isinstance(page, bool) or not isinstance(page, int) or page < 1):
-        raise IssueError("invalid", "page must be a positive integer")
+def affected_backends(conn, issue_id):
+    return [r[0] for r in conn.execute("SELECT DISTINCT backend FROM issue_cases WHERE issue_id=? "
+            "AND role='affected' ORDER BY backend", (issue_id,))]
+
+
+def set_treatment(store, principal, issue_id, body):
+    principal.require_admin()
+    treatment, reason = body.get("treatment"), body.get("reason", "")
+    if treatment not in {"ignore", "low", "normal", "high"}:
+        raise IssueError("invalid", "invalid treatment")
+    if not isinstance(reason, str) or len(reason) > 500:
+        raise IssueError("invalid", "reason must be at most 500 characters")
+    def action(conn):
+        row = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
+        if row is None:
+            raise IssueError("not_found", "issue not found", 404)
+        # Ignoring explicitly withdraws work; stale workers cannot complete it.
+        if treatment == "ignore" and row["status"] in ACTIVE:
+            _cancel_tasks(conn, issue_id)
+            conn.execute("UPDATE issue_rounds SET outcome='invalid',finished_at=? WHERE issue_id=? "
+                         "AND finished_at IS NULL", (now_ms(), issue_id))
+            _set_status(conn, row, "open", principal.user_id, "work_withdrawn", reason,
+                        owner_user=None, agent_id=None, lease_id=None, lease_expires_at=None)
+        conn.execute("UPDATE issues SET treatment=?,updated_at=? WHERE issue_id=?",
+                     (treatment, now_ms(), issue_id))
+        event(conn, issue_id, principal.user_id, "treatment_changed", None, None,
+              json.dumps(dict(before=row["treatment"], after=treatment, reason=reason), ensure_ascii=False))
+        return dict(issue_id=issue_id, treatment=treatment)
+    return idempotent(store, principal, f"treatment:{issue_id}", body.pop("request_key", None), body, action)
+
+
+def list_issues(store, *, dimension=None, backend=None, status=None, q=None, after=None,
+                limit=50, page=None, results=None, selected_backends=None, chips=None,
+                categories=None, treatment=None, scope="all", case_q=None):
+    from autofusex.server import search
+    if not 1 <= limit <= 200 or (page is not None and (isinstance(page, bool) or not isinstance(page, int) or page < 1)):
+        raise IssueError("invalid", "invalid page or limit")
     if page is not None and after is not None:
         raise IssueError("invalid", "page and after cannot be combined")
+    if scope not in {"all", "current"}:
+        raise IssueError("invalid", "scope must be all or current")
+    query = search.visual_query(case_q, results, selected_backends or backend, chips)
+    hs, ha = query.head_sql() if query else ("1", [])
+    cs, ca = query.case_sql() if query else ("1", [])
+    membership = ("FROM issue_cases ic JOIN cases c ON c.case_id=ic.case_id "
+                  "JOIN executions e ON e.exec_id=ic.last_exec_id ")
+    match = "ic.issue_id=issues.issue_id AND ic.role='affected'"
+    if scope == "current":
+        membership = ("FROM issue_current ic JOIN cases c ON c.case_id=ic.case_id "
+                      "JOIN executions e ON e.exec_id=ic.exec_id ")
+        match = "ic.issue_id=issues.issue_id"
+    match += f" AND ({hs}) AND ({cs})"
+    match_args = [*ha, *ca]
     where, args = [], []
-    for column, value in (("dimension", dimension), ("backend", backend), ("status", status)):
-        if value is not None:
-            where.append(f"{column}=?")
-            args.append(value)
+    for column, value in (("dimension", dimension), ("status", status), ("treatment", treatment),
+                          ("primary_category", categories)):
+        if value:
+            values = value.split(",")
+            if len(values) > 20:
+                raise IssueError("invalid", "too many filter values")
+            where.append(f"issues.{column} IN ({','.join('?' for _ in values)})")
+            args.extend(values)
     if q:
-        q = str(q).strip()
         if len(q) > 128:
             raise IssueError("invalid", "q must be at most 128 characters")
-        where.append("(issue_id LIKE ? OR title LIKE ? OR COALESCE(log_summary,'') LIKE ?)")
-        pattern = "%" + q + "%"
-        args.extend([pattern, pattern, pattern])
-    if page is not None:
-        clause = f"WHERE {' AND '.join(where)}" if where else ""
-        conn = store.reader()
-        # Count and page share a WAL snapshot without taking the writer lock.
-        conn.execute("BEGIN")
-        try:
-            total = conn.execute(f"SELECT COUNT(*) FROM issues {clause}", args).fetchone()[0]
-            total_pages = (total + limit - 1) // limit
-            page = min(page, max(1, total_pages))
-            # Skip narrow index entries; fetch wide title/log columns only for this page.
-            rows = conn.execute(
-                f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues JOIN "
-                f"(SELECT issue_no AS page_no FROM issues {clause} "
-                f"ORDER BY {_ISSUE_ORDER} LIMIT ? OFFSET ?) AS selected "
-                f"ON issues.issue_no=selected.page_no ORDER BY {_ISSUE_ORDER}",
-                args + [limit, (page - 1) * limit]).fetchall()
-        finally:
-            conn.execute("ROLLBACK")
-        items = [_display_issue(row) for row in rows]
-        for item in items:
-            item.pop("issue_no")
-        return {"issues": items, "page": page, "page_size": limit,
-                "total": total, "total_pages": total_pages}
+        where.append("(issue_id LIKE ? OR title LIKE ? OR log_summary LIKE ?)")
+        args.extend(["%" + q + "%"] * 3)
+    if query or scope == "current":
+        where.append(f"EXISTS (SELECT 1 {membership} WHERE {match})")
+        args.extend(match_args)
+    offset = 0
     if after is not None:
         try:
-            parts = [int(part) for part in str(after).split(":")]
-            if len(parts) == 2:
-                after_rank, after_count, after_no = 1, parts[0], parts[1]
-            elif len(parts) == 3:
-                after_rank, after_count, after_no = parts
-            else:
-                raise ValueError
-        except ValueError:
-            raise IssueError("invalid", "after must be '<claimed>:<case_count>:<issue_no>'")
-        rank_sql = _ISSUE_RANK
-        where.append(f"(({rank_sql})>? OR (({rank_sql})=? AND "
-                     "(case_count<? OR (case_count=? AND issue_no<?))))")
-        args += [after_rank, after_rank, after_count, after_count, after_no]
-    clause = f"WHERE {' AND '.join(where)}" if where else ""
-    rows = store.reader().execute(
-        f"SELECT issue_no, {_ISSUE_COLUMNS} FROM issues {clause} "
-        f"ORDER BY {_ISSUE_ORDER} LIMIT ?", args + [limit]).fetchall()
-    items = [_display_issue(row) for row in rows]
-    if len(items) == limit:
-        last = items[-1]
-        cursor = f"{0 if last['status'] in ACTIVE else 1 if last['status'] == 'open' else 2}:{last['case_count']}:{last['issue_no']}"
-    else:
-        cursor = None
-    for item in items:
-        item.pop("issue_no")
-    return {"issues": items, "next_cursor": cursor}
+            offset = int(after)
+            if offset < 0: raise ValueError()
+        except (ValueError, TypeError):
+            raise IssueError("invalid", "after must be a nonnegative offset")
+    clause = "WHERE " + " AND ".join(where) if where else ""
+    conn = store.reader()
+    conn.execute("BEGIN")
+    try:
+        total = conn.execute(f"SELECT COUNT(*) FROM issues {clause}", args).fetchone()[0]
+        pages = (total + limit - 1) // limit
+        if page is not None:
+            page = min(page, max(1, pages)); offset = (page - 1) * limit
+        rows = conn.execute(f"SELECT {_ISSUE_COLUMNS}, "
+            f"(SELECT COUNT(DISTINCT ic.case_id) {membership} WHERE {match}) AS matched_case_count "
+            f"FROM issues {clause} ORDER BY {_ISSUE_RANK}, "
+            "CASE treatment WHEN 'high' THEN 0 WHEN 'normal' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, "
+            "case_count DESC, issue_no DESC LIMIT ? OFFSET ?", [*match_args, *args, limit, offset]).fetchall()
+        items = [_display_issue(row) for row in rows]
+        for item in items:
+            item["backends"] = affected_backends(conn, item["issue_id"])
+            item["current_case_count"] = conn.execute("SELECT COUNT(DISTINCT case_id) FROM issue_current WHERE issue_id=?", (item["issue_id"],)).fetchone()[0]
+    finally:
+        conn.execute("ROLLBACK")
+    return dict(issues=items, page=page or offset // limit + 1, page_size=limit,
+                total=total, total_pages=pages, next_cursor=str(offset + limit) if offset + limit < total else None)
 
 
 def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
@@ -678,6 +718,7 @@ def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
     if row is None:
         raise IssueError("not_found", "issue not found", 404)
     out = _display_issue(row)
+    out["backends"] = affected_backends(conn, issue_id)
     out["rounds"] = [dict(r) for r in conn.execute(
         "SELECT round_no, kind, fix_version, fix_sha256, started_at, finished_at, outcome, pass_count, fail_count, "
         "invalid_count FROM issue_rounds WHERE issue_id=? ORDER BY round_no", (issue_id,))]
@@ -695,16 +736,16 @@ def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
 
 def _repro(conn, issue_id, backend):
     rows = conn.execute(
-        "SELECT c.case_key, c.case_source, ic.npu_arch, e.exec_uuid FROM issue_cases ic "
+        "SELECT c.case_key, c.case_source, ic.npu_arch, ic.backend, e.exec_uuid FROM issue_cases ic "
         "JOIN cases c ON c.case_id=ic.case_id LEFT JOIN executions e ON e.exec_id=ic.last_exec_id "
         "WHERE ic.issue_id=? AND ic.role='affected' AND ic.stale=0 AND COALESCE(ic.result,'')<>'skip' ORDER BY ic.added_at DESC LIMIT ?",
         (issue_id, REPRO_LIMIT)).fetchall()
     cases = []
     for row in rows:
-        command = (f"afx fuzz replay {row['case_key']} --backend {backend}" if row["case_source"] == "nnsmith"
+        command = (f"afx fuzz replay {row['case_key']} --backend {row['backend']}" if row["case_source"] == "nnsmith"
                    else None)
         cases.append({"case_key": row["case_key"], "case_source": row["case_source"], "npu_arch": row["npu_arch"],
-                      "exec_uuid": row["exec_uuid"], "command": command})
+                      "backend": row["backend"], "exec_uuid": row["exec_uuid"], "command": command})
     return {"cases": cases, "truncated": len(rows) == REPRO_LIMIT}
 
 
@@ -712,12 +753,21 @@ def issue_detail(store: Store, issue_id: str) -> dict:
     return detail(store.reader(), issue_id)
 
 
-def issue_cases(store: Store, issue_id: str, role: str = "affected", after=None, limit=100) -> dict:
-    if role not in ("affected", "regression"):
-        raise IssueError("invalid", "role must be affected or regression")
+def issue_cases(store, issue_id, role="affected", after=None, limit=100):
+    if role not in {"affected", "regression"}:
+        raise IssueError("invalid", "invalid role")
+    offset = int(after or 0)
     rows = store.reader().execute(
-        "SELECT ic.case_id, c.case_key, ic.npu_arch, ic.pick_reason, ic.stale, ic.round_no, ic.result, ic.added_at "
-        "FROM issue_cases ic JOIN cases c ON c.case_id=ic.case_id WHERE ic.issue_id=? AND ic.role=? AND ic.case_id>? "
-        "ORDER BY ic.case_id LIMIT ?", (issue_id, role, after or 0, limit)).fetchall()
-    items = [dict(r) for r in rows]
-    return {"cases": items, "next_cursor": items[-1]["case_id"] if len(items) == limit else None}
+        "SELECT ic.case_id,c.case_key,ic.npu_arch,ic.backend,ic.pick_reason,ic.stale,ic.round_no,ic.result,ic.added_at "
+        "FROM issue_cases ic JOIN cases c USING(case_id) WHERE ic.issue_id=? AND ic.role=? "
+        "ORDER BY ic.case_id,ic.npu_arch,ic.backend LIMIT ? OFFSET ?", (issue_id, role, limit, offset)).fetchall()
+    return dict(cases=[dict(r) for r in rows], next_cursor=offset+limit if len(rows)==limit else None)
+
+
+def refresh_classified_executions(conn, exec_ids):
+    """Reconcile only changed current heads, in the caller's transaction."""
+    cfg = config(conn)
+    for exec_id in set(exec_ids):
+        head = conn.execute("SELECT case_id FROM execution_heads WHERE exec_id=?", (exec_id,)).fetchone()
+        if head:
+            on_head(conn, head[0], exec_id, cfg)

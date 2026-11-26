@@ -24,18 +24,28 @@ MAX_ATTEMPTS = 3
 
 
 def create_tasks(conn, issue, round_no: int, targets, version: str, sha: str, role: str = "affected") -> int:
-    backends = ["cpu", issue["backend"]]
-    if issue["dimension"] == "performance":
-        backends.append(_setting(conn, "issue.perf_anchor"))
-    now = now_ms()
-    for case_id, arch in targets:
-        conn.execute(
-            "INSERT INTO retest_tasks(issue_id, round_no, case_id, npu_arch, backends, required_backend, "
-            "required_version, required_sha256, status, created_at) VALUES(?,?,?,?,?,?,?,?, 'pending', ?)",
-            (issue["issue_id"], round_no, case_id, arch, ",".join(backends), issue["backend"], version, sha, now))
-        conn.execute("UPDATE issue_cases SET round_no=?, result=NULL WHERE issue_id=? AND role=? AND case_id=? "
-                     "AND npu_arch=?", (round_no, issue["issue_id"], role, case_id, arch))
-    return len(targets)
+    now, count = now_ms(), 0
+    for target in targets:
+        case_id, arch = target[:2]
+        candidates = [target[2]] if len(target) > 2 else [r[0] for r in conn.execute(
+            "SELECT DISTINCT backend FROM issue_cases WHERE issue_id=? AND role='affected' AND npu_arch=?",
+            (issue["issue_id"], arch))]
+        for backend in candidates:
+            backends = list(dict.fromkeys(["cpu", backend] + (
+                [_setting(conn, "issue.perf_anchor")] if issue["dimension"] == "performance" else [])))
+            conn.execute(
+                "INSERT INTO retest_tasks(issue_id,round_no,case_id,npu_arch,backends,required_backend,"
+                "required_version,required_sha256,status,created_at) VALUES(?,?,?,?,?,?,?,?,'pending',?)",
+                (issue["issue_id"],round_no,case_id,arch,",".join(backends),backend,version,sha,now))
+            if role == "regression":
+                conn.execute("INSERT OR IGNORE INTO issue_cases(issue_id,case_id,role,npu_arch,backend,case_revision,added_at) "
+                             "SELECT ?,case_id,'regression',?,?,case_revision,? FROM cases WHERE case_id=?",
+                             (issue["issue_id"],arch,backend,now,case_id))
+            conn.execute("UPDATE issue_cases SET round_no=?,result=NULL WHERE issue_id=? AND role=? "
+                         "AND case_id=? AND npu_arch=? AND backend=?",
+                         (round_no,issue["issue_id"],role,case_id,arch,backend))
+            count += 1
+    return count
 
 
 def _expire(conn) -> None:
@@ -184,9 +194,9 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         role = "affected" if task["kind"] == "verify" else "regression"
         target = next((r for r in rows if r["backend"] == task["required_backend"]), None)
         conn.execute("UPDATE issue_cases SET result=?, last_exec_id=COALESCE(?, last_exec_id) WHERE issue_id=? "
-                     "AND role=? AND case_id=? AND npu_arch=?",
+                     "AND role=? AND case_id=? AND npu_arch=? AND backend=?",
                      (result, target["exec_id"] if target else None, task["issue_id"], role, task["case_id"],
-                      task["npu_arch"]))
+                      task["npu_arch"], task["required_backend"]))
         _maybe_finish(conn, task["issue_id"], task["round_no"])
         return {"task_id": task_id, "result": result, "detail": detail}
     return idempotent(store, principal, f"retest-complete:{task_id}", body.pop("request_key", None), body, action)
@@ -251,12 +261,11 @@ def _maybe_finish(conn, issue_id, round_no) -> None:
                  "started_at) VALUES(?,?, 'regress', ?,?,?,?)",
                  (issue_id, round_no + 1, rnd["fix_version"], rnd["fix_sha256"],
                   regression.selection_seed(issue_id, round_no + 1), now_ms()))
-    for case_id, arch, reason in picks:
-        conn.execute("INSERT OR REPLACE INTO issue_cases(issue_id, case_id, role, npu_arch, pick_reason, "
-                     "case_revision, round_no, added_at) SELECT ?, case_id, 'regression', ?, ?, case_revision, ?, ? "
-                     "FROM cases WHERE case_id=?", (issue_id, arch, reason, round_no + 1, now_ms(), case_id))
     create_tasks(conn, issue, round_no + 1, [(c, a) for c, a, _ in picks], rnd["fix_version"], rnd["fix_sha256"],
                  role="regression")
+    for case_id, arch, reason in picks:
+        conn.execute("UPDATE issue_cases SET pick_reason=? WHERE issue_id=? AND role='regression' AND case_id=? AND npu_arch=?",
+                     (reason,issue_id,case_id,arch))
     conn.execute("UPDATE issues SET round_no=? WHERE issue_id=?", (round_no + 1, issue_id))
     _move(conn, issue, "regressing", "verify_passed", f"{detail}; regression round {round_no + 1} "
                                                       f"with {len(picks)} cases")
@@ -269,7 +278,7 @@ def _move(conn, issue, to_status, kind, detail):
 
 def round_tasks(store: Store, issue_id: str, round_no: int) -> list:
     return [dict(row) for row in store.reader().execute(
-        "SELECT t.task_id, c.case_key, t.npu_arch, t.status, t.result, t.detail, t.attempts, t.finished_at "
+        "SELECT t.task_id, c.case_key, t.npu_arch, t.required_backend AS backend, t.status, t.result, t.detail, t.attempts, t.finished_at "
         "FROM retest_tasks t JOIN cases c ON c.case_id=t.case_id WHERE t.issue_id=? AND t.round_no=? "
         "ORDER BY t.task_id", (issue_id, round_no))]
 

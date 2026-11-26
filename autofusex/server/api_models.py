@@ -268,3 +268,8 @@ class SourceArtifact(Payload):
     lease_id: str
     path: str
     data: str
+
+
+class IssueTreatment(RequestKey):
+    treatment: Literal['ignore', 'low', 'normal', 'high']
+    reason: str = Field(default='', max_length=500)

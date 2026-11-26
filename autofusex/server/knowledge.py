@@ -87,7 +87,8 @@ def create(conn, principal: Principal, fields: dict, *, confidence: str, status:
                     "case_count": issue["case_count"], "sample_cases": samples, "rounds": rounds,
                     "fix_version": issue["fix_version"], "fix_ref": fields.get("fix_ref") or issue["fix_ref"]}
         if not fields["backends"]:
-            fields["backends"] = [issue["backend"]]
+            from autofusex.server.issues import affected_backends
+            fields["backends"] = affected_backends(conn, issue["issue_id"])
     body = fields["body_md"] or _compose(fields)
     cur = conn.execute(
         "INSERT INTO knowledge(knowledge_id, kind, title, keywords, ops, dtypes, backends, graph_pattern, symptom, "

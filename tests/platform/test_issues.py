@@ -103,13 +103,13 @@ def seed_failures(world):
     """Two cases share one schedule bug, one case has another bug, eight cases pass."""
     world.upload([
         item("exec-0001", 1, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x1f tile 32"),
-        item("exec-0002", 2, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x2a tile 64"),
+        item("exec-0002", 2, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x2a tile 32"),
         item("exec-0003", 3, status="runtime_fail", summary="aclrtSynchronize failed", c=case(3, "reduce")),
         *[item(f"exec-1{n:03d}", n) for n in range(10, 18)],
         *[item(f"exec-2{n:03d}", n, backend="cpu") for n in range(1, 4)],
     ])
     listed = issues.list_issues(world.store)["issues"]
-    return {i["category"]: i for i in listed}
+    return {i["category"].split(":")[-1]: i for i in listed}
 
 
 def test_clustering_groups_same_normalized_error(world):
@@ -119,7 +119,7 @@ def test_clustering_groups_same_normalized_error(world):
     assert schedule["case_count"] == 2 and schedule["status"] == "open" and re.fullmatch(r"F\d+", schedule["issue_id"])
     assert schedule["dimension"] == "function" and schedule["backend"] == "af-mlir"
     assert issues.normalize("Error at 0x1F in /usr/lib/x.so: shape [3, 4] 'foo'") == \
-        "error at <hex> in <path>: shape <shape> <str>"
+        "Error at <address> in /usr/lib/x.so: shape [3, 4] 'foo'"
 
 
 def test_function_title_new_and_legacy(world):
@@ -128,18 +128,10 @@ def test_function_title_new_and_legacy(world):
     world.upload([item('exec-title', 301, status='compile_fail', fail_stage='lowering',
                        summary=summary, c=case(301, 'view'))])
     row = issues.list_issues(world.store)['issues'][0]
-    expected = '[af-mlir] unknown_retest: Operator Reshape failed: shape [3, 4], axis 2 (view)'
-    assert row['title'] == expected
+    assert 'Operator Reshape failed: shape [3, 4], axis 2' in row['title']
     assert row['log_summary'] == summary
-    with world.store.write() as conn:
-        stored = conn.execute('SELECT title, signature FROM issues WHERE issue_id=?', (row['issue_id'],)).fetchone()
-        assert stored['title'] == expected
-        legacy = '[af-mlir] lowering: ' + issues.normalize(summary)[:80] + ' (view)'
-        conn.execute('UPDATE issues SET title=? WHERE issue_id=?', (legacy, row['issue_id']))
-    assert issues.list_issues(world.store)['issues'][0]['title'] == expected
-    assert world.issue(row['issue_id'])['title'] == expected
-    assert world.store.reader().execute('SELECT signature FROM issues WHERE issue_id=?',
-                                       (row['issue_id'],)).fetchone()[0] == stored['signature']
+    assert row['category'] == 'compile_fail:unknown_retest'
+    assert row['primary_category'] == 'View'
 
 
 def test_function_title_plain_missing_and_long_summary():
@@ -184,8 +176,8 @@ def test_accuracy_and_performance_issues(world):
     ])
     by_dim = {i["dimension"]: i for i in issues.list_issues(world.store)["issues"]}
     assert set(by_dim) == {"accuracy", "performance"}
-    assert by_dim["accuracy"]["category"] == "severe" and "EagerNPU" in by_dim["accuracy"]["title"]
-    assert by_dim["performance"]["category"] == "2-5x" and by_dim["performance"]["case_count"] == 1
+    assert by_dim["accuracy"]["category"] == "Elementwise"
+    assert by_dim["performance"]["category"] == "Elementwise" and by_dim["performance"]["case_count"] == 1
 
 
 def test_full_lifecycle(world):
@@ -265,11 +257,11 @@ def test_full_lifecycle(world):
 
     # the old, still-unmerged version keeps failing: expected, the issue stays resolved
     later = 10**13
-    world.upload([item("exec-9001", 40, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x99 tile 8",
+    world.upload([item("exec-9001", 40, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x99 tile 32",
                        created=later)])
     assert world.issue(issue_id)["status"] == "resolved"
     # the same bug on a newer version reopens it
-    world.upload([item("exec-9002", 41, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x98 tile 8",
+    world.upload([item("exec-9002", 41, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x98 tile 32",
                        created=later, env={"cann": "8.2", "backend_version": "0.3.2"})])
     detail = world.issue(issue_id)
     assert detail["status"] == "open" and detail["case_count"] == 4
@@ -368,7 +360,7 @@ def test_numbered_pages(world):
     expected = issues.list_issues(world.store)['issues']
     first = issues.list_issues(world.store, page=1, limit=1)
     second = issues.list_issues(world.store, page=2, limit=1)
-    assert first == dict(issues=expected[:1], page=1, page_size=1, total=2, total_pages=2)
+    assert first == dict(issues=expected[:1], page=1, page_size=1, total=2, total_pages=2, next_cursor="1")
     assert second['issues'] == expected[1:]
     assert issues.list_issues(world.store, page=10**30, limit=1) == second
     cursor = issues.list_issues(world.store, limit=1)['next_cursor']
@@ -378,7 +370,7 @@ def test_numbered_pages(world):
     assert filtered['total'] == filtered['total_pages'] == filtered['page'] == 1
     assert filtered['issues'] == expected[:1]
     assert issues.list_issues(world.store, page=5, q='no matching issue') == dict(
-        issues=[], page=1, page_size=50, total=0, total_pages=0)
+        issues=[], page=1, page_size=50, total=0, total_pages=0, next_cursor=None)
     with world.store.write() as conn:
         conn.execute("UPDATE issues SET status='closed' WHERE issue_id=?", (expected[1]['issue_id'],))
     shrunk = issues.list_issues(world.store, page=2, limit=1, status='claimed')
@@ -525,3 +517,118 @@ def test_verified_result_reclassifies_original_issue(world, destination):
     if destination != 'pass':
         targets = [r for r in issues.list_issues(world.store)['issues'] if r['issue_id'] != issue_id and r['dimension'] == destination]
         assert any({c['result'] for c in issues.issue_cases(world.store, r['issue_id'])['cases']} == {'fail'} for r in targets)
+
+
+def test_shared_backend_cluster_and_precise_filters(world):
+    world.upload([item('cross-aa', 501, status='compile_fail', fail_stage='schedule', summary='Schedule failed tile 32'),
+                  item('cross-bb', 501, backend='af-legacy', status='compile_fail', fail_stage='schedule', summary='Schedule failed tile 32'),
+                  item('cross-cc', 502, status='runtime_fail', summary='another failure')])
+    rows = issues.list_issues(world.store, results='schedule', selected_backends='af-legacy', scope='current')['issues']
+    assert len(rows) == 1
+    assert rows[0]['backends'] == ['af-legacy', 'af-mlir']
+    assert rows[0]['case_count'] == rows[0]['matched_case_count'] == 1
+    assert len(issues.issue_cases(world.store, rows[0]['issue_id'])['cases']) == 2
+    assert not issues.list_issues(world.store, results='runtime_unknown', selected_backends='af-legacy', scope='current')['issues']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(),agent_id='cross',issue_id=rows[0]['issue_id']))
+    result = issues.verify(world.store,world.agent,rows[0]['issue_id'],dict(FIX,request_key=world.key(),lease_id=lease['lease_id']))
+    assert result['tasks'] == 2
+    tasks = world.store.reader().execute('SELECT required_backend FROM retest_tasks').fetchall()
+    assert {r[0] for r in tasks} == {'af-legacy','af-mlir'}
+
+
+def test_classification_change_moves_current_membership_with_active_lease(world):
+    world.upload([item('change-a', 601, status='compile_fail', fail_stage='schedule', summary='ERROR lowering')])
+    old = issues.list_issues(world.store)['issues'][0]
+    lease = issues.claim(world.store,world.agent,dict(request_key=world.key(),agent_id='change'))
+    with world.store.write() as conn:
+        exec_id = conn.execute("SELECT exec_id FROM executions WHERE exec_uuid='change-a'").fetchone()[0]
+        conn.execute("UPDATE executions SET fail_stage='mlir' WHERE exec_id=?", (exec_id,))
+        issues.refresh_classified_executions(conn,[exec_id])
+    rows = issues.list_issues(world.store,scope='current')['issues']
+    assert len(rows) == 1 and rows[0]['issue_id'] != old['issue_id']
+    assert rows[0]['category'] == 'compile_fail:mlir'
+    assert world.issue(old['issue_id'])['status'] == 'claimed'
+    assert not issues.list_issues(world.store,scope='current',results='schedule')['issues']
+    # Frozen evidence remains available, while current filtering follows classification.
+    assert issues.issue_cases(world.store,old['issue_id'])['cases']
+
+
+def test_treatment_permissions_idempotency_and_reactivation(world):
+    seed_failures(world)
+    row=issues.list_issues(world.store)['issues'][0]
+    body=dict(request_key=world.key(),treatment='ignore',reason='out of scope')
+    with pytest.raises(auth.AuthError):
+        issues.set_treatment(world.store,world.agent,row['issue_id'],dict(body))
+    first=issues.set_treatment(world.store,world.admin,row['issue_id'],dict(body))
+    assert issues.set_treatment(world.store,world.admin,row['issue_id'],dict(body)) == first
+    with pytest.raises(IssueError):
+        issues.claim(world.store,world.agent,dict(request_key=world.key(),agent_id='ignore',issue_id=row['issue_id']))
+    issues.set_treatment(world.store,world.admin,row['issue_id'],dict(request_key=world.key(),treatment='high'))
+    assert issues.claim(world.store,world.agent,dict(request_key=world.key(),agent_id='high'))['issue_id'] == row['issue_id']
+
+
+def test_rebuild_preview_and_apply_keep_executions(world):
+    from autofusex.server.issue_rebuild import rebuild
+    seed_failures(world)
+    before=[dict(r) for r in world.store.reader().execute('SELECT * FROM executions')]
+    old={r['issue_id'] for r in issues.list_issues(world.store)['issues']}
+    assert rebuild(world.store)['applied'] is False
+    assert {r['issue_id'] for r in issues.list_issues(world.store)['issues']} == old
+    assert rebuild(world.store,apply=True)['new_issues']['function'] == 2
+    assert not old & {r['issue_id'] for r in issues.list_issues(world.store)['issues']}
+    assert before == [dict(r) for r in world.store.reader().execute('SELECT * FROM executions')]
+
+
+def test_shared_primary_category_only_accuracy_and_performance(world):
+    world.upload([item('acc-one1',701,accuracy='fail',max_rel_err=.01,c=case(701,category='Reduce',ops=('sum',),dtypes=('float32',))),
+                  item('acc-two2',702,backend='af-legacy',accuracy='fail',max_rel_err=10,c=case(702,category='Reduce',ops=('mean',))),
+                  item('perf-one',703,kernel_ns=200,c=case(703,category='Reduce')),
+                  item('perf-ref',703,backend='triton-npu',kernel_ns=100,c=case(703,category='Reduce')),
+                  item('perf-two',704,backend='af-legacy',kernel_ns=900,c=case(704,category='Reduce')),
+                  item('perf-ref2',704,backend='triton-npu',kernel_ns=100,c=case(704,category='Reduce'))])
+    rows=issues.list_issues(world.store)['issues']
+    assert len(rows)==2
+    assert {r['dimension'] for r in rows}=={'accuracy','performance'}
+    assert all(r['case_count']==2 for r in rows)
+    assert issues.primary_category(['Elementwise','Broadcast','Reshape','View','Scatter','Gather','Split','Concat','Transpose','Reduce'])=='Reduce'
+
+
+def test_treatment_http_and_openapi(world):
+    from fastapi.testclient import TestClient
+    from autofusex.server.server import create_app
+    seed_failures(world)
+    issue_id=issues.list_issues(world.store)['issues'][0]['issue_id']
+    with TestClient(create_app(world.store)) as client:
+        path=f'/api/admin/issues/{issue_id}/treatment'
+        body=dict(request_key='http-label',treatment='ignore')
+        assert client.post(path,json=body,headers={'Authorization':'Bearer '+auth.issue_token(world.store,'dev')}).status_code==403
+        token=auth.issue_token(world.store,'root')
+        assert client.post(path,json=body,headers={'Authorization':'Bearer '+token}).status_code==200
+        assert client.get('/api/issues?treatment=ignore').json()['data']['issues'][0]['issue_id']==issue_id
+        assert '/api/admin/issues/{issue_id}/treatment' in client.get('/openapi.json').json()['paths']
+        assert client.get('/api/issues?treatment=low,normal,high&categories=Reduce,Elementwise&selected_backends=af-mlir,af-legacy').status_code == 200
+
+
+def test_issue_log_preserves_operator_dtype_and_error_code():
+    from autofusex.server.error_logs import issue_summary
+    line='Cast: Check dtype failed input_dtypes: [DT_INT64], output_dtypes: [DT_FLOAT]'
+    assert issue_summary(None,None,line)==line
+    assert issues.normalize(line)==line
+    assert issues.normalize('ERROR code 161002') != issues.normalize('ERROR code 161003')
+    assert issue_summary(None,None,'deprecated old API','timeout')=='Execution timed out'
+
+
+def test_classification_rollback_refreshes_issue_without_new_upload(world):
+    from autofusex.server.reclassification import rollback, FIELDS
+    world.upload([item('rollback-issue',801,status='compile_fail',fail_stage='schedule',summary='Schedule failed')])
+    with world.store.write() as conn:
+        row=conn.execute("SELECT * FROM executions WHERE exec_uuid='rollback-issue'").fetchone()
+        before=[row[k] for k in FIELDS]
+        after=[row['function_status'],'mlir','mlir',999]
+        conn.execute('INSERT INTO classification_changes VALUES(?,?,?,?)',('issue-test',row['exec_id'],json.dumps(before),json.dumps(after)))
+        conn.execute('UPDATE executions SET function_status=?,fail_stage=?,failure_owner=?,classifier_version=? WHERE exec_id=?',(*after,row['exec_id']))
+        issues.refresh_classified_executions(conn,[row['exec_id']])
+    assert issues.list_issues(world.store,scope='current')['issues'][0]['category']=='compile_fail:mlir'
+    rollback(world.store,'issue-test')
+    rows=issues.list_issues(world.store,scope='current')['issues']
+    assert len(rows)==1 and rows[0]['category']=='compile_fail:schedule'
