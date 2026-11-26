@@ -207,6 +207,7 @@ class Settings(Payload):
 
 class ClassificationRules(Payload):
     rules: list[dict[str, Any]]
+    base_revision: int
 
 class ClassificationRefresh(Payload):
     rules: Optional[list[dict[str, Any]]] = None

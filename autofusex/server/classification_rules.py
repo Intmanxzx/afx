@@ -39,13 +39,24 @@ def validate(rules):
 
 def load(store):
     row = store.reader().execute('SELECT value FROM platform_settings WHERE key=?', (KEY,)).fetchone()
-    if not row: return DEFAULT_RULES.copy()
-    try: return validate(json.loads(row['value']))
-    except (ValueError, TypeError, json.JSONDecodeError): return DEFAULT_RULES.copy()
+    if not row: return merge_builtins([])
+    return merge_builtins(json.loads(row['value']))
+
+def merge_builtins(rules):
+    """Keep missing builtins; an explicit same-id override may disable one."""
+    custom = validate(rules)
+    ids = {r['id'] for r in custom}
+    return validate(custom + [r for r in BUILTIN_RULES if r['id'] not in ids])
+
+def history(store):
+    rows = store.reader().execute(
+        "SELECT rowid AS id,at,actor,detail FROM audit_log WHERE action=? ORDER BY rowid DESC LIMIT 50",
+        ('classification.rules.backup',)).fetchall()
+    return [dict(id=r['id'], at=r['at'], actor=r['actor'], **json.loads(r['detail'])) for r in rows]
 
 def load_or_builtin(store):
     row = store.reader().execute('SELECT value FROM platform_settings WHERE key=?', (KEY,)).fetchone()
-    if not row: return validate(BUILTIN_RULES)
+    if not row: return merge_builtins([])
     return load(store)
 
 def match(rules, backend, text):
@@ -56,7 +67,7 @@ def match(rules, backend, text):
     return None
 
 def plan(store, rules, *, summary_only=True):
-    rules = validate(rules); changes = []
+    rules = merge_builtins(rules); changes = []
     with store.connect(readonly=True) as conn:
         # Rules are corrective evidence and must be able to repair records
         # already stamped with the current classifier version.  Restricting
