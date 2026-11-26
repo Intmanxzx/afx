@@ -26,8 +26,7 @@ PAGES.overview = async (root, params) => {
   const pipeline = await overviewData("/api/overview/pipeline" + qs({ arch, ...cohort }));
   const selectedBackends = filters.selected_backends ? new Set(filters.selected_backends.split(",")) : null;
   const shown = pipeline.lanes.filter(l => !selectedBackends || selectedBackends.has(l.backend));
-  const head = el("h2", {}, "基础能力统计分布");
-  const box = el("section", { class: "panel hero" }, head); root.append(box);
+  const box = el("section", { class: "panel hero" }); root.append(box);
   const lanes = shown.filter(l => !l.baseline).map(l => l.backend);
   const tabsDone = renderBackendTabs(box, lanes, arch, cohort, active, pipeline.lanes.filter(l => !l.baseline).map(l => l.backend));
   const perfBox = el("section", { class: "panel" }); root.append(perfBox);
@@ -79,13 +78,12 @@ function donutChart(result, backend, compact = false, active = new Set(RESULT_IT
   if (result.error) return el("div", { class: "chart" }, errorBox(result.error));
   const g = result.groups[0] || { total: 0, pass: 0, accuracy_fail: 0, unsupported: 0, stage_fail: {} };
   const total = selectedTotal(g, active);
-  const unsupportedCount = stageMetric(g, "other");
   const parts = RESULT_ITEMS.map(([key, cls,, title]) => [key, title, stageMetric(g,key), RESULT_COLORS[cls]]).filter(p => active.has(p[0]) && p[2] > 0);
   const R = 78, r = 48, C = 100, root = svg("svg", { viewBox: "0 0 200 200", width: 200, height: 200, role: "img", "aria-label": "正确性分布" });
   let angle = -Math.PI / 2;
   for (const [, name, n, color] of parts) { const sweep = 2 * Math.PI * n / (total || 1), end = angle + Math.min(sweep, 2 * Math.PI - 1e-4), large = sweep > Math.PI ? 1 : 0; const p = (rad,a) => `${C + rad*Math.cos(a)} ${C + rad*Math.sin(a)}`; root.append(svg("path", { d:`M ${p(R,angle)} A ${R} ${R} 0 ${large} 1 ${p(R,end)} L ${p(r,end)} A ${r} ${r} 0 ${large} 0 ${p(r,angle)} Z`, fill:color, "data-tooltip":`${name} ${fmt(n)}（${pct(n,total)}）` })); angle += sweep; }
   root.append(svg("text", {x:C,y:C+5,"text-anchor":"middle",class:"donut-center"}, selectedPassRate(g, active)));
-  return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "muted small" }, `显示 ${fmt(total)} / ${fmt(g.total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), el("div", { class: "muted small" }, "不支持 " + fmt(unsupportedCount) + " 个，不计通过率"), root);
+  return el("div", { class: "chart chart-main-result" }, compact ? el("div", { class: "cap-case-count" }, `显示 ${fmt(total)} / ${fmt(g.total)} 个用例`) : el("h3", {}, `${label(backend)} · 通过率（${fmt(total)} 个用例）`), root);
 }
 
 const BUCKET_DIMS = ["dim_bucket", "size_bucket"];

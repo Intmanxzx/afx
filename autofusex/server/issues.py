@@ -618,6 +618,22 @@ def affected_backends(conn, issue_id):
             "AND role='affected' ORDER BY backend", (issue_id,))]
 
 
+def issue_classifications(conn, issue_id):
+    # Current membership carries the same attribution shown in discovery. Older
+    # issues may retain a stage-only category, so never parse it as an execution.
+    rows = conn.execute(
+        "SELECT DISTINCT e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason "
+        "FROM issue_current ic JOIN executions e ON e.exec_id=ic.exec_id WHERE ic.issue_id=? "
+        "ORDER BY e.function_status,e.fail_stage", (issue_id,)).fetchall()
+    if not rows:
+        rows = conn.execute(
+            "SELECT DISTINCT e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason "
+            "FROM issue_cases ic JOIN executions e ON e.exec_id=ic.last_exec_id "
+            "WHERE ic.issue_id=? AND ic.role='affected' ORDER BY e.function_status,e.fail_stage",
+            (issue_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def set_treatment(store, principal, issue_id, body):
     principal.require_admin()
     treatment, reason = body.get("treatment"), body.get("reason", "")
@@ -706,6 +722,7 @@ def list_issues(store, *, dimension=None, backend=None, status=None, q=None, aft
         items = [_display_issue(row) for row in rows]
         for item in items:
             item["backends"] = affected_backends(conn, item["issue_id"])
+            item["classifications"] = issue_classifications(conn, item["issue_id"])
             item["current_case_count"] = conn.execute("SELECT COUNT(DISTINCT case_id) FROM issue_current WHERE issue_id=?", (item["issue_id"],)).fetchone()[0]
     finally:
         conn.execute("ROLLBACK")
@@ -719,6 +736,7 @@ def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
         raise IssueError("not_found", "issue not found", 404)
     out = _display_issue(row)
     out["backends"] = affected_backends(conn, issue_id)
+    out["classifications"] = issue_classifications(conn, issue_id)
     out["rounds"] = [dict(r) for r in conn.execute(
         "SELECT round_no, kind, fix_version, fix_sha256, started_at, finished_at, outcome, pass_count, fail_count, "
         "invalid_count FROM issue_rounds WHERE issue_id=? ORDER BY round_no", (issue_id,))]
@@ -758,8 +776,10 @@ def issue_cases(store, issue_id, role="affected", after=None, limit=100):
         raise IssueError("invalid", "invalid role")
     offset = int(after or 0)
     rows = store.reader().execute(
-        "SELECT ic.case_id,c.case_key,ic.npu_arch,ic.backend,ic.pick_reason,ic.stale,ic.round_no,ic.result,ic.added_at "
-        "FROM issue_cases ic JOIN cases c USING(case_id) WHERE ic.issue_id=? AND ic.role=? "
+        "SELECT ic.case_id,c.case_key,ic.npu_arch,ic.backend,ic.pick_reason,ic.stale,ic.round_no,ic.result,ic.added_at, "
+        "e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason "
+        "FROM issue_cases ic JOIN cases c USING(case_id) LEFT JOIN executions e ON e.exec_id=ic.last_exec_id "
+        "WHERE ic.issue_id=? AND ic.role=? "
         "ORDER BY ic.case_id,ic.npu_arch,ic.backend LIMIT ? OFFSET ?", (issue_id, role, limit, offset)).fetchall()
     return dict(cases=[dict(r) for r in rows], next_cursor=offset+limit if len(rows)==limit else None)
 
