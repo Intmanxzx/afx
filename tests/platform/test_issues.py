@@ -446,6 +446,59 @@ def test_http_issue_flow(world):
         server.server_close()
 
 
+def test_http_release_returns_claim_to_queue(world):
+    from fastapi.testclient import TestClient
+    from autofusex.server.server import create_app
+
+    issue_id = seed_failures(world)["schedule"]["issue_id"]
+    headers = {"Authorization": "Bearer " + auth.issue_token(world.store, "dev")}
+    auth.add_user(world.store, "other", "developer")
+    other = {"Authorization": "Bearer " + auth.issue_token(world.store, "other")}
+    with TestClient(create_app(world.store)) as client:
+        claimed = client.post("/api/issues/claim", headers=headers, json={
+            "request_key": "release-claim", "agent_id": "a", "issue_id": issue_id})
+        assert claimed.status_code == 200, claimed.text
+        lease = claimed.json()["data"]["lease_id"]
+        path = f"/api/issues/{issue_id}/release"
+        payload = {"request_key": "release-1", "lease_id": lease}
+        assert client.post(path, json=payload).status_code == 401
+        assert client.post(path, headers=headers, json={"request_key": "missing-lease"}).status_code == 400
+        assert client.post("/api/issues/F999999/release", headers=headers, json=payload).status_code == 404
+        denied = client.post(path, headers=other, json=payload)
+        assert denied.status_code == 409 and denied.json()["error"]["code"] == "lease_lost"
+        denied = client.post(path, headers=headers, json={**payload, "lease_id": "wrong"})
+        assert denied.status_code == 409 and denied.json()["error"]["code"] == "lease_lost"
+        assert world.issue(issue_id)["owner_user"] == "dev"
+
+        released = client.post(path, headers=headers, json=payload)
+        assert released.status_code == 200, released.text
+        assert released.json()["data"] == {"issue_id": issue_id, "status": "open"}
+        row = world.store.reader().execute("SELECT owner_user, agent_id, lease_id, lease_expires_at FROM issues "
+                                           "WHERE issue_id=?", (issue_id,)).fetchone()
+        assert all(value is None for value in row)
+        queued = client.get("/api/issues", params={"status": "open", "scope": "current"}).json()["data"]["issues"]
+        assert issue_id in {row["issue_id"] for row in queued}
+        # The former agent is free to work on another issue.
+        next_issue = client.post("/api/issues/claim", headers=headers, json={
+            "request_key": "release-next", "agent_id": "a"})
+        assert next_issue.status_code == 200 and next_issue.json()["data"] is not None
+        returned = client.post(f"/api/issues/{next_issue.json()['data']['issue_id']}/release", headers=headers,
+                               json={"request_key": "release-next-return", "lease_id": next_issue.json()["data"]["lease_id"]})
+        assert returned.status_code == 200, returned.text
+        taken = client.post("/api/issues/claim", headers=other, json={
+            "request_key": "release-takeover", "agent_id": "b"})
+        assert taken.status_code == 200 and taken.json()["data"]["issue_id"] == issue_id
+        assert taken.json()["data"]["lease_id"] != lease
+        # Retrying the old successful request must not release the new holder.
+        assert client.post(path, headers=headers, json=payload).json() == released.json()
+        assert world.issue(issue_id)["owner_user"] == "other"
+        stale = client.post(path, headers=headers, json={**payload, "request_key": "release-stale"})
+        assert stale.status_code == 409 and stale.json()["error"]["code"] == "lease_lost"
+        conflict = client.post(path, headers=headers, json={**payload, "lease_id": "different"})
+        assert conflict.status_code == 409 and conflict.json()["error"]["code"] == "conflict"
+        assert sum(event["kind"] == "released" for event in world.issue(issue_id)["events"]) == 2
+
+
 def test_device_busy_is_invalid_not_failure(world):
     issue_id = seed_failures(world)["schedule"]["issue_id"]
     lease = issues.claim(world.store, world.agent, {"request_key": "c1", "agent_id": "a"})["lease_id"]
