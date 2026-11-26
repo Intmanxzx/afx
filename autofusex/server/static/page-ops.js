@@ -56,11 +56,36 @@ PAGES.ops = async (root, params) => {
   root.append(overviewPanel);
   root.append(el("section", { class: "panel" }, el("h2", {}, "近 48 小时吞吐（用例/小时）"), hourly(data.hourly)));
   if (!me) return;
-  const selected = params.get("tab") || "tasks";
   const tabs = [["tasks","任务配置"], ...(isAdmin() ? [["platform","平台配置"],["rules","分类规则"],["jobs","刷新记录"]] : [])];
-  root.append(el("nav", {class:"toolbar", role:"tablist"}, tabs.map(([id,title]) => el("button", {role:"tab", "aria-selected":selected===id ? "true":"false", class:selected===id ? "primary":"", onclick:() => go("ops", {tab:id})},title))));
-  const panel = selected === "tasks" ? await taskConfigurationPanel() : isAdmin() ? selected === "jobs" ? await classificationJobsPanel(params.get("job")) : await settingsPanel(selected) : el("p", {}, "仅管理员可访问");
-  panel.dataset.custom = "1"; root.append(panel);
+  const area = el("section"); area.dataset.custom = "1";
+  const body = el("div", {role:"tabpanel"});
+  const cache = new Map(); let ticket = 0;
+  const nav = el("nav", {class:"toolbar", role:"tablist"});
+  const select = async (id, job=null, updateUrl=true) => {
+    if (!tabs.some(t => t[0] === id)) id = "tasks";
+    const current = ++ticket;
+    if (updateUrl) {
+      const query = new URLSearchParams({tab:id}); if (job) query.set("job",job);
+      history.replaceState(null,"", "#ops?" + query);
+    }
+    for (const button of nav.children) {
+      button.classList.toggle("primary",button.dataset.tab===id);
+      button.setAttribute("aria-selected",String(button.dataset.tab===id));
+    }
+    const key = id === "jobs" ? id + ":" + (job || "") : id;
+    if (cache.has(key)) { const panel = cache.get(key); body.replaceChildren(panel); if (panel.refreshJob) panel.refreshJob(); return; }
+    body.replaceChildren(el("p", {role:"status"}, "加载配置中……"));
+    try {
+      const panel = id === "tasks" ? await taskConfigurationPanel() : id === "jobs" ? await classificationJobsPanel(job,select) : await settingsPanel(id,select);
+      cache.set(key,panel);
+      if (current === ticket) body.replaceChildren(panel);
+    } catch (err) {
+      if (current === ticket) body.replaceChildren(el("div",{class:"error-box"},err.message),el("button",{onclick:() => select(id,job)},"重试"));
+    }
+  };
+  for (const [id,title] of tabs) nav.append(el("button", {role:"tab", "data-tab":id, onclick:() => select(id)},title));
+  area.append(nav,body); root.append(area);
+  await select(params.get("tab") || "tasks",params.get("job"),false);
 };
 function clientControls(client, latestVersion) {
   const fresh = client.online && client.daemon_state_at && Date.now() - client.daemon_state_at < 300000;
@@ -117,7 +142,7 @@ function hourly(series) {
   root.append(svg("text", { x: pad, y: 14 }, `峰值 ${max} 个用例/小时`));
   return root;
 }
-async function settingsPanel(mode = "platform") {
+async function settingsPanel(mode = "platform", selectTab = (tab,job) => go("ops", {tab,job})) {
   const [settings, pins, ruleData] = await Promise.all([api("/api/settings"), api("/api/regression/pins"), api("/api/admin/classification/rules")]);
   const fields = [["perf.tie_threshold", "Kernel 持平阈值", "number", "0.01", "判定性能差异接近持平的比例阈值。"], ["regression.budget", "回归默认预算", "number", "1", "每个问题默认抽取的回归用例总数。"], ["regression.max_budget", "单问题回归上限", "number", "1", "单个问题允许的最大回归用例数。"],
     ["issue.perf_anchor", "性能对比基准后端", "select", null, "自定义性能对比的基准后端，不是测试任务的执行后端。", ["cpu", "af-legacy", "af-mlir", "triton-npu", "eager-npu"]], ["issue.perf_slowdown", "性能问题阈值（倍）", "number", "0.1", "被测后端慢于基准达到该倍数时生成性能问题。"], ["issue.lease_days", "问题租约（天）", "number", "1", "Agent 领取问题后的最长占用时间。"], ["verify.max_cases", "单轮验证用例上限", "number", "1", "一次验证最多执行多少个用例。"]];
@@ -171,7 +196,7 @@ async function settingsPanel(mode = "platform") {
       backups.replaceChildren(el("option", {value:""}, "选择历史备份"), latest.history.map(h => el("option", {value:String(h.id)}, "版本 " + h.revision + " · " + time(h.at))));
       if (apply === "save") { ruleOut.textContent = "已保存并自动备份上一版本，新上报数据立即生效"; return; }
       const job = await api("/api/admin/classification/jobs", {method:"POST", body:{request_key:rkey(), rules:saved["classification.rules"].value}});
-      go("ops", {tab:"jobs", job:job.job_id});
+      await selectTab("jobs",job.job_id);
     } catch (err) { ruleOut.replaceChildren(el("div", {class:"error-box",role:"alert"}, String(err.message || err))); }
     finally { ruleBusy = false; }
   };
@@ -296,17 +321,20 @@ async function taskConfigurationPanel() {
   await load();return panel;
 }
 
-async function classificationJobsPanel(jobId) {
+async function classificationJobsPanel(jobId, selectTab) {
   const panel = el("section", {class:"panel"}, el("h2", {}, "分类刷新任务"));
   const content = el("div", {role:"status", "aria-live":"polite"}); panel.append(content);
   const phases = {queued:"等待执行",scanning:"扫描日志摘要",applying:"更新分类",issues:"更新关联问题",statistics:"重建统计",completed:"已完成",failed:"失败"};
+  let timer, loading = false;
   const load = async () => {
+    if (loading) return;
+    loading = true; clearTimeout(timer);
     try {
       const jobs = await api("/api/admin/classification/jobs");
       const job = jobId ? await api("/api/admin/classification/jobs/" + encodeURIComponent(jobId)) : null;
-      content.replaceChildren(el("div", {class:"toolbar"}, el("button", {onclick:load}, "刷新状态"), el("a", {href:"#ops?tab=rules"}, "返回分类规则")),
+      content.replaceChildren(el("div", {class:"toolbar"}, el("button", {onclick:load}, "刷新状态"), el("a", {href:"#ops?tab=rules", onclick:e => { if (selectTab) { e.preventDefault(); selectTab("rules"); } }}, "返回分类规则")),
         el("table", {class:"grid"}, el("thead", {}, el("tr", {}, ["任务","阶段","已扫描","待更新","提交时间"].map(x => el("th", {}, x)))),
-          el("tbody", {}, jobs.map(j => el("tr", {}, el("td", {}, el("a", {href:"#ops?tab=jobs&job="+j.job_id},j.job_id)), el("td", {}, phases[j.phase] || j.phase), el("td", {},fmt(j.scanned)), el("td", {},fmt(j.matched)), el("td", {},time(j.created_at)))))));
+          el("tbody", {}, jobs.map(j => el("tr", {}, el("td", {}, el("a", {href:"#ops?tab=jobs&job="+j.job_id, onclick:e => { if (selectTab) { e.preventDefault(); selectTab("jobs",j.job_id); } }},j.job_id)), el("td", {}, phases[j.phase] || j.phase), el("td", {},fmt(j.scanned)), el("td", {},fmt(j.matched)), el("td", {},time(j.created_at)))))));
       if (job) {
         content.append(el("h3", {}, "任务 " + job.job_id), el("p", {}, phases[job.phase] || job.phase), el("p", {}, "离开或刷新页面不会取消任务。服务重启后会继续处理未完成任务。"));
         if (job.error) content.append(el("div", {class:"error-box"},job.error));
@@ -317,8 +345,10 @@ async function classificationJobsPanel(jobId) {
             el("table", {class:"grid"}, el("tbody", {},job.result.samples.map(c => el("tr", {},el("td", {},el("a", {href:"#case?key="+encodeURIComponent(c.case_key)+"&exec="+c.exec_uuid},c.case_key)),el("td", {},c.rule_id),el("td", {},c.before.slice(0,3).join(" / ")),el("td", {},c.after.slice(0,3).join(" / ")))))));
         }
       }
-      if (jobs.some(j => ["queued","running"].includes(j.status))) setTimeout(() => { if (panel.isConnected) load(); },3000);
+      if (jobs.some(j => ["queued","running"].includes(j.status))) timer = setTimeout(() => { if (panel.isConnected) load(); },3000);
     } catch (err) { content.replaceChildren(el("div", {class:"error-box"},err.message),el("button",{onclick:load},"重试")); }
+    finally { loading = false; }
   };
+  panel.refreshJob = load;
   await load(); return panel;
 }
