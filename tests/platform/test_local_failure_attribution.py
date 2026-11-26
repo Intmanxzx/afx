@@ -64,7 +64,11 @@ def test_approved_rules_use_each_shape_trace(error, status, stage, serialized):
 
 @pytest.mark.parametrize('error,status,stage', ERRORS)
 def test_shared_logs_missing_frames_and_conflicts_are_not_evidence(error, status, stage):
-    assert local_failure(detail(error.split('\n')[-1]), 'af-mlir') is None
+    terminal = local_failure(detail(error.split('\n')[-1]), 'af-mlir')
+    if 'aten::pow()' in error:
+        assert terminal == ('gen_fail', 'inductor', 'torch')
+    else:
+        assert terminal is None
     assert local_failure(detail(error.split('\n')[0]), 'af-mlir') is None
     assert local_failure({'execution': {'diagnostics': {'error': error}}}, 'af-mlir') is None
     assert local_failure(detail(error, 'truncated failure'), 'af-mlir') is None

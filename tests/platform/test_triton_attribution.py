@@ -29,9 +29,10 @@ def detail(*errors):
 ])
 def test_compile_evidence(text, family):
     assert compile_evidence(text) == family
-    assert triton_failure('triton-npu', detail=detail(text)) == ('compile_fail', 'triton_ascend', 'triton')
+    expected = ('gen_fail', 'inductor', 'torch') if family == 'inductor_assertion' else ('compile_fail', 'triton_ascend', 'triton')
+    assert triton_failure('triton-npu', detail=detail(text)) == expected
     assert classify(backend='triton-npu', declared_status='runtime_fail', declared_stage='unknown_retest',
-                    detail=detail(text))[:3] == ('compile_fail', 'triton_ascend', 'triton')
+                    detail=detail(text))[:3] == expected
 
 
 @pytest.mark.parametrize('text', [

@@ -57,7 +57,7 @@ def test_python_triton_native_and_plog_all_visible_with_scope():
 
 def test_summary_prefers_concrete_compiler_error_over_qualified_inductor_wrapper():
     error = ('torch._inductor.exc.InductorError: RuntimeError: Failed to build ascend kernel\n'
-             'error: static assertion failed due to requirement SupportType<__bf16>() '
+             '/home/developer/Ascend/include/kernel_impl.h:34:5: error: static assertion failed due to requirement SupportType<__bf16>() '
              'Failed to check dtype in Adds')
     detail = {'contexts': {'execution': {'diagnostics': {'shapes': {'0': {'error': error}}}}}}
     assert summary(detail).startswith('error: static assertion failed')

@@ -8,7 +8,7 @@ from autofusex.execution.ascir import construction_source, saved_construction_so
 
 _ERROR = re.compile(r'\b(?:[\w.]*Error|[\w.]*Exception):|\[(?:ERROR|FATAL)\]|\berror:|\bfatal:', re.I)
 _WRAPPER = re.compile(r'Failed to execute graph code|BackendCompilerFailed|^torch\._dynamo\.exc\.|^InductorError:|Traceback \(most recent call last\)', re.I)
-_CONCRETE = re.compile(r'^(?:.*\b)?(?:error|fatal):\s+.+$', re.I)
+_CONCRETE = re.compile(r'^(?:[^\n]+:\d+:\d+:\s*)?((?:fatal error|error|fatal):\s+.+)$')
 
 
 def obj(value):
@@ -60,8 +60,9 @@ def summary(detail=None, log=None, fallback=None):
     for section in entries:
         for line in section['text'].splitlines():
             line = line.strip()
-            if _CONCRETE.match(line) and not _WRAPPER.search(line):
-                candidates.append(line)
+            concrete = _CONCRETE.match(line)
+            if concrete and not _WRAPPER.search(line):
+                candidates.append(concrete[1])
     if candidates:
         return candidates[0][:500]
     candidates = []
