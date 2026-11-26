@@ -6,7 +6,15 @@ from .failure_attribution import VERSION
 
 KEY = 'classification.rules'
 FIELDS = ('function_status', 'fail_stage', 'failure_owner', 'classifier_version')
-DEFAULT_RULES = []
+BUILTIN_RULES = [
+    {'id': 'inductor-symint', 'pattern': r'aten::pow.*SymInt', 'result': {'function_status': 'gen_fail', 'fail_stage': 'inductor', 'failure_owner': 'torch'}},
+    {'id': 'triton-graph-assert', 'pattern': r'AssertionError: n=copy_,.*graph=graph\(\):', 'backend': 'triton-npu', 'result': {'function_status': 'gen_fail', 'fail_stage': 'inductor', 'failure_owner': 'torch'}},
+    {'id': 'att-ge-autofuse', 'pattern': r'autofuse/att/.*ErrorNo:.*(?:failed|unsatisfied)|ERROR GE', 'result': {'function_status': 'compile_fail', 'fail_stage': 'af_common', 'failure_owner': 'autofuse'}},
+    {'id': 'mlir-vector-core', 'pattern': r'\[Error\]: The vector core execution is abnormal\.', 'backend': 'af-mlir', 'result': {'function_status': 'runtime_fail', 'fail_stage': 'fused_kernel', 'failure_owner': 'npu_runtime'}},
+    {'id': 'ascend-kernel-build', 'pattern': r'Failed to build ascend kernel, trigger bug', 'backend': 'af-mlir', 'result': {'function_status': 'compile_fail', 'fail_stage': 'fused_kernel', 'failure_owner': 'npu_runtime'}},
+    {'id': 'compiler-static-assert', 'pattern': r'error: static assertion failed.*SupportType.*Adds', 'result': {'function_status': 'compile_fail', 'fail_stage': 'af_common', 'failure_owner': 'autofuse'}},
+]
+DEFAULT_RULES = BUILTIN_RULES
 
 def validate(rules):
     if not isinstance(rules, list) or len(rules) > 200:
@@ -34,6 +42,11 @@ def load(store):
     if not row: return DEFAULT_RULES.copy()
     try: return validate(json.loads(row['value']))
     except (ValueError, TypeError, json.JSONDecodeError): return DEFAULT_RULES.copy()
+
+def load_or_builtin(store):
+    row = store.reader().execute('SELECT value FROM platform_settings WHERE key=?', (KEY,)).fetchone()
+    if not row: return validate(BUILTIN_RULES)
+    return load(store)
 
 def match(rules, backend, text):
     for rule in rules:
