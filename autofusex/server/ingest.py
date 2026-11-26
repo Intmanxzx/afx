@@ -455,7 +455,11 @@ class Ingestor:
             declared_stage=item.get("fail_stage"), summary=item.get("log_summary"),
             log=item.get("log"), detail=raw_detail)
         from autofusex.server.classification_rules import load_or_builtin, match
-        configured = match(load_or_builtin(self.store), item["backend"], item.get("log_summary") or "",
+        from autofusex.server.error_logs import summary as displayed_summary
+        configured = match(load_or_builtin(self.store), item["backend"],
+                           displayed_summary(json.loads(raw_detail) if raw_detail else None,
+                                             item["log"].decode(errors="replace") if item.get("log") else None,
+                                             item.get("log_summary")) or "",
                            current=(status, phase))
         if configured:
             status, phase, owner, classifier_version = configured[:4]
