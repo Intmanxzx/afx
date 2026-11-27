@@ -26,5 +26,13 @@ for (const expected of ['最终标杆：EagerNPU','CPU 首比：失败','EagerNP
 d.accuracy_status='fail'; d.accuracy_ref='cpu';
 d.detail.accuracy_evidence.comparisons.pop(); d.detail.baseline_status='unavailable';
 assert(text(renderExecution(d,0)).includes('EagerNPU 复核：执行不可用'));
+d.backend='eager-npu'; d.function_status='pass';
+d.detail.accuracy_evidence.comparisons[0].shapes[0].metrics.outputs=[{output_index:0,mismatches:1,elements:100,rmse:0.25,nan_mismatches:1}];
+rendered=text(renderExecution(d,0));
+for (const expected of ['eager-npu 与 CPU','输出 0','RMSE','NaN 失败元素','标杆不一致']) assert(rendered.includes(expected), expected);
+assert(!rendered.includes('EagerNPU 复核：'));
+d.function_status='runtime_fail';
+assert(text(renderExecution(d,0)).includes('参考执行未成功'));
+
 '''
     subprocess.run([node, '-e', harness + source + checks], check=True, capture_output=True, text=True)
