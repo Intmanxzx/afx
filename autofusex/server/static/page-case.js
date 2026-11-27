@@ -117,14 +117,14 @@ function renderExecution(d, shape) {
   const errorTone = m => m.tolerance_unbounded ? "accuracy-high" : m.tolerance_ratio_max == null ? "" : m.tolerance_ratio_max <= 1 ? "accuracy-ok" : m.tolerance_ratio_max <= 10 ? "accuracy-low" : m.tolerance_ratio_max <= 100 ? "accuracy-medium" : "accuracy-high";
   const cellTone = (column, value, m) => {
     if (value == null) return "";
-    if (column === 3 || column === 4) return ["通过", "一致"].includes(value) ? "accuracy-ok" : ["失败", "标杆不一致", "runtime_fail", "compile_fail", "timeout", "fail"].includes(value) ? "accuracy-high" : "";
+    if (column === 3 || column === 4) return ["通过", "一致"].includes(value) ? "accuracy-ok" : ["失败", "不一致", "runtime_fail", "compile_fail", "timeout", "fail"].includes(value) ? "accuracy-high" : "";
     if (column === 7 || column === 8) return ratioTone(m.mismatch_ratio);
     if ((column >= 9 && column <= 12) || column === 15) return errorTone(m);
     if (column >= 16 && column <= 18) return value === 0 ? "accuracy-ok" : "accuracy-high";
     return "";
   };
   const isReference = ["cpu", "eager-npu"].includes(d.backend);
-  const comparisonResult = passed => isReference ? (passed ? "一致" : "标杆不一致") : (passed ? "通过" : "失败");
+  const comparisonResult = passed => isReference ? (passed ? "一致" : "不一致") : (passed ? "通过" : "失败");
   const detail = d.detail || {};
   const diagnostics = d.diagnostics || {};
   const evidence = detail.accuracy_evidence || diagnostics.accuracy_evidence || {};
