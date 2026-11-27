@@ -699,6 +699,13 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
     def manage(body: m.Manage, principal=Depends(administrator)):
         return _success(accounts.manage(store, principal, data(body)))
 
+    @route('/api/overview/totals')
+    def totals(principal=Depends(identity)):
+        row = store.reader().execute(
+            'SELECT case_count, shape_count, record_count, execution_count '
+            'FROM overview_totals WHERE id=1').fetchone()
+        return _success(dict(row))
+
     @route('/api/overview/pipeline', dependencies=[Depends(aggregate)])
     def pipeline(arch: QueryValue = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
         return overview(('pipeline', arch, q, results, selected_backends, chips))
