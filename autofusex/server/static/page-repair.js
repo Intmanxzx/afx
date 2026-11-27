@@ -151,7 +151,7 @@ function caseSection(issueId, page, scope, title) {
 function adminStatusEditor(issue) {
   let target = issue.status === 'resolved' ? 'closed' : issue.status;
   const reason = el('input', {placeholder:'状态修改原因', maxlength:500, 'aria-label':'状态修改原因'});
-  const hints = {open:'取消未完成任务并释放领取；保留封存集合及历史记录。', claimed:'取消未完成任务并撤销旧租约；保留原领取人，无人领取时归当前管理员。', verifying:'使用已有候选包创建验证任务；相同包可复用已通过的回归。', regressing:'最近验证通过后创建回归任务；封存问题沿用原回归集合。', summarizing:'需要最近轮次通过，已有回归集合需要回归通过。', closed:'取消未完成任务、释放领取并封存集合。'};
+  const hints = {open:'取消未完成任务并释放领取；保留封存集合及历史记录。', claimed:'取消未完成任务并撤销旧租约；保留原领取人，无人领取时归当前管理员。', verifying:'使用已有候选包创建验证任务；相同包可复用已通过的回归。', regressing:'最近验证通过后创建回归任务；封存问题沿用原回归集合。', summarizing:'需要最近轮次通过，已有回归集合需要回归通过。', closed:'取消未完成任务、撤销租约并封存集合，保留领取人。'};
   const hint = el('div', {class:'muted small'}, hints[target]);
   const picker = select(Object.entries(STATUS_LABEL).filter(([key]) => key !== 'resolved'), target, value => {
     target = value; hint.textContent = hints[value];

@@ -703,6 +703,28 @@ CORE.append((31, """
 CREATE INDEX executions_filter ON executions(exec_id,backend,npu_arch,function_status,fail_stage,accuracy_status,user_id);
 """))
 
+CORE.append((32, """
+-- A closing administrator is not necessarily the holder. Recover only a claim
+-- that was not subsequently released, expired, withdrawn or reassigned.
+CREATE TEMP TABLE issue_owner_recovery AS
+SELECT i.issue_id, e.actor AS owner_user, e.detail AS agent_id, e.at AS claimed_at
+FROM issues i JOIN issue_events e ON e.event_id=(
+ SELECT MAX(h.event_id) FROM issue_events h WHERE h.issue_id=i.issue_id AND (
+  h.kind IN ('claimed','released','lease_expired','work_withdrawn') OR
+  (h.kind='admin_status_changed' AND h.to_status IN ('open','claimed'))))
+WHERE i.status IN ('resolved','closed') AND i.owner_user IS NULL AND i.agent_id IS NULL
+ AND i.lease_id IS NULL AND e.kind='claimed';
+UPDATE issues SET
+ owner_user=(SELECT r.owner_user FROM issue_owner_recovery r WHERE r.issue_id=issues.issue_id),
+ agent_id=(SELECT r.agent_id FROM issue_owner_recovery r WHERE r.issue_id=issues.issue_id),
+ claimed_at=COALESCE(claimed_at,(SELECT r.claimed_at FROM issue_owner_recovery r WHERE r.issue_id=issues.issue_id))
+WHERE issue_id IN (SELECT issue_id FROM issue_owner_recovery);
+INSERT INTO issue_events(issue_id,at,actor,kind,detail)
+SELECT issue_id,CAST(strftime('%s','now') AS INTEGER)*1000,'system','owner_restored',
+ owner_user || '/' || COALESCE(agent_id,'') FROM issue_owner_recovery;
+DROP TABLE issue_owner_recovery;
+"""))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(

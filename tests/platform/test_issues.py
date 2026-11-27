@@ -446,6 +446,13 @@ def test_full_lifecycle(world):
             "solution": "align tile axis with broadcast dim", "fix_ref": "https://example.invalid/mr/1"}})
     detail = world.issue(issue_id)
     assert detail["status"] == "resolved" and detail["knowledge_id"] == kb["knowledge_id"]
+    assert (detail['owner_user'], detail['agent_id']) == ('dev', 'agent-1')
+    row = world.store.reader().execute('SELECT lease_id,lease_expires_at FROM issues WHERE issue_id=?', (issue_id,)).fetchone()
+    assert tuple(row) == (None, None)
+    listed = next(i for i in issues.list_issues(world.store)['issues'] if i['issue_id'] == issue_id)
+    assert (listed['owner_user'], listed['agent_id']) == ('dev', 'agent-1')
+    with pytest.raises(IssueError):
+        issues.renew(world.store, world.agent, issue_id, dict(request_key=world.key(), lease_id=lease))
     assert [e["kind"] for e in reversed(detail["events"])][:3] == ["created", "claimed", "verify_submitted"]
 
     conn = world.store.reader()
@@ -988,10 +995,56 @@ def test_admin_status_cancels_tasks_and_preserves_evidence(world):
     change('verifying','claimed')
     assert len(world.claim_tasks()) == 2
     change('closed','verifying')
+    assert (world.issue(issue_id)['owner_user'], world.issue(issue_id)['agent_id']) == ('dev', 'a')
+    assert world.issue(issue_id)['lease_expires_at'] is None
     assert world.issue(issue_id)['frozen_at'] is not None
     change('open','closed')
     assert world.issue(issue_id)['frozen_at'] is not None
     assert world.issue(issue_id)['owner_user'] is None
+
+
+@pytest.mark.parametrize('claimed', [False, True])
+def test_admin_close_preserves_holder_and_frees_agent(world, claimed):
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    if claimed:
+        lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=issue_id, agent_id='closer'))['lease_id']
+    issues.close(world.store, world.admin, issue_id, dict(request_key=world.key(), reason='done'))
+    detail = world.issue(issue_id)
+    assert (detail['owner_user'], detail['agent_id']) == (('dev', 'closer') if claimed else (None, None))
+    assert tuple(world.store.reader().execute('SELECT lease_id,lease_expires_at FROM issues WHERE issue_id=?', (issue_id,)).fetchone()) == (None, None)
+    if claimed:
+        with pytest.raises(IssueError):
+            issues.renew(world.store, world.agent, issue_id, dict(request_key=world.key(), lease_id=lease))
+        assert issues.claim(world.store, world.agent, dict(request_key=world.key(), agent_id='closer'))['issue_id'] != issue_id
+
+
+@pytest.mark.parametrize('terminal', ['resolved', 'closed'])
+@pytest.mark.parametrize('last_event', ['claimed', 'released', 'lease_expired', 'work_withdrawn', 'admin_open', 'admin_claimed', 'reclaimed', 'none'])
+def test_completed_owner_migration_uses_confirmed_claim(world, terminal, last_event):
+    from autofusex.server import schema
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    if last_event != 'none':
+        issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=issue_id, agent_id='old-agent'))
+    with world.store.write() as conn:
+        if last_event in ('released', 'lease_expired', 'work_withdrawn'):
+            issues.event(conn, issue_id, 'system', last_event, 'claimed', 'open')
+        elif last_event.startswith('admin_'):
+            issues.event(conn, issue_id, 'root', 'admin_status_changed', 'claimed', last_event[6:])
+        elif last_event == 'reclaimed':
+            issues.event(conn, issue_id, 'system', 'lease_expired', 'claimed', 'open')
+            issues.event(conn, issue_id, 'root', 'claimed', 'open', 'claimed', 'new-agent')
+        issues.event(conn, issue_id, 'root', terminal, 'summarizing', terminal)
+        conn.execute('UPDATE issues SET status=?,owner_user=NULL,agent_id=NULL,lease_id=NULL,lease_expires_at=NULL WHERE issue_id=?', (terminal, issue_id))
+        conn.execute('DELETE FROM schema_migrations WHERE version=32')
+    before = world.issue(issue_id)
+    with world.store.connect(readonly=False) as conn:
+        schema.apply(conn, 'main', schema.CORE)
+        schema.apply(conn, 'main', schema.CORE)
+    detail = world.issue(issue_id)
+    expected = ('dev', 'old-agent') if last_event == 'claimed' else ('root', 'new-agent') if last_event == 'reclaimed' else (None, None)
+    assert (detail['owner_user'], detail['agent_id']) == expected
+    assert (detail['status'], detail['updated_at'], detail['lease_expires_at']) == (terminal, before['updated_at'], None)
+    assert sum(e['kind'] == 'owner_restored' for e in detail['events']) == (expected[0] is not None)
 
 
 def test_admin_status_http_permissions_and_idempotency(world):
