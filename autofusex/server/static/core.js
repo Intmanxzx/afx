@@ -84,7 +84,14 @@ export function rkey() { return (crypto.randomUUID ? crypto.randomUUID() : Strin
 // true while a background refresh runs: a 401 must not replace the page with the login form
 export let quietRefresh = false;
 export function setQuietRefresh(v) { quietRefresh = v; }
-export class ApiError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
+export class ApiError extends Error {
+  constructor(status, code, message) {
+    super(status === 429 && code === "rate_limited" ? "请求过于频繁，请稍后重试"
+      : status === 503 && code === "busy" ? "当前服务器流量过载，请稍后重试" : message);
+    this.status = status;
+    this.code = code;
+  }
+}
 export async function api(path, { method = "GET", body, raw = false } = {}) {
   const headers = {"X-AFX-Capabilities": "cleanup-v1,dump-v1"};
   if (token()) headers["Authorization"] = "Bearer " + token();
@@ -113,7 +120,7 @@ export async function api(path, { method = "GET", body, raw = false } = {}) {
   return payload.data;
 }
 export const qs = obj => { const p = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) if (v !== null && v !== undefined && v !== "") p.set(k, v); const s = p.toString(); return s ? "?" + s : ""; };
-export function errorBox(err) { return el("div", { class: "error-box" }, err instanceof ApiError ? `${err.message}（${err.status} ${err.code}）` : String(err)); }
+export function errorBox(err) { if (err instanceof ApiError && ((err.status === 503 && err.code === "busy") || (err.status === 429 && err.code === "rate_limited"))) return el("div", { class: "error-box", role: "alert" }, err.message); return el("div", { class: "error-box" }, err instanceof ApiError ? `${err.message}（${err.status} ${err.code}）` : String(err)); }
 
 let archesRequest = null, archesExpires = 0;
 export async function archOptions() {

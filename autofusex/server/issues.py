@@ -12,6 +12,7 @@ import json
 import re
 import secrets
 import sqlite3
+from autofusex.server.read_queries import snapshot
 
 from autofusex.server.auth import Principal
 from autofusex.server.store import Store, now_ms, get_content
@@ -721,6 +722,9 @@ def list_issues(store, *, dimension=None, backend=None, status=None, q=None, aft
                       "JOIN executions e ON e.exec_id=ic.exec_id ")
         match = "ic.issue_id=issues.issue_id"
     match += f" AND ({hs}) AND ({cs})"
+    membership = membership.replace('executions e', search.execution_source(hs))
+    if not query or not query.case:
+        membership = membership.replace('JOIN cases c ON c.case_id=ic.case_id ', '')
     match_args = [*ha, *ca]
     where, args = [], []
     for column, value in (("dimension", dimension), ("status", status), ("treatment", treatment),
@@ -748,8 +752,7 @@ def list_issues(store, *, dimension=None, backend=None, status=None, q=None, aft
             raise IssueError("invalid", "after must be a nonnegative offset")
     clause = "WHERE " + " AND ".join(where) if where else ""
     conn = store.reader()
-    conn.execute("BEGIN")
-    try:
+    with snapshot(conn):
         total = conn.execute(f"SELECT COUNT(*) FROM issues {clause}", args).fetchone()[0]
         pages = (total + limit - 1) // limit
         if page is not None:
@@ -764,8 +767,6 @@ def list_issues(store, *, dimension=None, backend=None, status=None, q=None, aft
             item["backends"] = affected_backends(conn, item["issue_id"])
             item["classifications"] = issue_classifications(conn, item["issue_id"])
             item["current_case_count"] = conn.execute("SELECT COUNT(DISTINCT case_id) FROM issue_current WHERE issue_id=?", (item["issue_id"],)).fetchone()[0]
-    finally:
-        conn.execute("ROLLBACK")
     return dict(issues=items, page=page or offset // limit + 1, page_size=limit,
                 total=total, total_pages=pages, next_cursor=str(offset + limit) if offset + limit < total else None)
 

@@ -678,6 +678,31 @@ WHEN NEW.case_id<>OLD.case_id OR NEW.backend<>OLD.backend BEGIN
 END;
 """))
 
+# Revision changes are transactional, including maintenance SQL outside Store.
+_read_revision_sql = """
+CREATE TABLE read_revision(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
+INSERT INTO read_revision VALUES(1,0);
+"""
+for _table in ('cases', 'executions', 'execution_heads', 'case_features', 'feature_registry',
+               'feature_values', 'issues', 'issue_cases', 'issue_current'):
+    for _event in ('INSERT', 'UPDATE', 'DELETE'):
+        _read_revision_sql += f"""
+CREATE TRIGGER read_revision_{_table}_{_event.lower()} AFTER {_event} ON {_table} BEGIN
+ UPDATE read_revision SET revision=revision+1 WHERE id=1;
+END;
+"""
+for _table, _columns in (('users', 'user_id,display_name'), ('clients', 'display_name')):
+    for _event in ('INSERT', 'UPDATE OF ' + _columns, 'DELETE'):
+        _read_revision_sql += f"""
+CREATE TRIGGER read_revision_{_table}_{_event.split()[0].lower()} AFTER {_event} ON {_table} BEGIN
+ UPDATE read_revision SET revision=revision+1 WHERE id=1;
+END;
+"""
+CORE.append((30, _read_revision_sql))
+CORE.append((31, """
+CREATE INDEX executions_filter ON executions(exec_id,backend,npu_arch,function_status,fail_stage,accuracy_status,user_id);
+"""))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(
@@ -690,6 +715,20 @@ CREATE TABLE contents(
 );
 """),
 ]
+
+CONTENT.append((2, """
+CREATE TABLE read_revision(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
+INSERT INTO read_revision VALUES(1,0);
+CREATE TRIGGER content.read_revision_insert AFTER INSERT ON contents BEGIN
+ UPDATE read_revision SET revision=revision+1 WHERE id=1;
+END;
+CREATE TRIGGER content.read_revision_update AFTER UPDATE ON contents BEGIN
+ UPDATE read_revision SET revision=revision+1 WHERE id=1;
+END;
+CREATE TRIGGER content.read_revision_delete AFTER DELETE ON contents BEGIN
+ UPDATE read_revision SET revision=revision+1 WHERE id=1;
+END;
+"""))
 
 STATS = [
     (1, """

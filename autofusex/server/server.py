@@ -347,8 +347,12 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
     def cases(after: Optional[int] = None, limit: int = 50, page: Optional[int] = None, backend: QueryValue = None,
               status: QueryValue = None, arch: QueryValue = None, case_key: QueryValue = None,
               case_id: Optional[int] = None, q: QueryText = None, results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None, principal=Depends(identity)):
-        return _success(queries.case_page(store, after=after, limit=limit, backend=backend, status=status,
-                                          arch=arch, case_key=case_key, case_id=case_id, q=q, results=results, selected_backends=selected_backends, chips=chips, page=page))
+        from autofusex.server.read_queries import response
+        parameters = dict(after=after, limit=limit, backend=backend, status=status, arch=arch,
+                          case_key=case_key, case_id=case_id, q=q, results=results,
+                          selected_backends=selected_backends, chips=chips, page=page)
+        return Response(response(store, 'cases', parameters, lambda: queries.case_page(store, **parameters)),
+                        media_type='application/json')
 
     @route('/api/cases/selection')
     def case_selection(q: QueryText = None, results: QuerySelection = None,
@@ -390,9 +394,12 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
                    results: QuerySelection = None, selected_backends: QuerySelection = None, chips: QuerySelection = None,
                    categories: QueryText = None, treatment: QueryText = None, scope: str = 'all',
                    case_q: QueryText = None, principal=Depends(identity)):
-        return _success(issues.list_issues(store, dimension=dimension, backend=backend, status=status,
-            q=q, after=after, limit=limit, page=page, results=results, selected_backends=selected_backends,
-            chips=chips, categories=categories, treatment=treatment, scope=scope, case_q=case_q))
+        from autofusex.server.read_queries import response
+        parameters = dict(dimension=dimension, backend=backend, status=status, q=q, after=after,
+                          limit=limit, page=page, results=results, selected_backends=selected_backends,
+                          chips=chips, categories=categories, treatment=treatment, scope=scope, case_q=case_q)
+        return Response(response(store, 'issues', parameters, lambda: issues.list_issues(store, **parameters)),
+                        media_type='application/json')
 
     @route('/api/admin/issues/{issue_id}/status', 'POST')
     def issue_status(issue_id: str, body: m.IssueStatus, principal=Depends(administrator)):

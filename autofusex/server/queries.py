@@ -8,6 +8,7 @@ import json
 
 from autofusex.server.aggregates import RATIO_BINS_PER_OCTAVE
 from autofusex.server import search
+from autofusex.server.read_queries import snapshot
 from autofusex.server.store import Store, get_content
 
 BASELINES = ("cpu", "eager-npu")
@@ -206,8 +207,9 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
         case_sql, case_args = query.case_sql()
         if query.needs_heads:
             head_sql, head_args = query.head_sql()
-            selector = ("SELECT DISTINCT h.case_id FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
-                        f"JOIN cases c ON c.case_id=h.case_id WHERE {head_sql} AND {case_sql}")
+            case_join = "JOIN cases c ON c.case_id=h.case_id " if query.case else ""
+            selector = (f"SELECT DISTINCT h.case_id FROM execution_heads h JOIN {search.execution_source(head_sql)} ON e.exec_id=h.exec_id "
+                        f"{case_join}WHERE {head_sql} AND {case_sql}")
             args = [*head_args, *case_args]
         else:
             selector, args = f"SELECT c.case_id FROM cases c WHERE {case_sql}", case_args
@@ -235,17 +237,14 @@ def case_page(store: Store, *, after: int | None = None, limit: int = 50, backen
     else:
         # One WAL snapshot for exact filtered count and page IDs. Only this page's
         # cases/executions are hydrated below; no preceding pages cross into Python.
-        conn.execute("BEGIN")
-        try:
+        with snapshot(conn):
             with search.time_limit(conn):
                 total = conn.execute(f"SELECT COUNT(*) FROM ({selector})", args).fetchone()[0]
                 total_pages = (total + limit - 1) // limit
                 page = min(page, max(1, total_pages))
                 ids = [r[0] for r in conn.execute(
-                    f"SELECT case_id FROM ({selector}) ORDER BY case_id DESC LIMIT ? OFFSET ?",
+                    f"{selector} ORDER BY 1 DESC LIMIT ? OFFSET ?",
                     [*args, limit, (page - 1) * limit])]
-        finally:
-            conn.execute("ROLLBACK")
     groups = []
     for cid in ids:
         case = dict(conn.execute(f"SELECT {_CASE_COLUMNS} FROM cases WHERE case_id=?", (cid,)).fetchone())

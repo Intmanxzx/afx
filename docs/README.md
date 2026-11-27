@@ -10,6 +10,7 @@
 |---|---|
 | [平台架构](architecture.md) | 模块职责、进程、三类工作负载与实现边界 |
 | [中心服务](server/architecture.md) | 数据库、任务派发、执行事实、问题闭环与 Web |
+| [页面读取性能](server/read-performance.md) | 各页面统一的测量、查询优化、缓存边界和验收流程 |
 | [Fuzz 工作负载](fuzz/architecture.md) | 生成、阶段调度、资源、比较与结果统计 |
 | [模型分析](model_architecture.md) | 模型执行、图采集、精度定位和报告 |
 
