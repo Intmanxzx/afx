@@ -97,6 +97,13 @@ def _join(parts):
     return " AND ".join(p[0] for p in parts), [a for p in parts for a in p[1]]
 
 
+def execution_source(predicate):
+    """Use the narrow covering index only when it contains every predicate field."""
+    columns = set(re.findall(r'\be.([a-z_]+)', predicate))
+    covered = {'exec_id', 'backend', 'npu_arch', 'function_status', 'fail_stage', 'accuracy_status', 'user_id'}
+    return 'executions e INDEXED BY executions_filter' if columns <= covered else 'executions e'
+
+
 def parse(text: str | None) -> Query | None:
     if text is None or not text.strip():
         return None

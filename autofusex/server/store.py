@@ -60,6 +60,7 @@ class Store:
         self.write_lock = threading.Lock()
         self._local = threading.local()
         from autofusex.server.read_cache import ReadCache
+        self.response_cache = ReadCache(max_entries=128, max_bytes=32 * 1024 * 1024, size=len)
         self.summary_cache = ReadCache(max_entries=8192, max_bytes=8 * 1024 * 1024,
                                        size=lambda value: len((value[0] or '').encode()) + 256 if value[1] else 0)
 
