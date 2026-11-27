@@ -478,53 +478,56 @@ def verify(store: Store, principal: Principal, issue_id: str, body: dict):
         raise IssueError("invalid", "fix_ref must be a string of at most 512 chars")
 
     def action(conn):
-        from autofusex.server import retests
-        if principal.role == 'admin':
-            issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
-            if issue is None:
-                raise IssueError('not_found', 'issue not found', 404)
-        else:
-            issue = _holder(conn, principal, issue_id, body.get("lease_id"))
-        supplemental = issue['frozen_at'] is not None
-        if supplemental:
-            if issue['status'] in ('verifying', 'regressing') or conn.execute(
-                    "SELECT 1 FROM retest_tasks WHERE issue_id=? AND status IN ('pending','leased')", (issue_id,)).fetchone():
-                raise IssueError('wrong_state', 'an issue round is already running', 409)
-        elif issue["status"] != "claimed":
-            raise IssueError("wrong_state", f"verify needs status claimed, issue is {issue['status']}", 409)
-        candidate_version = version if version is not None else issue['fix_version']
-        candidate_sha = sha if sha is not None else issue['fix_sha256']
-        if not candidate_version or not candidate_sha:
-            raise IssueError('invalid', 'an exact candidate version and SHA are required')
-        membership = ("issue_cases WHERE role='affected' AND" if issue['frozen_at'] is not None
-                      else "issue_current WHERE")
-        cases = conn.execute(
-            f"SELECT case_id,npu_arch,backend FROM {membership} issue_id=? "
-            "ORDER BY case_id LIMIT ?", (issue_id, -1 if supplemental else _setting(conn, "verify.max_cases"))).fetchall()
-        if not cases:
-            raise IssueError("no_cases", "issue has no current affected cases to verify", 409)
-        round_no = issue["round_no"] + 1
-        conn.execute("INSERT INTO issue_rounds(issue_id, round_no, kind, fix_version, fix_sha256, started_at) "
-                     "VALUES(?,?, 'verify', ?,?,?)", (issue_id, round_no, candidate_version, candidate_sha, now_ms()))
-        previous = conn.execute(
-            "SELECT outcome,fix_version,fix_sha256 FROM issue_rounds WHERE issue_id=? AND kind='regress' "
-            "ORDER BY round_no DESC LIMIT 1", (issue_id,)).fetchone()
-        reuse = bool(supplemental and previous and previous['outcome'] == 'passed'
-                     and previous['fix_version'] == candidate_version and previous['fix_sha256'] == candidate_sha)
-        if reuse:
-            conn.execute("UPDATE issue_rounds SET reuse_regression=1 WHERE issue_id=? AND round_no=?", (issue_id, round_no))
-        tasks = retests.create_tasks(conn, issue, round_no, [(c["case_id"], c["npu_arch"], c["backend"]) for c in cases],
-                                     candidate_version, candidate_sha)
-        _set_status(conn, issue, "verifying", principal.user_id, "verify_submitted",
-                    f"round {round_no} version {candidate_version} tasks {tasks}; reuse_regression={bool(reuse)}",
-                    round_no=round_no, fix_version=candidate_version,
-                    fix_sha256=candidate_sha, fix_ref=fix_ref or issue["fix_ref"])
-        response = {"issue_id": issue_id, "round_no": round_no, "tasks": tasks, "status": "verifying"}
-        if supplemental:
-            response['reuse_regression'] = reuse
-        return response
+        return _verify_action(conn, principal, issue_id, body, version, sha, fix_ref)
     return idempotent(store, principal, f"verify:{issue_id}", body.pop("request_key", None), body, action)
 
+
+def _verify_action(conn, principal, issue_id, body, version, sha, fix_ref):
+    from autofusex.server import retests
+    if principal.role == 'admin':
+        issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
+        if issue is None:
+            raise IssueError('not_found', 'issue not found', 404)
+    else:
+        issue = _holder(conn, principal, issue_id, body.get("lease_id"))
+    supplemental = issue['frozen_at'] is not None
+    if supplemental:
+        if issue['status'] in ('verifying', 'regressing') or conn.execute(
+                "SELECT 1 FROM retest_tasks WHERE issue_id=? AND status IN ('pending','leased')", (issue_id,)).fetchone():
+            raise IssueError('wrong_state', 'an issue round is already running', 409)
+    elif issue["status"] != "claimed":
+        raise IssueError("wrong_state", f"verify needs status claimed, issue is {issue['status']}", 409)
+    candidate_version = version if version is not None else issue['fix_version']
+    candidate_sha = sha if sha is not None else issue['fix_sha256']
+    if not candidate_version or not candidate_sha:
+        raise IssueError('invalid', 'an exact candidate version and SHA are required')
+    membership = ("issue_cases WHERE role='affected' AND" if issue['frozen_at'] is not None
+                  else "issue_current WHERE")
+    cases = conn.execute(
+        f"SELECT case_id,npu_arch,backend FROM {membership} issue_id=? "
+        "ORDER BY case_id LIMIT ?", (issue_id, -1 if supplemental else _setting(conn, "verify.max_cases"))).fetchall()
+    if not cases:
+        raise IssueError("no_cases", "issue has no current affected cases to verify", 409)
+    round_no = issue["round_no"] + 1
+    conn.execute("INSERT INTO issue_rounds(issue_id, round_no, kind, fix_version, fix_sha256, started_at) "
+                 "VALUES(?,?, 'verify', ?,?,?)", (issue_id, round_no, candidate_version, candidate_sha, now_ms()))
+    previous = conn.execute(
+        "SELECT outcome,fix_version,fix_sha256 FROM issue_rounds WHERE issue_id=? AND kind='regress' "
+        "ORDER BY round_no DESC LIMIT 1", (issue_id,)).fetchone()
+    reuse = bool(supplemental and previous and previous['outcome'] == 'passed'
+                 and previous['fix_version'] == candidate_version and previous['fix_sha256'] == candidate_sha)
+    if reuse:
+        conn.execute("UPDATE issue_rounds SET reuse_regression=1 WHERE issue_id=? AND round_no=?", (issue_id, round_no))
+    tasks = retests.create_tasks(conn, issue, round_no, [(c["case_id"], c["npu_arch"], c["backend"]) for c in cases],
+                                 candidate_version, candidate_sha)
+    _set_status(conn, issue, "verifying", principal.user_id, "verify_submitted",
+                f"round {round_no} version {candidate_version} tasks {tasks}; reuse_regression={bool(reuse)}",
+                round_no=round_no, fix_version=candidate_version,
+                fix_sha256=candidate_sha, fix_ref=fix_ref or issue["fix_ref"])
+    response = {"issue_id": issue_id, "round_no": round_no, "tasks": tasks, "status": "verifying"}
+    if supplemental:
+        response['reuse_regression'] = reuse
+    return response
 
 def pin_cases(store: Store, principal: Principal, issue_id: str, body: dict):
     """Lease holder (or admin) names must-run regression cases before regression starts (design 2.1)."""
@@ -826,3 +829,73 @@ def refresh_classified_executions(conn, exec_ids):
         head = conn.execute("SELECT case_id FROM execution_heads WHERE exec_id=?", (exec_id,)).fetchone()
         if head:
             on_head(conn, head[0], exec_id, cfg)
+
+
+def set_status(store, principal, issue_id, body):
+    """Administrative transition with task, lease and evidence invariants."""
+    principal.require_admin()
+    target, reason = body.get('status'), body.get('reason')
+    if target not in ('open', 'claimed', 'verifying', 'regressing', 'summarizing', 'closed'):
+        raise IssueError('invalid', 'invalid target status')
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+        raise IssueError('invalid', 'reason is required (1..500 chars)')
+
+    def action(conn):
+        from autofusex.server import retests, regression
+        issue = conn.execute('SELECT * FROM issues WHERE issue_id=?', (issue_id,)).fetchone()
+        if issue is None:
+            raise IssueError('not_found', 'issue not found', 404)
+        if issue['status'] != body.get('expected_status'):
+            raise IssueError('conflict', 'issue status changed; refresh before retrying', 409)
+        if target == issue['status'] or target == 'closed' and issue['status'] == 'resolved':
+            return dict(issue_id=issue_id, status=issue['status'])
+        if issue['duplicate_of']:
+            raise IssueError('wrong_state', 'merged issues cannot change status; use the merge target', 409)
+        if target in ('verifying', 'regressing', 'summarizing') and issue['treatment'] == 'ignore':
+            raise IssueError('wrong_state', 'restore an ignored issue before starting work', 409)
+        running = conn.execute("SELECT 1 FROM retest_tasks WHERE issue_id=? AND status IN ('pending','leased')", (issue_id,)).fetchone()
+        latest = conn.execute('SELECT * FROM issue_rounds WHERE issue_id=? ORDER BY round_no DESC LIMIT 1', (issue_id,)).fetchone()
+        if target in ('verifying', 'regressing', 'summarizing') and (running or latest and latest['finished_at'] is None):
+            raise IssueError('wrong_state', 'return to claimed or open to cancel the running round first', 409)
+        if target in ('regressing', 'summarizing'):
+            if not latest or latest['outcome'] != 'passed' or latest['fix_version'] != issue['fix_version'] or latest['fix_sha256'] != issue['fix_sha256']:
+                raise IssueError('wrong_state', 'latest round must pass on the current candidate', 409)
+        if target == 'summarizing' and latest['kind'] != 'regress' and not latest['reuse_regression']:
+            # A passed verify only goes straight to summary when no regression was selected.
+            if conn.execute("SELECT 1 FROM issue_cases WHERE issue_id=? AND role='regression'", (issue_id,)).fetchone():
+                raise IssueError('wrong_state', 'regression must pass before summarizing', 409)
+            if issue['frozen_at'] is None and regression.select(conn, issue, issue['round_no'] + 1):
+                raise IssueError('wrong_state', 'regression candidates must be tested before summarizing', 409)
+        if target == 'verifying':
+            if issue['status'] != 'claimed' and issue['frozen_at'] is None:
+                raise IssueError('wrong_state', 'claim the issue before verification', 409)
+            result = _verify_action(conn, principal, issue_id, {}, None, None, None)
+            event(conn, issue_id, principal.user_id, 'admin_status_changed', issue['status'], target, reason)
+            return result
+        fields = {}
+        if target in ('open', 'claimed', 'closed'):
+            _cancel_tasks(conn, issue_id)
+            conn.execute("UPDATE issue_rounds SET outcome='invalid',finished_at=? WHERE issue_id=? AND finished_at IS NULL", (now_ms(), issue_id))
+            fields.update(lease_id=None, lease_expires_at=None)
+            if target == 'claimed':
+                fields.update(owner_user=issue['owner_user'] or principal.user_id,
+                              agent_id=issue['agent_id'] or 'admin', claimed_at=now_ms())
+            else:
+                fields.update(owner_user=None, agent_id=None)
+        if target == 'regressing':
+            if latest['kind'] != 'verify':
+                raise IssueError('wrong_state', 'submit verification before starting another regression', 409)
+            number = issue['round_no'] + 1
+            if issue['frozen_at'] is not None:
+                targets = [tuple(r) for r in conn.execute("SELECT case_id,npu_arch,backend FROM issue_cases WHERE issue_id=? AND role='regression'", (issue_id,))]
+            else:
+                targets = [(c, a) for c, a, _ in regression.select(conn, issue, number)]
+            if not targets:
+                raise IssueError('no_cases', 'no regression cases available', 409)
+            conn.execute("INSERT INTO issue_rounds(issue_id,round_no,kind,fix_version,fix_sha256,started_at) VALUES(?,?,'regress',?,?,?)", (issue_id, number, issue['fix_version'], issue['fix_sha256'], now_ms()))
+            retests.create_tasks(conn, issue, number, targets, issue['fix_version'], issue['fix_sha256'], role='regression')
+            fields['round_no'] = number
+        fields.update(close_reason=reason if target == 'closed' else None, resolved_at=None)
+        _set_status(conn, issue, target, principal.user_id, 'admin_status_changed', reason, **fields)
+        return dict(issue_id=issue_id, status=target)
+    return idempotent(store, principal, f'status:{issue_id}', body.pop('request_key', None), body, action)

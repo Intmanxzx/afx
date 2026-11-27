@@ -290,3 +290,9 @@ class SourceArtifact(Payload):
 class IssueTreatment(RequestKey):
     treatment: Literal['ignore', 'low', 'normal', 'high']
     reason: str = Field(default='', max_length=500)
+
+
+class IssueStatus(RequestKey):
+    status: Literal['open', 'claimed', 'verifying', 'regressing', 'summarizing', 'closed']
+    expected_status: Literal['open', 'claimed', 'verifying', 'regressing', 'summarizing', 'resolved', 'closed']
+    reason: str = Field(min_length=1, max_length=500)

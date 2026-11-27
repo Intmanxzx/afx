@@ -394,6 +394,10 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
             q=q, after=after, limit=limit, page=page, results=results, selected_backends=selected_backends,
             chips=chips, categories=categories, treatment=treatment, scope=scope, case_q=case_q))
 
+    @route('/api/admin/issues/{issue_id}/status', 'POST')
+    def issue_status(issue_id: str, body: m.IssueStatus, principal=Depends(administrator)):
+        return _success(issues.set_status(store, principal, issue_id, data(body)))
+
     @route('/api/admin/issues/{issue_id}/treatment', 'POST')
     def issue_treatment(issue_id: str, body: m.IssueTreatment, principal=Depends(administrator)):
         return _success(issues.set_treatment(store, principal, issue_id, data(body)))
