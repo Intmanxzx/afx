@@ -121,7 +121,7 @@ function renderExecution(d, shape) {
     el("strong", {}, "精度判定：" + (d.accuracy_status === "pass" ? "通过" : d.accuracy_status === "fail" ? "失败" : "未完成")),
     el("span", { class: "muted small", style: { marginLeft: "12px" } }, "最终标杆：" + refText),
     el("span", { class: "muted small", style: { marginLeft: "12px" } }, "CPU 首比：" + comparisonText("cpu")),
-    el("span", { class: "muted small", style: { marginLeft: "12px" } }, "EagerNPU 复核：" + comparisonText("eager-npu"))));
+    d.backend === "eager-npu" ? null : el("span", { class: "muted small", style: { marginLeft: "12px" } }, "EagerNPU 复核：" + comparisonText("eager-npu"))));
   const classification = detail.accuracy_classification;
   if (classification) out.push(el("p", {class:"muted small"},
     `精度分类 · 异常性质：${classification.anomaly || "—"} · 超容差强度：${classification.severity} · 错误比例：${classification.ratio} · 空间形态：${classification.pattern} · 计算特征：${(classification.features || []).join("、")}`));
