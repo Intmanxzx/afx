@@ -248,7 +248,82 @@ def test_issue_classification_comes_from_execution_not_legacy_category(world, le
     assert {key: row[key] for key in expected} == expected
     with world.store.write() as conn:
         conn.execute('DELETE FROM issue_current WHERE issue_id=?', (issue_id,))
-    assert world.issue(issue_id)['classifications'] == [expected]
+    assert world.issue(issue_id)['classifications'] == []
+    assert world.issue(issue_id)['current_case_count'] == 0
+    assert issues.issue_cases(world.store, issue_id, scope='history')['cases']
+
+
+def test_current_membership_backfill_preserves_candidate_evidence(world):
+    from autofusex.server.issue_memberships import backfill
+    world.upload([item('head-before-migration', 901, status='compile_fail', fail_stage='mlir',
+                       summary='ERROR old lowering')])
+    original = issues.list_issues(world.store)['issues'][0]['issue_id']
+    world.upload([item('candidate-before-migration', 901)], kind='verify')
+    with world.store.write() as conn:
+        candidate = conn.execute("SELECT exec_id FROM executions WHERE exec_uuid='candidate-before-migration'").fetchone()[0]
+        conn.execute("UPDATE issue_cases SET last_exec_id=?,result='pass',round_no=1 WHERE issue_id=?", (candidate, original))
+        conn.execute("UPDATE issues SET cluster_generation=1,signature='legacy' WHERE issue_id=?", (original,))
+        conn.execute('DELETE FROM issue_current')
+    conn = world.store.reader()
+    evidence = [tuple(r) for r in conn.execute('SELECT * FROM issue_cases')]
+    before = [tuple(r) for r in conn.execute('SELECT * FROM issues')]
+    preview = backfill(world.store)
+    assert preview['counts'] == {'linked': 1} and preview['new_issues'] == 1
+    assert before == [tuple(r) for r in conn.execute('SELECT * FROM issues')]
+    assert not conn.execute('SELECT * FROM issue_current').fetchall()
+    assert backfill(world.store, apply=True)['counts'] == {'linked': 1}
+    assert evidence == [tuple(r) for r in conn.execute('SELECT * FROM issue_cases WHERE issue_id=?', (original,))]
+    historical = issues.issue_cases(world.store, original, scope='history')['cases'][0]
+    assert historical['run_kind'] == 'verify' and historical['function_status'] == 'pass'
+    assert historical['head_function_status'] == 'compile_fail'
+    assert historical['current_issue_id'] != original and historical['result'] == 'pass'
+    target = historical['current_issue_id']
+    current = issues.issue_cases(world.store, target, scope='current')['cases'][0]
+    assert current['exec_uuid'] == 'head-before-migration' and current['function_status'] == 'compile_fail'
+    assert world.issue(original)['classifications'] == []
+    assert world.issue(target)['current_case_count'] == 1
+    assert backfill(world.store, apply=True)['candidates'] == 0
+
+
+@pytest.mark.parametrize('status', ['verifying', 'regressing', 'summarizing'])
+def test_current_membership_backfill_freezes_members_and_error_groups(world, status):
+    from autofusex.server.issue_memberships import backfill
+    world.upload([item('frozen-member', 902, status='compile_fail', fail_stage='mlir', summary='ERROR frozen'),
+                  item('same-error-new-member', 903, status='compile_fail', fail_stage='mlir', summary='ERROR frozen')])
+    issue_id = issues.list_issues(world.store)['issues'][0]['issue_id']
+    with world.store.write() as conn:
+        conn.execute('DELETE FROM issue_current')
+        conn.execute('DELETE FROM issue_cases WHERE case_id=(SELECT case_id FROM cases WHERE case_key=?)', (seed(903),))
+        conn.execute('UPDATE issues SET status=? WHERE issue_id=?', (status, issue_id))
+    conn = world.store.reader()
+    tables = ['issues','issue_cases','executions','execution_heads','issue_rounds','issue_events','retest_tasks','issue_signature_alias']
+    before = {t: [tuple(r) for r in conn.execute(f'SELECT * FROM {t}')] for t in tables}
+    report = backfill(world.store, apply=True)
+    assert report['counts'] == {'frozen_members': 1, 'frozen_signatures': 1}
+    assert before == {t: [tuple(r) for r in conn.execute(f'SELECT * FROM {t}')] for t in tables}
+    assert not conn.execute('SELECT * FROM issue_current').fetchall()
+
+
+def test_ingest_current_membership_tracks_head_separately_from_candidate(world):
+    world.upload([item('initial-mlir', 904, status='compile_fail', fail_stage='mlir', summary='ERROR one'),
+                  item('initial-legacy', 904, backend='af-legacy', status='compile_fail', fail_stage='mlir', summary='ERROR one')])
+    original = issues.list_issues(world.store)['issues'][0]['issue_id']
+    world.upload([item('candidate-pass', 904)], kind='verify')
+    assert len(issues.issue_cases(world.store, original, scope='current')['cases']) == 2
+    world.upload([item('head-pass', 904)])
+    current = issues.issue_cases(world.store, original, scope='current')['cases']
+    assert len(current) == 1 and current[0]['backend'] == 'af-legacy'
+    history = issues.issue_cases(world.store, original, scope='history')['cases']
+    assert len(history) == 1 and history[0]['head_function_status'] == 'pass'
+    world.upload([item('head-different-failure', 904, status='runtime_fail', fail_stage='fused_kernel', summary='ERROR two')])
+    history = issues.issue_cases(world.store, original, scope='history')['cases'][0]
+    target = history['current_issue_id']
+    assert target and target != original
+    assert issues.issue_cases(world.store, target, scope='current')['cases'][0]['exec_uuid'] == 'head-different-failure'
+    assert len(issues.issue_cases(world.store, original)['cases']) == 2
+    for kwargs in [dict(scope='bad'), dict(role='regression', scope='current'), dict(after=-1), dict(limit=0)]:
+        with pytest.raises(IssueError):
+            issues.issue_cases(world.store, original, **kwargs)
 
 
 def test_issue_cases_keep_classification_per_backend_and_missing_regression(world):
@@ -555,6 +630,13 @@ def test_http_issue_flow(world):
         assert call("GET", "/api/issues?page=abc")[0] == 400
         status, claimed = call("POST", "/api/issues/claim", {"request_key": "h1", "agent_id": "a"})
         issue_id, lease = claimed["data"]["issue_id"], claimed["data"]["lease_id"]
+        status, current = call('GET', f'/api/issues/{issue_id}/cases?scope=current&limit=1')
+        assert status == 200 and len(current['data']['cases']) == 1
+        assert current['data']['cases'][0]['is_current'] == 1
+        assert current['data']['next_cursor'] == 1
+        assert call('GET', f'/api/issues/{issue_id}/cases?scope=history')[1]['data']['cases'] == []
+        assert call('GET', f'/api/issues/{issue_id}/cases?scope=bad')[0] == 400
+        assert call('GET', f'/api/issues/{issue_id}/cases?limit=0')[0] == 400
         status, verify = call("POST", f"/api/issues/{issue_id}/verify",
                               dict(FIX, request_key="h2", lease_id=lease))
         assert status == 200 and verify["data"]["status"] == "verifying"

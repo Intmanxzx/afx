@@ -45,9 +45,25 @@ case_count 保留累计唯一 case 数；列表展示匹配数 / 累计数。旧
 侧边面板复用总览组件；后端、芯片、结果与阶段顺序一致，随后为主算子类别、处理标签、
 修复状态。不展示具体 Op、dtype、独立精度结果。
 
-GET /api/issues/{id}/cases 返回 backend，分页游标以返回值为准。
+GET /api/issues/{id}/cases 支持 scope=current|history|all，默认 all 保持兼容。
+current 只返回 issue_current 指向的普通执行头；history 返回已不属于本 issue 的历史关联；
+all 返回累计关联证据。历史行的 function_status 等字段属于 last_exec_id 证据，
+run_kind 标明是否来自候选包验证；head_* 字段和 current_issue_id 表示当前执行结果和归属。
+候选包 verify/regress 不推进普通执行头，其通过结果不代表当前运行版本已经通过。
+分页支持 after 和 limit（1–200），游标以返回值为准。
 同一 case 在不同后端或芯片的关联分别返回，不可用 case_id 单独去重任务。
-GET /api/issues/{id} 返回 backends、主类别、处理标签及已有事件和轮次信息。
+GET /api/issues/{id} 返回 backends、主类别、处理标签、current_case_count 及已有事件和轮次信息。
+classifications 只来自当前关联；没有当前关联时返回空数组，不再用历史验证证据补齐。
+详情分别展示当前关联、历史关联与验证回归轮次，累计 case_count 保留原义。
+
+旧执行头缺少当前关联时，在停止服务写入并备份后可显式补齐：
+
+    PYTHONPATH=. python tools/issue_memberships.py DATA --offline
+    PYTHONPATH=. python tools/issue_memberships.py DATA --offline --apply
+
+默认预览会回滚。工具只补齐当前同版本功能/精度失败头的缺失关联，按现行签名归类；
+保留旧 issue、last_exec_id、验证结论与轮次，已有当前关联不覆盖。
+验证、回归、汇总状态 issue 的全部成员及同错误组跳过，并在报告中计数。
 
 ## 管理员设置处理标签
 

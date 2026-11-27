@@ -196,7 +196,7 @@ def on_head(conn: sqlite3.Connection, case_id: int, exec_id: int, cfg: dict | No
             reconcile(conn, target, heads.get(anchor), cfg=cfg)
 
 
-def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
+def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None, preserve_evidence=False):
     """Classify once; record pass, fail or skip against the original issue."""
     cfg = cfg or config(conn)
     traits = case_traits(conn, execution["case_id"])
@@ -230,7 +230,8 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
                      and normalize(source['log_summary']) == normalize(summary))):
             target_id = source_id
         else:
-            target_id = _attach(conn, dimension, execution["backend"], *signature, summary, execution, traits)
+            target_id = _attach(conn, dimension, execution["backend"], *signature, summary, execution, traits,
+                                preserve_evidence=preserve_evidence)
     conn.execute("UPDATE executions SET issue_signature=? WHERE exec_id=?",
                  (signature[0] if signature else None, execution['exec_id']))
     if source_id is None:
@@ -247,6 +248,8 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
         if previous and previous[0] != target_id:
             event(conn,previous[0],'system','current_membership_changed',None,None,
                   f"case {execution['case_id']} {execution['backend']} → {target_id or 'none'}")
+    if preserve_evidence:
+        return target_id
     rows = conn.execute(
         "SELECT ic.issue_id, i.dimension, i.status, i.frozen_at FROM issue_cases ic JOIN issues i USING(issue_id) "
         "WHERE ic.case_id=? AND ic.npu_arch=? AND ic.backend=? AND ic.role='affected' "
@@ -278,8 +281,7 @@ def _timed(row) -> bool:
             and row["kernel_ns"] is not None and row["kernel_ns"] > 0)
 
 
-def _attach(conn, dimension, backend, sig, category, title, summary, execution, traits):
-    now = now_ms()
+def signature_target(conn, dimension, sig):
     alias = conn.execute("SELECT issue_id FROM issue_signature_alias WHERE dimension=? AND backend=? AND signature=?",
                          (dimension, "", sig)).fetchone()
     if alias is not None:
@@ -287,6 +289,12 @@ def _attach(conn, dimension, backend, sig, category, title, summary, execution, 
     else:
         issue = conn.execute("SELECT * FROM issues WHERE dimension=? AND cluster_generation=2 AND signature=?",
                              (dimension, sig)).fetchone()
+    return issue
+
+
+def _attach(conn, dimension, backend, sig, category, title, summary, execution, traits, *, preserve_evidence=False):
+    now = now_ms()
+    issue = signature_target(conn, dimension, sig)
     similar = None
     if issue is not None and issue["frozen_at"] is not None:
         similar = issue
@@ -318,7 +326,7 @@ def _attach(conn, dimension, backend, sig, category, title, summary, execution, 
         "last_exec_id, added_at, backend, result) VALUES(?,?, 'affected', ?,?,?,?,?,?, 'fail')",
         (issue_id, execution["case_id"], execution["npu_arch"], traits["revision"], execution["exec_id"],
          execution["exec_id"], now, backend)).rowcount
-    if not inserted and issue["status"] not in ACTIVE:
+    if not inserted and issue["status"] not in ACTIVE and not preserve_evidence:
         conn.execute("UPDATE issue_cases SET last_exec_id=?, case_revision=?, stale=0, result='fail', pick_reason=NULL WHERE issue_id=? "
                      "AND role='affected' AND case_id=? AND npu_arch=? AND backend=?",
                      (execution["exec_id"], traits["revision"], issue_id, execution["case_id"], execution["npu_arch"], backend))
@@ -663,12 +671,6 @@ def issue_classifications(conn, issue_id):
         "SELECT DISTINCT e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason "
         "FROM issue_current ic JOIN executions e ON e.exec_id=ic.exec_id WHERE ic.issue_id=? "
         "ORDER BY e.function_status,e.fail_stage", (issue_id,)).fetchall()
-    if not rows:
-        rows = conn.execute(
-            "SELECT DISTINCT e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason "
-            "FROM issue_cases ic JOIN executions e ON e.exec_id=ic.last_exec_id "
-            "WHERE ic.issue_id=? AND ic.role='affected' ORDER BY e.function_status,e.fail_stage",
-            (issue_id,)).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -775,6 +777,8 @@ def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
     out = _display_issue(row)
     out["backends"] = affected_backends(conn, issue_id)
     out["classifications"] = issue_classifications(conn, issue_id)
+    out['current_case_count'] = conn.execute(
+        'SELECT COUNT(DISTINCT case_id) FROM issue_current WHERE issue_id=?', (issue_id,)).fetchone()[0]
     out["rounds"] = [dict(r) for r in conn.execute(
         "SELECT round_no, kind, fix_version, fix_sha256, started_at, finished_at, outcome, pass_count, fail_count, "
         "invalid_count FROM issue_rounds WHERE issue_id=? ORDER BY round_no", (issue_id,))]
@@ -792,9 +796,9 @@ def detail(conn, issue_id: str, *, repro: bool = False) -> dict:
 
 def _repro(conn, issue_id, backend):
     rows = conn.execute(
-        "SELECT c.case_key, c.case_source, ic.npu_arch, ic.backend, e.exec_uuid FROM issue_cases ic "
-        "JOIN cases c ON c.case_id=ic.case_id LEFT JOIN executions e ON e.exec_id=ic.last_exec_id "
-        "WHERE ic.issue_id=? AND ic.role='affected' AND ic.stale=0 AND COALESCE(ic.result,'')<>'skip' ORDER BY ic.added_at DESC LIMIT ?",
+        "SELECT c.case_key, c.case_source, ic.npu_arch, ic.backend, e.exec_uuid FROM issue_current ic "
+        "JOIN cases c ON c.case_id=ic.case_id JOIN executions e ON e.exec_id=ic.exec_id "
+        "WHERE ic.issue_id=? ORDER BY ic.exec_id DESC LIMIT ?",
         (issue_id, REPRO_LIMIT)).fetchall()
     cases = []
     for row in rows:
@@ -809,15 +813,35 @@ def issue_detail(store: Store, issue_id: str) -> dict:
     return detail(store.reader(), issue_id)
 
 
-def issue_cases(store, issue_id, role="affected", after=None, limit=100):
+def issue_cases(store, issue_id, role="affected", after=None, limit=100, scope='all'):
     if role not in {"affected", "regression"}:
         raise IssueError("invalid", "invalid role")
+    if scope not in {'all', 'current', 'history'} or (role != 'affected' and scope != 'all'):
+        raise IssueError('invalid', 'invalid case scope')
     offset = int(after or 0)
+    if not 0 <= offset or not 1 <= limit <= 200:
+        raise IssueError('invalid', 'invalid pagination')
+    if scope == 'current':
+        rows = store.reader().execute(
+            "SELECT ic.case_id,c.case_key,ic.npu_arch,ic.backend,e.exec_uuid,e.run_kind, "
+            "e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason, "
+            "ic.issue_id AS current_issue_id,1 AS is_current,NULL AS result "
+            "FROM issue_current ic JOIN cases c USING(case_id) JOIN executions e ON e.exec_id=ic.exec_id "
+            "WHERE ic.issue_id=? ORDER BY ic.case_id,ic.npu_arch,ic.backend LIMIT ? OFFSET ?",
+            (issue_id, limit, offset)).fetchall()
+        return dict(cases=[dict(r) for r in rows], next_cursor=offset+limit if len(rows)==limit else None)
+    history = " AND (cur.issue_id IS NULL OR cur.issue_id<>ic.issue_id)" if scope == 'history' else ''
     rows = store.reader().execute(
         "SELECT ic.case_id,c.case_key,ic.npu_arch,ic.backend,ic.pick_reason,ic.stale,ic.round_no,ic.result,ic.added_at, "
-        "e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason "
+        "e.function_status,e.fail_stage,e.accuracy_status,e.accuracy_ref,e.invalid_reason,e.exec_uuid,e.run_kind, "
+        "cur.issue_id AS current_issue_id,COALESCE(cur.issue_id=ic.issue_id,0) AS is_current, "
+        "he.function_status AS head_function_status,he.fail_stage AS head_fail_stage, "
+        "he.accuracy_status AS head_accuracy_status,he.accuracy_ref AS head_accuracy_ref,he.invalid_reason AS head_invalid_reason "
         "FROM issue_cases ic JOIN cases c USING(case_id) LEFT JOIN executions e ON e.exec_id=ic.last_exec_id "
-        "WHERE ic.issue_id=? AND ic.role=? "
+        "LEFT JOIN issue_current cur ON cur.case_id=ic.case_id AND cur.backend=ic.backend AND cur.npu_arch=ic.npu_arch "
+        "LEFT JOIN execution_heads h ON h.case_id=ic.case_id AND h.backend=ic.backend AND h.npu_arch=ic.npu_arch "
+        "LEFT JOIN executions he ON he.exec_id=h.exec_id "
+        "WHERE ic.issue_id=? AND ic.role=? " + history +
         "ORDER BY ic.case_id,ic.npu_arch,ic.backend LIMIT ? OFFSET ?", (issue_id, role, limit, offset)).fetchall()
     return dict(cases=[dict(r) for r in rows], next_cursor=offset+limit if len(rows)==limit else None)
 
