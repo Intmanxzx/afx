@@ -48,18 +48,29 @@ for (const category of ['af_fronted','graph_check','lowering']) {
 assert.equal(text(issueClassification({classifications:[compile,runtime]})),
   text(statusChip(compile)) + text(statusChip(runtime)));
 assert.equal(text(issueClassification({classifications:[]})), '未知');
+assert.equal(text(issueClassification({classifications:[],current_case_count:0})), '无当前关联');
 const table = caseList([
   {case_key:'one', backend:'af-mlir', npu_arch:'910b', ...compile},
   {case_key:'one', backend:'af-legacy', npu_arch:'910b', ...runtime},
   {case_key:'two', backend:'af-mlir', npu_arch:'910b'}
-]);
+], 'current');
 assert.deepEqual(table.children[0].children[0].children.map(text),
-  ['用例','芯片','后端','问题分类','选取原因','标记','复测结果']);
+  ['用例','芯片','后端','当前结果']);
 const rows = table.children[1].children;
-assert.equal(rows[0].children.length, 7);
+assert.equal(rows[0].children.length, 4);
 assert.equal(text(rows[0].children[3]), text(statusChip(compile)));
 assert.equal(text(rows[1].children[3]), text(statusChip(runtime)));
 assert.equal(text(rows[2].children[3]), '—');
+const history = caseList([{case_key:'one', backend:'af-mlir', npu_arch:'910b',
+  head_function_status:'compile_fail', head_fail_stage:'mlir', function_status:'pass',
+  run_kind:'verify', result:'pass', current_issue_id:'F2'}]);
+const evidence = history.children[1].children[0].children;
+assert.equal(evidence.length, 8);
+assert.equal(text(evidence[3]), text(statusChip(compile)));
+assert.equal(text(evidence[4]), 'F2');
+assert.equal(text(evidence[5]), '候选包验证');
+assert.equal(text(evidence[6]), text(statusChip({function_status:'pass'})));
+assert.equal(text(evidence[7]), 'pass');
 for (const [dimension, expected, cls] of [['function','构图失败 · AF前端','bad'],
     ['accuracy','精度失败','warn'], ['performance','性能问题','bad']]) {
   const cell = issueCell({...fixture, dimension});

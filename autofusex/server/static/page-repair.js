@@ -14,7 +14,7 @@ function issueClassification(issue) {
   if (issue.dimension === "performance") return el("span", { class: "chip bad" }, "性能问题");
   const classifications = issue.classifications || [];
   return classifications.length ? el("span", {}, classifications.map(statusChip))
-    : el("span", { class: "chip gray" }, "未知");
+    : el("span", { class: "chip gray" }, issue.current_case_count === 0 ? "无当前关联" : "未知");
 }
 function issueCell(issue) {
   const reason = issue.dimension === "function" ? issue.log_summary || "" : issue.category || "";
@@ -72,7 +72,10 @@ PAGES.repair = async (root, params) => {
 };
 export async function issueDrawer(issueId) {
   openDrawer(el("div", { class: "empty" }, "加载中…"));
-  const [issue, cases, regression] = await Promise.all([api("/api/issues/" + issueId), api(`/api/issues/${issueId}/cases`), api(`/api/issues/${issueId}/cases?role=regression`)]);
+  const [issue, cases, history, regression] = await Promise.all([api("/api/issues/" + issueId),
+    api("/api/issues/" + issueId + "/cases?scope=current"),
+    api("/api/issues/" + issueId + "/cases?scope=history"),
+    api("/api/issues/" + issueId + "/cases?role=regression")]);
   const rounds = el("div");
   for (const r of issue.rounds) {
     const box = el("div", { class: "panel" }, el("div", {}, `第 ${r.round_no} 轮 · ${r.kind === "verify" ? "验证" : "回归"} · 版本 ${r.fix_version} · `,
@@ -90,7 +93,7 @@ export async function issueDrawer(issueId) {
     el("button", { onclick: async () => { const into = prompt("合并到哪个问题 ID？"); if (!into) return; try { await api(`/api/admin/issues/${issueId}/merge`, { method: "POST", body: { request_key: rkey(), into: into.trim() } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "合并到…")) : null;
   openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status])), subway(issue),
     el("div", { class: "kv", style: { marginTop: "12px" } }, [["维度", { function: "功能", accuracy: "精度", performance: "性能" }[issue.dimension]], ["后端", (issue.backends || [issue.backend]).map(label).join(" · ")], ["分类", issueClassification(issue)], ["主算子类别", issue.primary_category], ["处理标签", new Map(TREATMENTS).get(issue.treatment)],
-      ["用例数", fmt(issue.case_count)], ["芯片", issue.arches.map(archLabel).join(", ") || "—"], ["领取", issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"],
+      ["当前 / 累计用例", fmt(issue.current_case_count) + " / " + fmt(issue.case_count)], ["芯片", issue.arches.map(archLabel).join(", ") || "—"], ["领取", issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"],
       ["修复版本", issue.fix_version || "—"], ["代码链接", issue.fix_ref ? el("a", { href: issue.fix_ref, target: "_blank", rel: "noopener noreferrer" }, issue.fix_ref) : "—"],
       ["知识", issue.knowledge_id ? el("a", { href: "#", onclick: e => { e.preventDefault(); knowledgeDrawer(issue.knowledge_id); } }, issue.knowledge_id) : "—"],
       ["首次出现", time(issue.first_seen_at)]].flat().map(v => el("div", {}, v))),
@@ -100,17 +103,39 @@ export async function issueDrawer(issueId) {
       catch(err) { alert(err.message); }
     })) : null, adminBox,
     el("h3", {}, "验证与回归"), issue.rounds.length ? rounds : el("div", { class: "muted" }, "尚未提交验证"),
-    el("h3", {}, `涉及用例（${cases.cases.length}${cases.next_cursor ? "+" : ""}）`), caseList(cases.cases),
-    regression.cases.length ? el("div", {}, el("h3", {}, `回归用例（${regression.cases.length}）`), caseList(regression.cases)) : null,
+    caseSection(issueId, cases, "current", "当前关联用例"),
+    el("p", {class:"muted small"}, "当前关联依据普通执行的最新结果。候选修复包的通过或失败保留在验证与回归轮次中。"),
+    caseSection(issueId, history, "history", "历史关联用例"),
+    regression.cases.length ? caseSection(issueId, regression, "regression", "回归证据") : null,
     el("h3", {}, "事件"), el("ul", { class: "timeline" }, issue.events.map(e => el("li", {}, `${time(e.at)} · ${e.actor} · ${e.kind}`, e.to_status ? ` → ${STATUS_LABEL[e.to_status] || e.to_status}` : "", e.detail ? el("div", { class: "muted" }, e.detail) : null))));
 }
-function caseList(cases) {
+function caseList(cases, mode = "evidence") {
+  const current = mode === "current";
+  const headers = current ? ["用例", "芯片", "后端", "当前结果"]
+    : ["用例", "芯片", "后端", "当前结果", "当前归属", "证据来源", "证据结果", "复测结论"];
+  const currentStatus = c => c.head_function_status ? statusChip({function_status:c.head_function_status,
+    fail_stage:c.head_fail_stage, accuracy_status:c.head_accuracy_status, accuracy_ref:c.head_accuracy_ref,
+    invalid_reason:c.head_invalid_reason}) : current && c.function_status ? statusChip(c) : "—";
+  const source = c => ({verify:"候选包验证", regress:"候选包回归", fuzz:"普通执行", retest:"普通复测", import:"导入执行"}[c.run_kind] || "历史证据");
   return el("table", { class: "grid" },
-    el("thead", {}, el("tr", {}, ["用例", "芯片", "后端", "问题分类", "选取原因", "标记", "复测结果"].map(t => el("th", {}, t)))),
+    el("thead", {}, el("tr", {}, headers.map(t => el("th", {}, t)))),
     el("tbody", {}, cases.map(c => el("tr", {},
-    el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
-    el("td", {}, archLabel(c.npu_arch)), el("td", {}, label(c.backend)),
-    el("td", {}, c.function_status ? statusChip(c) : "—"),
-    el("td", {}, c.pick_reason || ""), el("td", {}, c.result === "skip" ? el("span", { class: "chip warn" }, "Skip") : c.stale ? el("span", { class: "chip gray" }, "旧图") : ""),
-    el("td", {}, c.result ? el("span", { class: "chip " + (c.result === "pass" ? "ok" : c.result === "fail" ? "bad" : "warn") }, c.result) : "")))));
+      el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
+      el("td", {}, archLabel(c.npu_arch)), el("td", {}, label(c.backend)), el("td", {}, currentStatus(c)),
+      ...(current ? [] : [el("td", {}, c.current_issue_id ? el("a", {href:"#", onclick:e => {
+        e.preventDefault(); issueDrawer(c.current_issue_id); }}, c.current_issue_id) : "无当前 issue"),
+      el("td", {}, source(c)), el("td", {}, c.function_status ? statusChip(c) : "—"),
+      el("td", {}, c.result || "—", c.stale ? " · 旧图" : "", c.pick_reason ? " · " + c.pick_reason : "")])))));
+}
+function caseSection(issueId, page, scope, title) {
+  const content = el("div", {class:"table-wrap"}, page.cases.length ? caseList(page.cases, scope === "current" ? "current" : "evidence")
+    : el("div", {class:"muted"}, "无"));
+  const next = el("button", {class:"icon-btn", onclick:async () => {
+    const query = scope === "regression" ? "role=regression" : "scope=" + scope;
+    const more = await api("/api/issues/" + issueId + "/cases?" + query + "&after=" + page.next_cursor);
+    content.append(caseList(more.cases, scope === "current" ? "current" : "evidence"));
+    page = more; next.hidden = !page.next_cursor;
+  }}, "加载更多");
+  next.hidden = !page.next_cursor;
+  return el("section", {}, el("h3", {}, title), content, next);
 }
