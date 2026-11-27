@@ -224,10 +224,10 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
     if signature:
         source = conn.execute("SELECT * FROM issues WHERE issue_id=?", (source_id,)).fetchone() if source_id else None
         # Frozen pre-upgrade verification keeps its original ID and membership.
-        if (dimension == 'function' and source is not None and source['dimension'] == 'function'
-                and source['status'] in ('verifying', 'regressing', 'summarizing')
-                and source['category'] == signature[1]
-                and normalize(source['log_summary']) == normalize(summary)):
+        if (source is not None and source['dimension'] == dimension
+                and (source['signature'] == signature[0] or source['canonical_signature'] == signature[0]
+                     or dimension == 'function' and source['category'] == signature[1]
+                     and normalize(source['log_summary']) == normalize(summary))):
             target_id = source_id
         else:
             target_id = _attach(conn, dimension, execution["backend"], *signature, summary, execution, traits)
@@ -248,14 +248,14 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None):
             event(conn,previous[0],'system','current_membership_changed',None,None,
                   f"case {execution['case_id']} {execution['backend']} → {target_id or 'none'}")
     rows = conn.execute(
-        "SELECT ic.issue_id, i.dimension, i.status FROM issue_cases ic JOIN issues i USING(issue_id) "
+        "SELECT ic.issue_id, i.dimension, i.status, i.frozen_at FROM issue_cases ic JOIN issues i USING(issue_id) "
         "WHERE ic.case_id=? AND ic.npu_arch=? AND ic.backend=? AND ic.role='affected' "
         "AND ic.stale=0 AND COALESCE(ic.result,'')<>'skip'",
         (execution["case_id"], execution["npu_arch"], execution["backend"])).fetchall()
     for row in rows:
         if source_id is not None and row["issue_id"] != source_id:
             continue
-        if source_id is None and row["status"] in ACTIVE:
+        if source_id is None and (row["status"] in ACTIVE or row["frozen_at"] is not None):
             continue
         if target_id is None and (execution["function_status"] != "pass" or
                                   row["dimension"] == "performance" and not measured):
@@ -287,13 +287,27 @@ def _attach(conn, dimension, backend, sig, category, title, summary, execution, 
     else:
         issue = conn.execute("SELECT * FROM issues WHERE dimension=? AND cluster_generation=2 AND signature=?",
                              (dimension, sig)).fetchone()
+    similar = None
+    if issue is not None and issue["frozen_at"] is not None:
+        similar = issue
+        issue = conn.execute("SELECT * FROM issues WHERE dimension=? AND canonical_signature=? "
+                             "AND frozen_at IS NULL ORDER BY issue_no DESC LIMIT 1", (dimension, sig)).fetchone()
     if issue is None:
+        stored_sig = _digest(sig.hex(), similar["issue_id"], secrets.token_hex(16)) if similar else sig
         cur = conn.execute(
             "INSERT INTO issues(issue_id, dimension, backend, signature, category, title, log_summary, status, "
             "first_seen_at, last_seen_at, updated_at) VALUES('', ?,?,?,?,?,?, 'open', ?,?,?)",
-            (dimension, backend, sig, category, title[:300], (summary or ""), now, now, now))
+            (dimension, backend, stored_sig, category, title[:300], (summary or ""), now, now, now))
         issue_id = f"{DIMENSION_PREFIX[dimension]}{cur.lastrowid}"  # e.g. F254: one token, easy to copy
         conn.execute("UPDATE issues SET issue_id=?, primary_category=?, cluster_generation=2 WHERE issue_no=?", (issue_id, traits["primary"], cur.lastrowid))
+        if similar:
+            conn.execute("UPDATE issues SET similar_to=?, canonical_signature=?, treatment='high', "
+                         "fix_version=?,fix_sha256=?,fix_ref=? WHERE issue_id=?",
+                         (similar['issue_id'], sig, similar['fix_version'], similar['fix_sha256'],
+                          similar['fix_ref'], issue_id))
+            conn.execute("INSERT OR REPLACE INTO issue_signature_alias VALUES(?,?,?,?)",
+                         (dimension, "", sig, issue_id))
+            event(conn, issue_id, "system", "similar_issue", None, None, similar['issue_id'])
         event(conn, issue_id, "system", "created", None, "open", title[:300])
         issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
     issue_id = issue["issue_id"]
@@ -310,40 +324,15 @@ def _attach(conn, dimension, backend, sig, category, title, summary, execution, 
                      (execution["exec_id"], traits["revision"], issue_id, execution["case_id"], execution["npu_arch"], backend))
     conn.execute("UPDATE issues SET case_count=case_count+?, last_seen_at=?, updated_at=? WHERE issue_id=?",
                  (int(new_case), now, now, issue_id))
-    if issue["status"] == "resolved" and _reopens(conn, issue, execution):
-        conn.execute("UPDATE issues SET status='open', owner_user=NULL, agent_id=NULL, lease_id=NULL, "
-                     "lease_expires_at=NULL, updated_at=? WHERE issue_id=?", (now, issue_id))
-        event(conn, issue_id, "system", "reopened", "resolved", "open",
-              f"new failure exec {execution['exec_id']} after resolution")
-
     return issue_id
-
-
-def _reopens(conn, issue, execution) -> bool:
-    """A resolved issue reopens only for a failure on a backend version that was not already known broken.
-
-    Until the fix is merged, fuzz keeps running the old versions and keeps failing; those
-    failures are expected and must not reopen the issue.
-    """
-    if execution["created_at"] <= (issue["resolved_at"] or 0):
-        return False
-    version = conn.execute("SELECT v.backend_version FROM executions e JOIN environments v USING(env_id) "
-                           "WHERE e.exec_id=?", (execution["exec_id"],)).fetchone()[0]
-    if version is not None and version == issue["fix_version"]:
-        return True
-    known_broken = {r[0] for r in conn.execute(
-        "SELECT DISTINCT v.backend_version FROM issue_cases ic JOIN executions e ON e.exec_id=ic.first_exec_id "
-        "JOIN environments v ON v.env_id=e.env_id WHERE ic.issue_id=? AND ic.role='affected' AND e.created_at<=?",
-        (issue["issue_id"], issue["resolved_at"]))}
-    return version not in known_broken
 
 
 def mark_stale(conn, case_id: int, revision: int) -> None:
     """Imported case graph replaced: its old issue memberships no longer describe the case."""
     conn.execute("DELETE FROM issue_current WHERE case_id=?", (case_id,))
-    rows = conn.execute("SELECT DISTINCT issue_id FROM issue_cases WHERE case_id=? AND case_revision<? AND stale=0",
+    rows = conn.execute("SELECT DISTINCT issue_id FROM issue_cases WHERE case_id=? AND case_revision<? AND stale=0 AND issue_id IN (SELECT issue_id FROM issues WHERE frozen_at IS NULL)",
                         (case_id, revision)).fetchall()
-    conn.execute("UPDATE issue_cases SET stale=1 WHERE case_id=? AND case_revision<?", (case_id, revision))
+    conn.execute("UPDATE issue_cases SET stale=1 WHERE case_id=? AND case_revision<? AND issue_id IN (SELECT issue_id FROM issues WHERE frozen_at IS NULL)", (case_id, revision))
     for row in rows:
         event(conn, row[0], "system", "case_stale", None, None, f"case {case_id} graph replaced (rev {revision})")
 
@@ -480,9 +469,9 @@ def verify(store: Store, principal: Principal, issue_id: str, body: dict):
     """Freeze the affected cases and queue a verification round on their own arch (design 2)."""
     principal.require_write()
     version, sha = body.get("fix_version"), body.get("fix_sha256")
-    if not isinstance(version, str) or not _VERSION.match(version):
+    if not (version is None and sha is None) and (not isinstance(version, str) or not _VERSION.match(version)):
         raise IssueError("invalid", "fix_version must be an exact package version")
-    if not isinstance(sha, str) or not _SHA.match(sha):
+    if not (version is None and sha is None) and (not isinstance(sha, str) or not _SHA.match(sha)):
         raise IssueError("invalid", "fix_sha256 must be 64 lowercase hex chars")
     fix_ref = body.get("fix_ref")
     if fix_ref is not None and (not isinstance(fix_ref, str) or len(fix_ref) > 512):
@@ -490,23 +479,50 @@ def verify(store: Store, principal: Principal, issue_id: str, body: dict):
 
     def action(conn):
         from autofusex.server import retests
-        issue = _holder(conn, principal, issue_id, body.get("lease_id"))
-        if issue["status"] != "claimed":
+        if principal.role == 'admin':
+            issue = conn.execute("SELECT * FROM issues WHERE issue_id=?", (issue_id,)).fetchone()
+            if issue is None:
+                raise IssueError('not_found', 'issue not found', 404)
+        else:
+            issue = _holder(conn, principal, issue_id, body.get("lease_id"))
+        supplemental = issue['frozen_at'] is not None
+        if supplemental:
+            if issue['status'] in ('verifying', 'regressing') or conn.execute(
+                    "SELECT 1 FROM retest_tasks WHERE issue_id=? AND status IN ('pending','leased')", (issue_id,)).fetchone():
+                raise IssueError('wrong_state', 'an issue round is already running', 409)
+        elif issue["status"] != "claimed":
             raise IssueError("wrong_state", f"verify needs status claimed, issue is {issue['status']}", 409)
+        candidate_version = version if version is not None else issue['fix_version']
+        candidate_sha = sha if sha is not None else issue['fix_sha256']
+        if not candidate_version or not candidate_sha:
+            raise IssueError('invalid', 'an exact candidate version and SHA are required')
+        membership = ("issue_cases WHERE role='affected' AND" if issue['frozen_at'] is not None
+                      else "issue_current WHERE")
         cases = conn.execute(
-            "SELECT case_id,npu_arch,backend FROM issue_current WHERE issue_id=? "
-            "ORDER BY exec_id DESC LIMIT ?", (issue_id, _setting(conn, "verify.max_cases"))).fetchall()
+            f"SELECT case_id,npu_arch,backend FROM {membership} issue_id=? "
+            "ORDER BY case_id LIMIT ?", (issue_id, -1 if supplemental else _setting(conn, "verify.max_cases"))).fetchall()
         if not cases:
             raise IssueError("no_cases", "issue has no current affected cases to verify", 409)
         round_no = issue["round_no"] + 1
         conn.execute("INSERT INTO issue_rounds(issue_id, round_no, kind, fix_version, fix_sha256, started_at) "
-                     "VALUES(?,?, 'verify', ?,?,?)", (issue_id, round_no, version, sha, now_ms()))
+                     "VALUES(?,?, 'verify', ?,?,?)", (issue_id, round_no, candidate_version, candidate_sha, now_ms()))
+        previous = conn.execute(
+            "SELECT outcome,fix_version,fix_sha256 FROM issue_rounds WHERE issue_id=? AND kind='regress' "
+            "ORDER BY round_no DESC LIMIT 1", (issue_id,)).fetchone()
+        reuse = bool(supplemental and previous and previous['outcome'] == 'passed'
+                     and previous['fix_version'] == candidate_version and previous['fix_sha256'] == candidate_sha)
+        if reuse:
+            conn.execute("UPDATE issue_rounds SET reuse_regression=1 WHERE issue_id=? AND round_no=?", (issue_id, round_no))
         tasks = retests.create_tasks(conn, issue, round_no, [(c["case_id"], c["npu_arch"], c["backend"]) for c in cases],
-                                     version, sha)
+                                     candidate_version, candidate_sha)
         _set_status(conn, issue, "verifying", principal.user_id, "verify_submitted",
-                    f"round {round_no} version {version} tasks {tasks}", round_no=round_no, fix_version=version,
-                    fix_sha256=sha, fix_ref=fix_ref or issue["fix_ref"])
-        return {"issue_id": issue_id, "round_no": round_no, "tasks": tasks, "status": "verifying"}
+                    f"round {round_no} version {candidate_version} tasks {tasks}; reuse_regression={bool(reuse)}",
+                    round_no=round_no, fix_version=candidate_version,
+                    fix_sha256=candidate_sha, fix_ref=fix_ref or issue["fix_ref"])
+        response = {"issue_id": issue_id, "round_no": round_no, "tasks": tasks, "status": "verifying"}
+        if supplemental:
+            response['reuse_regression'] = reuse
+        return response
     return idempotent(store, principal, f"verify:{issue_id}", body.pop("request_key", None), body, action)
 
 
@@ -525,7 +541,7 @@ def pin_cases(store: Store, principal: Principal, issue_id: str, body: dict):
             raise IssueError("not_found", "issue not found", 404)
         if principal.role != "admin":
             _holder(conn, principal, issue_id, body.get("lease_id"))
-        if issue["status"] not in ("open", "claimed", "verifying"):
+        if issue["frozen_at"] is not None or issue["status"] not in ("open", "claimed", "verifying"):
             raise IssueError("wrong_state", "regression set is frozen once regression starts", 409)
         ids = _case_ids(conn, keys)
         for case_id in ids:
@@ -595,7 +611,7 @@ def merge(store: Store, principal: Principal, issue_id: str, body: dict):
             raise IssueError("invalid", "source and target must be two existing issues", 400)
         if source["dimension"] != target["dimension"]:
             raise IssueError("invalid", "only issues of the same dimension can merge", 400)
-        if source["status"] in ACTIVE or target["status"] in TERMINAL:
+        if source["status"] in ACTIVE or source["frozen_at"] is not None or target["frozen_at"] is not None:
             raise IssueError("wrong_state", "source must not be in progress and target must be open", 409)
         moved = conn.execute(
             "INSERT OR IGNORE INTO issue_cases(issue_id, case_id, role, npu_arch, case_revision, stale, first_exec_id, "
@@ -625,7 +641,7 @@ def _cancel_tasks(conn, issue_id):
 _ISSUE_COLUMNS = ("issue_id, dimension, backend, category, title, log_summary, status, priority, case_count, "
                   "owner_user, agent_id, lease_expires_at, fix_version, fix_sha256, fix_ref, knowledge_id, caused_by, "
                   "duplicate_of, close_reason, round_no, first_seen_at, last_seen_at, claimed_at, resolved_at, "
-                  "updated_at, treatment, primary_category, cluster_generation")
+                  "updated_at, treatment, primary_category, cluster_generation, similar_to, frozen_at")
 
 
 _ISSUE_RANK = "CASE WHEN status IN ('claimed','verifying','regressing','summarizing') THEN 0 WHEN status='open' THEN 1 ELSE 2 END"
@@ -735,9 +751,9 @@ def list_issues(store, *, dimension=None, backend=None, status=None, q=None, aft
             page = min(page, max(1, pages)); offset = (page - 1) * limit
         rows = conn.execute(f"SELECT {_ISSUE_COLUMNS}, "
             f"(SELECT COUNT(DISTINCT ic.case_id) {membership} WHERE {match}) AS matched_case_count "
-            f"FROM issues {clause} ORDER BY {_ISSUE_RANK}, "
+            f"FROM issues {clause} ORDER BY "
             "CASE treatment WHEN 'high' THEN 0 WHEN 'normal' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, "
-            "case_count DESC, issue_no DESC LIMIT ? OFFSET ?", [*match_args, *args, limit, offset]).fetchall()
+            f"{_ISSUE_RANK}, case_count DESC, issue_no DESC LIMIT ? OFFSET ?", [*match_args, *args, limit, offset]).fetchall()
         items = [_display_issue(row) for row in rows]
         for item in items:
             item["backends"] = affected_backends(conn, item["issue_id"])

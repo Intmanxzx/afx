@@ -615,6 +615,21 @@ CREATE TABLE classification_previews(
 ALTER TABLE classification_jobs ADD COLUMN preview_id TEXT;
 """))
 
+CORE.append((27, """
+ALTER TABLE issues ADD COLUMN similar_to TEXT;
+ALTER TABLE issues ADD COLUMN canonical_signature BLOB;
+ALTER TABLE issues ADD COLUMN frozen_at INTEGER;
+UPDATE issues SET frozen_at=updated_at WHERE status IN ('regressing','summarizing','resolved','closed');
+CREATE INDEX issues_canonical ON issues(dimension,canonical_signature);
+CREATE TRIGGER issues_freeze AFTER UPDATE OF status ON issues
+WHEN NEW.status IN ('regressing','summarizing','resolved','closed') AND NEW.frozen_at IS NULL
+BEGIN
+ UPDATE issues SET frozen_at=NEW.updated_at WHERE issue_no=NEW.issue_no;
+END;
+"""))
+
+CORE.append((28, "ALTER TABLE issue_rounds ADD COLUMN reuse_regression INTEGER NOT NULL DEFAULT 0;"))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(
@@ -686,10 +701,13 @@ def apply(conn: sqlite3.Connection, schema: str, migrations) -> None:
 
 
 def _statements(sql: str):
+    pending = ""
     for chunk in sql.split(";"):
-        chunk = chunk.strip()
-        if chunk:
-            yield chunk
+        pending += chunk + ";"
+        if sqlite3.complete_statement(pending):
+            if pending.strip().strip(";"):
+                yield pending.strip()
+            pending = ""
 
 
 def _qualify(statement: str, schema: str) -> str:

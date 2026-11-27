@@ -431,6 +431,14 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
 
     @route('/api/issues/{issue_id}/verify', 'POST')
     def verify(issue_id: str, body: m.Verify, principal=Depends(writer)):
+        """Submit verification as the lease holder or administrator.
+
+        Sealed issues verify every retained affected case, including prior skips.
+        Omit both package fields to reuse the stored candidate. If the latest
+        regression passed on the identical version and SHA, successful supplemental
+        verification returns to summarizing without rerunning regression.
+        Running verification/regression rounds cannot be resubmitted.
+        """
         return _success(issues.verify(store, principal, issue_id, data(body)))
 
     @route('/api/issues/{issue_id}/regression-cases', 'POST')

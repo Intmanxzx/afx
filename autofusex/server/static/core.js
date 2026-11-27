@@ -17,7 +17,7 @@ const SEARCH_STAGES = ["nnsmith", "inductor", "af_fronted", "schedule", "legacy_
   "triton_ascend", "af_common", "aclnn", "aicpu", "fused_kernel", "environment", "unknown", "unknown_retest"];
 export const DIM_LABEL = { all: "全部", op_category: "算子类别", op_display: "算子覆盖", dtype: "数据类型", dim_bucket: "最大维度", size_bucket: "张量规模", dynamic: "静态/动态", source: "用例来源" };
 export const DIM_ORDER = ["op_display", "dtype", "dim_bucket", "size_bucket", "op_category", "dynamic", "source"];
-export const STATUS_LABEL = { open: "未领取", claimed: "修复中", verifying: "验证中", regressing: "回归中", summarizing: "归档中", resolved: "已解决", closed: "已关闭" };
+export const STATUS_LABEL = { open: "未领取", claimed: "领取中", verifying: "验证中", regressing: "回归中", summarizing: "总结中", resolved: "已关闭", closed: "已关闭" };
 
 // ---------- global search field catalog (mirrors autofusex/server/search.py) ----------
 export const SEARCH_RESULT_LABEL = { invalid: "无效用例", pass: "通过", fail: "失败（功能或精度）", function_fail: "功能失败", accuracy_fail: "精度失败", unsupported: "不支持" };

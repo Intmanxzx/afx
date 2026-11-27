@@ -16,6 +16,11 @@ function issueClassification(issue) {
   return classifications.length ? el("span", {}, classifications.map(statusChip))
     : el("span", { class: "chip gray" }, "未知");
 }
+function similarLink(issue) {
+  return issue.similar_to ? el("a", { href: "#", class: "chip warn", onclick: e => {
+    e.preventDefault(); issueDrawer(issue.similar_to);
+  } }, "与问题 " + issue.similar_to + " 相似") : null;
+}
 function issueCell(issue) {
   const reason = issue.dimension === "function" ? issue.log_summary || "" : issue.category || "";
   return el("td", { class: "issue-cell" },
@@ -25,7 +30,7 @@ function issueCell(issue) {
         el("span", { class: "issue-number" }, issue.issue_id),
         el("span", { class: "chip info" }, new Map(TREATMENTS).get(issue.treatment)),
         issueClassification(issue),
-        el("span", { class: "issue-reason", title: reason }, reason.slice(0, 110)))));
+        el("span", { class: "issue-reason", title: reason }, reason.slice(0, 110)))), similarLink(issue));
 }
 function subway(issue) {
   const index = { open: -1, claimed: 0, verifying: 1, regressing: 2, summarizing: 3, resolved: 4, closed: 4 }[issue.status];
@@ -36,7 +41,7 @@ function subway(issue) {
     if (i) box.append(el("div", { class: "line" + (i <= index ? " done" : "") }));
     let cls = i < index ? "done" : i === index ? (issue.status === "resolved" || issue.status === "closed" ? "done" : "now") : "";
     if (bounced && i === 1) cls = "back";
-    box.append(el("div", { class: "st " + cls }, el("div", { class: "dot" }), issue.status === "closed" && i === 4 ? "关闭" : text));
+    box.append(el("div", { class: "st " + cls }, el("div", { class: "dot" }), text));
   });
   void lastRound;
   return box;
@@ -88,7 +93,7 @@ export async function issueDrawer(issueId) {
   const adminBox = isAdmin() && !["resolved", "closed"].includes(issue.status) ? el("div", { class: "toolbar" },
     el("button", { class: "danger", onclick: async () => { const reason = prompt("关闭原因（不修复/误报/重复）："); if (!reason) return; try { await api(`/api/admin/issues/${issueId}/close`, { method: "POST", body: { request_key: rkey(), reason } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "关闭问题"),
     el("button", { onclick: async () => { const into = prompt("合并到哪个问题 ID？"); if (!into) return; try { await api(`/api/admin/issues/${issueId}/merge`, { method: "POST", body: { request_key: rkey(), into: into.trim() } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "合并到…")) : null;
-  openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status])), subway(issue),
+  openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status])), subway(issue), similarLink(issue),
     el("div", { class: "kv", style: { marginTop: "12px" } }, [["维度", { function: "功能", accuracy: "精度", performance: "性能" }[issue.dimension]], ["后端", (issue.backends || [issue.backend]).map(label).join(" · ")], ["分类", issueClassification(issue)], ["主算子类别", issue.primary_category], ["处理标签", new Map(TREATMENTS).get(issue.treatment)],
       ["用例数", fmt(issue.case_count)], ["芯片", issue.arches.map(archLabel).join(", ") || "—"], ["领取", issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"],
       ["修复版本", issue.fix_version || "—"], ["代码链接", issue.fix_ref ? el("a", { href: issue.fix_ref, target: "_blank", rel: "noopener noreferrer" }, issue.fix_ref) : "—"],
