@@ -60,3 +60,28 @@ def test_cancelled_retest_reports_terminal_receipt(tmp_path, monkeypatch):
     assert body['terminal_reason'] == 'no_autofuse_coverage'
     assert body['exec_uuids'] == []
     assert saved['delivered']
+
+
+def test_retest_uploads_baseline_but_completes_original_task(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from autofusex.client import retest_queue, platform_transport, daemon
+    task = dict(task_id=203, lease_id='lease', case_source='nnsmith',run_uuid='run',run_kind='retest')
+    saved = dict(queue=str(tmp_path/'tasks.sqlite'), database=str(tmp_path/'results.sqlite'),task_ids=['local'])
+    api = Mock(); api.call.return_value = {'tasks':[task]}
+    client = SimpleNamespace(api=api,devices=['npu:0'],environment=lambda: {},identity=lambda: {},state=Mock(),counters={})
+    monkeypatch.setattr(platform_transport,'installed_packages',lambda _: {'af-mlir': {'version': '1'}})
+    monkeypatch.setattr(daemon,'request',lambda *a:saved)
+    ledger = Mock(); ledger.get.return_value = dict(state='completed')
+    monkeypatch.setattr(retest_queue,'TaskLedger',lambda _:ledger)
+    monkeypatch.setattr(retest_queue,'completed',lambda _:['target'])
+    mapper = Mock()
+    mapper.conn.execute.return_value.fetchone.return_value={'execution_id':'context'}
+    mapper.context.return_value={'diagnostics':json.dumps({'baseline_exec_uuid':'baseline'})}
+    monkeypatch.setattr(platform_transport,'Mapper',lambda _:mapper)
+    upload = Mock(return_value={'target':'accepted','baseline':'accepted'})
+    monkeypatch.setattr(platform_transport,'upload_new',upload)
+    assert retest_queue._synchronize(client,tmp_path)==1
+    assert upload.call_args.kwargs['attempt_ids']==['baseline','target']
+    assert api.call.call_args.args[2]['exec_uuids']==['target']
+    mapper.conn.close.assert_called_once()

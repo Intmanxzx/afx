@@ -141,6 +141,39 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                    for x in (*combined, *compares)):
                 return
             for other in combined:
+                ss = sessions[other.session_id]
+                cfg = json.loads(ss.task['execution'])
+                cmp = next((x for x in compares if x.session_id == ss.identity), None)
+                if cfg['backend'] not in {'af-mlir', 'af-legacy', 'triton-npu'} or cmp is None or not cmp.output:
+                    continue
+                if cmp.output['result']['status'] != 'fail' or cmp.facts.get('rechecked'):
+                    continue
+                eager = next((x for x in combined
+                    if json.loads(sessions[x.session_id].task['execution'])['backend'] == 'eager-npu'
+                    and sessions[x.session_id].uuid == ss.uuid), None)
+                if eager is None:
+                    cfg.update(backend='eager-npu', device=ss.device)
+                    task = dict(ss.task, execution=json.dumps(cfg), attempt_id=str(uuid.uuid4()),
+                                _auxiliary=True, _baseline_for=ss.uuid)
+                    aux = BackendSession(str(uuid.uuid4()), task)
+                    sessions[aux.identity] = aux
+                    eager = stage(Kind.COMBINED, case, (), aux)
+                    eager.requirements = Requirements(cpu_tokens=budget.compile_threads,
+                        memory_bytes=other.requirements.memory_bytes, cache_bytes=other.requirements.cache_bytes,
+                        devices=(ss.device,), device_bytes=other.requirements.device_bytes)
+                    ref_stage = next(x for x in case.stages.values() if x.kind == Kind.REFERENCE)
+                    stage(Kind.COMPARE, case, (eager, ref_stage), aux)
+                    return
+                cmp.facts['rechecked'] = True
+                if eager.state == 'succeeded' and eager.output['result']['status'] == 'ok':
+                    again = stage(Kind.COMPARE, case, (other, eager), ss)
+                    again.facts.update(reference_stage=eager.identity, initial_compare=cmp.identity)
+                    return
+                diag = json.loads(cmp.output['result']['execution']['diagnostics'])
+                diag['baseline_status'] = 'unavailable'
+                diag['baseline_exec_uuid'] = sessions[eager.session_id].task['attempt_id']
+                cmp.output['result']['execution']['diagnostics'] = json.dumps(diag)
+            for other in combined:
                 if has_record(case, other.session_id):
                     continue
                 session = sessions[other.session_id]
@@ -187,14 +220,21 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 # under the claim fence, before any result is produced.
                 session.task['execution']=json.dumps(config,sort_keys=True,separators=(',',':'))
                 with ledger._connection() as conn:
-                    changed=conn.execute("UPDATE tasks SET execution=? WHERE id=? AND claim=? AND state='running'",(session.task['execution'],session.task['id'],session.task['claim'])).rowcount
+                    changed=1 if session.task.get("_auxiliary") else conn.execute("UPDATE tasks SET execution=? WHERE id=? AND claim=? AND state='running'",(session.task['execution'],session.task['id'],session.task['claim'])).rowcount
                     if not changed:raise ValueError('task cancelled before dispatch')
                 job['output_file']=session.identity+'.npz'
                 job['device_budget_bytes']=next((d.capacity for d in pool.devices if d.uuid==session.uuid),None)
             elif s.kind==Kind.COMPARE:
                 combined=stages[s.dependencies[0]].output
-                job.update(combined)
-                job['reference']=case.reference['outputs']
+                job.update(json.loads(json.dumps(combined)))
+                if s.facts.get('reference_stage'):
+                    baseline = stages[s.facts['reference_stage']]
+                    job['reference'] = baseline.output['outputs']
+                    job['reference_backend'] = 'eager-npu'
+                    job['reference_exec_uuid'] = sessions[baseline.session_id].task['attempt_id']
+                    job['result'] = json.loads(json.dumps(stages[s.facts['initial_compare']].output['result']))
+                else:
+                    job['reference']=case.reference['outputs']
             elif s.kind==Kind.RECORD:
                 # Only publish observed transitions. A generation failure has no
                 # backend start; missing events must not be fabricated at admission.
@@ -275,31 +315,37 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     # below still waits for every other target's AF verdict.
                     if not s.output['result']['shape_results']:
                         for other in case.stages.values():
-                            if other.kind == Kind.COMPARE and other.session_id == s.session_id:
+                            if other.kind == Kind.COMPARE and s.identity in other.dependencies:
                                 other.state = 'cancelled'
                 else:
                     s.facts['error'] = response['error']
                     for other in case.stages.values():
-                        if other.kind == Kind.COMPARE and other.session_id == s.session_id:
+                        if other.kind == Kind.COMPARE and s.identity in other.dependencies:
                             other.state = 'cancelled'
             elif s.kind==Kind.COMPARE:
                 s.output=response.get('value')
                 if response['ok']:
                     result=s.output['result']
                 else:
-                    result=json.loads(json.dumps(stages[s.dependencies[0]].output['result']))
+                    source = stages[s.facts.get('initial_compare', s.dependencies[0])].output['result']
+                    result=json.loads(json.dumps(source))
                     result['status']='error'
                     for row in result['shape_results']:
                         if not row.get('error_stage'):row.update(correctness='error',error_stage='compare',error_summary=str(response['error'])[-500:])
                 s.output = {'result': result}
+                if s.facts.get('initial_compare'):
+                    stages[s.facts['initial_compare']].output = s.output
             elif s.kind==Kind.RECORD:
                 if response['ok']:
-                    ledger.complete(session.task['id'],session.task['claim']);summary['completed']+=1
+                    if not session.task.get('_auxiliary'):
+                        ledger.complete(session.task['id'],session.task['claim']);summary['completed']+=1
                     completed_attempts.append(session.task['attempt_id'])
                     reporter.record(s.output['result'],json.loads(session.task['execution'])['backend'])
                     if response['value'].get('status')!='ok':summary['failed']+=1
                 else:
-                    ledger.interrupt(session.task['id'],session.task['claim'],'record_failed');summary['interrupted']+=1;summary['record_failed']+=1
+                    if not session.task.get('_auxiliary'):
+                        ledger.interrupt(session.task['id'],session.task['claim'],'record_failed');summary['interrupted']+=1
+                    summary['record_failed']+=1
                     from autofusex.execution.runtime import atomic
                     atomic(ledger.path.parent/'last-record-error.json',{'error':str(response.get('error','unknown'))[-2000:]})
                 session.task['done']=True
@@ -384,9 +430,10 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                             if stopped or case.skip_reason is not None:
                                 s.state='cancelled'
                             else:finish(s,response)
-                    flush_deferred_targets(case)
+                    if not stopped:
+                        flush_deferred_targets(case)
                     finalize_case_skip(case)
-                    if all(t.get('done') for t in case.tasks) and not any(s.state=='running' for s in case.stages.values()):
+                    if all(t.get('done') for t in case.tasks) and all(s.state in {'succeeded','failed','cancelled'} for s in case.stages.values()):
                         from autofusex.execution.storage.stage_facts import save_case
                         if case.identity not in finalized:
                             for unused in case.stages.values():
@@ -397,7 +444,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                         shutil.rmtree(case.directory)
                         for sid in list(case.stages):stages.pop(sid,None)
                         for sid,ss in list(sessions.items()):
-                            if ss.task in case.tasks:sessions.pop(sid)
+                            if ss.task in case.tasks or ss.identity in {x.session_id for x in case.stages.values()}:sessions.pop(sid)
                         del cases[case.identity]
                 now=time.monotonic_ns()
                 ready=[s for s in stages.values() if s.ready(stages,now)]

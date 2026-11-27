@@ -122,14 +122,24 @@ def _synchronize(client, home):
         if not ids:
             continue
         mapper = Mapper(saved['database'])
+        auxiliary = []
+        for identity in ids:
+            row = mapper.conn.execute('SELECT execution_id FROM attempts WHERE id=?', (identity,)).fetchone()
+            if row:
+                context = mapper.context(row['execution_id'])
+                diagnostics = json.loads(context.get('diagnostics') or '{}')
+                if diagnostics.get('baseline_exec_uuid'):
+                    auxiliary.append(diagnostics['baseline_exec_uuid'])
+                auxiliary.extend(c['reference_exec_uuid'] for c in diagnostics.get('accuracy_evidence', {}).get('comparisons', []) if c.get('reference_exec_uuid'))
+
         try:
             statuses = upload_new(client.api, mapper, client.state, client.counters,
-                key_prefix='task' + str(task['task_id']), attempt_ids=ids,
+                key_prefix='task' + str(task['task_id']), attempt_ids=list(dict.fromkeys(auxiliary + ids)),
                 run_override={'run_uuid': task['run_uuid'][:64], 'kind': task['run_kind']})
         finally:
             mapper.conn.close()
         uploaded = [i for i in ids if statuses.get(i) in {'accepted', 'duplicate'}]
-        if len(uploaded) != len(ids):
+        if len(uploaded) != len(ids) or any(statuses.get(i) not in {'accepted','duplicate'} for i in auxiliary):
             continue
         client.api.call('POST', f"/api/client/retests/{task['task_id']}/complete", {
             'request_key': f"complete-{task['task_id']}-{task['lease_id'][:8]}",

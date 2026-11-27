@@ -495,7 +495,7 @@ class Mapper:
                     "cpu_arch": environment.get("machine"), "gcc": self._static_env["gcc"]},
             "capture_version": execution.get("capture_version", 1),
             "function_status": status, "fail_stage": stage,
-            "accuracy_status": accuracy, "accuracy_ref": "cpu" if accuracy else None,
+            "accuracy_status": accuracy, "accuracy_ref": diagnostics.get("accuracy_evidence", {}).get("final_basis", "cpu") if accuracy else None,
             "compile_ns": attempt["prepare_ns"],
             "kernel_ns": int(sum(kernels) / len(kernels)) if kernels and evaluation.get("performance") else None,
             "e2e_ns": max(1, e2e),
@@ -508,6 +508,23 @@ class Mapper:
             item["log"] = item["log"].encode()[:MAX_LOG].decode(errors="ignore")
         if detail is not None and plog:
             detail["plog_errors"] = plog
+        if detail is not None and diagnostics.get("accuracy_evidence"):
+            detail["accuracy_evidence"] = diagnostics["accuracy_evidence"]
+            detail["baseline_status"] = diagnostics.get("baseline_status")
+            detail["baseline_exec_uuid"] = diagnostics.get("baseline_exec_uuid")
+            from autofusex.execution.accuracy import classify
+            detail["accuracy_classification"] = classify(diagnostics["accuracy_evidence"],
+                ["dynamic" if item["case"]["is_dynamic"] else "static", *item["case"]["features"]["op_category"]])
+        comparisons = diagnostics.get("accuracy_evidence", {}).get("comparisons", [])
+        if comparisons:
+            metrics = [s.get("metrics", {}) for s in comparisons[-1].get("shapes", [])]
+            by_shape = {s['shape_index']: s.get('metrics', {}) for s in comparisons[-1].get('shapes', [])}
+            for shape, shape_item in zip(shapes, shape_items):
+                values = by_shape.get(shape['shape_index'], {})
+                shape_item.update(max_abs_err=values.get('max_abs'), max_rel_err=values.get('max_rel'))
+            for target, source in (("max_abs_err", "max_abs"), ("max_rel_err", "max_rel")):
+                values = [m[source] for m in metrics if m.get(source) is not None]
+                item[target] = max(values) if values else None
         item["detail"] = detail
         run = {"run_uuid": (execution.get("batch_id") or "local")[:64], "kind": "fuzz"}
         return item, {"machine_id": environment.get("installation_id") or socket.gethostname(),
