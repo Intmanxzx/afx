@@ -105,6 +105,13 @@ function tensorText(shapes = {}, weights = [], types = {}) {
 }
 
 function renderExecution(d, shape) {
+  const metricText = value => {
+    if (!Number.isFinite(value)) return String(value);
+    const rounded = Number(value.toPrecision(3));
+    const magnitude = Math.abs(rounded);
+    return magnitude !== 0 && (magnitude < 0.001 || magnitude >= 10000)
+      ? rounded.toExponential().replace("e+", "e") : String(rounded);
+  };
   const isReference = ["cpu", "eager-npu"].includes(d.backend);
   const comparisonResult = passed => isReference ? (passed ? "一致" : "标杆不一致") : (passed ? "通过" : "失败");
   const detail = d.detail || {};
@@ -146,7 +153,8 @@ function renderExecution(d, shape) {
         m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max,
         m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, m.spatial_pattern,
         ns(run.kernel_ns), ns(run.e2e_ns)
-      ].map(v => el("td", {}, v ?? "—"))))))));
+        ].map((v, column) => el("td", { title: v == null ? "" : String(v), style: { whiteSpace: "nowrap" } },
+        v == null ? "—" : column >= 9 && column <= 15 && typeof v === "number" ? metricText(v) : v))))))));
   out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)
     : el("div", { class: "muted" }, "未保存错误日志"));
