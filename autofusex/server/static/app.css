@@ -496,3 +496,9 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
 .monitor-mark { color: var(--signal); font-size: 7px; margin-right: 7px; vertical-align: 1px; opacity: .7; }
 @media (max-width: 900px) { .monitor { padding: 16px; } .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .monitor-value { font-size: 30px; } }
 @media (max-width: 480px) { .monitor { padding: 12px; } .monitor-metric { padding: 10px 12px; } .monitor-grid { gap: 10px; } .monitor-value { font-size: 26px; } .monitor-label > span { display: none; } }
+
+/* Accuracy severity is supplemented by explicit results and numeric values. */
+.grid td.accuracy-ok { background: #eaf7ef; color: #17643b; }
+.grid td.accuracy-low { background: #fff1ef; color: #a13d32; }
+.grid td.accuracy-medium { background: #ffded8; color: #9b281e; }
+.grid td.accuracy-high { background: #ffbeb5; color: #861c14; font-weight: 600; }

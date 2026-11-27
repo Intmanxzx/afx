@@ -112,6 +112,17 @@ function renderExecution(d, shape) {
     return magnitude !== 0 && (magnitude < 0.001 || magnitude >= 10000)
       ? rounded.toExponential().replace("e+", "e") : String(rounded);
   };
+  const patternText = value => ({none:"无错误", all:"全部错误", contiguous:"连续区间", periodic:"周期性间隔", scattered:"零散分布"}[value] || value || "—");
+  const ratioTone = value => value == null ? "" : value === 0 ? "accuracy-ok" : value < 0.01 ? "accuracy-low" : value < 0.1 ? "accuracy-medium" : "accuracy-high";
+  const errorTone = m => m.tolerance_unbounded ? "accuracy-high" : m.tolerance_ratio_max == null ? "" : m.tolerance_ratio_max <= 1 ? "accuracy-ok" : m.tolerance_ratio_max <= 10 ? "accuracy-low" : m.tolerance_ratio_max <= 100 ? "accuracy-medium" : "accuracy-high";
+  const cellTone = (column, value, m) => {
+    if (value == null) return "";
+    if (column === 3 || column === 4) return ["通过", "一致"].includes(value) ? "accuracy-ok" : ["失败", "标杆不一致", "runtime_fail", "compile_fail", "timeout", "fail"].includes(value) ? "accuracy-high" : "";
+    if (column === 7 || column === 8) return ratioTone(m.mismatch_ratio);
+    if ((column >= 9 && column <= 12) || column === 15) return errorTone(m);
+    if (column >= 16 && column <= 18) return value === 0 ? "accuracy-ok" : "accuracy-high";
+    return "";
+  };
   const isReference = ["cpu", "eager-npu"].includes(d.backend);
   const comparisonResult = passed => isReference ? (passed ? "一致" : "标杆不一致") : (passed ? "通过" : "失败");
   const detail = d.detail || {};
@@ -122,7 +133,7 @@ function renderExecution(d, shape) {
   const out = [el("h2", {}, `执行详情 · ${label(d.backend)}`, " ", statusChip(d), el("span", { class: "muted small" }, ` · ${d.user_name || d.user_id} · ${d.client_name || ""} · ${time(d.created_at)}`))];
   const classification = detail.accuracy_classification;
   if (classification) out.push(el("p", {class:"muted small"},
-    `精度分类 · 异常性质：${classification.anomaly || "—"} · 超容差强度：${classification.severity} · 错误比例：${classification.ratio} · 空间形态：${classification.pattern} · 计算特征：${(classification.features || []).join("、")}`));
+    `精度分类 · 异常性质：${classification.anomaly || "—"} · 超容差强度：${classification.severity} · 错误比例：${classification.ratio} · 空间形态：${patternText(classification.pattern)} · 计算特征：${(classification.features || []).join("、")}`));
   const rows = [];
   for (const comparison of comparisons) {
     const reference = comparison.reference || comparison.reference_backend;
@@ -140,10 +151,10 @@ function renderExecution(d, shape) {
     relation:refText === "—" ? "未比较" : label(d.backend) + " 与 " + refText,
     index:x.shape_index, output:"汇总", result:x.function_status !== "pass" ? "未比较" : isReference ? "参考" : x.accuracy_status || "—",
     m:{max_abs:x.max_abs_err, max_rel:x.max_rel_err}, run:x});
-  if (rows.length) out.push(el("h3", {}, "执行与精度对比"),
-    el("p", {class:"muted small"}, "S0、S1 表示本次执行的输入 Shape 组；每组下分别列出汇总和各输出指标。误差仅统计可比较的有限值，NaN / Inf 另列。"),
+  if (rows.length) out.push(el("h3", {}, "精度对比"),
+    el("p", {class:"muted small"}, "S0、S1 表示本次执行的输入 Shape 组；每组下分别列出汇总和各输出指标。误差仅统计可比较的有限值，NaN / Inf 另列。绿色表示符合容差；超容差倍数按 ≤10、≤100、>100 逐级加深红色。错误比例按 <1%、<10%、≥10% 加深红色，任一错误仍判失败。误差列颜色依据该输出最大超容差倍数，未记录时不着色。"),
     el("div", {class:"table-wrap"}, el("table", {class:"grid"},
-      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "功能", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "非有限值失败元素", "错误连续段数", "空间形态", "Kernel", "E2E"].map(t => el("th", {}, t)))),
+      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "功能", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "非有限值失败元素", "错误连续段数", "空间形态"].map(t => el("th", {}, t)))),
       el("tbody", {}, rows.map(({relation,index,output,result,m,run}) => el("tr", {}, [
         relation, "S" + index, output, run.function_status ? (run.function_status === "pass" ? "通过" : run.function_status) : "—", result, m.dtype,
         m.shape == null ? null : JSON.stringify(m.shape),
@@ -151,9 +162,8 @@ function renderExecution(d, shape) {
         m.mismatch_ratio == null ? null : (100*m.mismatch_ratio).toFixed(4) + "%",
         m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol,
         m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max,
-        m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, m.spatial_pattern,
-        ns(run.kernel_ns), ns(run.e2e_ns)
-        ].map((v, column) => el("td", { title: v == null ? "" : String(v), style: { whiteSpace: "nowrap" } },
+        m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, patternText(m.spatial_pattern)
+        ].map((v, column) => el("td", { class: cellTone(column, v, m), title: v == null ? "" : String(v), style: { whiteSpace: "nowrap" } },
         v == null ? "—" : column >= 9 && column <= 15 && typeof v === "number" ? metricText(v) : v))))))));
   out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)
@@ -168,6 +178,12 @@ function renderExecution(d, shape) {
     ["Triton", env.triton], ["Python", d.env.python || env.python], ["AutofuseX", d.env.afx || env.package_version], ["NNSmith", d.env.nnsmith], ["OS", d.env.os],
     ["CPU 架构", d.env.cpu_arch || env.machine], ["GCC", d.env.gcc]].filter(([, v]) => v);
   out.push(el("h3", {}, "运行环境"), el("div", { class: "kv" }, envRows.flat().map(v => el("div", { class: "mono small" }, v))));
+  // Performance measurements are separate from accuracy evidence.
+  if ((d.shapes || []).some(x => x.kernel_ns != null || x.e2e_ns != null)) out.push(
+    el("h3", {}, "性能耗时"), el("table", {class:"grid"},
+      el("thead", {}, el("tr", {}, ["Shape", "Kernel", "E2E"].map(t => el("th", {}, t)))),
+      el("tbody", {}, d.shapes.map(x => el("tr", {}, el("td", {}, "S" + x.shape_index),
+        el("td", {}, ns(x.kernel_ns)), el("td", {}, ns(x.e2e_ns)))))));
   // timing
   let telemetry = {};
   try { telemetry = JSON.parse(((detail.contexts || {}).execution || {}).telemetry || "{}"); } catch { telemetry = {}; }
