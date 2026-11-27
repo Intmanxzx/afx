@@ -159,7 +159,7 @@ function renderExecution(d, shape) {
         relation, "S" + index, output, run.function_status ? (run.function_status === "pass" ? "通过" : run.function_status) : "—", result, m.dtype,
         m.shape == null ? null : JSON.stringify(m.shape),
         String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"),
-        m.mismatch_ratio == null ? null : (100*m.mismatch_ratio).toFixed(4) + "%",
+        m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : m.mismatch_ratio < 1 && m.mismatch_ratio > 0.9999 ? ">99.99%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"),
         m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol,
         m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max,
         m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, patternText(m.spatial_pattern)

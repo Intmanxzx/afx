@@ -22,7 +22,7 @@ const d = {backend:'af-mlir', accuracy_status:'pass', accuracy_ref:'eager-npu', 
  {reference:'eager-npu',passed:true,shapes:[{shape_index:0,passed:true,metrics:{mismatches:0,elements:100}}]}
 ]}}};
 let rendered = text(renderExecution(d, 0));
-for (const expected of ['af-mlir 与 CPU','af-mlir 与 EagerNPU','1.0000%']) assert(rendered.includes(expected), expected);
+for (const expected of ['af-mlir 与 CPU','af-mlir 与 EagerNPU','1%']) assert(rendered.includes(expected), expected);
 d.accuracy_status='fail'; d.accuracy_ref='cpu';
 d.detail.accuracy_evidence.comparisons.pop(); d.detail.baseline_status='unavailable';
 assert(!text(renderExecution(d,0)).includes('精度判定：'));
