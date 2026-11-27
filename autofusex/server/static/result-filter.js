@@ -46,50 +46,91 @@ export function resultFilterParams(params) {
   return { q: params.get("q"), results: params.get("results") || DEFAULT_RESULTS.join(","), selected_backends: params.get("backends"), chips: params.get("chips") || "a2a3" };
 }
 let filterTimer = null;
-export function cancelFilterChange() { clearTimeout(filterTimer); }
+export function cancelFilterChange() { clearTimeout(filterTimer); filterTimer = null; }
 let collapsed = matchMedia("(max-width:760px)").matches;
 export const ISSUE_CATEGORIES = ["Reduce", "Transpose", "Concat", "Split", "Gather", "Scatter", "View", "Reshape", "Broadcast", "Elementwise"];
 export const TREATMENTS = [["ignore", "忽略"], ["low", "低级"], ["normal", "中等"], ["high", "高级"]];
 export const REPAIR_DEFAULT_RESULTS = ["mlir", "fused_kernel"];
 export const REPAIR_DEFAULT_STATUSES = Object.keys(STATUS_LABEL).filter(key => !["resolved", "closed"].includes(key));
-export function resultFilter(params, change, arches = [], options = {}) {
-  const repair = options.repair;
+// A panel owns its draft until the user pauses; only then does routing load data.
+export function isFilterChangePending() { return filterTimer !== null; }
+export const FILTER_DELAY_MS = 450;
+export function resultFilter(params, notify, arches = [], options = {}) {
+  const repair = !!options.repair;
   const groups = repair ? RESULT_GROUPS.filter(([name]) => name !== "精度结果") : RESULT_GROUPS;
   const items = groups.flatMap(([, entries]) => entries);
   const defaults = repair ? REPAIR_DEFAULT_RESULTS : DEFAULT_RESULTS;
+  const keys = ["q", "backends", "chips", "results", ...(repair ? ["categories", "treatment", "status", "scope"] : [])];
   params = new URLSearchParams(params);
-  const notify = change;
-  change = patch => {
-    for (const [key, value] of Object.entries(patch)) value == null ? params.delete(key) : params.set(key, value);
-    const scroll = aside.scrollTop;
-    const fresh = resultFilter(params, notify, arches, options);
-    aside.replaceWith(fresh); fresh.scrollTop = scroll;
-    clearTimeout(filterTimer);
-    filterTimer = setTimeout(() => notify({ ...Object.fromEntries(params),
-      ...Object.fromEntries(["q", "backends", "chips", "results",
-        ...(repair ? ["categories", "treatment", "status", "scope"] : [])].map(key => [key, params.get(key)]))
-    }), 180);
-  };
-  const active = new Set(params.has("results") ? params.get("results").split(",").filter(k => items.some(([v]) => v === k)) : defaults);
+  const fields = [];
   const aside = el("aside", { class: "result-filter", "aria-label": "数据筛选" });
   const body = el("div", { class: "result-filter-body", id: "result-filter-body" });
   const toggle = el("button", { type: "button", class: "result-filter-toggle", "aria-controls": "result-filter-body", onclick: () => { collapsed = !collapsed; update(); } });
+  const countLabel = el("div", { class: "muted small" });
+  const activeResults = () => new Set(params.has("results") ? params.get("results").split(",").filter(k => items.some(([v]) => v === k)) : defaults);
+  // Keep the panel, its scroll position and focused button through filter loads
+  // and pagination. Other route changes create a fresh panel.
+  const signature = value => JSON.stringify([...value].filter(([key]) => key !== "page").sort(([a], [b]) => a.localeCompare(b)));
+  aside.matchesFilter = (next, nextRepair) => repair === nextRepair && signature(params) === signature(next);
   function update() {
     aside.classList.toggle("collapsed", collapsed); body.hidden = collapsed;
     toggle.setAttribute("aria-expanded", String(!collapsed)); toggle.textContent = collapsed ? "数据筛选 ›" : "‹ 收起筛选";
   }
-  function field(title, key, options, chosen) {
-    const selected = new Set(chosen);
-    return el("section", { class: "visual-filter-field" }, el("h3", {}, title),
-      el("div", { class: "legend-group-items" }, options.map(([value, text]) => el("button", {
-        type: "button", class: "legend-toggle", "aria-pressed": String(selected.has(value)), onclick: () => {
-          selected.has(value) ? selected.delete(value) : selected.add(value);
-          change({ [key]: key === "backends" && selected.size === options.length ? null : [...selected].join(",") || "none" });
-        }
-      }, text))));
+  function sync() {
+    fields.forEach(field => field.sync());
+    countLabel.textContent = "已选 " + activeResults().size + "/" + items.length;
+  }
+  function change(patch) {
+    for (const [key, value] of Object.entries(patch)) value == null ? params.delete(key) : params.set(key, value);
+    sync();
+    cancelFilterChange();
+    filterTimer = setTimeout(() => {
+      filterTimer = null;
+      if (aside.isConnected) notify({ ...Object.fromEntries(params), ...Object.fromEntries(keys.map(key => [key, params.get(key)])) });
+    }, FILTER_DELAY_MS);
+  }
+  function actions(title, selectAll, clear, reset) {
+    return el("div", { class: "filter-field-actions", role: "group", "aria-label": title + "筛选操作" },
+      [["全部选择", selectAll], ["全部清空", clear], ["恢复默认", reset]].map(([text, onclick]) =>
+        el("button", { type: "button", onclick }, text)));
+  }
+  function field(title, key, entries, fallback, resultGroup = false) {
+    const values = entries.map(([value]) => value);
+    const selected = () => {
+      const raw = new Set(params.has(key) ? params.get(key).split(",") : fallback);
+      return new Set(values.filter(value => value.split(",").some(part => raw.has(part))));
+    };
+    const apply = chosen => {
+      const next = resultGroup ? activeResults() : new Set();
+      values.forEach(value => next.delete(value));
+      chosen.forEach(value => next.add(value));
+      change({ [key]: [...next].join(",") || "none" });
+    };
+    const heading = resultGroup ? el("button", { type: "button", class: "legend-group-toggle", onclick: () =>
+      apply(selected().size === values.length ? [] : values) }, title) : el("h3", {}, title);
+    const buttons = entries.map(([value, text, cls, description]) => el("button", {
+      type: "button", class: "legend-toggle", ...(resultGroup ? { "data-result": value, "aria-label": description, title: description } : {}),
+      onclick: () => { const next = selected(); next.has(value) ? next.delete(value) : next.add(value); apply(next); }
+    }, cls ? el("i", { class: cls }) : null, text));
+    const control = { sync() {
+      const current = selected();
+      buttons.forEach((button, i) => button.setAttribute("aria-pressed", String(current.has(values[i]))));
+      if (resultGroup) heading.setAttribute("aria-pressed", current.size === values.length ? "true" : current.size ? "mixed" : "false");
+    }};
+    fields.push(control);
+    const section = el(resultGroup ? "div" : "section", { class: resultGroup ? "legend-group" : "visual-filter-field", role: "group", "aria-label": title },
+      el("div", { class: "filter-field-heading" }, heading, actions(title, () => apply(values), () => apply([]),
+        () => resultGroup ? apply(values.filter(value => fallback.includes(value))) : change({ [key]: null }))),
+      el("div", { class: "legend-group-items" }, buttons));
+    section.filterControl = control;
+    control.sync();
+    return section;
   }
   const backendOptions = Object.entries(BACKEND_LABEL);
-  let chipOptions = [["a2a3", "A2A3"], ["a5", "A5"], ...arches.filter(a => !/910|950/i.test(a)).map(a => [a, a])];
+  const chips = values => [["a2a3", "A2A3"], ["a5", "A5"], ...[...new Set(values)].filter(a => !/910|950/i.test(a) && !["a2a3", "a5"].includes(a)).map(a => [a, a])];
+  let chipOptions = chips(arches);
+  const chipField = () => field("芯片", "chips", chipOptions, repair ? chipOptions.map(([v]) => v) : ["a2a3"]);
+  let chipSection = chipField();
   const allFilters = selected => ({
     backends: selected ? backendOptions.map(([key]) => key).join(",") : "none",
     chips: selected ? chipOptions.map(([key]) => key).join(",") : "none",
@@ -106,37 +147,28 @@ export function resultFilter(params, change, arches = [], options = {}) {
     el("button", { type: "button", onclick: () => change(allFilters(false)) }, "全部清空"),
     el("button", { type: "button", onclick: () => change({ backends: null, chips: null, results: null,
       ...(repair ? { categories: null, treatment: null, status: null, scope: null } : {}) }) }, "恢复默认")));
-  body.append(
-    field("后端", "backends", backendOptions, params.has("backends") ? params.get("backends").split(",") : backendOptions.map(([v]) => v)),
-    field("芯片", "chips", chipOptions, (params.get("chips") || (repair ? chipOptions.map(([v]) => v).join(",") : "a2a3")).split(",")));
-  const legend = el("div", { class: "legend capability-legend" });
-  const commit = () => change({ results: [...active].join(",") || "none" });
-  for (const [name, items] of groups) {
-    const count = items.filter(([k]) => active.has(k)).length;
-    legend.append(el("div", { class: "legend-group", role: "group", "aria-label": name },
-      el("button", { type: "button", class: "legend-group-toggle", "aria-pressed": count === items.length ? "true" : count ? "mixed" : "false", onclick: () => {
-        const hide = items.every(([k]) => active.has(k)); for (const [k] of items) hide ? active.delete(k) : active.add(k); commit();
-      } }, name), el("div", { class: "legend-group-items" }, items.map(([key, cls, text, title]) => el("button", {
-        type: "button", class: "legend-toggle", "data-result": key, "aria-label": title, title, "aria-pressed": String(active.has(key)),
-        onclick: () => { active.has(key) ? active.delete(key) : active.add(key); commit(); }
-      }, el("i", { class: cls }), text)))));
+  body.append(field("后端", "backends", backendOptions, backendOptions.map(([v]) => v)), chipSection);
+  if (!repair || (params.get("dimension") || "function") === "function") {
+    body.append(el("div", { class: "filter-field-heading" }, el("h3", {}, "结果与阶段"),
+      actions("结果与阶段", () => change({ results: items.map(([key]) => key).join(",") }),
+        () => change({ results: "none" }), () => change({ results: null }))), countLabel,
+      el("div", { class: "legend capability-legend" }, groups.map(([name, entries]) =>
+        field(name, "results", entries.map(([key, cls, text, title]) => [key, text, cls, title]), defaults, true))));
   }
-  if (!repair || (params.get("dimension") || "function") === "function") body.append(
-    el("h3", {}, "结果与阶段"),
-    el("div", { class: "muted small" }, "已选 " + active.size + "/" + items.length), legend);
-  if (repair) {
-    body.append(field("算子类别", "categories", ISSUE_CATEGORIES.map(v => [v, v]),
-      params.has("categories") ? params.get("categories").split(",") : ISSUE_CATEGORIES),
-      field("处理标签", "treatment", TREATMENTS, (params.get("treatment") || "low,normal,high").split(",")),
-      field("修复状态", "status", Object.entries(STATUS_LABEL).filter(([key]) => key !== "resolved").map(([key, text]) => [key === "closed" ? "resolved,closed" : key, text]), params.has("status") ? params.get("status").replace(/resolved,closed|closed,resolved|resolved|closed/g, "terminal").split(",").map(key => key === "terminal" ? "resolved,closed" : key) : REPAIR_DEFAULT_STATUSES));
-  }
+  if (repair) body.append(
+    field("算子类别", "categories", ISSUE_CATEGORIES.map(v => [v, v]), ISSUE_CATEGORIES),
+    field("处理标签", "treatment", TREATMENTS, ["low", "normal", "high"]),
+    field("修复状态", "status", Object.entries(STATUS_LABEL).filter(([key]) => key !== "resolved").map(([key, text]) => [key === "closed" ? "resolved,closed" : key, text]), REPAIR_DEFAULT_STATUSES));
   aside.append(toggle, body);
   aside.addEventListener("keydown", e => { if (e.key === "Escape") { collapsed = true; update(); toggle.focus(); } });
   archOptions().then(values => {
     if (!aside.isConnected) return;
-    arches = values;
-    chipOptions = [["a2a3", "A2A3"], ["a5", "A5"], ...values.filter(a => !/910|950/i.test(a)).map(a => [a, a])];
-    body.querySelectorAll(".visual-filter-field")[1].replaceWith(field("芯片", "chips", chipOptions, (params.get("chips") || (repair ? chipOptions.map(([v]) => v).join(",") : "a2a3")).split(",")));
+    const next = chips(values);
+    if (JSON.stringify(next) === JSON.stringify(chipOptions)) return;
+    chipOptions = next;
+    fields.splice(fields.indexOf(chipSection.filterControl), 1);
+    const fresh = chipField();
+    chipSection.replaceWith(fresh); chipSection = fresh;
   }).catch(() => {});
-  update(); return aside;
+  sync(); update(); return aside;
 }

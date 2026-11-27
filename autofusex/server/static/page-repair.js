@@ -64,8 +64,9 @@ PAGES.repair = async (root, params) => {
   root.append(panel);
   const body = el("tbody");
   const table = el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["问题", "涉及后端", "匹配 / 总用例", "状态", "领取人", "更新时间"].map(t => el("th", {}, t)))), body);
+  const pagerTop = el("div", { class: "toolbar" });
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
-  panel.append(el("div", { class: "table-wrap" }, table), more);
+  panel.append(pagerTop, el("div", { class: "table-wrap" }, table), more);
   const load = async () => {
     const page = await api("/api/issues" + qs({ dimension, status, q, page: pageNumber, limit: 50, selected_backends:params.get("backends"), chips:params.get("chips"), results:dimension === "function" ? params.get("results") || REPAIR_DEFAULT_RESULTS.join(",") : null, categories:params.get("categories"), treatment:params.get("treatment") || "low,normal,high", scope:params.get("scope") || "current" }));
     for (const issue of page.issues) body.append(el("tr", {},
@@ -73,8 +74,8 @@ PAGES.repair = async (root, params) => {
       el("td", {}, (issue.backends || [issue.backend]).map(label).join(" · ")), el("td", {}, fmt(issue.matched_case_count) + " / " + fmt(issue.case_count)), el("td", {}, subway(issue)),
       el("td", { class: "small" }, issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"), el("td", { class: "small" }, time(issue.updated_at))));
     if (!body.children.length) body.append(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "暂无问题")));
-    more.replaceChildren(pagination(page.page, page.total_pages, page.total, target =>
-      navigate({ page: target })));
+    for (const target of [pagerTop, more]) target.replaceChildren(pagination(page.page, page.total_pages, page.total, pageNumber =>
+      navigate({ page: pageNumber })));
   };
   await load();
 };
