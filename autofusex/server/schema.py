@@ -630,6 +630,54 @@ END;
 
 CORE.append((28, "ALTER TABLE issue_rounds ADD COLUMN reuse_regression INTEGER NOT NULL DEFAULT 0;"))
 
+# Counters commit atomically with uploads; homepage reads one fixed-size row.
+CORE.append((29, """
+CREATE TABLE overview_totals(
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ case_count INTEGER NOT NULL, shape_count INTEGER NOT NULL,
+ record_count INTEGER NOT NULL, execution_count INTEGER NOT NULL
+);
+CREATE TABLE overview_records(
+ case_id INTEGER NOT NULL, backend TEXT NOT NULL, execution_count INTEGER NOT NULL,
+ PRIMARY KEY(case_id, backend)
+) WITHOUT ROWID;
+INSERT INTO overview_records SELECT case_id, backend, COUNT(*) FROM executions GROUP BY case_id, backend;
+INSERT INTO overview_totals SELECT 1, COUNT(*), COALESCE(SUM(shape_count),0),
+ (SELECT COUNT(*) FROM overview_records), (SELECT COUNT(*) FROM executions) FROM cases;
+CREATE TRIGGER overview_case_insert AFTER INSERT ON cases BEGIN
+ UPDATE overview_totals SET case_count=case_count+1, shape_count=shape_count+NEW.shape_count;
+END;
+CREATE TRIGGER overview_case_delete AFTER DELETE ON cases BEGIN
+ UPDATE overview_totals SET case_count=case_count-1, shape_count=shape_count-OLD.shape_count;
+END;
+CREATE TRIGGER overview_case_update AFTER UPDATE OF shape_count ON cases BEGIN
+ UPDATE overview_totals SET shape_count=shape_count+NEW.shape_count-OLD.shape_count;
+END;
+CREATE TRIGGER overview_record_insert AFTER INSERT ON overview_records BEGIN
+ UPDATE overview_totals SET record_count=record_count+1;
+END;
+CREATE TRIGGER overview_record_delete AFTER DELETE ON overview_records BEGIN
+ UPDATE overview_totals SET record_count=record_count-1;
+END;
+CREATE TRIGGER overview_execution_insert AFTER INSERT ON executions BEGIN
+ INSERT INTO overview_records VALUES(NEW.case_id, NEW.backend, 1)
+ ON CONFLICT(case_id,backend) DO UPDATE SET execution_count=execution_count+1;
+ UPDATE overview_totals SET execution_count=execution_count+1;
+END;
+CREATE TRIGGER overview_execution_delete AFTER DELETE ON executions BEGIN
+ UPDATE overview_records SET execution_count=execution_count-1 WHERE case_id=OLD.case_id AND backend=OLD.backend;
+ DELETE FROM overview_records WHERE case_id=OLD.case_id AND backend=OLD.backend AND execution_count=0;
+ UPDATE overview_totals SET execution_count=execution_count-1;
+END;
+CREATE TRIGGER overview_execution_move AFTER UPDATE OF case_id,backend ON executions
+WHEN NEW.case_id<>OLD.case_id OR NEW.backend<>OLD.backend BEGIN
+ UPDATE overview_records SET execution_count=execution_count-1 WHERE case_id=OLD.case_id AND backend=OLD.backend;
+ DELETE FROM overview_records WHERE case_id=OLD.case_id AND backend=OLD.backend AND execution_count=0;
+ INSERT INTO overview_records VALUES(NEW.case_id, NEW.backend, 1)
+ ON CONFLICT(case_id,backend) DO UPDATE SET execution_count=execution_count+1;
+END;
+"""))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(

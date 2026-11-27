@@ -19,6 +19,7 @@ function overviewData(path) {
 }
 PAGES.overview = async (root, params) => {
   if (root.forceRefresh) overviewCache.clear();
+  const totalsDone = renderTotals(root);
   const filters = resultFilterParams(params);
   const active = selectedResults(params);
   const arch = "";
@@ -32,8 +33,42 @@ PAGES.overview = async (root, params) => {
   const perfBox = el("section", { class: "panel" }); root.append(perfBox);
   const npuBackends = shown.map(l => l.backend).filter(b => b !== "cpu");
   const perfDone = renderPerf(perfBox, npuBackends, arch, params.get("x") || (npuBackends.includes("af-mlir") ? "af-mlir" : npuBackends[0]), params.get("y") || (npuBackends.includes("triton-npu") ? "triton-npu" : npuBackends.find(b => b !== "af-mlir")), params.get("pdim") || "op_category", false, filters);
-  root.settled = Promise.all([tabsDone, perfDone]);
+  root.settled = Promise.all([totalsDone, tabsDone, perfDone]);
 };
+
+async function renderTotals(root) {
+  const fields = [
+    ["case_count", "总用例数", "CASES", "全库去重用例", "cyan"],
+    ["shape_count", "总 Shape 数", "SHAPES", "按用例实际 Shape 累计", "blue"],
+    ["record_count", "总记录数", "RECORDS", "用例 × 后端 · 去重", "violet"],
+    ["execution_count", "总执行次数", "EXECUTIONS", "含同一后端的重复执行", "green"],
+  ];
+  const values = fields.map(() => el("div", { class: "monitor-value" }, "—"));
+  const status = el("span", { class: "monitor-status", role: "status" }, "正在同步");
+  const box = el("section", { class: "overview-totals monitor", "aria-label": "全局汇总" },
+    el("div", { class: "monitor-heading" },
+      el("div", {}, el("div", { class: "monitor-eyebrow" }, "AUTOFUSE / TELEMETRY"), el("h2", {}, "全局运行总览")),
+      el("div", { class: "monitor-meta" }, status, el("span", {}, "全库累计 · 不受筛选影响"))),
+    el("div", { class: "monitor-grid" }, fields.map(([key, name, english, detail, color], i) =>
+      el("div", { class: "monitor-metric " + color },
+        el("div", { class: "monitor-label" }, name, el("span", {}, english)), values[i],
+        el("div", { class: "monitor-detail" }, el("span", { class: "monitor-mark", "aria-hidden": "true" }, "◆"), detail)))),
+    el("div", { class: "monitor-footer" }, el("span", {}, "跨后端 · 跨芯片 · 全部结果"), el("span", {}, "GLOBAL COUNTERS")));
+  root.append(box);
+  async function load() {
+    box.dataset.state = "loading";
+    try {
+      const totals = await overviewData("/api/overview/totals");
+      fields.forEach(([key], i) => { values[i].textContent = fmt(totals[key]); });
+      status.textContent = "数据已同步";
+      box.dataset.state = "ready";
+    } catch {
+      box.dataset.state = "error";
+      status.replaceChildren("同步失败 · ", el("button", { onclick: load }, "重试"));
+    }
+  }
+  await load();
+}
 
 const LANE_COLOR = { "af-mlir": "var(--lane-mlir)", "af-legacy": "var(--lane-legacy)", "triton-npu": "var(--lane-triton)", "eager-npu": "var(--lane-eager)" };
 
