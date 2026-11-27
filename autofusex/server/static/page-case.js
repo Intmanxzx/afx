@@ -105,6 +105,8 @@ function tensorText(shapes = {}, weights = [], types = {}) {
 }
 
 function renderExecution(d, shape) {
+  const isReference = ["cpu", "eager-npu"].includes(d.backend);
+  const comparisonResult = passed => isReference ? (passed ? "一致" : "标杆不一致") : (passed ? "通过" : "失败");
   const detail = d.detail || {};
   const diagnostics = d.diagnostics || {};
   const evidence = detail.accuracy_evidence || diagnostics.accuracy_evidence || {};
@@ -113,29 +115,29 @@ function renderExecution(d, shape) {
     const row = comparisons.find(x => x.reference === reference || x.reference_backend === reference);
     if (!row && reference === "eager-npu" && detail.baseline_status === "unavailable") return "执行不可用";
     if (!row) return comparisons.length ? "未执行" : "未记录";
-    return row.passed === true ? "通过" : row.passed === false ? "失败" : "未完成";
+    return row.passed == null ? "未完成" : comparisonResult(row.passed);
   };
   const refText = d.accuracy_ref === "eager-npu" ? "EagerNPU" : d.accuracy_ref === "cpu" ? "CPU" : "—";
   const out = [el("h2", {}, `执行详情 · ${label(d.backend)}`, " ", statusChip(d), el("span", { class: "muted small" }, ` · ${d.user_name || d.user_id} · ${d.client_name || ""} · ${time(d.created_at)}`))];
   if (d.accuracy_status || comparisons.length) out.push(el("div", { class: "accuracy-evidence panel" },
-    el("strong", {}, "精度判定：" + (d.accuracy_status === "pass" ? "通过" : d.accuracy_status === "fail" ? "失败" : "未完成")),
-    el("span", { class: "muted small", style: { marginLeft: "12px" } }, "最终标杆：" + refText),
+    el("strong", {}, isReference ? "参考" : "精度判定：" + (d.accuracy_status === "pass" ? "通过" : d.accuracy_status === "fail" ? "失败" : "未完成")),
+    el("span", { class: "muted small", style: { marginLeft: "12px" } }, (isReference ? "对比标杆：" : "最终标杆：") + refText),
     el("span", { class: "muted small", style: { marginLeft: "12px" } }, "CPU 首比：" + comparisonText("cpu")),
     d.backend === "eager-npu" ? null : el("span", { class: "muted small", style: { marginLeft: "12px" } }, "EagerNPU 复核：" + comparisonText("eager-npu"))));
   const classification = detail.accuracy_classification;
   if (classification) out.push(el("p", {class:"muted small"},
     `精度分类 · 异常性质：${classification.anomaly || "—"} · 超容差强度：${classification.severity} · 错误比例：${classification.ratio} · 空间形态：${classification.pattern} · 计算特征：${(classification.features || []).join("、")}`));
   for (const comparison of comparisons) out.push(el("section", { class: "accuracy-comparison" },
-    el("h3", {}, (comparison.reference === "eager-npu" ? "EagerNPU 复核" : "CPU 首比") + " · " + (comparison.passed ? "通过" : "失败")),
+    el("h3", {}, (comparison.reference === "eager-npu" ? "EagerNPU 复核" : "CPU 首比") + " · " + comparisonResult(comparison.passed)),
     el("table", {class:"grid"}, el("thead", {}, el("tr", {}, ["Shape", "结果", "错误元素", "错误比例", "最大绝对误差", "最大相对误差"].map(t => el("th", {}, t)))),
       el("tbody", {}, (comparison.shapes || []).map(x => { const m = x.metrics || {}; return el("tr", {},
-        el("td", {}, "S" + x.shape_index), el("td", {}, x.passed ? "通过" : "失败"),
+        el("td", {}, "S" + x.shape_index), el("td", {}, comparisonResult(x.passed)),
         el("td", {}, String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—")),
         el("td", {}, m.mismatch_ratio == null ? "—" : (100*m.mismatch_ratio).toFixed(4) + "%"),
         el("td", {}, m.max_abs ?? "—"), el("td", {}, m.max_rel ?? "—")); })))));
   // per-shape results
   if (d.shapes && d.shapes.length) out.push(el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Shape", "功能", "精度", "最大绝对误差", "最大相对误差", "Kernel", "E2E"].map(t => el("th", {}, t)))),
-    el("tbody", {}, d.shapes.map(x => el("tr", { class: x.shape_index === shape ? "bt0" : "" }, el("td", {}, "S" + x.shape_index), el("td", {}, x.function_status), el("td", {}, x.accuracy_status || "—"),
+    el("tbody", {}, d.shapes.map(x => el("tr", { class: x.shape_index === shape ? "bt0" : "" }, el("td", {}, "S" + x.shape_index), el("td", {}, x.function_status), el("td", {}, isReference ? "参考" : x.accuracy_status || "—"),
       el("td", {}, x.max_abs_err ?? "—"), el("td", {}, x.max_rel_err ?? "—"), el("td", {}, ns(x.kernel_ns)), el("td", {}, ns(x.e2e_ns)))))));
   out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)

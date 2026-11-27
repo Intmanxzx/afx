@@ -37,10 +37,10 @@ export function pagination(current, pages, total, onchange, subject = "问题") 
 }
 export function statusChip(e) {
   if (e.function_status === "unsupported" && e.invalid_reason === "no_autofuse_coverage") return el("span", { class: "chip gray", title: e.invalid_reason || "无 Autofuse 覆盖" }, "不支持 · 无 AF 覆盖");
-  if (e.backend === "cpu" && e.function_status === "pass") return el("span", { class: "chip gray", "data-tooltip": "CPU 结果作为精度标杆" }, "参考");
+  if (["cpu", "eager-npu"].includes(e.backend) && e.function_status === "pass") return el("span", { class: "chip gray", "data-tooltip": "该后端结果作为精度标杆" }, "参考");
   if (e.function_status === "pass") {
     const ref = e.accuracy_ref === "eager-npu" ? "EagerNPU" : e.accuracy_ref === "cpu" ? "CPU" : null;
-    const suffix = ref ? el("span", { class: "float-tag", title: ref === "EagerNPU" ? "以 EagerNPU 为精度标杆，比较过程见执行详情" : "CPU 结果作为精度标杆" }, ref) : null;
+    const suffix = ref ? el("span", { class: "float-tag", title: ref === "EagerNPU" ? "以 EagerNPU 为精度标杆，比较过程见执行详情" : "该后端结果作为精度标杆" }, ref) : null;
     if (e.accuracy_status === "fail") return el("span", {}, el("span", { class: "chip warn" }, "精度失败"), suffix);
     return el("span", {}, el("span", { class: "chip ok" }, e.accuracy_status === "pass" ? "通过" : "功能通过"), suffix);
   }
