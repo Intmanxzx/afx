@@ -586,7 +586,7 @@ def submit_knowledge(store: Store, principal: Principal, issue_id: str, body: di
         knowledge_id = knowledge.create(conn, principal, fields, confidence="verified", status="published",
                                         agent_id=issue["agent_id"], issue=issue)
         _set_status(conn, issue, "resolved", principal.user_id, "resolved", knowledge_id, knowledge_id=knowledge_id,
-                    resolved_at=now_ms(), owner_user=None, agent_id=None, lease_id=None, lease_expires_at=None)
+                    resolved_at=now_ms(), lease_id=None, lease_expires_at=None)
         return {"issue_id": issue_id, "knowledge_id": knowledge_id, "status": "resolved"}
     return idempotent(store, principal, f"knowledge:{issue_id}", body.pop("request_key", None), body, action)
 
@@ -606,7 +606,7 @@ def close(store: Store, principal: Principal, issue_id: str, body: dict):
             raise IssueError("wrong_state", f"issue is already {issue['status']}", 409)
         _cancel_tasks(conn, issue_id)
         _set_status(conn, issue, "closed", principal.user_id, "closed", reason, close_reason=reason,
-                    owner_user=None, agent_id=None, lease_id=None, lease_expires_at=None)
+                    lease_id=None, lease_expires_at=None)
         return {"issue_id": issue_id, "status": "closed"}
     return idempotent(store, principal, f"close:{issue_id}", body.pop("request_key", None), body, action)
 
@@ -905,7 +905,7 @@ def set_status(store, principal, issue_id, body):
             if target == 'claimed':
                 fields.update(owner_user=issue['owner_user'] or principal.user_id,
                               agent_id=issue['agent_id'] or 'admin', claimed_at=now_ms())
-            else:
+            elif target == 'open':
                 fields.update(owner_user=None, agent_id=None)
         if target == 'regressing':
             if latest['kind'] != 'verify':
