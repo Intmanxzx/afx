@@ -117,10 +117,10 @@ function renderExecution(d, shape) {
   const errorTone = m => m.tolerance_unbounded ? "accuracy-high" : m.tolerance_ratio_max == null ? "" : m.tolerance_ratio_max <= 1 ? "accuracy-ok" : m.tolerance_ratio_max <= 10 ? "accuracy-low" : m.tolerance_ratio_max <= 100 ? "accuracy-medium" : "accuracy-high";
   const cellTone = (column, value, m) => {
     if (value == null) return "";
-    if (column === 3 || column === 4) return ["通过", "一致"].includes(value) ? "accuracy-ok" : ["失败", "不一致", "runtime_fail", "compile_fail", "timeout", "fail"].includes(value) ? "accuracy-high" : "";
-    if (column === 7 || column === 8) return ratioTone(m.mismatch_ratio);
-    if ((column >= 9 && column <= 12) || column === 15) return errorTone(m);
-    if (column >= 16 && column <= 18) return value === 0 ? "accuracy-ok" : "accuracy-high";
+    if (column === 3) return ["通过", "一致"].includes(value) ? "accuracy-ok" : ["失败", "不一致", "runtime_fail", "compile_fail", "timeout", "fail"].includes(value) ? "accuracy-high" : "";
+    if (column === 6 || column === 7) return ratioTone(m.mismatch_ratio);
+    if ((column >= 8 && column <= 11) || column === 14) return errorTone(m);
+    if (column >= 15 && column <= 17) return value === 0 ? "accuracy-ok" : "accuracy-high";
     return "";
   };
   const isReference = ["cpu", "eager-npu"].includes(d.backend);
@@ -154,9 +154,9 @@ function renderExecution(d, shape) {
   if (rows.length) out.push(el("h3", {}, "精度对比"),
     el("p", {class:"muted small"}, "S0、S1 表示本次执行的输入 Shape 组；每组下分别列出汇总和各输出指标。误差仅统计可比较的有限值，NaN / Inf 另列。绿色表示符合容差；超容差倍数按 ≤10、≤100、>100 逐级加深红色。错误比例按 <1%、<10%、≥10% 加深红色，任一错误仍判失败。误差列颜色依据该输出最大超容差倍数，未记录时不着色。"),
     el("div", {class:"table-wrap"}, el("table", {class:"grid"},
-      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "功能", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "非有限值失败元素", "错误连续段数", "空间形态"].map(t => el("th", {}, t)))),
+      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "非有限值失败元素", "错误连续段数", "空间形态"].map(t => el("th", {}, t)))),
       el("tbody", {}, rows.map(({relation,index,output,result,m,run}) => el("tr", {}, [
-        relation, "S" + index, output, run.function_status ? (run.function_status === "pass" ? "通过" : run.function_status) : "—", result, m.dtype,
+        relation, "S" + index, output, result, m.dtype,
         m.shape == null ? null : JSON.stringify(m.shape),
         String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"),
         m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : m.mismatch_ratio < 1 && m.mismatch_ratio > 0.9999 ? ">99.99%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"),
@@ -164,7 +164,7 @@ function renderExecution(d, shape) {
         m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max,
         m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, patternText(m.spatial_pattern)
         ].map((v, column) => el("td", { class: cellTone(column, v, m), title: v == null ? "" : String(v), style: { whiteSpace: "nowrap" } },
-        v == null ? "—" : column >= 9 && column <= 15 && typeof v === "number" ? metricText(v) : v))))))));
+        v == null ? "—" : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v))))))));
   out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)
     : el("div", { class: "muted" }, "未保存错误日志"));
