@@ -47,13 +47,12 @@ async function renderTotals(root) {
   const status = el("span", { class: "monitor-status", role: "status" }, "正在同步");
   const box = el("section", { class: "overview-totals monitor", "aria-label": "全局汇总" },
     el("div", { class: "monitor-heading" },
-      el("div", {}, el("div", { class: "monitor-eyebrow" }, "AUTOFUSE / TELEMETRY"), el("h2", {}, "全局运行总览")),
-      el("div", { class: "monitor-meta" }, status, el("span", {}, "全库累计 · 不受筛选影响"))),
+      el("h2", {}, "全局运行总览"),
+      status),
     el("div", { class: "monitor-grid" }, fields.map(([key, name, english, detail, color], i) =>
       el("div", { class: "monitor-metric " + color },
         el("div", { class: "monitor-label" }, name, el("span", {}, english)), values[i],
-        el("div", { class: "monitor-detail" }, el("span", { class: "monitor-mark", "aria-hidden": "true" }, "◆"), detail)))),
-    el("div", { class: "monitor-footer" }, el("span", {}, "跨后端 · 跨芯片 · 全部结果"), el("span", {}, "GLOBAL COUNTERS")));
+        el("div", { class: "monitor-detail" }, el("span", { class: "monitor-mark", "aria-hidden": "true" }, "◆"), detail)))));
   root.append(box);
   async function load() {
     box.dataset.state = "loading";
