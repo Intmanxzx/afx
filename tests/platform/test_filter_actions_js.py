@@ -20,9 +20,11 @@ def test_panel_actions_select_clear_and_restore_defaults():
     script = r'''
 const assert = require('node:assert/strict');
 let timers = new Map(), nextTimer = 0;
-const setTimeout = fn => { timers.set(++nextTimer, fn); return nextTimer; };
+let now = 0;
+const setTimeout = (fn, delay) => { timers.set(++nextTimer, {fn, due:now + delay}); return nextTimer; };
 const clearTimeout = id => timers.delete(id);
-const flush = () => { for (const fn of timers.values()) fn(); timers.clear(); };
+const advance = ms => { now += ms; for (const [id, timer] of [...timers]) if (timer.due <= now) { timers.delete(id); timer.fn(); } };
+const flush = () => advance(1000);
 const matchMedia = () => ({matches:false});
 const archOptions = async () => ['910b', '950', 'custom-chip'];
 class E {
@@ -47,7 +49,8 @@ const el = (tag, attrs, ...children) => new E(tag, attrs, children);
 const nodes = (root, predicate) => root instanceof E ?
   [...(predicate(root) ? [root] : []), ...root.children.flatMap(c => nodes(c, predicate))] : [];
 const text = n => n instanceof E ? n.children.map(text).join('') : String(n);
-const PAGES = {}, go = () => {}, pagination = () => el('div', {});
+let pagers = [];
+const PAGES = {}, go = () => {}, pagination = (...args) => { pagers.push(args); return el('nav', {}); };
 const qs = values => '?' + new URLSearchParams(Object.entries(values).filter(([,v]) => v != null));
 let requested;
 const api = async path => { requested = new URL(path, 'http://localhost').searchParams;
@@ -65,14 +68,14 @@ const api = async path => { requested = new URL(path, 'http://localhost').search
     }, [], {repair}));
     const panel = () => host.children[0];
     const click = name => {
-      const found = nodes(panel(), n => n.tag === 'button' && text(n) === name);
+      const found = nodes(panel().children[1].children[0], n => n.tag === 'button' && text(n) === name);
       assert.equal(found.length, 1, name); found[0].attrs.onclick();
     };
     await Promise.resolve();
     assert.equal(panel().children[1].children[0].attrs['aria-label'], '全部筛选操作');
     click('全部清空');
     assert(nodes(panel(), n => n.attrs['aria-pressed'] === 'false').length > 10);
-    // Recreate the panel and click again before the debounce expires. The
+    // Click again before the debounce expires. The
     // asynchronously discovered chip must still participate in select-all.
     click('全部选择');
     flush();
@@ -97,9 +100,9 @@ const api = async path => { requested = new URL(path, 'http://localhost').search
     assert.equal(fields[1].children[1].children[0].attrs['aria-pressed'], 'true');
     assert.equal(fields[1].children[1].children[1].attrs['aria-pressed'], repair ? 'true' : 'false');
     if (repair) {
-      const categories = fields.find(n => text(n.children[0]) === '算子类别');
+      const categories = fields.find(n => n.attrs['aria-label'] === '算子类别');
       assert(categories.children[1].children.every(n => n.attrs['aria-pressed'] === 'true'));
-      const statuses = fields.find(n => text(n.children[0]) === '修复状态');
+      const statuses = fields.find(n => n.attrs['aria-label'] === '修复状态');
       assert.deepEqual(statuses.children[1].children.map(n => n.attrs['aria-pressed']),
         ['true','true','true','true','true','false']);
       const closed = statuses.children[1].children[5];
@@ -108,14 +111,73 @@ const api = async path => { requested = new URL(path, 'http://localhost').search
       if (dimension === 'function') assert.deepEqual(nodes(panel(), n =>
         n.attrs['data-result'] && n.attrs['aria-pressed'] === 'true').map(n => n.attrs['data-result']),
         ['mlir','fused_kernel']);
-      const treatment = fields.find(n => text(n.children[0]) === '处理标签');
+      const treatment = fields.find(n => n.attrs['aria-label'] === '处理标签');
       assert.deepEqual(treatment.children[1].children.map(n => n.attrs['aria-pressed']),
         ['false','true','true','true']);
       assert.equal(nodes(panel(), n => n.tag === 'button' && text(n) === '全部 issue').length, 0);
     }
+    flush();
+    const stablePanel = panel();
+    const stableButtons = nodes(panel(), n => n.tag === 'button');
+    panel().scrollTop = 137;
+    const action = (title, name) => {
+      const group = nodes(panel(), n => n.attrs['aria-label'] === title + '筛选操作')[0];
+      nodes(group, n => n.tag === 'button' && text(n) === name)[0].attrs.onclick();
+    };
+    // Clear, wait, then select an item: the debounce restarts and keeps DOM/scroll.
+    const before = calls;
+    action('后端', '全部清空');
+    advance(FILTER_DELAY_MS - 1);
+    assert.equal(calls, before);
+    fields[0].children[1].children[0].attrs.onclick();
+    advance(FILTER_DELAY_MS - 1);
+    assert.equal(calls, before);
+    advance(1);
+    assert.equal(calls, before + 1);
+    assert.equal(route.backends, Object.keys(BACKEND_LABEL)[0]);
+    assert.equal(panel(), stablePanel);
+    assert.equal(panel().scrollTop, 137);
+    assert.deepEqual(nodes(panel(), n => n.tag === 'button'), stableButtons);
+    action('后端', '恢复默认'); flush();
+    assert.equal(route.backends, undefined);
+    // Every category's actions must leave the other categories alone.
+    for (const field of fields) {
+      const title = field.attrs['aria-label'];
+      action(title, '全部清空');
+      assert(field.children[1].children.every(n => n.attrs['aria-pressed'] === 'false'));
+      action(title, '全部选择');
+      assert(field.children[1].children.every(n => n.attrs['aria-pressed'] === 'true'));
+      action(title, '恢复默认');
+    }
+    if (!repair || dimension === 'function') {
+      click('全部清空');
+      const mlir = nodes(panel(), n => n.attrs['data-result'] === 'mlir')[0];
+      mlir.attrs.onclick(); flush();
+      assert.equal(route.results, 'mlir');
+      action('编译失败', '全部选择');
+      action('构图失败', '全部清空');
+      action('编译失败', '恢复默认'); flush();
+      assert.deepEqual(route.results.split(',').sort(), RESULT_GROUPS[1][1].map(([key]) => key).filter(key =>
+        (repair ? REPAIR_DEFAULT_RESULTS : DEFAULT_RESULTS).includes(key)).sort());
+      click('恢复默认');
+      mlir.attrs.onclick(); flush();
+      assert(!route.results.split(',').includes('mlir'));
+      action('结果与阶段', '全部清空'); flush();
+      assert.equal(route.results, 'none');
+      action('结果与阶段', '恢复默认'); flush();
+      assert.equal(route.results, undefined);
+    }
+    const beforeCancel = calls;
+    action('后端', '全部清空');
+    assert.equal(isFilterChangePending(), true);
+    cancelFilterChange(); flush();
+    assert.equal(calls, beforeCancel);
+    assert.equal(isFilterChangePending(), false);
     await Promise.resolve();
   }
   await PAGES.repair(el('main', {}), new URLSearchParams());
+  assert.equal(pagers.length, 2);
+  assert.deepEqual(pagers[0].slice(0, 3), pagers[1].slice(0, 3));
   assert.equal(requested.get('results'), 'mlir,fused_kernel');
   assert.equal(requested.get('status'), 'open,claimed,verifying,regressing,summarizing');
   assert.equal(requested.get('categories'), null);

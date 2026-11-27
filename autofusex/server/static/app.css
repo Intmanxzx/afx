@@ -451,6 +451,14 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
 .result-filter .legend-toggle { border: 0; padding: 4px 6px; font-size: 12px; }
 .result-filter .legend-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); }
 .result-filter .legend-toggle[aria-pressed="false"] { opacity: .45; text-decoration: line-through; }
+.result-filter .filter-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.result-filter .filter-field-heading { margin: 14px 0 6px; }
+.result-filter .filter-field-heading h3 { margin: 0; white-space: nowrap; }
+.result-filter .filter-field-actions { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.result-filter .filter-field-actions button { border: 1px solid var(--line); border-radius: 4px; padding: 4px; font-size: 10px; line-height: 1.4; white-space: nowrap; color: var(--muted); background: var(--bg); }
+.result-filter .filter-field-actions button:hover { color: var(--text); background: var(--accent-soft); }
+.result-filter .legend-group .filter-field-heading { margin: 0; }
+.result-filter .legend-group .legend-group-toggle { margin: 0; }
 .result-filter.collapsed { width: auto; }
 
 

@@ -3,7 +3,7 @@
 // Page modules register themselves into PAGES as a side effect of being
 // imported (see app.js), so this module never imports a page module itself.
 import { $, el, errorBox, ApiError, setQuietRefresh } from "./core.js";
-import { resultFilter, cancelFilterChange } from "./result-filter.js";
+import { resultFilter, cancelFilterChange, isFilterChangePending } from "./result-filter.js";
 import { closeDrawer, hideActionBar, isMenuOpen } from "./ui.js";
 
 // ---------- routing ----------
@@ -41,16 +41,23 @@ export async function render() {
   closeDrawer();
   hideActionBar();
   overviewRedraw = null;
-  document.querySelector(".result-filter")?.remove();
+  const currentFilter = document.querySelector(".result-filter");
   const filterable = ["overview", "discovery", "repair"].includes(page) && params.get("sub") !== "retests";
   document.body.classList.toggle("has-result-filter", filterable);
-  if (filterable) document.body.append(resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes, page: null }), [], { repair: page === "repair" }));
+  if (!filterable || currentFilter?.filterPage !== page || !currentFilter?.matchesFilter(params, page === "repair")) {
+    currentFilter?.remove();
+    if (filterable) {
+      const panel = resultFilter(params, changes => go(page, { ...Object.fromEntries(params), ...changes, page: null }), [], { repair: page === "repair" });
+      panel.filterPage = page;
+      document.body.append(panel);
+    }
+  }
   const main = $("#main");
   const q = params.get("q");
   const content = el("div");
   if (q) content.append(el("div", { class: "filter-note" }, "已过滤：", el("span", { class: "mono" }, q),
     el("button", { onclick: () => go(page, { ...Object.fromEntries(params), q: null }) }, "清除")));
-  const visualKeys = new Set(["results", "backends", "chips"]);
+  const visualKeys = new Set(["results", "backends", "chips", "categories", "treatment", "status", "scope", "page"]);
   const samePage = view && view.page === page && view.content.isConnected;
   const visualChange = samePage && [...new Set([...params.keys(), ...view.params.keys()])]
     .every(key => visualKeys.has(key) || params.get(key) === view.params.get(key));
@@ -110,6 +117,7 @@ const AUTO_REFRESH_PAGES = new Set(["overview", "discovery", "repair", "ops"]);
 let view = null, lastRefresh = 0, refreshing = false;
 // manual = the user pressed 刷新: any page, and sections they customised are refreshed too.
 export async function softRefresh(manual = false) {
+  if (isFilterChangePending()) return false;
   if (refreshing || !view || view.ticket !== renderToken || !view.content.isConnected) return false;
   if (!manual) {
     if (document.hidden || !AUTO_REFRESH_PAGES.has(view.page)) return false;
@@ -130,7 +138,7 @@ export async function softRefresh(manual = false) {
     // Pages that fill sections lazily: give them a moment to leave their loading placeholder.
     for (let i = 0; i < 40 && staging.textContent.includes("加载中…"); i++) await new Promise(r => setTimeout(r, 250));
     const fresh = [...staging.children], old = [...content.children];
-    if (ticket !== renderToken || fresh.length !== old.length || staging.querySelector(".error-box")) return false;
+    if (ticket !== renderToken || isFilterChangePending() || fresh.length !== old.length || staging.querySelector(".error-box")) return false;
     let heroSwapped = false;
     fresh.forEach((n, i) => {
       const o = old[i];
@@ -152,6 +160,7 @@ export async function softRefresh(manual = false) {
 export function initAutoRefresh() {
   const refreshBtn = $("#refresh");
   refreshBtn.addEventListener("click", async () => {
+    if (isFilterChangePending()) return;
     refreshBtn.disabled = true; refreshBtn.textContent = "刷新中…";
     const ok = await softRefresh(true);
     refreshBtn.disabled = false; refreshBtn.textContent = ok ? "已刷新" : "刷新";
