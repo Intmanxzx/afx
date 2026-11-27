@@ -16,14 +16,22 @@ function issueClassification(issue) {
   return classifications.length ? el("span", {}, classifications.map(statusChip))
     : el("span", { class: "chip gray" }, issue.current_case_count === 0 ? "无当前关联" : "未知");
 }
+function treatmentChip(issue) {
+  return el("span", { class: "chip priority-" + issue.treatment }, new Map(TREATMENTS).get(issue.treatment));
+}
+function similarLink(issue) {
+  return issue.similar_to ? el("a", { href: "#", class: "chip warn", onclick: e => {
+    e.preventDefault(); issueDrawer(issue.similar_to);
+  } }, "与问题 " + issue.similar_to + " 相似") : null;
+}
 function issueCell(issue) {
   const reason = issue.dimension === "function" ? issue.log_summary || "" : issue.category || "";
   return el("td", { class: "issue-cell" },
     el("a", { href: "#", class: "issue-summary-link", "aria-label": `查看问题 ${issue.issue_id} 详情`,
       onclick: e => { e.preventDefault(); issueDrawer(issue.issue_id); } },
       el("span", { class: "issue-summary" },
-        el("span", { class: "issue-number" }, issue.issue_id),
-        el("span", { class: "chip info" }, new Map(TREATMENTS).get(issue.treatment)),
+        el("span", { class: "issue-number" + (issue.similar_to ? " similar" : "") }, issue.issue_id),
+        treatmentChip(issue),
         issueClassification(issue),
         el("span", { class: "issue-reason", title: reason }, reason.slice(0, 110)))));
 }
@@ -36,7 +44,7 @@ function subway(issue) {
     if (i) box.append(el("div", { class: "line" + (i <= index ? " done" : "") }));
     let cls = i < index ? "done" : i === index ? (issue.status === "resolved" || issue.status === "closed" ? "done" : "now") : "";
     if (bounced && i === 1) cls = "back";
-    box.append(el("div", { class: "st " + cls }, el("div", { class: "dot" }), issue.status === "closed" && i === 4 ? "关闭" : text));
+    box.append(el("div", { class: "st " + cls }, el("div", { class: "dot" }), text));
   });
   void lastRound;
   return box;
@@ -91,8 +99,8 @@ export async function issueDrawer(issueId) {
   const adminBox = isAdmin() && !["resolved", "closed"].includes(issue.status) ? el("div", { class: "toolbar" },
     el("button", { class: "danger", onclick: async () => { const reason = prompt("关闭原因（不修复/误报/重复）："); if (!reason) return; try { await api(`/api/admin/issues/${issueId}/close`, { method: "POST", body: { request_key: rkey(), reason } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "关闭问题"),
     el("button", { onclick: async () => { const into = prompt("合并到哪个问题 ID？"); if (!into) return; try { await api(`/api/admin/issues/${issueId}/merge`, { method: "POST", body: { request_key: rkey(), into: into.trim() } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "合并到…")) : null;
-  openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status])), subway(issue),
-    el("div", { class: "kv", style: { marginTop: "12px" } }, [["维度", { function: "功能", accuracy: "精度", performance: "性能" }[issue.dimension]], ["后端", (issue.backends || [issue.backend]).map(label).join(" · ")], ["分类", issueClassification(issue)], ["主算子类别", issue.primary_category], ["处理标签", new Map(TREATMENTS).get(issue.treatment)],
+  openDrawer(el("h2", {}, issue.issue_id, " ", el("span", { class: "chip info" }, STATUS_LABEL[issue.status]), " ", similarLink(issue)), subway(issue),
+    el("div", { class: "kv", style: { marginTop: "12px" } }, [["维度", { function: "功能", accuracy: "精度", performance: "性能" }[issue.dimension]], ["后端", (issue.backends || [issue.backend]).map(label).join(" · ")], ["分类", issueClassification(issue)], ["主算子类别", issue.primary_category], ["处理标签", treatmentChip(issue)],
       ["当前 / 累计用例", fmt(issue.current_case_count) + " / " + fmt(issue.case_count)], ["芯片", issue.arches.map(archLabel).join(", ") || "—"], ["领取", issue.owner_user ? `${issue.owner_user} / ${issue.agent_id}` : "—"],
       ["修复版本", issue.fix_version || "—"], ["代码链接", issue.fix_ref ? el("a", { href: issue.fix_ref, target: "_blank", rel: "noopener noreferrer" }, issue.fix_ref) : "—"],
       ["知识", issue.knowledge_id ? el("a", { href: "#", onclick: e => { e.preventDefault(); knowledgeDrawer(issue.knowledge_id); } }, issue.knowledge_id) : "—"],
@@ -101,7 +109,7 @@ export async function issueDrawer(issueId) {
     isAdmin() ? el("div", {class:"toolbar"}, "处理标签", select(TREATMENTS, issue.treatment, async treatment => {
       try { await api('/api/admin/issues/' + issueId + '/treatment', {method:"POST",body:{request_key:rkey(),treatment}}); await issueDrawer(issueId); }
       catch(err) { alert(err.message); }
-    })) : null, adminBox,
+    })) : null, adminBox, isAdmin() ? adminStatusEditor(issue) : null,
     el("h3", {}, "验证与回归"), issue.rounds.length ? rounds : el("div", { class: "muted" }, "尚未提交验证"),
     caseSection(issueId, cases, "current", "当前关联用例"),
     el("p", {class:"muted small"}, "当前关联依据普通执行的最新结果。候选修复包的通过或失败保留在验证与回归轮次中。"),
@@ -138,4 +146,23 @@ function caseSection(issueId, page, scope, title) {
   }}, "加载更多");
   next.hidden = !page.next_cursor;
   return el("section", {}, el("h3", {}, title), content, next);
+}
+
+function adminStatusEditor(issue) {
+  let target = issue.status === 'resolved' ? 'closed' : issue.status;
+  const reason = el('input', {placeholder:'状态修改原因', maxlength:500, 'aria-label':'状态修改原因'});
+  const hints = {open:'取消未完成任务并释放领取；保留封存集合及历史记录。', claimed:'取消未完成任务并撤销旧租约；保留原领取人，无人领取时归当前管理员。', verifying:'使用已有候选包创建验证任务；相同包可复用已通过的回归。', regressing:'最近验证通过后创建回归任务；封存问题沿用原回归集合。', summarizing:'需要最近轮次通过，已有回归集合需要回归通过。', closed:'取消未完成任务、释放领取并封存集合。'};
+  const hint = el('div', {class:'muted small'}, hints[target]);
+  const picker = select(Object.entries(STATUS_LABEL).filter(([key]) => key !== 'resolved'), target, value => {
+    target = value; hint.textContent = hints[value];
+  }, {'aria-label':'问题状态'});
+  const save = el('button', {onclick: async () => {
+    if (!reason.value.trim()) { alert('请填写状态修改原因'); return; }
+    save.disabled = true;
+    try {
+      await api('/api/admin/issues/' + issue.issue_id + '/status', {method:'POST', body:{request_key:rkey(), status:target, expected_status:issue.status, reason:reason.value.trim()}});
+      await issueDrawer(issue.issue_id);
+    } catch (err) { alert(err.message); save.disabled = false; }
+  }}, '修改状态');
+  return el('div', {class:'panel'}, el('div', {class:'toolbar'}, '问题状态', picker, reason, save), hint);
 }

@@ -292,11 +292,16 @@ def _maybe_finish(conn, issue_id, round_no) -> None:
         to_status = "claimed" if issue["lease_id"] else "open"
         _move(conn, issue, to_status, f"{rnd['kind']}_{outcome}", detail)
         return
+    if rnd['kind'] == 'verify' and rnd['reuse_regression']:
+        _move(conn, issue, "summarizing", "verify_passed", detail + "; reused passed regression for identical candidate")
+        return
     if rnd["kind"] == "regress":
         _move(conn, issue, "summarizing", "regress_passed", detail)
         return
     from autofusex.server import regression
-    picks = regression.select(conn, issue, round_no + 1)
+    picks = ([(r['case_id'], r['npu_arch'], r['pick_reason']) for r in conn.execute(
+        "SELECT DISTINCT case_id,npu_arch,pick_reason FROM issue_cases WHERE issue_id=? AND role='regression'",
+        (issue_id,))] if issue['frozen_at'] is not None else regression.select(conn, issue, round_no + 1))
     if not picks:
         _move(conn, issue, "summarizing", "verify_passed", detail + "; no regression candidates")
         return

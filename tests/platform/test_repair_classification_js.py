@@ -82,7 +82,7 @@ for (const [dimension, expected, cls] of [['function','构图失败 · AF前端'
   assert.equal(typeof link.attrs.onclick, 'function');
   assert.equal(text(summary.children[0]), 'F1');
   assert.equal(text(summary.children[1]), '中等');
-  assert.equal(summary.children[1].attrs.class, 'chip info');
+  assert.equal(summary.children[1].attrs.class, 'chip priority-normal');
   assert.equal(text(summary.children[2]), expected);
   assert(text(summary.children[2]).includes(expected));
   if (dimension !== 'function') assert.equal(summary.children[2].attrs.class, 'chip ' + cls);

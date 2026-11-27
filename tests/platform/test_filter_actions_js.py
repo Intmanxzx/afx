@@ -101,7 +101,10 @@ const api = async path => { requested = new URL(path, 'http://localhost').search
       assert(categories.children[1].children.every(n => n.attrs['aria-pressed'] === 'true'));
       const statuses = fields.find(n => text(n.children[0]) === '修复状态');
       assert.deepEqual(statuses.children[1].children.map(n => n.attrs['aria-pressed']),
-        ['true','true','true','true','true','false','false']);
+        ['true','true','true','true','true','false']);
+      const closed = statuses.children[1].children[5];
+      closed.attrs.onclick();
+      assert(panel());
       if (dimension === 'function') assert.deepEqual(nodes(panel(), n =>
         n.attrs['data-result'] && n.attrs['aria-pressed'] === 'true').map(n => n.attrs['data-result']),
         ['mlir','fused_kernel']);

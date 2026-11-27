@@ -128,7 +128,7 @@ export function resultFilter(params, change, arches = [], options = {}) {
     body.append(field("算子类别", "categories", ISSUE_CATEGORIES.map(v => [v, v]),
       params.has("categories") ? params.get("categories").split(",") : ISSUE_CATEGORIES),
       field("处理标签", "treatment", TREATMENTS, (params.get("treatment") || "low,normal,high").split(",")),
-      field("修复状态", "status", Object.entries(STATUS_LABEL), params.has("status") ? params.get("status").split(",") : REPAIR_DEFAULT_STATUSES));
+      field("修复状态", "status", Object.entries(STATUS_LABEL).filter(([key]) => key !== "resolved").map(([key, text]) => [key === "closed" ? "resolved,closed" : key, text]), params.has("status") ? params.get("status").replace(/resolved,closed|closed,resolved|resolved|closed/g, "terminal").split(",").map(key => key === "terminal" ? "resolved,closed" : key) : REPAIR_DEFAULT_STATUSES));
   }
   aside.append(toggle, body);
   aside.addEventListener("keydown", e => { if (e.key === "Escape") { collapsed = true; update(); toggle.focus(); } });

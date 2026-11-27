@@ -25,7 +25,7 @@ def migrate(store, *, apply=False):
                  'open': 4, 'resolved': 5, 'closed': 6}
         migrated = []
         for signature, rows in groups.items():
-            if any(r['status'] in ('verifying', 'regressing', 'summarizing') for r in rows):
+            if any(r['status'] == 'verifying' or r['frozen_at'] is not None or r['similar_to'] for r in rows):
                 report['deferred'].append(dict(issues=[r['issue_id'] for r in rows],
                                                reason='frozen verification group'))
                 continue

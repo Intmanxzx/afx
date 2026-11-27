@@ -465,13 +465,15 @@ def test_full_lifecycle(world):
     world.upload([item("exec-9001", 40, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x99 tile 32",
                        created=later)])
     assert world.issue(issue_id)["status"] == "resolved"
-    # the same bug on a newer version reopens it
+    # Later failures share a new high-priority issue; the completed issue stays sealed.
     world.upload([item("exec-9002", 41, status="compile_fail", fail_stage="schedule", summary="Schedule failed at 0x98 tile 32",
                        created=later, env={"cann": "8.2", "backend_version": "0.3.2"})])
     detail = world.issue(issue_id)
-    assert detail["status"] == "open" and detail["case_count"] == 4
+    assert detail["status"] == "resolved" and detail["case_count"] == 2
+    successor = next(i for i in issues.list_issues(world.store)['issues'] if i['similar_to'] == issue_id)
+    assert successor['treatment'] == 'high' and successor['case_count'] == 2
     related = issues.claim(world.store, world.agent, {"request_key": world.key(), "agent_id": "agent-1",
-                                                     "issue_id": issue_id})["related_knowledge"]
+                                                     "issue_id": successor['issue_id']})["related_knowledge"]
     assert related[0]["knowledge_id"] == kb["knowledge_id"]
 
 
@@ -897,3 +899,116 @@ def test_classification_rollback_refreshes_issue_without_new_upload(world):
     rollback(world.store,'issue-test')
     rows=issues.list_issues(world.store,scope='current')['issues']
     assert len(rows)==1 and rows[0]['category']=='compile_fail:schedule'
+
+
+@pytest.mark.parametrize('status', ['regressing', 'summarizing', 'resolved', 'closed'])
+def test_sealed_issue_routes_new_failures_to_high_priority_successor(world, status):
+    original = seed_failures(world)['schedule']['issue_id']
+    with world.store.write() as conn:
+        conn.execute('UPDATE issues SET status=? WHERE issue_id=?', (status, original))
+    conn = world.store.reader()
+    before = [tuple(r) for r in conn.execute('SELECT * FROM issue_cases WHERE issue_id=?', (original,))]
+    world.upload([item('sealed-new', 801, status='compile_fail', fail_stage='schedule',
+                       summary='Schedule failed at 0x1f tile 32', created=2000)])
+    successor = issues.list_issues(world.store)['issues'][0]
+    assert successor['similar_to'] == original and successor['treatment'] == 'high'
+    world.upload([item('sealed-repeat', 802, status='compile_fail', fail_stage='schedule',
+                       summary='Schedule failed at 0x1f tile 32', created=2001)])
+    world.upload([item('sealed-reclassify', 1, status='compile_fail', fail_stage='mlir',
+                       summary='different error', created=2002)])
+    assert [tuple(r) for r in conn.execute('SELECT * FROM issue_cases WHERE issue_id=?', (original,))] == before
+    assert world.issue(original)['case_count'] == 2
+    assert world.issue(successor['issue_id'])['case_count'] == 2
+    # A second completed occurrence can itself have a successor.
+    with world.store.write() as writer:
+        writer.execute("UPDATE issues SET status='closed' WHERE issue_id=?", (successor['issue_id'],))
+    world.upload([item('sealed-third', 803, status='compile_fail', fail_stage='schedule',
+                       summary='Schedule failed at 0x1f tile 32', created=2003)])
+    latest = issues.list_issues(world.store)['issues'][0]
+    assert latest['similar_to'] == successor['issue_id']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=latest['issue_id'], agent_id='verify-similar'))
+    verified = issues.verify(world.store, world.agent, latest['issue_id'], dict(request_key=world.key(), lease_id=lease['lease_id'], **FIX))
+    assert verified['tasks'] == 1
+
+
+@pytest.mark.parametrize('caller', ['admin', 'holder'])
+@pytest.mark.parametrize('changed', [False, True])
+def test_http_reverify_sealed_candidate_and_regression_reuse(world, changed, caller):
+    from fastapi.testclient import TestClient
+    from autofusex.server.server import create_app
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=issue_id, agent_id='supplement'))['lease_id']
+    issues.verify(world.store, world.agent, issue_id, dict(FIX, request_key=world.key(), lease_id=lease))
+    world.run_tasks(world.claim_tasks(), lambda key: 'pass')
+    world.run_tasks(world.claim_tasks(), lambda key: 'pass')
+    assert world.issue(issue_id)['status'] == 'summarizing'
+    before_round = world.issue(issue_id)['round_no']
+    conn = world.store.reader()
+    membership = [tuple(r) for r in conn.execute('SELECT case_id,role,npu_arch,backend FROM issue_cases WHERE issue_id=?', (issue_id,))]
+    headers = {'Authorization': 'Bearer ' + auth.issue_token(world.store, 'root')}
+    dev = {'Authorization': 'Bearer ' + auth.issue_token(world.store, 'dev')}
+    candidate = dict(FIX, fix_sha256='b'*64) if changed else FIX
+    with TestClient(create_app(world.store)) as client:
+        path = f'/api/issues/{issue_id}/verify'
+        body = dict(request_key=world.key(), **candidate) if changed else dict(request_key=world.key())
+        assert client.post(path, json=body).status_code == 401
+        assert client.post(path, headers=dev, json=body).status_code == 409
+        if caller == 'holder':
+            headers = dev
+            body['lease_id'] = lease
+        response = client.post(path, headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        data = response.json()['data']
+        assert data['tasks'] == 2 and data['reuse_regression'] is not changed
+        assert data['round_no'] == before_round + 1
+        assert client.post(path, headers=headers, json=body).json() == response.json()
+        assert client.post(path, headers=headers, json=dict(body, request_key=world.key())).status_code == 409
+    # Reauthenticate after the HTTP token rotation.
+    world.client = world.agent = world._principal('dev')
+    installed = {'af-mlir': {'version': candidate['fix_version'], 'sha256': candidate['fix_sha256']}}
+    world.run_tasks(world.claim_tasks(installed=installed), lambda key: 'pass', installed=installed)
+    assert world.issue(issue_id)['status'] == ('regressing' if changed else 'summarizing')
+    assert world.issue(issue_id)['round_no'] == before_round + (2 if changed else 1)
+    assert [tuple(r) for r in conn.execute('SELECT case_id,role,npu_arch,backend FROM issue_cases WHERE issue_id=?', (issue_id,))] == membership
+
+
+def test_admin_status_cancels_tasks_and_preserves_evidence(world):
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=issue_id, agent_id='a'))['lease_id']
+    issues.verify(world.store, world.agent, issue_id, dict(FIX, request_key=world.key(), lease_id=lease))
+    def change(status, expected):
+        return issues.set_status(world.store, world.admin, issue_id, dict(request_key=world.key(),status=status,expected_status=expected,reason='admin correction'))
+    with pytest.raises(IssueError): change('summarizing','verifying')
+    before = issues.issue_cases(world.store, issue_id)['cases']
+    change('claimed','verifying')
+    assert world.issue(issue_id)['rounds'][0]['outcome'] == 'invalid'
+    assert not world.claim_tasks()
+    assert issues.issue_cases(world.store, issue_id)['cases'] == before
+    with pytest.raises(IssueError): change('open','verifying')
+    change('verifying','claimed')
+    assert len(world.claim_tasks()) == 2
+    change('closed','verifying')
+    assert world.issue(issue_id)['frozen_at'] is not None
+    change('open','closed')
+    assert world.issue(issue_id)['frozen_at'] is not None
+    assert world.issue(issue_id)['owner_user'] is None
+
+
+def test_admin_status_http_permissions_and_idempotency(world):
+    from fastapi.testclient import TestClient
+    from autofusex.server.server import create_app
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    admin = {'Authorization':'Bearer '+auth.issue_token(world.store,'root')}
+    dev = {'Authorization':'Bearer '+auth.issue_token(world.store,'dev')}
+    payload = dict(request_key=world.key(),status='claimed',expected_status='open',reason='take ownership')
+    with TestClient(create_app(world.store)) as client:
+        path = f'/api/admin/issues/{issue_id}/status'
+        assert client.post(path,json=payload).status_code == 401
+        assert client.post(path,headers=dev,json=payload).status_code == 403
+        response = client.post(path,headers=admin,json=payload)
+        assert response.status_code == 200, response.text
+        assert client.post(path,headers=admin,json=payload).json() == response.json()
+        assert world.issue(issue_id)['owner_user'] == 'root'
+        assert client.post(path,headers=admin,json=dict(payload,request_key=world.key(),status='summarizing',expected_status='claimed')).status_code == 409
+        assert client.post(path,headers=admin,json=dict(payload,request_key=world.key(),status='verifying',expected_status='claimed')).status_code == 400
+        assert world.issue(issue_id)['status'] == 'claimed'

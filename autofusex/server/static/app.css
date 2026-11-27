@@ -458,3 +458,9 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
   .result-filter { left: 6px; width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 220px); }
   .result-filter:not(.collapsed) { box-shadow: 0 8px 32px rgba(0,0,0,.2); }
 }
+
+.issue-number.similar { color: #b8860b; }
+.chip.priority-high { background: #fee2e2; color: #b91c1c; }
+.chip.priority-normal { background: #fef3c7; color: #92400e; }
+.chip.priority-low { background: #dbeafe; color: #1d4ed8; }
+.chip.priority-ignore { background: var(--panel-2); color: var(--muted); }
