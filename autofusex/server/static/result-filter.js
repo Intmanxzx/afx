@@ -54,7 +54,7 @@ export const REPAIR_DEFAULT_RESULTS = ["mlir", "fused_kernel"];
 export const REPAIR_DEFAULT_STATUSES = Object.keys(STATUS_LABEL).filter(key => !["resolved", "closed"].includes(key));
 // A panel owns its draft until the user pauses; only then does routing load data.
 export function isFilterChangePending() { return filterTimer !== null; }
-export const FILTER_DELAY_MS = 450;
+export const FILTER_DELAY_MS = 800;
 export function resultFilter(params, notify, arches = [], options = {}) {
   const repair = !!options.repair;
   const groups = repair ? RESULT_GROUPS.filter(([name]) => name !== "精度结果") : RESULT_GROUPS;
