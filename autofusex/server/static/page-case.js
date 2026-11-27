@@ -125,8 +125,8 @@ function renderExecution(d, shape) {
   const classification = detail.accuracy_classification;
   if (classification) out.push(el("p", {class:"muted small"},
     `精度分类 · 异常性质：${classification.anomaly || "—"} · 超容差强度：${classification.severity} · 错误比例：${classification.ratio} · 空间形态：${classification.pattern} · 计算特征：${(classification.features || []).join("、")}`));
-  for (const comparison of comparisons) out.push(el("details", {},
-    el("summary", {}, (comparison.reference === "eager-npu" ? "EagerNPU 复核" : "CPU 首比") + " · " + (comparison.passed ? "通过" : "失败")),
+  for (const comparison of comparisons) out.push(el("section", { class: "accuracy-comparison" },
+    el("h3", {}, (comparison.reference === "eager-npu" ? "EagerNPU 复核" : "CPU 首比") + " · " + (comparison.passed ? "通过" : "失败")),
     el("table", {class:"grid"}, el("thead", {}, el("tr", {}, ["Shape", "结果", "错误元素", "错误比例", "最大绝对误差", "最大相对误差"].map(t => el("th", {}, t)))),
       el("tbody", {}, (comparison.shapes || []).map(x => { const m = x.metrics || {}; return el("tr", {},
         el("td", {}, "S" + x.shape_index), el("td", {}, x.passed ? "通过" : "失败"),
