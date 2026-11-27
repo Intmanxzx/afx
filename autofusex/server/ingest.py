@@ -9,7 +9,7 @@ import sqlite3
 from autofusex.server import aggregates
 from autofusex.server import issues
 from autofusex.server.auth import Principal
-from autofusex.server.store import Store, canonical_json, now_ms, put_content
+from autofusex.server.store import Store, canonical_json, now_ms, put_content, put_raw_upload
 from autofusex.server.failure_attribution import classify as classify_failure
 
 MAX_ITEMS = 500
@@ -477,7 +477,7 @@ class Ingestor:
              item["accuracy_status"], item["accuracy_ref"], item["max_abs_err"], item["max_rel_err"],
              item["compile_ns"], item["kernel_ns"], item["e2e_ns"], item["log_summary"], log_id,
              item["created_at"], now_ms(), item["classifier_version"], item["failure_owner"])).lastrowid
-        raw_id = put_content(conn, item['raw_upload'])
+        raw_id = put_raw_upload(conn, item['raw_upload'])
         conn.execute("UPDATE executions SET upload_protocol_version=?,capture_version=?,reported_status=?,reported_stage=?,raw_upload_content_id=? WHERE exec_id=?",
                      (item['upload_protocol_version'], item['capture_version'], reported_status, reported_stage, raw_id, exec_id))
         if detail_id is not None:

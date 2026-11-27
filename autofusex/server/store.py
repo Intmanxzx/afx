@@ -167,7 +167,9 @@ def put_content(conn: sqlite3.Connection, data: bytes) -> int:
     row = conn.execute("SELECT content_id, codec, data FROM content.contents WHERE sha256=?",
                        (digest,)).fetchone()
     if row is not None:
-        if _decode(row["codec"], row["data"]) != data:
+        existing = (get_content(conn, row["content_id"]) if row["codec"] == "upload-refs-v1"
+                    else _decode(row["codec"], row["data"]))
+        if existing != data:
             raise ValueError("content hash collision or corruption")
         return row["content_id"]
     packed = zlib.compress(data, 6)
@@ -177,12 +179,57 @@ def put_content(conn: sqlite3.Connection, data: bytes) -> int:
     return cur.lastrowid
 
 
+def put_raw_upload(conn: sqlite3.Connection, data: bytes) -> int:
+    """Keep canonical original bytes addressable, storing large fields by immutable ID."""
+    digest = hashlib.sha256(data).digest()
+    existing = conn.execute(
+        "SELECT content_id FROM content.contents WHERE sha256=?", (digest,)).fetchone()
+    if existing is not None:
+        if get_content(conn, existing[0]) != data:
+            raise ValueError("content hash collision or corruption")
+        return existing[0]
+    payload = json.loads(data)
+    refs = []
+    for path in (("log",), ("detail",), ("case", "spec")):
+        parent = payload if len(path) == 1 else payload.get(path[0])
+        if not isinstance(parent, dict) or parent.get(path[-1]) is None:
+            continue
+        value = parent.pop(path[-1])
+        encoded = value.encode() if path == ("log",) else canonical_json(value)
+        ref = put_content(conn, encoded)
+        if conn.execute("SELECT codec FROM content.contents WHERE content_id=?",
+                        (ref,)).fetchone()[0] == "upload-refs-v1":
+            # A JSON detail can itself equal a previously uploaded item. Keep
+            # reference graphs one level deep, including for such valid inputs.
+            return put_content(conn, data)
+        refs.append([list(path), ref])
+    manifest = canonical_json({"payload": payload, "refs": refs})
+    return conn.execute(
+        "INSERT INTO content.contents(sha256,codec,raw_size,data,created_at) VALUES(?,?,?,?,?)",
+        (digest, "upload-refs-v1", len(data), zlib.compress(manifest, 6), now_ms())).lastrowid
+
+
 def get_content(conn: sqlite3.Connection, content_id: int) -> bytes | None:
     row = conn.execute("SELECT sha256, codec, data FROM content.contents WHERE content_id=?",
                        (content_id,)).fetchone()
     if row is None:
         return None
-    data = _decode(row["codec"], row["data"])
+    if row["codec"] == "upload-refs-v1":
+        manifest = json.loads(zlib.decompress(row["data"]))
+        payload = manifest["payload"]
+        for path, ref in manifest["refs"]:
+            if path not in (["log"], ["detail"], ["case", "spec"]):
+                raise ValueError("invalid upload reference path")
+            child = conn.execute(
+                "SELECT codec FROM content.contents WHERE content_id=?", (ref,)).fetchone()
+            if child is None or child[0] not in ("raw", "zlib"):
+                raise ValueError(f"missing or invalid upload reference {ref}")
+            value = get_content(conn, ref)
+            parent = payload if len(path) == 1 else payload[path[0]]
+            parent[path[-1]] = value.decode() if path == ["log"] else json.loads(value)
+        data = canonical_json(payload)
+    else:
+        data = _decode(row["codec"], row["data"])
     if hashlib.sha256(data).digest() != row["sha256"]:
         raise ValueError(f"content {content_id} failed integrity check")
     return data

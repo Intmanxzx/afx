@@ -250,6 +250,14 @@ def filtered_case_count(conn, query: Query) -> int:
     with time_limit(conn):
         if query.needs_heads:
             head_sql, head_args = query.head_sql()
+            # Backend/chip-only cohorts are fully represented by the compact
+            # heads table. Avoid fetching every wide execution row merely to
+            # count case IDs (the default overview selects a chip family).
+            columns = set(re.findall(r'\be\.([a-z_]+)', head_sql))
+            if not query.case and columns <= {'backend', 'npu_arch'}:
+                return conn.execute(
+                    'SELECT COUNT(DISTINCT h.case_id) FROM execution_heads h WHERE '
+                    + head_sql.replace('e.', 'h.'), head_args).fetchone()[0]
             return conn.execute("SELECT COUNT(DISTINCT h.case_id) FROM execution_heads h JOIN executions e "
                                 f"ON e.exec_id=h.exec_id JOIN cases c ON c.case_id=h.case_id WHERE {head_sql} "
                                 f"AND {case_sql}", [*head_args, *case_args]).fetchone()[0]
