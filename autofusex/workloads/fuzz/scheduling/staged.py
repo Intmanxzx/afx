@@ -128,6 +128,12 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                 summary['skipped'] += 1
             case.skip_finalized = True
 
+        def baseline_device_group(session):
+            # A window uses one software environment. Share host outputs across
+            # cards of the same model; unknown models remain device-local.
+            model = next((d.model for d in pool.devices if d.uuid == session.uuid), None)
+            return ('model', model) if model and model.lower() != 'unknown' else ('device', session.uuid)
+
         def flush_deferred_targets(case):
             """Publish outcomes only after the CPU oracle and AF verdict."""
             if case.skip_reason is not None or case.reference is None:
@@ -150,7 +156,7 @@ def drain(ledger, database, *, timeout=120, _owned_fd=None, _ready=None):
                     continue
                 eager = next((x for x in combined
                     if json.loads(sessions[x.session_id].task['execution'])['backend'] == 'eager-npu'
-                    and sessions[x.session_id].uuid == ss.uuid), None)
+                    and baseline_device_group(sessions[x.session_id]) == baseline_device_group(ss)), None)
                 if eager is None:
                     cfg.update(backend='eager-npu', device=ss.device)
                     task = dict(ss.task, execution=json.dumps(cfg), attempt_id=str(uuid.uuid4()),

@@ -1,8 +1,9 @@
 import json
 import pytest
+@pytest.mark.parametrize('placement', ['same_card', 'same_model', 'different_model'])
 @pytest.mark.parametrize('fallback_pass', [True, False])
 @pytest.mark.parametrize('scenario', ['fallback', 'cpu_pass', 'existing_eager', 'eager_error'])
-def test_eager_fallback_dag(tmp_path, monkeypatch, fallback_pass, scenario):
+def test_eager_fallback_dag(tmp_path, monkeypatch, fallback_pass, scenario, placement):
     late_kind = "pass"
     """A fast peer must not commit before a slow peer's skip verdict."""
     import time
@@ -12,12 +13,21 @@ def test_eager_fallback_dag(tmp_path, monkeypatch, fallback_pass, scenario):
     from autofusex.execution.scheduling.budgets import Budget, write_policy
     from autofusex.contracts.execution import ExecutionConfig, EvaluationConfig
     recorded = []
+    eager_runs = []
+    reused_references = []
     class FakePool:
         def __init__(self,*args,**kw):
             self.executor=ThreadPoolExecutor(4); self.leases={}; self.workers=[]; self.devices=[]
+            from types import SimpleNamespace
+            if placement != 'same_card':
+                self.devices = [SimpleNamespace(uuid='card0', model='910C', capacity=2**40),
+                                SimpleNamespace(uuid='card1', model='910C' if placement == 'same_model' else '910B', capacity=2**40)]
             self.cpu_capacity=4; self.memory_capacity=2**40; self.cache_capacity=2**40
         def reserve(self,s):
-            self.leases[s.identity]={'device':'cpu','device_uuid':'cpu'};return self.leases[s.identity]
+            device = 'cpu'
+            if placement != 'same_card' and s.requirements.devices:
+                device = s.requirements.devices[0]
+            self.leases[s.identity]={'device':device,'device_uuid':'cpu' if device == 'cpu' else 'card' + device[-1]};return self.leases[s.identity]
         def release(self,i): return dict(self.leases.pop(i),released=time.monotonic_ns())
         def submit(self,s,job,timeout):
             def run():
@@ -27,6 +37,8 @@ def test_eager_fallback_dag(tmp_path, monkeypatch, fallback_pass, scenario):
                     time.sleep(.08 if late_kind=='cpu_failure' else .01)
                     value={'outputs':{},'result':dict(status='error' if late_kind=='cpu_failure' else 'ok',execution={},shape_results=[])}
                 elif k=='first_call_combined':
+                    if backend == 'eager-npu':
+                        eager_runs.append(job['config']['device'])
                     if backend == 'eager-npu' and scenario == 'eager_error':
                         return dict(ok=False,error='baseline worker failed',finished=time.monotonic_ns())
                     if backend=='cpu-compile': time.sleep(.12)
@@ -34,6 +46,8 @@ def test_eager_fallback_dag(tmp_path, monkeypatch, fallback_pass, scenario):
                            'skip_reason':'no_autofuse_coverage','outputs':{},'shape_starts':{},
                            'result':dict(status='ok',execution={},shape_results=[] if late_kind=='empty' else [dict(shape_index=0)])}
                 elif k=='compare':
+                    if job.get('reference_backend') == 'eager-npu':
+                        reused_references.append(job['reference_exec_uuid'])
                     result = job['result']
                     result['status'] = 'ok' if scenario == 'cpu_pass' or backend == 'eager-npu' or (job.get('reference_backend') == 'eager-npu' and fallback_pass) else 'fail'
                     result['execution']['diagnostics'] = json.dumps({'version':1,'shapes':{}})
@@ -52,14 +66,21 @@ def test_eager_fallback_dag(tmp_path, monkeypatch, fallback_pass, scenario):
     backends = ['cpu','af-mlir','af-legacy'] + (['eager-npu'] if scenario == 'existing_eager' else [])
     for backend in backends:
         from autofusex.workloads.fuzz.generation.sampling import SamplingConfig
-        ledger.enqueue(str(SamplingConfig.profile('small').seed(3)),ExecutionConfig(backend,'npu:0' if backend!='cpu' else 'cpu',1,scheduling='staged',batch_id='test'),EvaluationConfig())
+        device = 'cpu' if backend == 'cpu' else 'npu:1' if backend == 'af-legacy' else 'npu:0'
+        ledger.enqueue(str(SamplingConfig.profile('small').seed(3)),ExecutionConfig(backend,device,1,scheduling='staged',batch_id='test'),EvaluationConfig())
     write_policy(ledger,Budget(cpu_workers=4))
     summary=staged.drain(ledger,tmp_path/'results')
     status = 'ok' if scenario == 'cpu_pass' or (scenario != 'eager_error' and fallback_pass) else 'fail'
     expected = [('cpu','ok'), ('af-mlir',status), ('af-legacy',status)]
     if scenario != 'cpu_pass':
         expected.append(('eager-npu', 'error' if scenario == 'eager_error' else 'ok'))
+    if placement == 'different_model' and scenario != 'cpu_pass':
+        expected.append(('eager-npu', 'error' if scenario == 'eager_error' else 'ok'))
     assert sorted(recorded) == sorted(expected)
+    assert len(eager_runs) == sum(backend == 'eager-npu' for backend, _ in expected)
+    if scenario in {'fallback', 'existing_eager'}:
+        assert len(reused_references) == 2
+        assert len(set(reused_references)) == (2 if placement == 'different_model' else 1)
     assert summary['completed'] == len(backends)
 
 
