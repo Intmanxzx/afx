@@ -309,8 +309,11 @@ def case_history(store: Store, case_key: str, *, after=None, limit: int = 50) ->
         raise QueryError("case not found")
     case = dict(case)
     case['coverage_exclusions'] = [dict(r) for r in conn.execute(
-        "SELECT backend,npu_arch,'no_autofuse_coverage' AS reason,task_id,installed,observed_at,environment_key,environment,evidence FROM coverage_observations "
-        "WHERE case_id=? AND case_revision=?", (case['case_id'], case['case_revision']))]
+        "SELECT o.backend,o.npu_arch,'no_autofuse_coverage' AS reason,o.task_id,o.installed,o.observed_at,"
+        "o.environment_key,o.environment,o.evidence,o.case_revision,u.user_id,u.display_name AS user_name,"
+        "cl.hostname AS client_name FROM coverage_observations o "
+        "JOIN retest_tasks t ON t.task_id=o.task_id LEFT JOIN clients cl ON cl.client_id=t.client_id "
+        "LEFT JOIN users u ON u.user_id=cl.user_id WHERE o.case_id=? AND o.case_revision=?", (case['case_id'], case['case_revision']))]
     for observation in case['coverage_exclusions']:
         observation['environment'] = json.loads(observation['environment'])
         observation['evidence'] = json.loads(observation['evidence'])
