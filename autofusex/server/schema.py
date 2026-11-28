@@ -725,6 +725,23 @@ SELECT issue_id,CAST(strftime('%s','now') AS INTEGER)*1000,'system','owner_resto
 DROP TABLE issue_owner_recovery;
 """))
 
+CORE.append((33, """
+CREATE TABLE coverage_observations(
+ task_id INTEGER PRIMARY KEY REFERENCES retest_tasks(task_id),
+ case_id INTEGER NOT NULL, case_revision INTEGER NOT NULL, backend TEXT NOT NULL, npu_arch TEXT NOT NULL,
+ environment_key TEXT, environment TEXT NOT NULL, installed TEXT NOT NULL, evidence TEXT NOT NULL,
+ observed_at INTEGER NOT NULL);
+CREATE INDEX coverage_environment ON coverage_observations(case_id,case_revision,backend,npu_arch,environment_key);
+INSERT INTO coverage_observations
+ SELECT task_id,case_id,case_revision,required_backend,npu_arch,NULL,'{}','{}','[]',finished_at
+ FROM retest_tasks WHERE detail='no_autofuse_coverage' AND finished_at IS NOT NULL AND case_revision IS NOT NULL;
+UPDATE executions SET function_status=pre_invalid_status,invalid_reason=NULL,pre_invalid_status=NULL
+ WHERE invalid_reason='no_autofuse_coverage' AND pre_invalid_status IS NOT NULL;
+UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='ingest_seq';
+ALTER TABLE retest_tasks ADD COLUMN force_coverage INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE retest_tasks ADD COLUMN coverage_environment_key TEXT;
+"""))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(

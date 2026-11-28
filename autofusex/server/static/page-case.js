@@ -42,7 +42,12 @@ PAGES.case = async (root, params) => {
       ["算子", (c.op_display || c.op_types || "—").split(",").join(" · ")], ["数据类型", (c.dtypes || "—").split(",").join(" · ")], ["最大维度 / 张量元素", `${fmt(c.max_dim)} / ${fmt(c.max_numel)}`],
       ["首次出现", time(c.first_seen_at)], ["执行次数", fmt(history.total)]].flat().map(v => el("div", {}, v)))));
   for (const observation of c.coverage_exclusions || []) root.append(el("div", { class: "panel muted" },
-    label(observation.backend) + " / " + observation.npu_arch + "：无 Autofuse 覆盖，默认跳过后续复测。观测时间：" + time(observation.observed_at)));
+    label(observation.backend) + " / " + observation.npu_arch + "：复测未覆盖 Autofuse。" +
+      (observation.environment_key ? "仅在相同编译环境下跳过重复复测。" : "环境证据不完整，不阻止后续复测。") +
+      "观测时间：" + time(observation.observed_at),
+    el("div", {class:"muted small"}, "Torch NPU：" + (observation.environment?.torch_npu || "未记录") + " · 任务 #" + observation.task_id),
+    el("details", {}, el("summary", {}, "环境与覆盖证据"),
+      el("pre", {class:"log"}, JSON.stringify({environment:observation.environment, evidence:observation.evidence}, null, 2)))));
   // Shape selector + DAG
   const dagBox = el("section", { class: "panel" });
   root.append(dagBox);

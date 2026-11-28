@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from autofusex.contracts.coverage import environment_key
 
 from autofusex.server.auth import Principal
 from autofusex.server.issues import IssueError, _setting, event, idempotent
@@ -85,6 +86,28 @@ def _installed(body) -> dict:
     return out
 
 
+def coverage_context(body):
+    environment = body.get('coverage_environment') or {}
+    evidence = body.get('coverage_evidence') or []
+    if not isinstance(environment, dict) or not isinstance(evidence, list) or not all(isinstance(e, dict) for e in evidence):
+        raise IssueError('invalid', 'coverage environment/evidence must be an object/list of objects')
+    if len(json.dumps([environment, evidence])) > 48000:
+        raise IssueError('invalid', 'coverage evidence exceeds 48 KB')
+    return environment, evidence
+
+
+def reusable_coverage(conn, task, key):
+    if key is None or task['force_coverage'] or task['issue_id']:
+        return None
+    return conn.execute(
+        "SELECT o.task_id FROM coverage_observations o WHERE o.case_id=? AND o.case_revision=? "
+        "AND o.backend=? AND o.npu_arch=? AND o.environment_key=? AND NOT EXISTS ("
+        "SELECT 1 FROM retest_tasks t WHERE t.case_id=o.case_id AND t.case_revision=o.case_revision "
+        "AND t.required_backend=o.backend AND t.npu_arch=o.npu_arch AND t.coverage_environment_key=o.environment_key "
+        "AND t.result IN ('pass','fail') AND t.finished_at>o.observed_at) ORDER BY o.observed_at DESC LIMIT 1",
+        (task['case_id'], task['case_revision'], task['required_backend'], task['npu_arch'], key)).fetchone()
+
+
 def claim(store: Store, principal: Principal, body: dict):
     principal.require_write()
     machine_id, arch = body.get("machine_id"), body.get("npu_arch")
@@ -93,6 +116,8 @@ def claim(store: Store, principal: Principal, body: dict):
     if not isinstance(arch, str) or not 1 <= len(arch) <= 32:
         raise IssueError("invalid", "npu_arch is required")
     installed = _installed(body)
+    environment, _ = coverage_context(body)
+    key = environment_key(environment)
     limit = body.get("limit", 5)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_CLAIM:
         raise IssueError("invalid", f"limit must be 1..{MAX_CLAIM}")
@@ -114,6 +139,11 @@ def claim(store: Store, principal: Principal, body: dict):
                 "ORDER BY t.task_id LIMIT ?",
                 (arch, backend, version, sha, principal.user_id, limit - len(tasks))).fetchall()
             for row in rows:
+                cached = reusable_coverage(conn, row, key)
+                if cached:
+                    conn.execute("UPDATE retest_tasks SET status='invalid',result='invalid',detail=?,finished_at=?,coverage_environment_key=? WHERE task_id=?",
+                                 (f"no_autofuse_coverage: same environment, observation task {cached[0]}", now_ms(), key, row['task_id']))
+                    continue
                 lease_id = secrets.token_hex(16)
                 conn.execute("UPDATE retest_tasks SET status='leased', client_id=?, lease_id=?, lease_expires_at=?, "
                              "attempts=attempts+1 WHERE task_id=?",
@@ -152,6 +182,8 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
             or not all(isinstance(u, str) and len(u) <= 64 for u in exec_uuids):
         raise IssueError("invalid", "exec_uuids must list 1..8 uploaded execution ids")
     installed = _installed(body)
+    environment, evidence = coverage_context(body)
+    key = environment_key(environment)
 
     def action(conn):
         task = conn.execute("SELECT t.*, COALESCE(r.kind, t.task_kind) AS kind FROM retest_tasks t "
@@ -163,6 +195,7 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         if task["status"] != "leased" or task["lease_id"] != body.get("lease_id") or client is None \
                 or client["user_id"] != principal.user_id:
             raise IssueError("lease_lost", "task lease is not held by this caller", 409)
+        conn.execute("UPDATE retest_tasks SET coverage_environment_key=? WHERE task_id=?", (key, task_id))
         if terminal_reason:
             if exec_uuids:
                 raise IssueError("invalid", "terminal_reason cannot accompany executions")
@@ -170,10 +203,20 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
                          "lease_id=NULL,lease_expires_at=NULL WHERE task_id=?",
                          (terminal_reason, now_ms(), task_id))
             if terminal_reason == 'no_autofuse_coverage' and task['required_backend'] in {'af-mlir', 'af-legacy'} and task['case_revision'] is not None:
-                conn.execute("INSERT OR REPLACE INTO case_coverage VALUES(?,?,?,?,?,?,?,?)",
-                             (task['case_id'], task['case_revision'], task['required_backend'], task['npu_arch'],
-                              terminal_reason, task_id, json.dumps(installed, sort_keys=True), now_ms()))
-                mark_unsupported_head(conn, task)
+                # A receipt is a new observation, never a rewrite of an execution.
+                proven = any(isinstance(e.get('autofuse_coverage'), dict)
+                             and e.get('backend') == task['required_backend']
+                             and environment_key(e.get('environment')) == key and key is not None
+                             and e.get('autofuse_coverage', {}).get('installed') is True
+                             and e['autofuse_coverage'].get('no_coverage') is True
+                             and e['autofuse_coverage'].get('candidates') == 0
+                             and e['autofuse_coverage'].get('scheduler_codegen_succeeded', 0) > 0
+                             for e in evidence)
+                reusable_key = key if proven and environment.get('autofuse_binary') == installed.get(task['required_backend'], ('', ''))[1] else None
+                conn.execute("INSERT INTO coverage_observations VALUES(?,?,?,?,?,?,?,?,?,?)",
+                             (task_id, task['case_id'], task['case_revision'], task['required_backend'], task['npu_arch'],
+                              reusable_key, json.dumps(environment, sort_keys=True), json.dumps(installed, sort_keys=True),
+                              json.dumps(evidence), now_ms()))
 
             if task["issue_id"]:
                 if terminal_reason == 'environment_changed':
@@ -204,9 +247,6 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         if any(r["case_revision"] != current_revision for r in rows):
             raise IssueError("mismatch", "execution uses an obsolete case revision", 409)
         result, detail = _judge(conn, task, rows, installed)
-        if result != 'invalid':
-            conn.execute("DELETE FROM case_coverage WHERE case_id=? AND case_revision=? AND backend=? AND npu_arch=?",
-                         (task['case_id'], current_revision, task['required_backend'], task['npu_arch']))
         target = next((r for r in rows if r["backend"] == task["required_backend"]), None)
         if result != "invalid" and target is not None:
             from autofusex.server.issues import reconcile, same_function_issue
@@ -231,25 +271,6 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
         _maybe_finish(conn, task["issue_id"], task["round_no"])
         return {"task_id": task_id, "result": result, "detail": detail}
     return idempotent(store, principal, f"retest-complete:{task_id}", body.pop("request_key", None), body, action)
-
-
-def mark_unsupported_head(conn, task):
-    """Mark the matching current result unsupported and update its derived statistics."""
-    from autofusex.server import aggregates, issues
-    row = conn.execute("SELECT e.* FROM execution_heads h JOIN executions e ON e.exec_id=h.exec_id "
-                       "WHERE h.case_id=? AND h.backend=? AND h.npu_arch=? AND e.case_revision=?",
-                       (task['case_id'], task['required_backend'], task['npu_arch'], task['case_revision'])).fetchone()
-    if row is None or row['invalid_reason'] or row['created_at'] > task['created_at']:
-        return
-    dims = aggregates.case_dims(conn, row['case_id'])
-    aggregates.apply_stat(conn, row, dims, -1)
-    aggregates.apply_perf(conn, row, dims, -1, _setting(conn, 'perf.tie_threshold'))
-    conn.execute("UPDATE executions SET pre_invalid_status=function_status,function_status='unsupported', "
-                 "invalid_reason='no_autofuse_coverage' WHERE exec_id=?", (row['exec_id'],))
-    updated = aggregates.head_row(conn, row['exec_id'])
-    aggregates.apply_stat(conn, updated, dims, 1)
-    issues.on_head(conn, row['case_id'], row['exec_id'])
-    aggregates.advance_seq(conn)
 
 
 def _judge(conn, task, rows, installed):
@@ -386,18 +407,13 @@ def create_manual(store: Store, principal: Principal, body: dict):
                     continue
                 for target_arch in arches:
                     revision = conn.execute("SELECT case_revision FROM cases WHERE case_id=?", (case_id,)).fetchone()[0]
-                    if not body.get('force', False) and conn.execute(
-                            "SELECT 1 FROM case_coverage WHERE case_id=? AND case_revision=? AND backend=? AND npu_arch=?",
-                            (case_id, revision, backend, target_arch)).fetchone():
-                        excluded += 1
-                        continue
                     for _ in range(repetitions):
                         conn.execute(
                             "INSERT INTO retest_tasks(issue_id, round_no, case_id, npu_arch, backends, required_backend, "
                             "required_version, required_sha256, status, created_at, task_kind, requested_by, batch, assigned_user) "
                             "VALUES('', 0, ?,?,?,?, '*', '*', 'pending', ?, 'retest', ?, ?, ?)",
                             (case_id, target_arch, f"cpu,{backend}", backend, now, principal.user_id, request_key, users[created % len(users)]))
-                        conn.execute("UPDATE retest_tasks SET case_revision=? WHERE task_id=last_insert_rowid()", (revision,))
+                        conn.execute("UPDATE retest_tasks SET case_revision=?,force_coverage=? WHERE task_id=last_insert_rowid()", (revision, int(body.get('force', False))))
                         created += 1
         return {"batch": request_key, "tasks": created, "skipped_without_arch": len(skipped), "skipped_no_coverage": excluded}
     return idempotent(store, principal, "retest-manual", body.pop("request_key", None), body, action)
