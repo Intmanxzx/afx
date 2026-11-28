@@ -192,3 +192,20 @@ def test_accuracy_evidence_survives_local_record_and_upload_mapping(tmp_path):
         json.dumps(item, allow_nan=False)
     finally:
         mapper.conn.close()
+
+
+def test_nonfinite_evidence_distinguishes_sides_and_alignment():
+    import torch
+    from autofusex.execution.accuracy import nonfinite_evidence
+    a = torch.tensor([float('nan'), float('inf'), -float('inf'), float('nan'), 2., 3.])
+    r = torch.tensor([float('nan'), -float('inf'), -float('inf'), 1., float('inf'), 3.])
+    e = nonfinite_evidence(a, r)
+    assert e == dict(actual=dict(nan=2, pos_inf=1, neg_inf=1),
+                     reference=dict(nan=1, pos_inf=1, neg_inf=2),
+                     actual_only=1, reference_only=1, aligned_nan=1, aligned=2, different=3)
+    a = torch.tensor([complex(float('nan'), 1), complex(1, float('inf'))])
+    r = torch.tensor([complex(1, float('nan')), complex(1, -float('inf'))])
+    e = nonfinite_evidence(a, r)
+    assert e['aligned'] == 0 and e['different'] == 2
+    assert nonfinite_evidence(torch.tensor(True), torch.tensor(False))['different'] == 0
+    assert nonfinite_evidence(torch.empty(0), torch.empty(0))['aligned'] == 0

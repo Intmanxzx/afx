@@ -40,6 +40,16 @@ assert(text(tree).includes('零散分布'));
 assert(!text(tree).includes('Kernel'));
 assert(JSON.stringify(tree).includes('accuracy-medium'));
 assert(JSON.stringify(tree).includes('accuracy-high'));
+const metrics=d.detail.accuracy_evidence.comparisons[0].shapes[0].metrics.outputs[0];
+metrics.nonfinite=1;
+assert(text(renderExecution(d,0)).includes('双方分布未记录，需复测'));
+metrics.nonfinite_evidence={actual:{nan:1,pos_inf:0,neg_inf:0},reference:{nan:1,pos_inf:0,neg_inf:0},aligned:1,different:0,actual_only:0,reference_only:0};
+metrics.finite_pairs=99; metrics.finite_mismatches=0;
+const explained=text(renderExecution(d,0));
+assert(explained.includes('eager-npu：NaN 1'));
+assert(explained.includes('CPU：NaN 1'));
+assert(explained.includes('同位置同类型 1，位置或类型不同 0'));
+
 
 
 '''

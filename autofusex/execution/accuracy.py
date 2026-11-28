@@ -2,6 +2,25 @@
 import math
 
 
+def nonfinite_evidence(actual, reference):
+    """Count elements; complex alignment checks each component and Inf sign."""
+    import torch
+    a = torch.view_as_real(actual) if actual.is_complex() else actual.unsqueeze(-1)
+    r = torch.view_as_real(reference) if reference.is_complex() else reference.unsqueeze(-1)
+    def counts(x):
+        return {name: int(predicate(x).any(dim=-1).sum()) for name, predicate in (
+            ('nan', torch.isnan), ('pos_inf', torch.isposinf), ('neg_inf', torch.isneginf))}
+    af, rf = torch.isfinite(a), torch.isfinite(r)
+    ap, rp = (~af).any(dim=-1), (~rf).any(dim=-1)
+    present = ap | rp
+    aligned = ((af & rf) | (torch.isnan(a) & torch.isnan(r)) |
+               (torch.isposinf(a) & torch.isposinf(r)) |
+               (torch.isneginf(a) & torch.isneginf(r))).all(dim=-1)
+    return dict(actual=counts(a), reference=counts(r),
+                actual_only=int((ap & ~rp).sum()), reference_only=int((rp & ~ap).sum()),
+                aligned_nan=int((aligned & torch.isnan(a).any(dim=-1)).sum()), aligned=int((present & aligned).sum()), different=int((present & ~aligned).sum()))
+
+
 def summarize(actuals, references, close):
     import torch
     from autofusex.execution.compare import resolve_tolerances
@@ -38,6 +57,8 @@ def summarize(actuals, references, close):
         pattern = 'none' if not count else 'all' if count == total else 'contiguous' if runs == 1 else 'periodic' if periodic else 'scattered'
         outputs.append(dict(output_index=index, shape=list(actual.shape), dtype=str(actual.dtype),
             rtol=rtol, atol=atol, elements=total, mismatches=count,
+            finite_pairs=int(finite.sum()), finite_mismatches=int((mask & finite.reshape(-1)).sum()),
+            nonfinite_evidence=nonfinite_evidence(actual, reference),
             mismatch_ratio=count/max(1,total), nonfinite=int((~finite).sum()),
             nan_mismatches=int(((torch.isnan(actual)|torch.isnan(reference)).reshape(-1)&mask).sum()),
             inf_mismatches=int(((torch.isinf(actual)|torch.isinf(reference)).reshape(-1)&mask).sum()),
