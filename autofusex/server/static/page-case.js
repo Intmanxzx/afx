@@ -161,25 +161,23 @@ function renderExecution(d, shape) {
     relation:refText === "—" ? "未比较" : label(d.backend) + " 与 " + refText,
     index:x.shape_index, output:"汇总", result:x.function_status !== "pass" ? "未比较" : isReference ? "参考" : x.accuracy_status || "—",
     m:{max_abs:x.max_abs_err, max_rel:x.max_rel_err}, run:x});
-  if (rows.length) out.push(el("h3", {}, "精度对比"),
-    el("p", {class:"muted small"}, "被测侧是“比较双方”左侧后端，参考侧是右侧后端。双方数量不同的被测侧单元格及位置/类型差异标红；数量相等不代表位置相同。S0、S1 表示本次执行的输入 Shape 组；每组下分别列出汇总和各输出指标。误差仅统计可比较的有限值，NaN / Inf 另列。绿色误差仅表示有限值部分符合容差，不代表整个输出通过；超容差倍数按 ≤10、≤100、>100 逐级加深红色。错误比例按 <1%、<10%、≥10% 加深红色，任一错误仍判失败。误差列颜色依据该输出最大超容差倍数，未记录时不着色。"),
-    el("div", {class:"table-wrap"}, el("table", {class:"grid"},
-      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "含非有限值元素", "错误连续段数", "空间形态", "被测侧 NaN", "参考侧 NaN", "被测侧 +Inf", "参考侧 +Inf", "被测侧 −Inf", "参考侧 −Inf", "同位置同类型", "位置或类型不同", "仅被测侧非有限", "仅参考侧非有限", "有限值元素", "有限值失败"].map(t => el("th", {}, t)))),
-      el("tbody", {}, rows.map(({relation,index,output,result,m,run}) => el("tr", {}, [
-        relation, "S" + index, output, result, m.dtype,
-        m.shape == null ? null : JSON.stringify(m.shape),
-        String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"),
-        m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : m.mismatch_ratio < 1 && m.mismatch_ratio > 0.9999 ? ">99.99%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"),
-        m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol,
-        m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max,
-        m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, patternText(m.spatial_pattern), m.nonfinite_evidence?.actual.nan, m.nonfinite_evidence?.reference.nan,
-        m.nonfinite_evidence?.actual.pos_inf, m.nonfinite_evidence?.reference.pos_inf,
-        m.nonfinite_evidence?.actual.neg_inf, m.nonfinite_evidence?.reference.neg_inf,
-        m.nonfinite_evidence?.aligned, m.nonfinite_evidence?.different,
-        m.nonfinite_evidence?.actual_only, m.nonfinite_evidence?.reference_only,
-        m.finite_pairs, m.finite_mismatches
-        ].map((v, column) => el("td", { class: cellTone(column, v, m), title: v == null ? (missingMetric(column, m) === "无有限值" ? "没有双方均为有限值的元素，无法计算数值误差；请查看 NaN / Inf 失败元素" : "未记录或不适用") : String(v), style: { whiteSpace: "nowrap" } },
-        v == null ? (column >= 20 ? "未记录" : missingMetric(column, m)) : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v))))))));
+  if (rows.length) {
+    const finiteHeaders = ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "错误连续段数", "空间形态", "有限值元素", "有限值失败"];
+    const nonfiniteHeaders = ["比较双方", "Shape", "输出", "对比结果", "NaN 失败元素", "Inf 失败元素", "含非有限值元素", "被测侧 NaN", "参考侧 NaN", "被测侧 +Inf", "参考侧 +Inf", "被测侧 −Inf", "参考侧 −Inf", "同位置同类型", "位置或类型不同", "仅被测侧非有限", "仅参考侧非有限"];
+    const finiteValues = m => [m.dtype, m.shape == null ? null : JSON.stringify(m.shape), String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"), m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"), m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol, m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max, m.error_runs, patternText(m.spatial_pattern), m.finite_pairs, m.finite_mismatches];
+    const nonfiniteValues = m => [m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.nonfinite_evidence?.actual.nan, m.nonfinite_evidence?.reference.nan, m.nonfinite_evidence?.actual.pos_inf, m.nonfinite_evidence?.reference.pos_inf, m.nonfinite_evidence?.actual.neg_inf, m.nonfinite_evidence?.reference.neg_inf, m.nonfinite_evidence?.aligned, m.nonfinite_evidence?.different, m.nonfinite_evidence?.actual_only, m.nonfinite_evidence?.reference_only];
+    const makeTable = (headers, values, title) => {
+      const body = rows.map(({relation,index,output,result,m}) => {
+        const vals = values(m);
+        const cells = [relation, "S" + index, output, result, ...vals].map((v, column) =>
+          el("td", {class:cellTone(column, v, m), title:v == null ? "未记录或不适用" : String(v), style:{whiteSpace:"nowrap"}},
+            v == null ? "—" : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v));
+        return el("tr", {}, cells);
+      });
+      return el("section", {class:"accuracy-table"}, el("h4", {}, title), el("div", {class:"table-wrap"}, el("table", {class:"grid"}, el("thead", {}, el("tr", {}, headers.map(t => el("th", {}, t)))), el("tbody", {}, body))));
+    };
+    out.push(el("h3", {}, "精度对比"), el("p", {class:"muted small"}, "有限值误差与非有限值异常分开统计。"), makeTable(finiteHeaders, finiteValues, "有限值误差"), makeTable(nonfiniteHeaders, nonfiniteValues, "非有限值统计"));
+  }
   out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)
     : el("div", { class: "muted" }, "未保存错误日志"));
