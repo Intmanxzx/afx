@@ -176,6 +176,13 @@ def complete(store: Store, principal: Principal, task_id: int, body: dict):
                 mark_unsupported_head(conn, task)
 
             if task["issue_id"]:
+                if terminal_reason == 'environment_changed':
+                    conn.execute("UPDATE retest_tasks SET status='invalid',result='invalid',detail=?,finished_at=?, "
+                                 "lease_id=NULL,lease_expires_at=NULL WHERE issue_id=? AND round_no=? "
+                                 "AND status IN ('pending','leased')",
+                                 (terminal_reason, now_ms(), task['issue_id'], task['round_no']))
+                    event(conn, task['issue_id'], principal.user_id, 'environment_changed', None, None,
+                          f"round {task['round_no']}: remaining tasks invalidated; submit a new verification")
                 _maybe_finish(conn, task["issue_id"], task["round_no"])
             return {"task_id": task_id, "result": "invalid", "detail": terminal_reason}
         rows = []

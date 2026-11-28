@@ -24,8 +24,8 @@ class Lease(RequestKey):
 
 class Verify(RequestKey):
     lease_id: Optional[str] = None
-    fix_version: Optional[str] = Field(default=None, min_length=1, max_length=64)
-    fix_sha256: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
+    fix_version: str = Field(min_length=1, max_length=64)
+    fix_sha256: str = Field(pattern='^[0-9a-f]{64}$')
     fix_ref: Optional[str] = Field(default=None, max_length=512)
 
 

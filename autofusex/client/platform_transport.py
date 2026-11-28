@@ -673,6 +673,20 @@ def installed_packages(env: dict | None = None) -> dict:
     return {"af-mlir": package, "af-legacy": package}
 
 
+def task_package_changed(task, installed):
+    """Compare the server target, including when replaying a persisted claim."""
+    required = task.get('required', {})
+    if not required or required.get('version') == '*':
+        return False
+    return installed.get(required['backend']) != {
+        'version': required['version'], 'sha256': required['sha256']}
+
+
+def fresh_installed():
+    from autofusex.execution.environment import collect
+    return installed_packages(collect())
+
+
 class Client:
     def __init__(self, api: API, results_db: str, state_path: Path, *, devices=(), retest_db=None,
                  afx_command=None, interval=30.0):
@@ -799,7 +813,7 @@ class Client:
 
     def retest_once(self) -> int:
         """Claim and run retest tasks this client can serve. Returns the number of tasks finished."""
-        installed = installed_packages(self.environment())
+        installed = fresh_installed()
         env = self.identity()
         if not installed or not self.devices:
             return 0
@@ -818,10 +832,22 @@ class Client:
             self.busy = False
         return len(tasks)
 
+    def _reject_changed_task(self, task, claimed):
+        current = fresh_installed()
+        if current == claimed and not task_package_changed(task, current):
+            return False
+        self.api.call('POST', f"/api/client/retests/{task['task_id']}/complete", {
+            'request_key': f"environment-{task['task_id']}-{task['lease_id']}",
+            'lease_id': task['lease_id'], 'exec_uuids': [],
+            'installed': current or claimed, 'terminal_reason': 'environment_changed'})
+        return True
+
     def _run_task(self, task: dict, device: str, installed: dict) -> None:
         """Replay one retest task. Cards are shared with the running fuzz job: when the card is busy
         the replay waits its turn (each replay already waits up to 60 s for the card lock) and is
         retried with backoff on the next card, so busy-card attempts are never reported as results."""
+        if self._reject_changed_task(task, installed):
+            return
         if task["case_source"] != "nnsmith":
             log.warning("task %s: %s cases are not executable by this client yet", task["task_id"], task["case_source"])
             return  # lease expires and the server marks it invalid after retries
@@ -860,6 +886,8 @@ class Client:
         if not ids:
             log.warning("task %s produced no usable results; it will be re-queued when its lease expires", task["task_id"])
             return
+        if self._reject_changed_task(task, installed):
+            return
         mapper = Mapper(self.retest_db)
         run = {"run_uuid": task["run_uuid"][:64], "kind": task["run_kind"]}
         statuses = upload_new(self.api, mapper, self.state, self.counters, key_prefix=f"task{task['task_id']}",
@@ -867,6 +895,8 @@ class Client:
         uploaded = [i for i, s in statuses.items() if s in ("accepted", "duplicate")]
         if not uploaded:
             log.warning("task %s: nothing accepted: %s", task["task_id"], statuses)
+            return
+        if self._reject_changed_task(task, installed):
             return
         self.api.call("POST", f"/api/client/retests/{task['task_id']}/complete", {
             "request_key": f"complete-{task['task_id']}-{task['lease_id'][:8]}", "lease_id": task["lease_id"],
