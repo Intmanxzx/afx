@@ -257,3 +257,37 @@ def test_migrate_deployed_invalid_coverage_to_unsupported(tmp_path):
     assert group['results'] == {'pass': 1}
     assert group['valid_total'] == 1
     assert w.store.reader().execute('SELECT pre_invalid_status FROM executions').fetchone()[0] is None
+
+
+@pytest.mark.parametrize('repetitions', [1, 3])
+def test_case_backends_stay_with_one_user(tmp_path, repetitions):
+    w = World(tmp_path)
+    w.upload([item('grouped-'+str(i), i) for i in range(1, 6)])
+    body = dict(request_key='grouped', case_keys=[seed(i) for i in range(1, 6)],
+                backends=['af-mlir', 'af-legacy'], user_ids=['dev', 'root'],
+                repetitions=repetitions)
+    assert retests.create_manual(w.store, w.admin, dict(body))['tasks'] == 10 * repetitions
+    assert retests.create_manual(w.store, w.admin, dict(body))['tasks'] == 10 * repetitions
+    conn = w.store.reader()
+    rows = conn.execute('SELECT case_id,COUNT(DISTINCT assigned_user),COUNT(*) FROM retest_tasks GROUP BY case_id').fetchall()
+    assert len(rows) == 5
+    assert all(r[1:] == (1, 2 * repetitions) for r in rows)
+    assert dict(conn.execute('SELECT assigned_user,COUNT(*) FROM retest_tasks GROUP BY assigned_user')) == {
+        'dev': 6 * repetitions, 'root': 4 * repetitions}
+
+
+def test_case_assignment_balances_tasks_and_ignores_skipped_cases(tmp_path):
+    w = World(tmp_path)
+    w.upload([item('varying-'+str(i), i) for i in range(1, 5)])
+    with w.store.write() as conn:
+        conn.execute('DELETE FROM execution_heads WHERE case_id=(SELECT case_id FROM cases WHERE case_key=?)', (seed(1),))
+        conn.execute("UPDATE execution_heads SET backend='af-legacy' WHERE case_id=(SELECT case_id FROM cases WHERE case_key=?)", (seed(2),))
+    # Case 2 has two architectures across its requested backends; subsequent
+    # single-architecture cases should both go to the other user to catch up.
+    w.upload([dict(item('extra-chip', 2), npu_arch='950')])
+    retests.create_manual(w.store, w.admin, dict(request_key='varying',
+        case_keys=[seed(i) for i in range(1, 5)], backends=['af-mlir', 'triton-npu'],
+        user_ids=['dev', 'root']))
+    conn = w.store.reader()
+    owners = {r[0]: r[1] for r in conn.execute('SELECT c.case_key,t.assigned_user FROM retest_tasks t JOIN cases c USING(case_id)')}
+    assert owners == {seed(2): 'dev', seed(3): 'root', seed(4): 'root'}

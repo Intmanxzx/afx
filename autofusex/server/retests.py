@@ -409,7 +409,11 @@ def create_manual(store: Store, principal: Principal, body: dict):
             if not conn.execute("SELECT 1 FROM users WHERE user_id=? AND status='active' AND role IN ('admin','developer')", (user,)).fetchone():
                 raise IssueError("invalid", f"inactive or unknown user: {user}")
         now, created, skipped, excluded = now_ms(), 0, [], 0
+        assigned_counts = dict.fromkeys(users, 0)
         for case_id in _case_ids(conn, keys):
+            # Keep every backend/repetition of a case on one user, then balance
+            # the next case against the number of tasks assigned in this batch.
+            assigned_user = min(users, key=assigned_counts.__getitem__)
             for backend in dict.fromkeys(backends):
                 arches = [arch] if arch else [r[0] for r in conn.execute(
                     "SELECT DISTINCT npu_arch FROM execution_heads WHERE case_id=? AND backend=?", (case_id, backend))]
@@ -428,9 +432,10 @@ def create_manual(store: Store, principal: Principal, body: dict):
                             "INSERT INTO retest_tasks(issue_id, round_no, case_id, npu_arch, backends, required_backend, "
                             "required_version, required_sha256, status, created_at, task_kind, requested_by, batch, assigned_user) "
                             "VALUES('', 0, ?,?,?,?, '*', '*', 'pending', ?, 'retest', ?, ?, ?)",
-                            (case_id, target_arch, f"cpu,{backend}", backend, now, principal.user_id, request_key, users[created % len(users)]))
+                            (case_id, target_arch, f"cpu,{backend}", backend, now, principal.user_id, request_key, assigned_user))
                         conn.execute("UPDATE retest_tasks SET case_revision=?,force_coverage=? WHERE task_id=last_insert_rowid()", (revision, int(body.get('force', False))))
                         created += 1
+                        assigned_counts[assigned_user] += 1
         return {"batch": request_key, "tasks": created, "skipped_without_arch": len(skipped), "skipped_no_coverage": excluded}
     return idempotent(store, principal, "retest-manual", body.pop("request_key", None), body, action)
 
