@@ -64,6 +64,7 @@ def standalone(store, task, record):
     from autofusex.execution.scheduling.budgets import Budget, write_policy
     spec = json.loads((store.home / 'task.json').read_text())
     ex = spec['execution']; perf = spec['evaluation']['performance']
+    devices = execution_devices(ex['devices'])
     directory = record.parent / ('queue-' + str(task['task_id']) + '-' + task['lease_id'])
     directory.mkdir(exist_ok=True)
     ledger = TaskLedger(directory / 'tasks.sqlite')
@@ -76,20 +77,42 @@ def standalone(store, task, record):
         if backend == 'cpu':
             continue
         identity = str(uuid.uuid5(uuid.NAMESPACE_URL, str(directory) + ':' + backend))
-        execution = ExecutionConfig(backend, ex['devices'][0], 1, scheduling='staged',
+        execution = ExecutionConfig(backend, devices[0], 1, scheduling='staged',
             static_only=ex['static_only'] or not seed.dynamic, batch_id=task['run_uuid'], save_results=True)
         tasks.append((seed, execution, evaluation, identity))
     if not tasks:
         raise ValueError('retest has no executable backend')
     saved = dict(lease_id=task['lease_id'], queue=str(ledger.path), database=str(directory/'results.sqlite'),
-                 evidence_version=1, standalone=True, task_ids=[t[3] for t in tasks], devices=ex['devices'],
+                 evidence_version=1, standalone=True, task_ids=[t[3] for t in tasks], devices=devices,
                  specifications=[(str(t[0]), asdict(t[1]), asdict(t[2]), t[3]) for t in tasks])
     atomic(record, saved)
     return admit(record, saved)
 
 
+def execution_devices(selection):
+    if 'all' in selection:
+        from autofusex.execution.scheduling.devices import device_inventory_info
+        selection = device_inventory_info()['devices']
+    if not selection or any(not device.startswith('npu:') or not device[4:].isdigit() for device in selection):
+        raise ValueError('retest requires explicit logical NPU devices')
+    return list(selection)
+
+
 def admit(record, saved):
     ledger = TaskLedger(Path(saved['queue']))
+    if saved.get('standalone') and 'all' in saved['devices']:
+        devices = execution_devices(saved['devices'])
+        saved['devices'] = devices
+        for _, execution, _, _ in saved['specifications']:
+            execution['device'] = devices[0]
+        with ledger._connection() as db:
+            for identity in saved['task_ids']:
+                row = db.execute('SELECT execution,state FROM tasks WHERE id=?', (identity,)).fetchone()
+                if row and row['state'] == 'pending':
+                    execution = json.loads(row['execution']); execution['device'] = devices[0]
+                    db.execute('UPDATE tasks SET execution=? WHERE id=?', (json.dumps(execution), identity))
+                    db.execute('UPDATE task_devices SET devices=? WHERE task_id=?', (json.dumps(devices), identity))
+        atomic(record, saved)
     # Only the manager admits retests. A persisted record survives a crash before enqueue.
     with ledger._connection() as db:
         existing = {r[0] for r in db.execute('SELECT id FROM tasks')}
