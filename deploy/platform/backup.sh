@@ -20,6 +20,7 @@ AFX_BIN=${AFX_BIN:-afx}
 STAGING=${BACKUP_STAGING:-/var/tmp/afx-platform-backup}
 KEEP_CORE_DAYS=${BACKUP_KEEP_CORE_DAYS:-7}
 KEEP_FULL_DAYS=${BACKUP_KEEP_FULL_DAYS:-14}
+COMPRESSION_LEVEL=${BACKUP_COMPRESSION_LEVEL:-1}
 SSH_OPTS=${BACKUP_SSH_OPTS:-"-o BatchMode=yes -o ConnectTimeout=20"}
 
 mkdir -p "$STAGING"
@@ -31,7 +32,8 @@ FLAG=""
 # Remove leftovers of an earlier failed run (only this script's own files).
 find "$STAGING" -maxdepth 1 -type f -name 'afx-platform-*.tar*' -mmin +60 -delete
 
-OUT=$("$AFX_BIN" platform --data "$AFX_DATA" backup --out "$STAGING" --tmp "$STAGING" $FLAG)
+OUT=$("$AFX_BIN" platform --data "$AFX_DATA" backup --out "$STAGING" --tmp "$STAGING" \
+  --compression-level "$COMPRESSION_LEVEL" $FLAG)
 ARCHIVE=$(printf '%s' "$OUT" | sed -n 's/.*"archive": *"\([^"]*\)".*/\1/p')
 [ -n "$ARCHIVE" ] && [ -f "$ARCHIVE" ] || { echo "backup failed: $OUT" >&2; exit 1; }
 

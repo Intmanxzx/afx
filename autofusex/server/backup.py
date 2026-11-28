@@ -37,16 +37,19 @@ def _snapshot(source: Path, target: Path) -> None:
         src.close()
 
 
-def _gzip(source: Path, target: Path) -> str:
+def _gzip(source: Path, target: Path, *, compresslevel: int = 1) -> str:
+    if not 1 <= compresslevel <= 9:
+        raise ValueError("compression level must be between 1 and 9")
     digest = hashlib.sha256()
-    with open(source, "rb") as fin, gzip.open(target, "wb", compresslevel=6) as fout:
+    with open(source, "rb") as fin, gzip.open(target, "wb", compresslevel=compresslevel) as fout:
         while chunk := fin.read(_CHUNK):
             digest.update(chunk)
             fout.write(chunk)
     return digest.hexdigest()
 
 
-def create(data_dir, out_dir, *, include_content: bool = True, tmp_dir=None) -> Path:
+def create(data_dir, out_dir, *, include_content: bool = True, tmp_dir=None,
+           compression_level: int = 1) -> Path:
     """Write <out_dir>/afx-platform-<UTC>[-core].tar and return its path."""
     data_dir, out_dir = Path(data_dir), Path(out_dir)
     if not (data_dir / "core.db").exists():
@@ -65,7 +68,8 @@ def create(data_dir, out_dir, *, include_content: bool = True, tmp_dir=None) -> 
                 with sqlite3.connect(raw) as conn:
                     manifest["ingest_seq"] = conn.execute(
                         "SELECT value FROM meta WHERE key='ingest_seq'").fetchone()[0]
-            manifest["files"][member + ".gz"] = {"sha256": _gzip(raw, work / (member + ".gz")),
+            manifest["files"][member + ".gz"] = {"sha256": _gzip(
+                raw, work / (member + ".gz"), compresslevel=compression_level),
                                                  "raw_size": raw.stat().st_size}
             raw.unlink()
         secret = (data_dir / "secret.key").read_bytes()
