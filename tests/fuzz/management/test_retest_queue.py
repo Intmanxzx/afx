@@ -6,6 +6,22 @@ from autofusex.execution.scheduling.budgets import Budget, write_policy
 from autofusex.execution.scheduling.placement import candidates
 
 
+def test_retest_without_active_fuzz_creates_only_explicit_tasks(tmp_path):
+    Store(tmp_path)
+    spec = {'execution': {'devices': ['npu:0'], 'static_only': False},
+            'evaluation': {'performance': {'enabled': False, 'warmup_steps': 1, 'measured_steps': 1}}}
+    (tmp_path/'task.json').write_text(json.dumps(spec))
+    task = dict(task_id=77, lease_id='isolated', run_uuid='retest-run',
+                case_key='F0SQR0WLFHGE5JG59LC7NA60RQ1', backends=['af-mlir'])
+    saved = submit(tmp_path, task)
+    assert saved['standalone']
+    ledger = TaskLedger(saved['queue'])
+    assert len(ledger.page()['items']) == 1
+    assert submit(tmp_path, task)['task_ids'] == saved['task_ids']
+    with ledger._connection() as db:
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='campaign'").fetchone()
+
+
 def test_retest_inherits_active_run_and_is_idempotent(tmp_path):
     store = Store(tmp_path)
     directory = tmp_path / 'runs' / 'one'

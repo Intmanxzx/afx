@@ -28,14 +28,19 @@ def tick(manager):
     if not path.exists():
         return
     client = json.loads(path.read_text())
-    command = store.home / 'daemon-control.json'
-    desired = json.loads(command.read_text()).get('state') if command.exists() else None
-    enabled = (client.get('mode') == 'managed' and client.get('platform', {}).get('retest', False)
-               and bool(manager.processes) and desired != 'stopped'
+    from autofusex.client.workload_control import retest_enabled
+    enabled = (client.get('mode') == 'managed' and retest_enabled(store)
                and store.get('client_switch', {}).get('state') not in {'draining', 'staging', 'requested', 'activating', 'stage_failed'})
     if not enabled:
+        child = getattr(manager, '_retest_process', None)
+        if store.get('retest_control', {}).get('state') == 'stopped' and child is not None and child.poll() is None:
+            # Let the owned scheduler cancel/reap workers and flush its receipt.
+            store.put('retest_stopping', True)
+            return
+        store.put('retest_stopping', False)
         stop(manager)
         return
+    store.put('retest_stopping', False)
     child = getattr(manager, '_retest_process', None)
     if child is not None:
         if child.poll() is None:
@@ -48,8 +53,12 @@ def tick(manager):
     with store.connect() as db:
         row = db.execute("SELECT manifest FROM environments WHERE id='local' AND state='ready'").fetchone()
     if row is None:
-        return
-    manifest = json.loads(row['manifest'])
+        from autofusex.client.local_session import _local_manifest
+        manifest = _local_manifest()
+        with store.connect() as db:
+            db.execute("INSERT OR IGNORE INTO environments VALUES ('local','local',?,'ready')", (json.dumps(manifest),))
+    else:
+        manifest = json.loads(row['manifest'])
     env = os.environ.copy()
     env.pop('PYTHONPATH', None)
     env.update(manifest['env'])

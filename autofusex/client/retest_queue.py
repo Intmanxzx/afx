@@ -13,7 +13,7 @@ from autofusex.execution.scheduling.budgets import read_policy
 from autofusex.client.paths import retest_directory
 
 
-def submit(home, task):
+def submit(home, task, *, independent=False):
     store = Store(home)
     record_dir = retest_directory(store.home)
     record = record_dir / ('task-' + str(int(task['task_id'])) + '.json')
@@ -23,6 +23,8 @@ def submit(home, task):
             return saved if saved.get('delivered') else admit(record, saved)
     with store.connect() as db:
         runs = list(db.execute("SELECT id FROM runs WHERE state='running'"))
+    if independent or not runs:
+        return standalone(store, task, record)
     if len(runs) != 1:
         raise ValueError('retest requires one active run')
     directory = store.home / 'runs' / runs[0]['id']
@@ -52,6 +54,35 @@ def submit(home, task):
         raise ValueError('retest has no executable backend')
     saved = dict(lease_id=task['lease_id'], queue=str(ledger.path), database=binding['database'], evidence_version=1,
                  task_ids=[t[3] for t in tasks], devices=ex['devices'],
+                 specifications=[(str(t[0]), asdict(t[1]), asdict(t[2]), t[3]) for t in tasks])
+    atomic(record, saved)
+    return admit(record, saved)
+
+
+def standalone(store, task, record):
+    """Prepare a finite replay queue when no fuzz executor owns a run."""
+    from autofusex.execution.scheduling.budgets import Budget, write_policy
+    spec = json.loads((store.home / 'task.json').read_text())
+    ex = spec['execution']; perf = spec['evaluation']['performance']
+    directory = record.parent / ('queue-' + str(task['task_id']) + '-' + task['lease_id'])
+    directory.mkdir(exist_ok=True)
+    ledger = TaskLedger(directory / 'tasks.sqlite')
+    budget = Budget(cpu_workers=1, compile_threads=1)
+    write_policy(ledger, budget)
+    seed = Seed.parse(task['case_key'])
+    evaluation = EvaluationConfig(performance=perf['enabled'], warmup_steps=perf['warmup_steps'], measured_steps=perf['measured_steps'])
+    tasks = []
+    for backend in task['backends']:
+        if backend == 'cpu':
+            continue
+        identity = str(uuid.uuid5(uuid.NAMESPACE_URL, str(directory) + ':' + backend))
+        execution = ExecutionConfig(backend, ex['devices'][0], 1, scheduling='staged',
+            static_only=ex['static_only'] or not seed.dynamic, batch_id=task['run_uuid'], save_results=True)
+        tasks.append((seed, execution, evaluation, identity))
+    if not tasks:
+        raise ValueError('retest has no executable backend')
+    saved = dict(lease_id=task['lease_id'], queue=str(ledger.path), database=str(directory/'results.sqlite'),
+                 evidence_version=1, standalone=True, task_ids=[t[3] for t in tasks], devices=ex['devices'],
                  specifications=[(str(t[0]), asdict(t[1]), asdict(t[2]), t[3]) for t in tasks])
     atomic(record, saved)
     return admit(record, saved)
@@ -91,6 +122,9 @@ def _synchronize(client, home):
     from autofusex.client.platform_transport import Mapper, upload_new, fresh_installed
     from autofusex.client.daemon import request
     installed = fresh_installed()
+    with Store(home).connect() as db:
+        if db.execute("SELECT 1 FROM runs WHERE state IN ('preparing','draining','cancelling','needs_attention') LIMIT 1").fetchone():
+            return 0
     if not installed or not client.devices:
         return 0
     env = client.identity()
@@ -98,7 +132,7 @@ def _synchronize(client, home):
         'request_key': 'claim-' + str(uuid.uuid4()),
         'machine_id': env.get('installation_id') or __import__('socket').gethostname(),
         'npu_arch': env.get('device_model') or 'unknown',
-        'installed': installed, 'coverage_environment': env, 'limit': len(client.devices)})['tasks']
+        'installed': installed, 'coverage_environment': env, 'limit': 1})['tasks']
     finished = 0
     for task in tasks:
         if task['case_source'] != 'nnsmith':
@@ -110,6 +144,9 @@ def _synchronize(client, home):
         if saved.get('delivered'):
             continue
         ledger = TaskLedger(Path(saved['queue']))
+        if saved.get('standalone'):
+            from autofusex.workloads.fuzz.scheduling.hosting import launch
+            launch(ledger, saved['database'], [], foreground=True, devices=saved['devices'])
         rows = [ledger.get(identity) for identity in saved['task_ids']]
         if all(row['state'] in {'completed', 'cancelled'} for row in rows) and any(row['state'] == 'cancelled' for row in rows):
             reason = '; '.join(sorted({row['reason'] or 'cancelled' for row in rows if row['state'] == 'cancelled'}))

@@ -742,6 +742,11 @@ ALTER TABLE retest_tasks ADD COLUMN force_coverage INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE retest_tasks ADD COLUMN coverage_environment_key TEXT;
 """))
 
+CORE.append((34, """
+ALTER TABLE clients ADD COLUMN workload_controls TEXT;
+ALTER TABLE clients ADD COLUMN workload_states TEXT;
+"""))
+
 CONTENT = [
     (1, """
 CREATE TABLE contents(

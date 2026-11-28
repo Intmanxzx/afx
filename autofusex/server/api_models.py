@@ -119,6 +119,7 @@ class ClientUpdate(RequestKey):
 class ClientControl(RequestKey):
     client_id: int
     state: Literal['running', 'stopped', 'restart']
+    workload: Optional[Literal['fuzz', 'retest']] = None
 
 
 class Drafts(RequestKey):

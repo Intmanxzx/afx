@@ -35,7 +35,11 @@ def synchronize(manager, api, machine):
     if manager.active:return
     # Respect explicit local stop and do not replace a running task's configuration.
     command=store.home/'daemon-control.json'
-    if command.exists() and json.loads(command.read_text()).get('state')=='stopped':return
+    if command.exists():
+        control = json.loads(command.read_text())
+        if control.get('state') == 'stopped' and control.get('workload') != 'fuzz':return
+    from autofusex.client.workload_control import retest_enabled
+    if store.get('retest_control') and not retest_enabled(store):return
     job=api.call('POST','/api/source-jobs/claim',dict(machine_id=machine))['job']
     if not job:return
     record=receive(store.home,job['bundle'])

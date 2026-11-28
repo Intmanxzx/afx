@@ -51,12 +51,40 @@ def test_runner_uses_execution_environment_and_does_not_duplicate(tmp_path, monk
     assert manager._retest_process is None
 
 
-def test_stopped_client_does_not_claim(tmp_path, monkeypatch):
+def test_explicitly_stopped_client_does_not_claim(tmp_path, monkeypatch):
     store=Store(tmp_path)
     (tmp_path/'client.json').write_text(json.dumps({'mode':'managed','platform':{'retest':True}}))
+    (tmp_path/'daemon-control.json').write_text(json.dumps({'state':'stopped'}))
     spawn=Mock();monkeypatch.setattr(retests.subprocess,'Popen',spawn)
     retests.tick(SimpleNamespace(store=store,processes={}))
     spawn.assert_not_called()
+
+
+def test_retest_runs_without_fuzz_and_switches_independently(tmp_path, monkeypatch):
+    from autofusex.client.workload_control import receive, states
+    store = Store(tmp_path)
+    (tmp_path/'client.json').write_text(json.dumps({'mode':'managed','platform':{'retest':False}}))
+    with store.connect() as db:
+        db.execute("INSERT INTO environments VALUES ('local','local',?,'ready')",
+                   (json.dumps(dict(python='/execution/bin/python', env={})),))
+    manager = SimpleNamespace(store=store, processes={})
+    child = Mock(pid=123); child.poll.return_value = None
+    spawn = Mock(return_value=child)
+    monkeypatch.setattr(retests.subprocess, 'Popen', spawn)
+    kill = Mock(); monkeypatch.setattr(retests.os, 'killpg', kill)
+    receive(store, dict(fuzz=dict(state='stopped', request_id='f1'),
+                        retest=dict(state='running', request_id='r1')))
+    retests.tick(manager)
+    spawn.assert_called_once()
+    assert states(store)['retest'] == dict(state='running', request_id='r1')
+    receive(store, dict(retest=dict(state='stopped', request_id='r2')))
+    retests.tick(manager)
+    kill.assert_not_called()
+    assert states(store)['retest']['state'] == 'stopping'
+    child.poll.return_value = 0
+    retests.tick(manager)
+    assert states(store)['retest']['state'] == 'stopped'
+    assert json.loads((tmp_path/'daemon-control.json').read_text())['request_id'] == 'f1'
 
 
 @pytest.mark.parametrize('already_running', [False, True])

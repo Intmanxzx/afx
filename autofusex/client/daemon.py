@@ -47,8 +47,11 @@ class Manager:
             from autofusex.client.session_control import start_requested
             return start_requested(self, dump=body.get('dump'))
         if action=='platform_retest':
+            from autofusex.client.workload_control import retest_enabled
+            if not retest_enabled(self.store):
+                raise ValueError('retest execution is stopped')
             from autofusex.client.retest_queue import submit
-            return submit(self.store.home, body['task'])
+            return submit(self.store.home, body['task'], independent=True)
         if action=='fuzz_replay':
             from autofusex.client.replay import submit_fuzz
             return submit_fuzz(self.store, body['options'], self.processes)

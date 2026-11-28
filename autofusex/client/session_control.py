@@ -47,6 +47,11 @@ def reconcile(manager):
             from autofusex.client.tasks import action
             started = result.get('started', time.time()) if result.get('request_id') == identity else time.time()
             for run in set(manager.processes) | set(unresolved):
+                if command.get('workload') == 'fuzz':
+                    with store.connect() as db:
+                        row = db.execute('SELECT spec FROM runs WHERE id=?', (run,)).fetchone()
+                    if row and json.loads(row['spec']).get('spec', {}).get('kind') != 'fuzz_task':
+                        continue
                 # Recovered workers retain the task lock and read their private
                 # control file. Never signal a PID recovered from the database.
                 if run not in manager.processes:
@@ -54,14 +59,22 @@ def reconcile(manager):
                     atomic(store.home / 'runs' / run / 'control.json', {'action': 'force-stop' if time.time() - started > 300 else 'stop'})
                     continue
                 action(store, run, 'force-stop' if time.time() - started > 300 else 'stop', manager.processes)
-            state = 'stopping' if manager.processes or unresolved or manager.active else 'stopped'
+            active_runs = set(manager.processes) | set(unresolved)
+            if command.get('workload') == 'fuzz':
+                with store.connect() as db:
+                    active_runs = {run for run in active_runs if (row := db.execute('SELECT spec FROM runs WHERE id=?', (run,)).fetchone())
+                                   and json.loads(row['spec']).get('spec', {}).get('kind') == 'fuzz_task'}
+            state = 'stopping' if active_runs or manager.active else 'stopped'
             store.put('session_control', dict(request_id=identity, state=state,
                       status='running' if state == 'stopping' or restarting else 'succeeded',
                       restart_drained=restarting and state == 'stopped', started=started))
         elif not manager.active:
             from autofusex.client.local_session import start
             if result.get('request_id') != identity or not result.get('run_ids'):
-                started = manager.start_session() if hasattr(manager, 'start_session') else start(manager)
+                if command.get('workload') == 'fuzz':
+                    started = start(manager, fuzz_only=True)
+                else:
+                    started = manager.start_session() if hasattr(manager, 'start_session') else start(manager)
                 runs = started.get('run_ids') or [started['run_id']]
                 store.put('session_control', dict(request_id=identity, run_ids=runs, state='starting', status='running', restart_drained=restarting))
             else:
