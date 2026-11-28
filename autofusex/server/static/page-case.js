@@ -173,32 +173,47 @@ function renderExecution(d, shape, requestedDimension = null) {
     m:{max_abs:x.max_abs_err, max_rel:x.max_rel_err}, run:x});
   if (rows.length && issueDimension !== "function" && issueDimension !== "performance") {
     const finiteHeaders = ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "错误连续段数", "错误形态"];
-    const detailHeaders = ["比较双方", "Shape", "输出", "对比结果", "有限值错误元素", "NaN数量（被测/标杆）", "+Inf数量（被测/标杆）", "−Inf数量（被测/标杆）"];
+    const detailHeaders = ["比较双方", "Shape", "输出", "对比结果", "有限值错误元素", "非有限错误元素", "非有限错误原因", "NaN数量（被测/标杆）", "+Inf数量（被测/标杆）", "−Inf数量（被测/标杆）"];
     const finiteValues = m => [m.dtype, m.shape == null ? null : JSON.stringify(m.shape), String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"), m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"), m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol, m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max, m.error_runs, patternText(m.spatial_pattern, m)];
-    const categoryText = (failed, total) => `${failed ?? 0}/${total ?? 0}`;
-    const unionCount = (e, key) => {
-      const actual = Number(e?.actual?.[key] || 0), reference = Number(e?.reference?.[key] || 0), aligned = Number(e?.aligned?.[key] || 0);
-      return actual + reference - aligned;
-    };
+    const categoryText = (failed, total) => `${failed ?? "—"}/${total ?? "—"}`;
     const detailValues = m => {
-      const e = m.nonfinite_evidence;
-      const nanTotal = e ? unionCount(e, "nan") : Number(m.nan_mismatches || 0);
-      const infTotal = e ? unionCount(e, "pos_inf") + unionCount(e, "neg_inf") : Number(m.inf_mismatches || 0);
-      const sideCount = key => e ? Number(e.actual?.[key] || 0) + " / " + Number(e.reference?.[key] || 0) : null;
-      return [categoryText(m.finite_mismatches, m.finite_pairs),
+      // Older summaries omit these fields; aggregate complete output evidence.
+      const outputs = m.outputs || [];
+      const sum = key => m[key] ?? (outputs.length && outputs.every(o => o[key] != null)
+        ? outputs.reduce((total, o) => total + o[key], 0) : null);
+      const finiteFailed = sum("finite_mismatches"), finitePairs = sum("finite_pairs");
+      const failed = sum("mismatches"), nonfinite = sum("nonfinite");
+      // Finite and nonfinite failures are disjoint; NaN/Inf counts may overlap for complex values.
+      const nonfiniteFailed = failed != null && finiteFailed != null ? failed - finiteFailed : null;
+      const nanFailed = sum("nan_mismatches"), infFailed = sum("inf_mismatches");
+      const evidence = m.nonfinite_evidence ? [m.nonfinite_evidence] : outputs.map(o => o.nonfinite_evidence);
+      const sideCount = key => evidence.length && evidence.every(e => e?.actual?.[key] != null && e?.reference?.[key] != null)
+        ? evidence.reduce((n, e) => n + e.actual[key], 0) + " / " + evidence.reduce((n, e) => n + e.reference[key], 0) : null;
+      const reason = nanFailed == null && infFailed == null ? null
+        : [nanFailed > 0 ? `NaN 错误 ${nanFailed}` : null, infFailed > 0 ? `Inf 错误 ${infFailed}` : null].filter(Boolean).join("；") || "无";
+      return [categoryText(finiteFailed, finitePairs), categoryText(nonfiniteFailed, nonfinite), reason,
         sideCount("nan"), sideCount("pos_inf"), sideCount("neg_inf")];
     };
-    const makeTable = (headers, values, title) => {
+    const makeTable = (headers, values, title, isDetail = false) => {
+      const tone = (column, value, m) => {
+        if (!isDetail || column <= 3) return cellTone(column, value, m);
+        if ((column === 4 || column === 5) && typeof value === "string") {
+          const failed = Number(value.split("/")[0]);
+          return Number.isFinite(failed) ? failed > 0 ? "accuracy-high" : "accuracy-ok" : "";
+        }
+        if (column === 6) return value == null ? "" : value === "无" ? "accuracy-ok" : "accuracy-high";
+        return "";
+      };
       const body = rows.map(({relation,index,output,result,m}) => {
         const vals = values(m);
         const cells = [relation, "S" + index, output, result, ...vals].map((v, column) =>
-          el("td", {class:cellTone(column, v, m), title:v == null ? "未记录或不适用" : String(v), style:{whiteSpace:"nowrap"}},
-            v == null ? "—" : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v));
+          el("td", {class:tone(column, v, m), title:v == null ? "未记录或不适用" : isDetail && column === 5 ? "非有限值中判错的元素数 / 含非有限值的元素数；双方均为 NaN 仍可被严格比较判错" : String(v), style:{whiteSpace:"nowrap"}},
+            v == null ? "—" : !isDetail && column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v));
         return el("tr", {}, cells);
       });
       return el("section", {class:"accuracy-table"}, el("h4", {}, title), el("div", {class:"table-wrap"}, el("table", {class:"grid"}, el("thead", {}, el("tr", {}, headers.map(t => el("th", {}, t)))), el("tbody", {}, body))));
     };
-    out.push(el("h3", {}, "精度对比"), makeTable(finiteHeaders, finiteValues, "统计总览"), makeTable(detailHeaders, detailValues, "统计细分"));
+    out.push(el("h3", {}, "精度对比"), makeTable(finiteHeaders, finiteValues, "统计总览"), makeTable(detailHeaders, detailValues, "统计细分", true));
   }
   if (issueDimension !== "accuracy" && issueDimension !== "performance") out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)
