@@ -97,6 +97,11 @@ for (const [dimension, expected, cls] of [['function','构图失败 · AF前端'
   assert(text(summary.children[2]).includes(expected));
   if (dimension !== 'function') assert.equal(summary.children[2].attrs.class, 'chip ' + cls);
 }
+const accuracy = {...fixture, dimension:"accuracy", category:"Reduce · finite · 2-10x · <=1% · contiguous · "};
+const accuracyDescription = "Reduce/有限值/超容差:2–10x/错误比例:≤1%/错误形态:连续";
+assert.equal(accuracyReason(accuracy), accuracyDescription);
+assert(text(issueCell(accuracy)).includes(accuracyDescription));
+assert.equal(accuracyReason({category:"Reduce"}), "Reduce");
 (async () => {
   await issueDrawer('F1');
   const rendered = drawerNodes.map(text).join('');
