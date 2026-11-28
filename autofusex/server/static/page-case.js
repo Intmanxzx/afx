@@ -119,22 +119,18 @@ function renderExecution(d, shape) {
     if (((column >= 8 && column <= 11) || column === 14) && m.elements > 0 && m.nonfinite === m.elements) return "无有限值";
     return "—";
   };
-  const nonfiniteText = (m, reference) => {
-    const e = m.nonfinite_evidence;
-    if (!e) return m.nonfinite > 0 ? "涉及 NaN/Inf，双方分布未记录，需复测" : "未记录";
-    const counts = x => "NaN " + x.nan + "，+Inf " + x.pos_inf + "，−Inf " + x.neg_inf;
-    return label(d.backend) + "：" + counts(e.actual) + "；" + reference + "：" + counts(e.reference)
-      + "；非有限值同位置同类型 " + e.aligned + "，位置或类型不同 " + e.different
-      + "（仅 " + label(d.backend) + " " + e.actual_only + "，仅 " + reference + " " + e.reference_only + "）"
-      + "；有限值对比 " + m.finite_pairs + " 个，失败 " + m.finite_mismatches + " 个"
-      + (e.aligned_nan > 0 && m.nan_mismatches > 0 ? "；当前规则将 NaN 判失败，即使双方同位置都是 NaN" : "");
-  };
   const cellTone = (column, value, m) => {
     if (value == null) return "";
     if (column === 3) return ["通过", "一致"].includes(value) ? "accuracy-ok" : ["失败", "不一致", "runtime_fail", "compile_fail", "timeout", "fail"].includes(value) ? "accuracy-high" : "";
     if (column === 6 || column === 7) return ratioTone(m.mismatch_ratio);
     if ((column >= 8 && column <= 11) || column === 14) return errorTone(m);
-    if (column >= 15 && column <= 17) return value === 0 ? "accuracy-ok" : "accuracy-high";
+    if (column >= 15 && column <= 16) return value === 0 ? "accuracy-ok" : "accuracy-high";
+    const evidence = m.nonfinite_evidence;
+    if (evidence && [20, 22, 24].includes(column)) {
+      const key = {20:"nan", 22:"pos_inf", 24:"neg_inf"}[column];
+      return evidence.actual[key] !== evidence.reference[key] ? "accuracy-high" : "";
+    }
+    if ([27, 28, 29, 31].includes(column)) return value > 0 ? "accuracy-high" : "accuracy-ok";
     return "";
   };
   const isReference = ["cpu", "eager-npu"].includes(d.backend);
@@ -166,9 +162,9 @@ function renderExecution(d, shape) {
     index:x.shape_index, output:"汇总", result:x.function_status !== "pass" ? "未比较" : isReference ? "参考" : x.accuracy_status || "—",
     m:{max_abs:x.max_abs_err, max_rel:x.max_rel_err}, run:x});
   if (rows.length) out.push(el("h3", {}, "精度对比"),
-    el("p", {class:"muted small"}, "S0、S1 表示本次执行的输入 Shape 组；每组下分别列出汇总和各输出指标。误差仅统计可比较的有限值，NaN / Inf 另列。绿色误差仅表示有限值部分符合容差，不代表整个输出通过；超容差倍数按 ≤10、≤100、>100 逐级加深红色。错误比例按 <1%、<10%、≥10% 加深红色，任一错误仍判失败。误差列颜色依据该输出最大超容差倍数，未记录时不着色。"),
+    el("p", {class:"muted small"}, "被测侧是“比较双方”左侧后端，参考侧是右侧后端。双方数量不同的被测侧单元格及位置/类型差异标红；数量相等不代表位置相同。S0、S1 表示本次执行的输入 Shape 组；每组下分别列出汇总和各输出指标。误差仅统计可比较的有限值，NaN / Inf 另列。绿色误差仅表示有限值部分符合容差，不代表整个输出通过；超容差倍数按 ≤10、≤100、>100 逐级加深红色。错误比例按 <1%、<10%、≥10% 加深红色，任一错误仍判失败。误差列颜色依据该输出最大超容差倍数，未记录时不着色。"),
     el("div", {class:"table-wrap"}, el("table", {class:"grid"},
-      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "含非有限值元素", "错误连续段数", "空间形态", "非有限值说明"].map(t => el("th", {}, t)))),
+      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "含非有限值元素", "错误连续段数", "空间形态", "被测侧 NaN", "参考侧 NaN", "被测侧 +Inf", "参考侧 +Inf", "被测侧 −Inf", "参考侧 −Inf", "同位置同类型", "位置或类型不同", "仅被测侧非有限", "仅参考侧非有限", "有限值元素", "有限值失败"].map(t => el("th", {}, t)))),
       el("tbody", {}, rows.map(({relation,index,output,result,m,run}) => el("tr", {}, [
         relation, "S" + index, output, result, m.dtype,
         m.shape == null ? null : JSON.stringify(m.shape),
@@ -176,9 +172,14 @@ function renderExecution(d, shape) {
         m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : m.mismatch_ratio < 1 && m.mismatch_ratio > 0.9999 ? ">99.99%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"),
         m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol,
         m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max,
-        m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, patternText(m.spatial_pattern), output === "汇总" ? "见各输出" : nonfiniteText(m, relation.split(" 与 ")[1])
-        ].map((v, column) => el("td", { class: cellTone(column, v, m), title: v == null ? (missingMetric(column, m) === "无有限值" ? "没有双方均为有限值的元素，无法计算数值误差；请查看 NaN / Inf 失败元素" : "未记录或不适用") : String(v), style: { whiteSpace: column === 20 ? "normal" : "nowrap", minWidth: column === 20 ? "320px" : "" } },
-        v == null ? missingMetric(column, m) : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v))))))));
+        m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, patternText(m.spatial_pattern), m.nonfinite_evidence?.actual.nan, m.nonfinite_evidence?.reference.nan,
+        m.nonfinite_evidence?.actual.pos_inf, m.nonfinite_evidence?.reference.pos_inf,
+        m.nonfinite_evidence?.actual.neg_inf, m.nonfinite_evidence?.reference.neg_inf,
+        m.nonfinite_evidence?.aligned, m.nonfinite_evidence?.different,
+        m.nonfinite_evidence?.actual_only, m.nonfinite_evidence?.reference_only,
+        m.finite_pairs, m.finite_mismatches
+        ].map((v, column) => el("td", { class: cellTone(column, v, m), title: v == null ? (missingMetric(column, m) === "无有限值" ? "没有双方均为有限值的元素，无法计算数值误差；请查看 NaN / Inf 失败元素" : "未记录或不适用") : String(v), style: { whiteSpace: "nowrap" } },
+        v == null ? (column >= 20 ? "未记录" : missingMetric(column, m)) : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v))))))));
   out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)
     : el("div", { class: "muted" }, "未保存错误日志"));
