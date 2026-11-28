@@ -129,6 +129,13 @@ function clientControls(client, latestVersion) {
     try { await api("/api/admin/clients/update", { method: "POST", body: { request_key: rkey(), client_ids: [client.client_id] } }); render(); }
     catch (err) { button.disabled = false; alert(err.message); }
   } }, "升级"));
+  if (isAdmin() && !client.online) actions.append(el("button", { class: "danger mini-btn", onclick: async event => {
+    if (!confirm(`删除离线客户端 ${client.display_name || client.client_id}？`)) return;
+    const button = event.currentTarget;
+    button.disabled = true;
+    try { await api(`/api/admin/clients/${client.client_id}`, { method: "DELETE" }); render(); }
+    catch (err) { button.disabled = false; alert(err.message); }
+  } }, "删除"));
   const pending = { running: "启动中（等待回执）", stopped: "停止中（等待回执）", restart: "重启中（等待回执）" }[client.target_daemon_state];
   const statuses = el("div", { style: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } },
     status, ...Object.entries(client.workload_controls || {}).map(([name, command]) =>

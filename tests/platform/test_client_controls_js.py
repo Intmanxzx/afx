@@ -13,7 +13,7 @@ def test_three_controls_and_independent_toggle():
     script = r'''
 const assert = require('assert').strict;
 const el = (tag, attrs, ...children) => ({tag, attrs, children: children.flat().filter(x => x != null), append(...items) { this.children.push(...items); }});
-const me = {}; const isAdmin = () => true; const time = () => '';
+const me = {}; let admin = true; const isAdmin = () => admin; const time = () => '';
 let calls = []; const api = async (path, body) => calls.push(body.body);
 const rkey = () => 'key'; const render = () => {};
 const buttons = root => root.children.flatMap(x => typeof x === 'object' ? (x.tag === 'button' ? [x] : buttons(x)) : []);
@@ -32,6 +32,10 @@ client.daemon_state = 'stopped'; client.daemon_state_at = Date.now();
 client.workload_states.fuzz.state = 'stopped';
 const labels = texts(clientControls(client, '2'));
 assert(labels.includes('Fuzz：已停止')); assert(labels.includes('复测：已开启'));
+client.online = false;
+assert.deepEqual(buttons(clientControls(client, '2')).map(x => x.children[0]), ['启动fuzz','停复测','升级','删除']);
+admin = false;
+assert(!buttons(clientControls(client, '2')).some(x => x.children[0] === '删除'));
 })();
 '''
     result = subprocess.run([node, '-e', script], capture_output=True, text=True)
