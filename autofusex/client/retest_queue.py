@@ -88,9 +88,9 @@ def synchronize(client, home):
 
 
 def _synchronize(client, home):
-    from autofusex.client.platform_transport import installed_packages, Mapper, upload_new
+    from autofusex.client.platform_transport import Mapper, upload_new, fresh_installed
     from autofusex.client.daemon import request
-    installed = installed_packages(client.environment())
+    installed = fresh_installed()
     if not installed or not client.devices:
         return 0
     env = client.identity()
@@ -102,6 +102,9 @@ def _synchronize(client, home):
     finished = 0
     for task in tasks:
         if task['case_source'] != 'nnsmith':
+            continue
+        if reject_changed_task(client, task, installed):
+            finished += 1
             continue
         saved = request(home, {'action': 'platform_retest', 'task': task})
         if saved.get('delivered'):
@@ -120,6 +123,9 @@ def _synchronize(client, home):
             continue
         ids = completed(saved)
         if not ids:
+            continue
+        if reject_changed_task(client, task, installed):
+            finished += 1
             continue
         mapper = Mapper(saved['database'])
         auxiliary = []
@@ -141,6 +147,9 @@ def _synchronize(client, home):
         uploaded = [i for i in ids if statuses.get(i) in {'accepted', 'duplicate'}]
         if len(uploaded) != len(ids) or any(statuses.get(i) not in {'accepted','duplicate'} for i in auxiliary):
             continue
+        if reject_changed_task(client, task, installed):
+            finished += 1
+            continue
         client.api.call('POST', f"/api/client/retests/{task['task_id']}/complete", {
             'request_key': f"complete-{task['task_id']}-{task['lease_id'][:8]}",
             'lease_id': task['lease_id'], 'exec_uuids': uploaded, 'installed': installed})
@@ -148,3 +157,8 @@ def _synchronize(client, home):
         atomic(Path(home) / 'retest' / ('task-' + str(task['task_id']) + '.json'), saved)
         finished += 1
     return finished
+
+
+def reject_changed_task(client, task, installed):
+    from autofusex.client.platform_transport import Client
+    return Client._reject_changed_task(client, task, installed)

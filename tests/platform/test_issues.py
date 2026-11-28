@@ -982,7 +982,7 @@ def test_http_reverify_sealed_candidate_and_regression_reuse(world, changed, cal
     candidate = dict(FIX, fix_sha256='b'*64) if changed else FIX
     with TestClient(create_app(world.store)) as client:
         path = f'/api/issues/{issue_id}/verify'
-        body = dict(request_key=world.key(), **candidate) if changed else dict(request_key=world.key())
+        body = dict(request_key=world.key(), **candidate)
         assert client.post(path, json=body).status_code == 401
         assert client.post(path, headers=dev, json=body).status_code == 409
         if caller == 'holder':
@@ -1090,3 +1090,38 @@ def test_admin_status_http_permissions_and_idempotency(world):
         assert client.post(path,headers=admin,json=dict(payload,request_key=world.key(),status='summarizing',expected_status='claimed')).status_code == 409
         assert client.post(path,headers=admin,json=dict(payload,request_key=world.key(),status='verifying',expected_status='claimed')).status_code == 400
         assert world.issue(issue_id)['status'] == 'claimed'
+
+
+def test_changed_candidate_requires_explicit_submission(world):
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=issue_id, agent_id='a'))['lease_id']
+    issues.verify(world.store, world.agent, issue_id, dict(FIX, fix_ref='old-ref', request_key=world.key(), lease_id=lease))
+    new = {'af-mlir': dict(version=FIX['fix_version'], sha256='b'*64)}
+    assert not world.claim_tasks(new)
+    issues.set_status(world.store, world.admin, issue_id, dict(request_key=world.key(), status='claimed', expected_status='verifying', reason='package changed'))
+    with pytest.raises(IssueError):
+        issues.verify(world.store, world.admin, issue_id, dict(request_key=world.key()))
+    issues.verify(world.store, world.admin, issue_id, dict(FIX, fix_sha256='b'*64, request_key=world.key()))
+    tasks = world.claim_tasks(new)
+    assert len(tasks) == 2
+    assert all(t['round_no'] == 2 and t['required']['sha256'] == 'b'*64 for t in tasks)
+    assert world.issue(issue_id)['fix_ref'] is None
+
+
+@pytest.mark.parametrize('limit', [1, 20])
+def test_environment_change_invalidates_remaining_round_and_leases(world, limit):
+    issue_id = seed_failures(world)['schedule']['issue_id']
+    lease = issues.claim(world.store, world.agent, dict(request_key=world.key(), issue_id=issue_id, agent_id='a'))['lease_id']
+    issues.verify(world.store, world.agent, issue_id, dict(FIX, request_key=world.key(), lease_id=lease))
+    tasks = world.claim_tasks(limit=limit)
+    body = dict(request_key=world.key(), lease_id=tasks[0]['lease_id'], installed=INSTALLED,
+                exec_uuids=[], terminal_reason='environment_changed')
+    assert retests.complete(world.store, world.client, tasks[0]['task_id'], body.copy())['result'] == 'invalid'
+    assert retests.complete(world.store, world.client, tasks[0]['task_id'], body.copy())['result'] == 'invalid'
+    rows = world.store.reader().execute('SELECT status,lease_id FROM retest_tasks WHERE issue_id=?', (issue_id,)).fetchall()
+    assert all(r['status'] == 'invalid' and r['lease_id'] is None for r in rows)
+    assert world.issue(issue_id)['rounds'][0]['outcome'] == 'invalid'
+    assert not world.claim_tasks()
+    if len(tasks) > 1:
+        with pytest.raises(IssueError, match='lease'):
+            retests.complete(world.store, world.client, tasks[1]['task_id'], dict(body, request_key=world.key(), lease_id=tasks[1]['lease_id']))

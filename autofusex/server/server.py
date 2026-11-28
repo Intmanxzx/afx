@@ -446,7 +446,7 @@ def create_app(store: Store, read_pool=None) -> FastAPI:
         """Submit verification as the lease holder or administrator.
 
         Sealed issues verify every retained affected case, including prior skips.
-        Omit both package fields to reuse the stored candidate. If the latest
+        Explicit version and SHA are required, including for repeated candidates. If the latest
         regression passed on the identical version and SHA, successful supplemental
         verification returns to summarizing without rerunning regression.
         Running verification/regression rounds cannot be resubmitted.

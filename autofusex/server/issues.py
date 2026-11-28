@@ -498,9 +498,9 @@ def verify(store: Store, principal: Principal, issue_id: str, body: dict):
     """Freeze the affected cases and queue a verification round on their own arch (design 2)."""
     principal.require_write()
     version, sha = body.get("fix_version"), body.get("fix_sha256")
-    if not (version is None and sha is None) and (not isinstance(version, str) or not _VERSION.match(version)):
+    if not isinstance(version, str) or not _VERSION.match(version):
         raise IssueError("invalid", "fix_version must be an exact package version")
-    if not (version is None and sha is None) and (not isinstance(sha, str) or not _SHA.match(sha)):
+    if not isinstance(sha, str) or not _SHA.match(sha):
         raise IssueError("invalid", "fix_sha256 must be 64 lowercase hex chars")
     fix_ref = body.get("fix_ref")
     if fix_ref is not None and (not isinstance(fix_ref, str) or len(fix_ref) > 512):
@@ -552,7 +552,9 @@ def _verify_action(conn, principal, issue_id, body, version, sha, fix_ref):
     _set_status(conn, issue, "verifying", principal.user_id, "verify_submitted",
                 f"round {round_no} version {candidate_version} tasks {tasks}; reuse_regression={bool(reuse)}",
                 round_no=round_no, fix_version=candidate_version,
-                fix_sha256=candidate_sha, fix_ref=fix_ref or issue["fix_ref"])
+                fix_sha256=candidate_sha, fix_ref=(fix_ref if fix_ref is not None else
+                    issue["fix_ref"] if (candidate_version, candidate_sha) ==
+                    (issue["fix_version"], issue["fix_sha256"]) else None))
     response = {"issue_id": issue_id, "round_no": round_no, "tasks": tasks, "status": "verifying"}
     if supplemental:
         response['reuse_regression'] = reuse
