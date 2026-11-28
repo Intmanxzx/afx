@@ -98,17 +98,7 @@ export async function issueDrawer(issueId) {
     api("/api/issues/" + issueId + "/cases?scope=history"),
     api("/api/issues/" + issueId + "/cases?role=regression")]);
   const rounds = el("div");
-  for (const r of issue.rounds) {
-    const box = el("div", { class: "panel" }, el("div", {}, `第 ${r.round_no} 轮 · ${r.kind === "verify" ? "验证" : "回归"} · 版本 ${r.fix_version} · `,
-      el("span", { class: "chip " + ({ passed: "ok", failed: "bad", invalid: "warn" }[r.outcome] || "info") }, { passed: "通过", failed: "失败", invalid: "无效" }[r.outcome] || "进行中"),
-      el("span", { class: "muted small" }, ` 通过 ${r.pass_count} · 失败 ${r.fail_count} · 无效 ${r.invalid_count}`)));
-    const tasks = el("div");
-    box.append(el("button", { class: "icon-btn", onclick: async () => {
-      const list = await api(`/api/issues/${issueId}/rounds/${r.round_no}/tasks`);
-      tasks.replaceChildren(el("table", { class: "grid" }, el("tbody", {}, list.map(t => el("tr", {}, el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(t.case_key); } }, t.case_key)), el("td", {}, archLabel(t.npu_arch)), el("td", {}, t.result || t.status), el("td", { class: "small muted" }, t.detail || ""))))));
-    } }, "查看任务"), tasks);
-    rounds.append(box);
-  }
+  for (const r of issue.rounds) rounds.append(roundPanel(issueId, r));
   const adminBox = isAdmin() && !["resolved", "closed"].includes(issue.status) ? el("div", { class: "toolbar" },
     el("button", { class: "danger", onclick: async () => { const reason = prompt("关闭原因（不修复/误报/重复）："); if (!reason) return; try { await api(`/api/admin/issues/${issueId}/close`, { method: "POST", body: { request_key: rkey(), reason } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "关闭问题"),
     el("button", { onclick: async () => { const into = prompt("合并到哪个问题 ID？"); if (!into) return; try { await api(`/api/admin/issues/${issueId}/merge`, { method: "POST", body: { request_key: rkey(), into: into.trim() } }); issueDrawer(issueId); } catch (err) { alert(err.message); } } }, "合并到…")) : null;
@@ -130,6 +120,60 @@ export async function issueDrawer(issueId) {
     caseSection(issueId, history, "history", "历史关联用例"),
     regression.cases.length ? caseSection(issueId, regression, "regression", "回归证据") : null,
     el("h3", {}, "事件"), el("ul", { class: "timeline" }, issue.events.map(e => el("li", {}, `${time(e.at)} · ${e.actor} · ${e.kind}`, e.to_status ? ` → ${STATUS_LABEL[e.to_status] || e.to_status}` : "", e.detail ? el("div", { class: "muted" }, e.detail) : null))));
+}
+function roundTaskStatus(task) {
+  const states = {pass:["ok", "通过"], fail:["bad", "失败"], invalid:["warn", "无效"],
+    skip:["gray", "跳过"], pending:["gray", "待执行"], leased:["info", "执行中"],
+    done:["gray", "已完成"], cancelled:["gray", "已取消"]};
+  const [tone, text] = states[task.result || task.status] || ["gray", task.result || task.status || "未知"];
+  return el("span", {class:"chip " + tone}, text);
+}
+function roundTaskDetail(task) {
+  const detail = task.detail || "";
+  const destination = /^→ *([A-Z][0-9]+)$/.exec(detail);
+  if (destination) return el("a", {href:"#", onclick:e => {
+    e.preventDefault(); issueDrawer(destination[1]);
+  }}, "转至问题 " + destination[1]);
+  const [status, accuracy] = detail.split("/");
+  const labels = {gen_fail:"构图失败", ascgraph_fail:"构图失败", build_fail:"构图失败",
+    compile_fail:"编译失败", runtime_fail:"运行失败", timeout:"超时", unsupported:"不支持"};
+  const text = labels[status] ? labels[status] + (accuracy === "fail" ? " · 精度失败" : "")
+    : status === "pass" && accuracy === "fail" ? "精度失败" : detail;
+  return el("span", {class:"muted", title:detail || null}, text || "—");
+}
+function roundPanel(issueId, round) {
+  const tasks = el("div", {class:"round-tasks", hidden:true});
+  let loaded = false;
+  const toggle = el("button", {class:"round-toggle", "aria-expanded":"false", onclick:async () => {
+    if (loaded && !tasks.hidden) {
+      tasks.hidden = true; toggle.textContent = "查看任务"; toggle.setAttribute("aria-expanded", "false"); return;
+    }
+    toggle.disabled = true; toggle.textContent = "加载中…";
+    try {
+      const list = await api("/api/issues/" + issueId + "/rounds/" + round.round_no + "/tasks");
+      tasks.replaceChildren(list.length ? el("div", {class:"table-wrap"},
+        el("table", {class:"grid round-task-table"},
+          el("thead", {}, el("tr", {}, ["用例", "芯片", "状态", "结果说明"].map(text => el("th", {scope:"col"}, text)))),
+          el("tbody", {}, list.map(task => el("tr", {},
+            el("td", {}, el("a", {href:"#", class:"mono small", onclick:e => {e.preventDefault(); openCase(task.case_key);}}, task.case_key)),
+            el("td", {class:"small"}, archLabel(task.npu_arch)),
+            el("td", {}, roundTaskStatus(task)), el("td", {class:"small round-task-detail"}, roundTaskDetail(task)))))))
+        : el("div", {class:"empty"}, "暂无任务"));
+      loaded = true; tasks.hidden = false;
+      toggle.textContent = "收起任务"; toggle.setAttribute("aria-expanded", "true");
+    } catch (err) {
+      tasks.hidden = false; tasks.replaceChildren(el("div", {class:"error-box", role:"alert"}, err.message));
+      toggle.textContent = "重试加载"; toggle.setAttribute("aria-expanded", "true");
+    } finally { toggle.disabled = false; }
+  }}, "查看任务");
+  return el("section", {class:"round-card"},
+    el("div", {class:"round-header"},
+      el("div", {class:"round-heading"}, el("strong", {}, "第 " + round.round_no + " 轮"),
+        el("span", {class:"muted small"}, round.kind === "verify" ? "验证" : "回归"),
+        el("span", {class:"chip " + ({passed:"ok", failed:"bad", invalid:"warn"}[round.outcome] || "info")},
+          {passed:"通过", failed:"失败", invalid:"无效"}[round.outcome] || "进行中")), toggle),
+    el("div", {class:"round-meta small muted"}, el("span", {}, "版本 " + (round.fix_version || "—")),
+      el("span", {}, "通过 " + fmt(round.pass_count) + " · 失败 " + fmt(round.fail_count) + " · 无效 " + fmt(round.invalid_count))), tasks);
 }
 function evidenceVerdict(c) {
   const verdicts = {pass:["ok", "通过"], fail:["bad", "失败"], skip:["gray", "跳过"], invalid:["warn", "无效"]};
