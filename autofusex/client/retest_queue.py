@@ -65,10 +65,16 @@ def standalone(store, task, record):
     spec = json.loads((store.home / 'task.json').read_text())
     ex = spec['execution']; perf = spec['evaluation']['performance']
     devices = execution_devices(ex['devices'])
-    directory = record.parent / ('queue-' + str(task['task_id']) + '-' + task['lease_id'])
+    group = task.get('execution_group')
+    if group:
+        import hashlib
+        group_key = hashlib.sha256(json.dumps(group[0], sort_keys=True).encode()).hexdigest()[:24]
+        directory = record.parent / ('group-' + group_key)
+    else:
+        directory = record.parent / ('queue-' + str(task['task_id']) + '-' + task['lease_id'])
     directory.mkdir(exist_ok=True)
     ledger = TaskLedger(directory / 'tasks.sqlite')
-    budget = Budget(cpu_workers=1, compile_threads=1)
+    budget = Budget(cpu_workers=max(1, len(devices) * 2), compile_threads=1)
     write_policy(ledger, budget)
     seed = Seed.parse(task['case_key'])
     evaluation = EvaluationConfig(performance=perf['enabled'], warmup_steps=perf['warmup_steps'], measured_steps=perf['measured_steps'])
@@ -76,9 +82,9 @@ def standalone(store, task, record):
     for backend in task['backends']:
         if backend == 'cpu':
             continue
-        identity = str(uuid.uuid5(uuid.NAMESPACE_URL, str(directory) + ':' + backend))
+        identity = str(uuid.uuid5(uuid.NAMESPACE_URL, str(directory) + ':' + str(task['task_id']) + ':' + task['lease_id'] + ':' + backend))
         execution = ExecutionConfig(backend, devices[0], 1, scheduling='staged',
-            static_only=ex['static_only'] or not seed.dynamic, batch_id=task['run_uuid'], save_results=True)
+            static_only=ex['static_only'] or not seed.dynamic, batch_id=json.dumps(group) if group else task['run_uuid'], save_results=True)
         tasks.append((seed, execution, evaluation, identity))
     if not tasks:
         raise ValueError('retest has no executable backend')
@@ -155,7 +161,13 @@ def _synchronize(client, home):
         'request_key': 'claim-' + str(uuid.uuid4()),
         'machine_id': env.get('installation_id') or __import__('socket').gethostname(),
         'npu_arch': env.get('device_model') or 'unknown',
-        'installed': installed, 'coverage_environment': env, 'limit': 1})['tasks']
+        'installed': installed, 'coverage_environment': env, 'limit': 20, 'group_case': True})['tasks']
+    prepared = {}
+    for task in tasks:
+        if task.get('execution_group') and task['case_source'] == 'nnsmith':
+            if reject_changed_task(client, task, installed):
+                continue
+            prepared[task['task_id']] = request(home, {'action': 'platform_retest', 'task': task})
     finished = 0
     for task in tasks:
         if task['case_source'] != 'nnsmith':
@@ -163,7 +175,7 @@ def _synchronize(client, home):
         if reject_changed_task(client, task, installed):
             finished += 1
             continue
-        saved = request(home, {'action': 'platform_retest', 'task': task})
+        saved = prepared.get(task['task_id']) or request(home, {'action': 'platform_retest', 'task': task})
         if saved.get('delivered'):
             continue
         ledger = TaskLedger(Path(saved['queue']))

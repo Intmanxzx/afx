@@ -30,3 +30,20 @@ def test_old_clients_reject_independent_controls(world):
     cid = ops.heartbeat(store, user, dict(machine_id='old-client'))['client_id']
     with pytest.raises(IssueError):
         ops.request_daemon_state(store, user, dict(client_id=cid, workload='fuzz', state='stopped', request_key='old'))
+
+
+def test_claim_groups_backend_peers_and_keeps_repetitions_distinct(world):
+    from autofusex.server import retests
+    from test_platform_ops import seed
+    store, user, _ = world
+    retests.create_manual(store, user, dict(request_key='grouped-batch', case_keys=[seed(1)],
+        backends=['af-mlir', 'triton-npu'], npu_arch='910b', repetitions=2))
+    result = retests.claim(store, user, dict(request_key='group-claim', machine_id='grouped',
+        npu_arch='910b', installed={b:dict(version='1', sha256='a'*64) for b in ['af-mlir', 'triton-npu']},
+        limit=20, group_case=True))
+    assert len(result['tasks']) == 4
+    groups = {}
+    for task in result['tasks']:
+        groups.setdefault(tuple(task['execution_group']), []).append(task['required']['backend'])
+    assert len(groups) == 2
+    assert all(set(backends) == {'af-mlir', 'triton-npu'} for backends in groups.values())

@@ -72,6 +72,26 @@ def test_saved_database_path_is_used_without_cli_option(tmp_path):
     assert results_database(tmp_path, tmp_path / 'override.sqlite') == tmp_path / 'override.sqlite'
 
 
+def test_batch_peers_share_queue_and_allow_two_card_execution(tmp_path):
+    from autofusex.execution.scheduling.budgets import read_policy
+    Store(tmp_path)
+    spec = dict(execution=dict(devices=['npu:0','npu:1'], static_only=False),
+                evaluation=dict(performance=dict(enabled=False, warmup_steps=1, measured_steps=1)))
+    (tmp_path/'task.json').write_text(json.dumps(spec))
+    group = ['batch', 1, 1, '910b', 1]
+    tasks = [dict(task_id=i, lease_id=str(i), run_uuid='run'+str(i), execution_group=group,
+                  case_key='F0SQR0WLFHGE5JG59LC7NA60RQ1', backends=[b])
+             for i,b in [(81,'af-mlir'), (82,'af-legacy')]]
+    saved = [submit(tmp_path, task) for task in tasks]
+    assert saved[0]['queue'] == saved[1]['queue']
+    ledger = TaskLedger(saved[0]['queue'])
+    rows = ledger.page()['items']
+    assert len(rows) == 2
+    assert len({json.loads(row['execution'])['batch_id'] for row in rows}) == 1
+    assert read_policy(ledger).cpu_workers >= 2
+    assert all(candidates(ledger, row) == ['npu:0','npu:1'] for row in rows)
+
+
 def test_cancelled_retest_reports_terminal_receipt(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import Mock
