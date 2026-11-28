@@ -114,7 +114,10 @@ def test_pages_render_generic_errors_and_only_selected_shape_graph():
     discovery = Path('autofusex/server/static/page-discovery.js').read_text()
     script = r'''
 const assert=require('node:assert/strict');
-class E {constructor(tag,attrs,children){this.tag=tag;this.attrs=attrs||{};this.children=children.flat(Infinity).filter(v=>v!=null)}}
+class E {
+ constructor(tag,attrs,children){this.tag=tag;this.attrs=attrs||{};this.hidden=!!this.attrs.hidden;this.children=children.flat(Infinity).filter(v=>v!=null)}
+ append(...children){this.children.push(...children.flat(Infinity).filter(v=>v!=null))}
+}
 const el=(tag,attrs,...children)=>new E(tag,attrs,children);
 const text=n=>Array.isArray(n)?n.map(text).join('\n'):n instanceof E?n.children.map(text).join('\n'):String(n);
 const statusChip=()=>'',label=String,archLabel=String,time=String,ns=String,secs=String,stageName=String;
@@ -139,5 +142,27 @@ assert.equal(execValue({function_status:'pass',accuracy_status:'fail',log_summar
 d.diagnostics.error_log='';
 assert(renderExecution(d,1).every(n=>n instanceof E));
 assert(text(renderExecution(d,1)).includes('未保存错误日志'));
+// Issue views must retain the compact layout when accuracy tables change.
+const accuracy={...d,function_status:'pass',accuracy_status:'fail',shapes:[{shape_index:0,kernel_ns:123,e2e_ns:456}]};
+const accurate=renderExecution(accuracy,0);
+assert(text(accurate).includes('有限值误差') && text(accurate).includes('非有限值统计'));
+assert(!text(accurate).includes('有限值误差与非有限值异常分开统计。'));
+assert(!text(accurate).includes('错误日志') && !text(accurate).includes('ASCIR 表达的图结构'));
+assert(!text(accurate).includes('性能耗时'));
+const extra=accurate.find(n=>n.attrs.class==='execution-detail-extra');
+const toggle=accurate.find(n=>n.attrs.class==='execution-detail-toggle').children[0];
+assert(extra.hidden && text(extra).includes('运行环境') && text(extra).includes('用例执行耗时'));
+assert.equal(text(toggle),'查看详细执行信息');
+toggle.attrs.onclick();
+assert(!extra.hidden && toggle.hidden);
+assert(!text(renderExecution({...accuracy,function_status:'compile_fail'},0)).includes('精度对比'));
+for(const record of [{...accuracy,issue_dimension:'performance'},{...accuracy,issue:{dimension:'performance'}}]) {
+ const performance=renderExecution(record,0);
+ assert(text(performance).includes('性能耗时'));
+ assert(!text(performance).includes('精度对比') && !text(performance).includes('错误日志'));
+}
+const requested=renderExecution({...accuracy,issue_dimension:'accuracy'},0,'function');
+assert(text(requested).includes('错误日志') && text(requested).includes('GRAPH_ZERO'));
+assert(!text(requested).includes('精度对比'));
 '''
     subprocess.run([node, '-e', script], check=True, capture_output=True, text=True)
