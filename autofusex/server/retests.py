@@ -137,8 +137,16 @@ def claim(store: Store, principal: Principal, body: dict):
                 "AND t.required_backend=? AND ((t.required_version=? AND t.required_sha256=?) "
                 "OR t.required_version='*') AND (t.issue_id<>'' OR t.assigned_user=?) "
                 "ORDER BY t.task_id LIMIT ?",
-                (arch, backend, version, sha, principal.user_id, limit - len(tasks))).fetchall()
+                (arch, backend, version, sha, principal.user_id,
+                 max(1, limit // len(installed)) if body.get('group_case') else limit - len(tasks))).fetchall()
             for row in rows:
+                if len(tasks) >= limit:
+                    break
+                execution_group = None
+                if body.get('group_case') and row['batch'] and not row['issue_id']:
+                    repetition = conn.execute("SELECT COUNT(*) FROM retest_tasks WHERE requested_by=? AND batch=? AND case_id=? AND npu_arch=? AND required_backend=? AND task_id<=?",
+                        (row['requested_by'], row['batch'], row['case_id'], row['npu_arch'], row['required_backend'], row['task_id'])).fetchone()[0]
+                    execution_group = [row['batch'], row['case_id'], row['case_revision'], row['npu_arch'], repetition]
                 cached = reusable_coverage(conn, row, key)
                 if cached:
                     conn.execute("UPDATE retest_tasks SET status='invalid',result='invalid',detail=?,finished_at=?,coverage_environment_key=? WHERE task_id=?",
@@ -148,7 +156,10 @@ def claim(store: Store, principal: Principal, body: dict):
                 conn.execute("UPDATE retest_tasks SET status='leased', client_id=?, lease_id=?, lease_expires_at=?, "
                              "attempts=attempts+1 WHERE task_id=?",
                              (client_id, lease_id, now_ms() + lease_ms, row["task_id"]))
-                tasks.append(_task_payload(conn, row, lease_id))
+                payload = _task_payload(conn, row, lease_id)
+                if execution_group is not None:
+                    payload['execution_group'] = execution_group
+                tasks.append(payload)
             if len(tasks) >= limit:
                 break
         return {"tasks": tasks}
