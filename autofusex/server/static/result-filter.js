@@ -33,6 +33,7 @@ export const RESULT_GROUPS = [
   ]]
 ];
 export const RESULT_ITEMS = RESULT_GROUPS.flatMap(([, items]) => items);
+export const DEFAULT_BACKENDS = ["af-legacy", "af-mlir", "triton-npu"];
 export const DEFAULT_RESULTS = RESULT_ITEMS.map(([key]) => key).filter(key => ![
   "nnsmith", "gen_fail", "compile_unknown", "runtime_unknown", "unchecked", "aclnn", "aicpu",
   "other", "environment", "timeout", "unknown", "unknown_retest"
@@ -43,7 +44,7 @@ export function selectedResults(params) {
   return new Set(params.has("results") ? params.get("results").split(",").filter(k => RESULT_ITEMS.some(([v]) => k === v)) : DEFAULT_RESULTS);
 }
 export function resultFilterParams(params) {
-  return { q: params.get("q"), results: params.get("results") || DEFAULT_RESULTS.join(","), selected_backends: params.get("backends"), chips: params.get("chips") || "a2a3" };
+  return { q: params.get("q"), results: params.get("results") || DEFAULT_RESULTS.join(","), selected_backends: params.get("backends") ?? DEFAULT_BACKENDS.join(","), chips: params.get("chips") || "a2a3" };
 }
 let filterTimer = null;
 export function cancelFilterChange() { clearTimeout(filterTimer); filterTimer = null; }
@@ -147,7 +148,7 @@ export function resultFilter(params, notify, arches = [], options = {}) {
     el("button", { type: "button", onclick: () => change(allFilters(false)) }, "全部清空"),
     el("button", { type: "button", onclick: () => change({ backends: null, chips: null, results: null,
       ...(repair ? { categories: null, treatment: null, status: null, scope: null } : {}) }) }, "恢复默认")));
-  body.append(field("后端", "backends", backendOptions, backendOptions.map(([v]) => v)), chipSection);
+  body.append(field("后端", "backends", backendOptions, DEFAULT_BACKENDS), chipSection);
   if (!repair || (params.get("dimension") || "function") === "function") {
     body.append(el("div", { class: "filter-field-heading" }, el("h3", {}, "结果与阶段"),
       actions("结果与阶段", () => change({ results: items.map(([key]) => key).join(",") }),
