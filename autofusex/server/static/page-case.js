@@ -78,13 +78,11 @@ PAGES.case = async (root, params) => {
   // history
   const histBody = el("tbody");
   const more = el("div", { class: "toolbar", style: { marginTop: "8px" } });
-  root.append(el("section", { class: "panel" }, el("h2", {}, `执行历史（${fmt(history.total + (c.coverage_exclusions || []).length)}）`),
+  root.append(el("section", { class: "panel" }, el("h2", {}, `执行历史（${fmt(history.total)}）`),
     el("div", { class: "table-wrap" }, el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["后端", "结果", "用户", "节点", "批次", "版本", "时间"].map(t => el("th", {}, t)))), histBody)), more));
   const drawHistory = () => {
     const batchOf = batchClasses(executions);
-    const rows = [...executions, ...(c.coverage_exclusions || []).map(o => ({...o, coverage_observation:true, created_at:o.observed_at}))]
-      .sort((a,b) => b.created_at - a.created_at);
-    histBody.replaceChildren(...rows.map(e => e.coverage_observation ? coverageHistoryRow(e, execBox) : el("tr", { class: batchOf(e.run_id), style: { cursor: "pointer" }, onclick: () => selectExec(e.exec_uuid) },
+    histBody.replaceChildren(...executions.map(e => el("tr", { class: batchOf(e.run_id), style: { cursor: "pointer" }, onclick: () => selectExec(e.exec_uuid) },
       el("td", {}, label(e.backend), e.is_head ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, "当前") : null, e.stale_graph ? el("span", { class: "chip gray" }, "旧图") : null),
       el("td", {}, statusChip(e)), el("td", {}, e.user_name || e.user_id), el("td", {}, e.client_name || "—"),
       el("td", {}, `#${e.run_id}`, e.run_kind !== "fuzz" ? el("span", { class: "chip info", style: { marginLeft: "4px" } }, { retest: "复测", verify: "验证", regress: "回归", import: "导入" }[e.run_kind] || e.run_kind) : null),
@@ -99,25 +97,6 @@ PAGES.case = async (root, params) => {
     || executions.find(e => e.backend !== "cpu") || executions[0] || {}).exec_uuid;
   selectExec(pick);
 };
-
-function coverageHistoryRow(observation, execBox) {
-  const show = () => execBox.replaceChildren(
-    el("h2", {}, "复测详情 · ", label(observation.backend), " · 无 AF 覆盖"),
-    el("p", {class:"muted"}, observation.environment_key
-      ? "本次复测未进入 Autofuse，仅在相同编译环境下跳过重复复测。历史执行结果保持原样。"
-      : "本次复测未进入 Autofuse。环境证据不完整，不阻止后续复测。历史执行结果保持原样。"),
-    el("div", {class:"kv"}, ["任务", "#" + observation.task_id, "芯片", observation.npu_arch,
-      "Torch NPU", observation.environment?.torch_npu || "未记录", "时间", time(observation.observed_at)]
-      .map(v => el("div", {}, v))),
-    el("details", {}, el("summary", {}, "环境与覆盖证据"),
-      el("pre", {class:"log"}, JSON.stringify({environment:observation.environment,evidence:observation.evidence},null,2))));
-  return el("tr", {style:{cursor:"pointer"}, onclick:show},
-    el("td", {}, label(observation.backend)), el("td", {}, el("span", {class:"chip gray"}, "无 AF 覆盖")),
-    el("td", {}, observation.user_name || observation.user_id || "—"), el("td", {}, observation.client_name || "—"),
-    el("td", {}, "任务 #" + observation.task_id, el("span", {class:"chip info",style:{marginLeft:"4px"}}, "复测")),
-    el("td", {class:"small"}, "rev " + observation.case_revision),
-    el("td", {class:"small"}, time(observation.observed_at)));
-}
 
 function tensorText(shapes = {}, weights = [], types = {}) {
   const entries = [...Object.entries(shapes || {}).map(([n, sh]) => ({ shape: sh, dtype: (types || {})[n] })), ...(weights || [])];
