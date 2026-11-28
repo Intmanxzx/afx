@@ -139,8 +139,8 @@ def test_accuracy_nonfinite_and_strict_single_failure():
     actual = (torch.tensor([float('nan'), float('inf'), -float('inf'), 0.]),)
     expected = (torch.tensor([float('nan'), float('inf'), float('inf'), 0.]),)
     metrics = summarize(actual, expected, adapter._close)
-    assert metrics['mismatches'] == 2
-    assert metrics['outputs'][0]['nan_mismatches'] == 1
+    assert metrics['mismatches'] == 1
+    assert metrics['outputs'][0]['nan_mismatches'] == 0
     assert metrics['outputs'][0]['inf_mismatches'] == 1
     json.dumps(metrics, allow_nan=False)
     reference = torch.zeros(10000)

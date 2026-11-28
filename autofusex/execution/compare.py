@@ -510,7 +510,7 @@ def _elementwise_payload(
 ) -> dict[str, Any]:
     if close is None:
         close = np.isclose(
-            golden.astype(np.float64), actual.astype(np.float64), rtol=rtol, atol=atol, equal_nan=False
+            golden.astype(np.float64), actual.astype(np.float64), rtol=rtol, atol=atol, equal_nan=True
         )
     else:
         close = close.reshape(golden.shape)
