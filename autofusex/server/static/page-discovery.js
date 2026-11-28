@@ -111,11 +111,21 @@ export function batchClasses(executions) {
   for (const e of executions) if (!order.includes(e.run_id)) order.push(e.run_id);
   return id => "bt" + (order.indexOf(id) % 6);
 }
+export function latestByBackend(executions) {
+  const latest = new Map();
+  for (const execution of executions) {
+    if (!latest.has(execution.backend)) latest.set(execution.backend, execution);
+  }
+  return [...latest.values()];
+}
 function expandedTable(groups, visible, selected, updateBar) {
   const cols = COLUMNS.filter(([k]) => visible.has(k));
   const body = el("tbody");
   for (const group of groups) {
-    const rows = group.executions.length ? group.executions : [null];
+    // Discovery shows one current record per backend; complete history remains
+    // available from the case detail page.
+    const rows = latestByBackend(group.executions);
+    if (!rows.length) rows.push(null);
     const batchOf = batchClasses(group.executions);
     rows.forEach((e, i) => {
       const tr = el("tr", { class: i === 0 ? "group-start" : "" });
@@ -125,7 +135,6 @@ function expandedTable(groups, visible, selected, updateBar) {
       for (const [k] of cols) tr.append(el("td", { class: cls + (k === cols[0][0] ? " batch" : "") }, execValue(e, k, group.case.case_key)));
       body.append(tr);
     });
-    if (group.more_executions) body.append(el("tr", {}, el("td", { colspan: cols.length + 1, class: "muted small" }, "仅显示最近 10 条，更多见用例详情")));
   }
   return el("table", { class: "grid" }, el("thead", {}, el("tr", {}, el("th", {}, "用例"), cols.map(([, t]) => el("th", {}, t)))), body);
 }
@@ -154,7 +163,7 @@ function pivotTable(groups, selected, updateBar) {
   const body = el("tbody");
   for (const group of groups) {
     const byRun = new Map();
-    for (const e of group.executions) { const k = e.run_id; if (!byRun.has(k)) byRun.set(k, {}); byRun.get(k)[e.backend] = byRun.get(k)[e.backend] || e; }
+    for (const e of latestByBackend(group.executions)) { const k = e.run_id; if (!byRun.has(k)) byRun.set(k, {}); byRun.get(k)[e.backend] = byRun.get(k)[e.backend] || e; }
     const runs = [...byRun.entries()];
     const batchOf = batchClasses(group.executions);
     (runs.length ? runs : [[null, {}]]).forEach(([run, cells], i) => {
