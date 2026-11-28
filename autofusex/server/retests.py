@@ -365,8 +365,13 @@ def _move(conn, issue, to_status, kind, detail):
 
 def round_tasks(store: Store, issue_id: str, round_no: int) -> list:
     return [dict(row) for row in store.reader().execute(
-        "SELECT t.task_id, c.case_key, t.npu_arch, t.required_backend AS backend, t.status, t.result, t.detail, t.attempts, t.finished_at "
-        "FROM retest_tasks t JOIN cases c ON c.case_id=t.case_id WHERE t.issue_id=? AND t.round_no=? "
+        "SELECT t.task_id, c.case_key, t.npu_arch, t.required_backend AS backend, t.status, t.result, t.detail, t.attempts, t.finished_at, "
+        "e.function_status, e.fail_stage, e.accuracy_status, e.accuracy_ref, e.invalid_reason "
+        "FROM retest_tasks t JOIN cases c ON c.case_id=t.case_id "
+        "LEFT JOIN executions e ON e.exec_id=(SELECT x.exec_id FROM retest_task_execs x "
+        "JOIN executions result ON result.exec_id=x.exec_id "
+        "WHERE x.task_id=t.task_id AND result.backend=t.required_backend ORDER BY x.exec_id DESC LIMIT 1) "
+        "WHERE t.issue_id=? AND t.round_no=? "
         "ORDER BY t.task_id", (issue_id, round_no))]
 
 
