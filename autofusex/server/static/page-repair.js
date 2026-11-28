@@ -20,13 +20,12 @@ function accuracyReason(issue) {
   const raw = issue.category || issue.primary_category || "";
   const parts = raw.split("·").map(value => value.trim());
   if (parts.length < 5) return raw;
-  const [primary, anomaly, severity, ratio, pattern, ...features] = parts;
+  const [primary, anomaly, severity, ratio, pattern] = parts;
   const anomalies = {finite:"有限值", nan:"NaN", inf:"Inf", "nan+inf":"NaN+Inf", unknown:"未知数值"};
   const patterns = {none:"无", all:"全量", contiguous:"连续", periodic:"周期", scattered:"离散"};
   const compact = value => ({nonfinite:"非有限值", unknown:"未知"}[value] || value.replaceAll("<=", "≤").replaceAll("-", "–"));
   return [primary, anomalies[anomaly] || anomaly, `超容差:${compact(severity)}`,
-    `错误比例:${compact(ratio)}`, `错误形态:${patterns[pattern] || pattern}`,
-    features.filter(Boolean).length ? `特征:${features.filter(Boolean).join("、")}` : ""].filter(Boolean).join("/");
+    `错误比例:${compact(ratio)}`, `错误形态:${patterns[pattern] || pattern}`].filter(Boolean).join("/");
 }
 function treatmentChip(issue) {
   return el("span", { class: "chip priority-" + issue.treatment }, new Map(TREATMENTS).get(issue.treatment));

@@ -122,9 +122,9 @@ def accuracy_signature(execution, traits):
     primary = traits["primary"]
     classification = dict(execution).get('accuracy_classification')
     if classification:
-        parts = [primary, classification.get('anomaly', 'unknown'), classification['severity'], classification['ratio'], classification['pattern'], ','.join(classification['features'])]
+        parts = [primary, classification.get('anomaly', 'unknown'), classification['severity'], classification['ratio'], classification['pattern']]
         category = ' · '.join(parts)
-        return _digest('accuracy-v2', *parts), category, '精度失败 · ' + category
+        return _digest('accuracy-v3', *parts), category, '精度失败 · ' + category
     return _digest("accuracy", primary), primary, f"精度失败 · {primary}"
 
 

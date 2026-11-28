@@ -1125,3 +1125,29 @@ def test_environment_change_invalidates_remaining_round_and_leases(world, limit)
     if len(tasks) > 1:
         with pytest.raises(IssueError, match='lease'):
             retests.complete(world.store, world.client, tasks[1]['task_id'], dict(body, request_key=world.key(), lease_id=tasks[1]['lease_id']))
+
+
+def test_accuracy_signature_ignores_features():
+    base = dict(anomaly='finite', severity='2-10x', ratio='<=1%', pattern='contiguous')
+    left = issues.accuracy_signature({'accuracy_classification':dict(base, features=['static'])}, {'primary':'Reduce'})
+    right = issues.accuracy_signature({'accuracy_classification':dict(base, features=['dynamic','elementwise'])}, {'primary':'Reduce'})
+    assert left == right
+    assert left[1] == 'Reduce · finite · 2-10x · <=1% · contiguous'
+
+
+def test_accuracy_signature_migration_preview_and_merge(world):
+    from autofusex.server.issue_accuracy_signatures import migrate
+    world.upload([item('acc-feature-one', 9901, accuracy='fail'), item('acc-feature-two', 9902, accuracy='fail', c=case(9902, category='Transpose'))])
+    rows = issues.list_issues(world.store, dimension='accuracy')['issues']
+    with world.store.write() as conn:
+        for index,row in enumerate(rows):
+            conn.execute('UPDATE issues SET category=?,signature=? WHERE issue_id=?',
+                         ('Reduce · finite · 2-10x · <=1% · contiguous · '+str(index), bytes([index])*16, row['issue_id']))
+    preview = migrate(world.store)
+    assert len(preview['merged']) == 1
+    assert len(issues.list_issues(world.store, dimension='accuracy', status='open')['issues']) == 2
+    report = migrate(world.store, apply=True)
+    assert len(report['merged']) == 1
+    assert not migrate(world.store, apply=True)['merged']
+    remaining = issues.list_issues(world.store, dimension='accuracy', status='open')['issues']
+    assert len(remaining) == 1 and remaining[0]['case_count'] == 2
