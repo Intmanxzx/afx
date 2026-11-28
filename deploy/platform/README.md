@@ -9,7 +9,7 @@
 | secret.key | 每次 | token 校验密钥，丢失后所有 token 失效 |
 | stats.db | 不备份 | 启动时自动从 core.db 重建 |
 
-快照使用 SQLite 在线备份接口，服务运行中也能得到一致副本；core 先于 content 快照，保证 core 引用的内容都在。每个归档上传前都会做 SHA-256 和 `integrity_check` 校验，未通过不上传。
+快照使用 SQLite 在线备份接口，服务运行中也能得到一致副本；core 先于 content 快照，保证 core 引用的内容都在。每个归档上传前都会做 SHA-256 和 `integrity_check` 校验，未通过不上传。默认使用 gzip level 1 的快速压缩，适合 4C4G 服务器；在 `/etc/afx-platform/backup.env` 设置 `BACKUP_COMPRESSION_LEVEL=6` 可换取更小归档，但会增加 CPU 时间。
 
 ## 安装
 

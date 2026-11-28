@@ -38,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--out", required=True, help="directory for the archive")
     backup.add_argument("--core-only", action="store_true", help="skip content.db (logs, case specs)")
     backup.add_argument("--tmp", help="scratch directory for snapshots (default: system temp)")
+    backup.add_argument("--compression-level", type=int, choices=range(1, 10), default=1,
+                        help="gzip level (default: 1, optimized for backup speed)")
     verify = sub.add_parser("verify-backup", help="check archive hashes and SQLite integrity")
     verify.add_argument("archive")
     verify.add_argument("--tmp")
@@ -72,7 +74,8 @@ def main(argv=None) -> int:
         from autofusex.server import backup as backups
         try:
             if args.command == "backup":
-                path = backups.create(args.data, args.out, include_content=not args.core_only, tmp_dir=args.tmp)
+                path = backups.create(args.data, args.out, include_content=not args.core_only,
+                                      tmp_dir=args.tmp, compression_level=args.compression_level)
                 result = {"archive": str(path), "bytes": path.stat().st_size}
             elif args.command == "verify-backup":
                 result = backups.verify(args.archive, tmp_dir=args.tmp)
