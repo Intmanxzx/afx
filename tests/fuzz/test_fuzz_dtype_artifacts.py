@@ -52,7 +52,9 @@ def test_fuzz_discrete_outputs_remain_exact(torch_adapter, dtype, values):
 
 @pytest.mark.parametrize('actual,reference,passed', [
     (float('inf'), float('inf'), True), (float('-inf'), float('-inf'), True),
-    (float('inf'), float('-inf'), False), (float('nan'), float('nan'), False),
+    (float('inf'), float('-inf'), False), (float('nan'), float('nan'), True),
+    (float('nan'), 0., False), (0., float('nan'), False),
+    (float('nan'), float('inf'), False),
     (float('inf'), 0., False),
 ])
 def test_fuzz_nonfinite_outputs(torch_adapter, actual, reference, passed):
@@ -60,6 +62,43 @@ def test_fuzz_nonfinite_outputs(torch_adapter, actual, reference, passed):
     actual, reference = (torch.tensor([actual]),), (torch.tensor([reference]),)
     assert torch_adapter.compare(actual, reference) is passed
     assert torch_adapter.diagnose_accuracy(actual, reference)['mismatches'] == int(not passed)
+
+
+@pytest.mark.parametrize('actual,reference,passed', [
+    (complex(float('nan'), 2), complex(float('nan'), 2), True),
+    (complex(float('nan'), 3), complex(float('nan'), 2), False),
+    (complex(2, float('nan')), complex(2, float('nan')), True),
+    (complex(float('inf'), 2), complex(float('inf'), 2), True),
+    (complex(float('inf'), 3), complex(float('inf'), 2), False),
+    (complex(float('-inf'), 2), complex(float('inf'), 2), False),
+    (complex(float('nan'), 2), complex(2, float('nan')), False),
+])
+def test_complex_nonfinite_alignment(torch_adapter, actual, reference, passed):
+    torch = torch_adapter.torch
+    actual, reference = (torch.tensor([actual], dtype=torch.complex64),), (torch.tensor([reference], dtype=torch.complex64),)
+    assert torch_adapter.compare(actual, reference) is passed
+    metrics = torch_adapter.diagnose_accuracy(actual, reference)
+    assert metrics['mismatches'] == int(not passed)
+    assert metrics['outputs'][0]['nan_mismatches'] == int(not passed and (torch.isnan(actual[0]) | torch.isnan(reference[0])).any())
+
+
+def test_nonfinite_rules_match_execution_compare(torch_adapter):
+    import numpy as np
+    from autofusex.execution.compare import _metrics_with_close, _elementwise_payload
+    torch = torch_adapter.torch
+    values = [float('nan'), float('inf'), float('-inf'), 0., 1.]
+    for actual_value in values:
+        for reference_value in values:
+            actual = torch.tensor([actual_value], dtype=torch.float64)
+            reference = torch.tensor([reference_value], dtype=torch.float64)
+            expected = np.array([reference_value])
+            observed = np.array([actual_value])
+            metrics, close = _metrics_with_close(expected, observed, rtol=1e-7, atol=1e-7)
+            assert bool(torch_adapter._close(actual, reference).all()) == metrics['strict_passed']
+            assert close.all() == metrics['strict_passed']
+            payload = _elementwise_payload(expected, observed, rtol=1e-7, atol=1e-7, logical_dtype='float64')
+            import base64
+            assert bool(base64.b64decode(payload['strict_mask']['data'])[0]) == metrics['strict_passed']
 
 
 def test_fuzz_output_signature_remains_strict(torch_adapter):

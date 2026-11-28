@@ -184,18 +184,20 @@ class TorchAdapter:
         if not actual.is_floating_point() and not actual.is_complex():
             return actual == reference
         rtol, atol, _ = resolve_tolerances(reference.dtype, actual.dtype)
+        # Match execution.compare: aligned NaNs and same-sign infinities pass.
+        # Complex outputs must align each component, including the finite one.
         # Evaluate tolerance arithmetic without rounding it to the output dtype.
         if actual.is_complex():
             # Compare real and imaginary components with the same dtype tolerance.
             # torch.isclose's complex magnitude semantics otherwise diverge from
             # the component-wise diagnostics produced by accuracy.summarize.
             real = self.torch.isclose(actual.real.to(self.torch.float64), reference.real.to(self.torch.float64),
-                                      rtol=rtol, atol=atol, equal_nan=False)
+                                      rtol=rtol, atol=atol, equal_nan=True)
             imag = self.torch.isclose(actual.imag.to(self.torch.float64), reference.imag.to(self.torch.float64),
-                                      rtol=rtol, atol=atol, equal_nan=False)
+                                      rtol=rtol, atol=atol, equal_nan=True)
             return real & imag
         return self.torch.isclose(actual.to(self.torch.float64), reference.to(self.torch.float64),
-                                  rtol=rtol, atol=atol, equal_nan=False)
+                                  rtol=rtol, atol=atol, equal_nan=True)
 
     def outputs_equal(self, left, right):
         return isinstance(left,tuple) and isinstance(right,tuple) and len(left)==len(right) and all(
