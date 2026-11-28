@@ -4,7 +4,7 @@ import math
 import re
 import traceback
 
-FIELDS={'cpu_pass','secondary_used','secondary_pass','max_abs','mean_abs','max_rel','mismatches','elements','nonfinite','error','basis'}
+FIELDS={'cpu_pass','secondary_used','secondary_pass','max_abs','mean_abs','max_rel','mismatches','elements','nonfinite','error','basis','outputs','mismatch_ratio'}
 
 
 def redact(text):
@@ -31,9 +31,11 @@ def error_summary(exc):
 
 
 def validate(raw):
-    if not isinstance(raw,str) or len(raw)>8000:raise ValueError('diagnostics size exceeded')
+    if not isinstance(raw,str) or len(raw)>128*1024:raise ValueError('diagnostics size exceeded')
     data=json.loads(raw)
-    if not isinstance(data,dict) or set(data)-{'version','error','shapes','autofuse_coverage'} or data.get('version')!=1:raise ValueError('invalid diagnostics')
+    if not isinstance(data,dict) or set(data)-{'version','error','shapes','autofuse_coverage','accuracy_evidence','baseline_status','baseline_exec_uuid'} or data.get('version')!=1:raise ValueError('invalid diagnostics')
+    if 'baseline_status' in data and data['baseline_status'] != 'unavailable':raise ValueError('invalid baseline status')
+    if 'baseline_exec_uuid' in data and (not isinstance(data['baseline_exec_uuid'], str) or len(data['baseline_exec_uuid']) > 64):raise ValueError('invalid baseline execution')
     if 'error' in data and (not isinstance(data['error'],str) or len(data['error'])>1600):raise ValueError('invalid core log')
     coverage = data.get('autofuse_coverage')
     if coverage is not None:
@@ -53,9 +55,33 @@ def validate(raw):
     for index,value in shapes.items():
         if not index.isdecimal() or not isinstance(value,dict) or set(value)-FIELDS:raise ValueError('invalid diagnostic fields')
         for key,v in value.items():
-            if key in {'error','basis'}:
+            if key == 'outputs':
+                if not isinstance(v, list) or len(v) > 256: raise ValueError('invalid accuracy outputs')
+            elif v is None and key in {'max_abs','max_rel','mean_abs'}:
+                continue
+            elif key in {'error','basis'}:
                 if not isinstance(v,str) or len(v)>1600:raise ValueError('invalid diagnostic text')
             elif not isinstance(v,(int,float,bool)) or not math.isfinite(v):raise ValueError('invalid diagnostic metric')
+    def finite_json(value, depth=0):
+        if depth > 12: raise ValueError('diagnostic nesting exceeded')
+        if isinstance(value, float) and not math.isfinite(value): raise ValueError('nonfinite diagnostic')
+        if isinstance(value, dict):
+            for item in value.values(): finite_json(item, depth+1)
+        elif isinstance(value, list):
+            for item in value: finite_json(item, depth+1)
+    finite_json(data)
+    evidence = data.get('accuracy_evidence')
+    if evidence is not None:
+        if not isinstance(evidence, dict) or evidence.get('version') != 1 or evidence.get('final_basis') not in {'cpu','eager-npu'}:
+            raise ValueError('invalid accuracy evidence')
+        comparisons = evidence.get('comparisons')
+        if not isinstance(comparisons, list) or not 1 <= len(comparisons) <= 2:
+            raise ValueError('invalid comparisons')
+        for comparison in comparisons:
+            if comparison.get('reference') not in {'cpu','eager-npu'} or type(comparison.get('passed')) is not bool:
+                raise ValueError('invalid comparison')
+            if not isinstance(comparison.get('shapes'), list) or len(comparison['shapes']) > 16:
+                raise ValueError('invalid comparison shapes')
     return json.dumps(data,sort_keys=True,separators=(',',':'))
 
 

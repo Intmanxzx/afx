@@ -120,6 +120,11 @@ def accuracy_bucket(execution) -> str:
 
 def accuracy_signature(execution, traits):
     primary = traits["primary"]
+    classification = dict(execution).get('accuracy_classification')
+    if classification:
+        parts = [primary, classification.get('anomaly', 'unknown'), classification['severity'], classification['ratio'], classification['pattern'], ','.join(classification['features'])]
+        category = ' · '.join(parts)
+        return _digest('accuracy-v2', *parts), category, '精度失败 · ' + category
     return _digest("accuracy", primary), primary, f"精度失败 · {primary}"
 
 
@@ -150,7 +155,20 @@ def execution_signature(conn, execution, traits=None):
     if dimension is None:
         return None
     traits = traits or case_traits(conn, execution["case_id"])
+    if dimension == 'accuracy':
+        execution = accuracy_execution(conn, execution)
     return (function_signature if dimension == "function" else accuracy_signature)(execution, traits)[0]
+
+
+def accuracy_execution(conn, execution):
+    execution = dict(execution)
+    if execution.get('detail_content_id'):
+        raw = get_content(conn, execution['detail_content_id'])
+        detail = json.loads(raw) if raw else {}
+        from autofusex.execution.accuracy import classify
+        execution['accuracy_classification'] = classify(detail.get('accuracy_evidence', {}),
+            detail.get('accuracy_classification', {}).get('features', []) if detail.get('accuracy_classification') else [])
+    return execution
 
 
 def same_function_issue(conn, left, right):
@@ -211,6 +229,8 @@ def reconcile(conn, execution, anchor=None, *, cfg=None, source_id=None, preserv
         detail = get_content(conn, execution['detail_content_id']) if execution.get('detail_content_id') else None
         log = get_content(conn, execution['log_content_id']) if execution.get('log_content_id') else None
         execution['log_summary'] = issue_summary(detail, log, execution['log_summary'], execution['function_status'])
+    if dimension == "accuracy":
+        execution = accuracy_execution(conn, execution)
     summary = execution["log_summary"]
     if dimension:
         signature = {"function": function_signature, "accuracy": accuracy_signature}[dimension](execution, traits)

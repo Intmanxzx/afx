@@ -42,6 +42,9 @@ class TorchAdapter:
             self.old_dfx = os.environ.get('AUTOFUSE_DFX_FLAGS')
             mode = 'mlir' if self.name == 'af-mlir' else 'none'
             os.environ['AUTOFUSE_DFX_FLAGS'] = _ensure_backend_dfx_flag(flags, mode)
+        if self.name == 'eager-npu':
+            self.old_autofuse_flags = os.environ.get('AUTOFUSE_FLAGS')
+            os.environ['AUTOFUSE_FLAGS'] = '--enable_autofuse=false'
         os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(self.config.compile_threads)
         import torch
         self.torch = torch
@@ -79,6 +82,12 @@ class TorchAdapter:
                 os.environ.pop('AUTOFUSE_DFX_FLAGS', None)
             else:
                 os.environ['AUTOFUSE_DFX_FLAGS'] = self.old_dfx
+        if hasattr(self, 'old_autofuse_flags'):
+            import os
+            if self.old_autofuse_flags is None:
+                os.environ.pop('AUTOFUSE_FLAGS', None)
+            else:
+                os.environ['AUTOFUSE_FLAGS'] = self.old_autofuse_flags
         if hasattr(self, 'lease'):
             self.lease.close()
 
@@ -108,8 +117,10 @@ class TorchAdapter:
 
     def _compile(self, forward, bundle):
         torch = self.torch
-        if self.name in {"cpu", "eager-npu"}:
+        if self.name == "cpu":
             return forward
+        if self.name == "eager-npu":
+            return torch.compile(forward, backend="eager")
         target = {'af-legacy': 'ascendc', 'af-mlir': 'ascendc', 'triton-npu': 'triton'}.get(self.name, self.name)
         options = {"npu_backend": target} if target in {"ascendc", "triton"} else {}
         return torch.compile(forward, backend="inductor", fullgraph=True,
@@ -170,10 +181,19 @@ class TorchAdapter:
     def _close(self, actual, reference):
         from autofusex.execution.compare import resolve_tolerances
         actual, reference = actual.detach().cpu(), reference.detach().cpu()
-        if not actual.is_floating_point():
+        if not actual.is_floating_point() and not actual.is_complex():
             return actual == reference
         rtol, atol, _ = resolve_tolerances(reference.dtype, actual.dtype)
         # Evaluate tolerance arithmetic without rounding it to the output dtype.
+        if actual.is_complex():
+            # Compare real and imaginary components with the same dtype tolerance.
+            # torch.isclose's complex magnitude semantics otherwise diverge from
+            # the component-wise diagnostics produced by accuracy.summarize.
+            real = self.torch.isclose(actual.real.to(self.torch.float64), reference.real.to(self.torch.float64),
+                                      rtol=rtol, atol=atol, equal_nan=False)
+            imag = self.torch.isclose(actual.imag.to(self.torch.float64), reference.imag.to(self.torch.float64),
+                                      rtol=rtol, atol=atol, equal_nan=False)
+            return real & imag
         return self.torch.isclose(actual.to(self.torch.float64), reference.to(self.torch.float64),
                                   rtol=rtol, atol=atol, equal_nan=False)
 
@@ -183,25 +203,13 @@ class TorchAdapter:
 
     def diagnose_accuracy(self, output, expected):
         from autofusex.workloads.fuzz.tensors import decode_storage
-        total=mismatches=nonfinite=0
-        max_abs=max_rel=absolute_sum=0.0
-        for actual, reference_value in zip(output,expected):
+        from autofusex.execution.accuracy import summarize
+        references = []
+        for reference_value in expected:
             if isinstance(reference_value, self.torch.Tensor):
-                reference = reference_value.detach().cpu()
+                references.append(reference_value.detach().cpu())
             else:
                 spec, raw = reference_value
-                values = decode_storage(raw, spec.dtype)
-                reference=self.torch.tensor(values,dtype=getattr(self.torch, spec.dtype)).reshape(spec.shape)
-            if actual.shape!=reference.shape:
-                return {'error':'output shape mismatch','basis':'cpu'}
-            mismatches += int((~self._close(actual, reference)).sum())
-            actual=actual.detach().cpu().to(self.torch.float64)
-            reference=reference.to(self.torch.float64)
-            finite=self.torch.isfinite(actual)&self.torch.isfinite(reference)
-            diff=(actual-reference).abs()
-            total+=actual.numel();nonfinite+=int((~finite).sum())
-            if bool(finite.any()):
-                absolute=diff[finite];relative=absolute/reference[finite].abs().clamp_min(1e-30)
-                max_abs=max(max_abs,float(absolute.max()));max_rel=max(max_rel,float(relative.max()));absolute_sum+=float(absolute.sum())
-        return {'max_abs':max_abs,'mean_abs':absolute_sum/max(1,total-nonfinite),'max_rel':max_rel,
-                'mismatches':mismatches,'elements':total,'nonfinite':nonfinite}
+                references.append(self.torch.tensor(decode_storage(raw, spec.dtype),
+                    dtype=getattr(self.torch, spec.dtype)).reshape(spec.shape))
+        return summarize(output, tuple(references), self._close)

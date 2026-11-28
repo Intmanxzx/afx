@@ -853,6 +853,31 @@ def test_rebuild_preview_and_apply_keep_executions(world):
     assert before == [dict(r) for r in world.store.reader().execute('SELECT * FROM executions')]
 
 
+def test_accuracy_evidence_clusters_by_strength_not_dtype_or_reference(world):
+    def detail(strength):
+        return {'accuracy_evidence': {'version': 1, 'final_basis': 'eager-npu',
+            'comparisons': [{'reference': 'eager-npu', 'passed': False, 'shapes': [
+                {'metrics': {'outputs': [{'output_index': 0, 'mismatches': 1,
+                    'mismatch_ratio': .01, 'tolerance_ratio_max': strength,
+                    'spatial_pattern': 'contiguous'}]}}]}]}}
+    world.upload([
+        item('strength-low1', 901, accuracy='fail', accuracy_ref='cpu', detail=detail(1.5)),
+        item('strength-low2', 902, backend='af-legacy', accuracy='fail', accuracy_ref='eager-npu',
+             c=case(902, dtypes=('float32',)), detail=detail(1.5)),
+        item('strength-high', 903, accuracy='fail', detail=detail(200)),
+        item('rechecked-pass', 904, accuracy='pass', accuracy_ref='eager-npu', detail=detail(1.5)),
+    ])
+    rows = issues.list_issues(world.store)['issues']
+    assert len(rows) == 2
+    assert sorted(row['case_count'] for row in rows) == [1, 2]
+    assert any('1-2x' in row['category'] for row in rows)
+    assert any('>100x' in row['category'] for row in rows)
+    from autofusex.server.queries import execution_detail
+    shown = execution_detail(world.store, 'rechecked-pass')
+    assert shown['accuracy_ref'] == 'eager-npu'
+    assert shown['detail']['accuracy_evidence'] == detail(1.5)['accuracy_evidence']
+
+
 def test_shared_primary_category_only_accuracy_and_performance(world):
     world.upload([item('acc-one1',701,accuracy='fail',max_rel_err=.01,c=case(701,category='Reduce',ops=('sum',),dtypes=('float32',))),
                   item('acc-two2',702,backend='af-legacy',accuracy='fail',max_rel_err=10,c=case(702,category='Reduce',ops=('mean',))),

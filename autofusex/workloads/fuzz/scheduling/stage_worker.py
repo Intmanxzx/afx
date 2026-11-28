@@ -94,23 +94,36 @@ def perform(job, device_transition=None):
         actual = read_arrays(job['directory'], job['outputs'])
         expected = read_arrays(job['directory'], job['reference'])
         result = job['result']
+        reference_backend = job.get('reference_backend', 'cpu')
+        comparison = {'reference': reference_backend, 'reference_exec_uuid': job.get('reference_exec_uuid'), 'shapes': []}
         telemetry = json.loads(result['execution']['telemetry'])
         diagnostic = json.loads(result['execution']['diagnostics'])
         for row in result['shape_results']:
             index = row['shape_index']
-            if row.get('error_stage') or index >= len(actual):
+            if row.get('error_stage'):
                 continue
+            if index >= len(actual) or index >= len(expected):
+                raise ValueError('missing shape output in comparison artifacts')
             start = time.monotonic_ns()
             if evaluation.correctness:
                 passed = adapter.compare(actual[index], expected[index])
                 row['correctness'] = 'pass' if passed else 'fail'
-                if not passed:
-                    diagnostic['shapes'][str(index)] = dict(adapter.diagnose_accuracy(actual[index], expected[index]), cpu_pass=False, secondary_used=False, basis='cpu')
+                values = adapter.diagnose_accuracy(actual[index], expected[index])
+                comparison['shapes'].append(dict(shape_index=index, passed=passed, metrics=values))
+                if not passed or reference_backend != 'cpu':
+                    diagnostic['shapes'][str(index)] = dict(values,
+                        cpu_pass=passed if reference_backend == 'cpu' else diagnostic['shapes'].get(str(index), {}).get('cpu_pass', True),
+                        secondary_used=reference_backend != 'cpu', basis=reference_backend,
+                        **({'secondary_pass': passed} if reference_backend != 'cpu' else {}))
             metrics = telemetry['shapes'][str(index)]
             metrics['correctness'] = time.monotonic_ns()-start
             metrics['shape_processing'] = time.monotonic_ns()-job['shape_starts'][str(index)]
         if result['shape_results']:
             result['status'] = 'error' if any(r.get('error_stage') for r in result['shape_results']) else ('fail' if any(r['correctness']=='fail' for r in result['shape_results']) else 'ok')
+        comparison['passed'] = bool(comparison['shapes']) and all(x['passed'] for x in comparison['shapes'])
+        evidence = diagnostic.setdefault('accuracy_evidence', {'version': 1, 'policy': 'strict-v1', 'comparisons': []})
+        evidence['comparisons'].append(comparison)
+        evidence['final_basis'] = reference_backend
         result['execution']['telemetry'] = json.dumps(telemetry)
         result['execution']['diagnostics'] = json.dumps(diagnostic)
         return {'result': result}
