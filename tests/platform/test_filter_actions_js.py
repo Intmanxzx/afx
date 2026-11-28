@@ -96,7 +96,10 @@ const api = async path => { requested = new URL(path, 'http://localhost').search
     click('恢复默认'); flush();
     assert.deepEqual(route, {q:'op:add', ...(repair ? {dimension} : {})});
     const fields = panel().querySelectorAll('.visual-filter-field');
-    assert(fields[0].children[1].children.every(n => n.attrs['aria-pressed'] === 'true'));
+    assert.deepEqual(fields[0].children[1].children.map(n => n.attrs['aria-pressed']),
+      Object.keys(BACKEND_LABEL).map(key => DEFAULT_BACKENDS.includes(key) ? 'true' : 'false'));
+    assert.equal(resultFilterParams(new URLSearchParams()).selected_backends, 'af-legacy,af-mlir,triton-npu');
+    assert.equal(resultFilterParams(new URLSearchParams({backends:'eager-npu'})).selected_backends, 'eager-npu');
     assert.equal(fields[1].children[1].children[0].attrs['aria-pressed'], 'true');
     assert.equal(fields[1].children[1].children[1].attrs['aria-pressed'], repair ? 'true' : 'false');
     if (repair) {
@@ -179,6 +182,7 @@ const api = async path => { requested = new URL(path, 'http://localhost').search
   assert.equal(pagers.length, 2);
   assert.deepEqual(pagers[0].slice(0, 3), pagers[1].slice(0, 3));
   assert.equal(requested.get('results'), 'mlir,fused_kernel');
+  assert.equal(requested.get('selected_backends'), 'af-legacy,af-mlir,triton-npu');
   assert.equal(requested.get('status'), 'open,claimed,verifying,regressing,summarizing');
   assert.equal(requested.get('categories'), null);
   assert.equal(requested.get('treatment'), 'low,normal,high');

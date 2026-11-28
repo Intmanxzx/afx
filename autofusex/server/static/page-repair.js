@@ -3,7 +3,7 @@
 import { el, api, qs, rkey, time, label, fmt, archLabel, STATUS_LABEL } from "./core.js";
 import { select, pagination, statusChip } from "./widgets.js";
 import { PAGES, go, openCase } from "./router.js";
-import { TREATMENTS, REPAIR_DEFAULT_RESULTS, REPAIR_DEFAULT_STATUSES } from "./result-filter.js";
+import { DEFAULT_BACKENDS, TREATMENTS, REPAIR_DEFAULT_RESULTS, REPAIR_DEFAULT_STATUSES } from "./result-filter.js";
 import { isAdmin } from "./auth.js";
 import { openDrawer } from "./ui.js";
 import { knowledgeDrawer } from "./page-knowledge.js";
@@ -79,7 +79,7 @@ PAGES.repair = async (root, params) => {
   const more = el("div", { class: "toolbar", style: { marginTop: "10px" } });
   panel.append(pagerTop, el("div", { class: "table-wrap" }, table), more);
   const load = async () => {
-    const page = await api("/api/issues" + qs({ dimension, status, q, page: pageNumber, limit: 50, selected_backends:params.get("backends"), chips:params.get("chips"), results:dimension === "function" ? params.get("results") || REPAIR_DEFAULT_RESULTS.join(",") : null, categories:params.get("categories"), treatment:params.get("treatment") || "low,normal,high", scope:params.get("scope") || "current" }));
+    const page = await api("/api/issues" + qs({ dimension, status, q, page: pageNumber, limit: 50, selected_backends:params.get("backends") ?? DEFAULT_BACKENDS.join(","), chips:params.get("chips"), results:dimension === "function" ? params.get("results") || REPAIR_DEFAULT_RESULTS.join(",") : null, categories:params.get("categories"), treatment:params.get("treatment") || "low,normal,high", scope:params.get("scope") || "current" }));
     for (const issue of page.issues) body.append(el("tr", {},
       issueCell(issue),
       el("td", {}, (issue.backends || [issue.backend]).map(label).join(" · ")), el("td", {}, fmt(issue.matched_case_count) + " / " + fmt(issue.case_count)), el("td", {}, subway(issue)),
