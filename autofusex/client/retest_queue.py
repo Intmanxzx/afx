@@ -168,6 +168,7 @@ def _synchronize(client, home):
             continue
         ledger = TaskLedger(Path(saved['queue']))
         if saved.get('standalone'):
+            saved = admit(retest_directory(home) / ('task-' + str(task['task_id']) + '.json'), saved)
             from autofusex.workloads.fuzz.scheduling.hosting import launch
             launch(ledger, saved['database'], [], foreground=True, devices=saved['devices'])
         rows = [ledger.get(identity) for identity in saved['task_ids']]
