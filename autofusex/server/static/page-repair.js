@@ -113,28 +113,39 @@ export async function issueDrawer(issueId) {
     })) : null, adminBox, isAdmin() ? adminStatusEditor(issue) : null,
     el("h3", {}, "验证与回归"), issue.rounds.length ? rounds : el("div", { class: "muted" }, "尚未提交验证"),
     caseSection(issueId, cases, "current", "当前关联用例"),
-    el("p", {class:"muted small"}, "当前关联依据普通执行的最新结果。候选修复包的通过或失败保留在验证与回归轮次中。"),
+    el("p", {class:"muted small"}, "最新执行结果用于判断用例目前是否通过；历史记录仅说明当时的结果。候选修复包的结果见验证与回归轮次。"),
     caseSection(issueId, history, "history", "历史关联用例"),
     regression.cases.length ? caseSection(issueId, regression, "regression", "回归证据") : null,
     el("h3", {}, "事件"), el("ul", { class: "timeline" }, issue.events.map(e => el("li", {}, `${time(e.at)} · ${e.actor} · ${e.kind}`, e.to_status ? ` → ${STATUS_LABEL[e.to_status] || e.to_status}` : "", e.detail ? el("div", { class: "muted" }, e.detail) : null))));
 }
+function evidenceVerdict(c) {
+  const verdicts = {pass:["ok", "通过"], fail:["bad", "失败"], skip:["gray", "跳过"], invalid:["warn", "无效"]};
+  const [cls, text] = verdicts[c.result] || ["gray", "未记录"];
+  return el("span", {class:"chip " + cls}, text);
+}
 function caseList(cases, mode = "evidence") {
   const current = mode === "current";
-  const headers = current ? ["用例", "芯片", "后端", "当前结果"]
-    : ["用例", "芯片", "后端", "当前结果", "当前归属", "证据来源", "证据结果", "复测结论"];
-  const currentStatus = c => c.head_function_status ? statusChip({function_status:c.head_function_status,
+  const headers = current ? ["用例", "芯片", "后端", "最新执行结果"]
+    : ["用例", "芯片", "后端", "最新执行结果", "历史记录（当时）"];
+  const currentStatus = c => c.head_function_status ? statusChip({backend:c.backend, function_status:c.head_function_status,
     fail_stage:c.head_fail_stage, accuracy_status:c.head_accuracy_status, accuracy_ref:c.head_accuracy_ref,
-    invalid_reason:c.head_invalid_reason}) : current && c.function_status ? statusChip(c) : "—";
+    invalid_reason:c.head_invalid_reason}) : current && c.function_status ? statusChip(c) : "暂无结果";
   const source = c => ({verify:"候选包验证", regress:"候选包回归", fuzz:"普通执行", retest:"普通复测", import:"导入执行"}[c.run_kind] || "历史证据");
-  return el("table", { class: "grid" },
+  return el("table", { class: "grid issue-cases" },
     el("thead", {}, el("tr", {}, headers.map(t => el("th", {}, t)))),
     el("tbody", {}, cases.map(c => el("tr", {},
       el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
-      el("td", {}, archLabel(c.npu_arch)), el("td", {}, label(c.backend)), el("td", {}, currentStatus(c)),
-      ...(current ? [] : [el("td", {}, c.current_issue_id ? el("a", {href:"#", onclick:e => {
-        e.preventDefault(); issueDrawer(c.current_issue_id); }}, c.current_issue_id) : "无当前 issue"),
-      el("td", {}, source(c)), el("td", {}, c.function_status ? statusChip(c) : "—"),
-      el("td", {}, c.result || "—", c.stale ? " · 旧图" : "", c.pick_reason ? " · " + c.pick_reason : "")])))));
+      el("td", {}, archLabel(c.npu_arch)), el("td", {}, label(c.backend)),
+      el("td", {}, el("div", {class:"issue-case-status"}, currentStatus(c)), current ? null :
+        el("div", {class:"muted small issue-case-meta"}, c.current_issue_id ? el("a", {href:"#", onclick:e => {
+          e.preventDefault(); issueDrawer(c.current_issue_id); }}, "当前问题 " + c.current_issue_id) : "无当前关联问题")),
+      ...(current ? [] : [el("td", {}, el("details", {},
+        el("summary", {}, "查看历史"),
+        el("div", {class:"muted small issue-case-meta"}, source(c)),
+        el("div", {class:"issue-case-status"}, c.function_status ? statusChip(c) : "暂无结果"),
+        el("div", {class:"issue-case-meta small"}, "当时对本问题的结论：", evidenceVerdict(c)),
+        c.stale ? el("div", {class:"muted small"}, "旧图") : null,
+        c.pick_reason ? el("div", {class:"muted small"}, c.pick_reason) : null))])))));
 }
 function caseSection(issueId, page, scope, title) {
   const content = el("div", {class:"table-wrap"}, page.cases.length ? caseList(page.cases, scope === "current" ? "current" : "evidence")

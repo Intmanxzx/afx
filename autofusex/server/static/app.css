@@ -503,3 +503,11 @@ table.grid tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, 
 .grid td.accuracy-low { background: #fff1ef; color: #a13d32; }
 .grid td.accuracy-medium { background: #ffded8; color: #9b281e; }
 .grid td.accuracy-high { background: #ffbeb5; color: #861c14; font-weight: 600; }
+
+/* Keep the latest case result readable; historical evidence is secondary. */
+.issue-cases .issue-case-status > span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.issue-cases .float-tag { margin-left: 0; }
+.issue-cases td:nth-child(2), .issue-cases td:nth-child(3) { white-space: nowrap; }
+.issue-case-meta { margin-top: 5px; }
+.issue-cases summary { cursor: pointer; color: var(--muted); white-space: nowrap; }
+.issue-cases details[open] { min-width: 180px; }
