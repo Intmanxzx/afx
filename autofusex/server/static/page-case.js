@@ -155,7 +155,7 @@ function renderExecution(d, shape, requestedDimension = null) {
   const out = [el("h2", {}, `执行详情 · ${label(d.backend)}`, " ", statusChip(d), el("span", { class: "muted small" }, ` · ${d.user_name || d.user_id} · ${d.client_name || ""} · ${time(d.created_at)}`))];
   const classification = detail.accuracy_classification;
   if (classification) out.push(el("p", {class:"muted small"},
-    `精度分类 · 异常性质：${classification.anomaly || "—"} · 超容差强度：${classification.severity} · 错误比例：${classification.ratio} · 空间形态：${patternText(classification.pattern)} · 计算特征：${(classification.features || []).join("、")}`));
+    `精度分类 · 异常性质：${classification.anomaly || "—"} · 超容差强度：${classification.severity} · 错误比例：${classification.ratio} · 错误形态：${patternText(classification.pattern)} · 计算特征：${(classification.features || []).join("、")}`));
   const rows = [];
   for (const comparison of comparisons) {
     const reference = comparison.reference || comparison.reference_backend;
@@ -174,7 +174,7 @@ function renderExecution(d, shape, requestedDimension = null) {
     index:x.shape_index, output:"汇总", result:x.function_status !== "pass" ? "未比较" : isReference ? "参考" : x.accuracy_status || "—",
     m:{max_abs:x.max_abs_err, max_rel:x.max_rel_err}, run:x});
   if (rows.length && issueDimension !== "function" && issueDimension !== "performance") {
-    const finiteHeaders = ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "错误连续段数", "空间形态"];
+    const finiteHeaders = ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "错误连续段数", "错误形态"];
     const detailHeaders = ["比较双方", "Shape", "输出", "对比结果", "有限值错误元素", "NaN数量（被测/标杆）", "+Inf数量（被测/标杆）", "−Inf数量（被测/标杆）"];
     const finiteValues = m => [m.dtype, m.shape == null ? null : JSON.stringify(m.shape), String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"), m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"), m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol, m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max, m.error_runs, patternText(m.spatial_pattern, m)];
     const categoryText = (failed, total) => `${failed ?? 0}/${total ?? 0}`;
