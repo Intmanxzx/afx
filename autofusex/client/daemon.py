@@ -44,8 +44,8 @@ class Manager:
             from autofusex.client.upgrade_drain import begin
             return dict(runs=begin(self.store, self.processes))
         if action=='start_session':
-            from autofusex.client.local_session import start
-            return start(self, dump=body.get('dump'))
+            from autofusex.client.session_control import start_requested
+            return start_requested(self, dump=body.get('dump'))
         if action=='platform_retest':
             from autofusex.client.retest_queue import submit
             return submit(self.store.home, body['task'])

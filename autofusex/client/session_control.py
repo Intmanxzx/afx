@@ -1,6 +1,21 @@
 """Apply platform session commands while keeping the management connection alive."""
 import json
 import time
+import uuid
+
+
+def start_requested(manager, dump=None):
+    """Acknowledge a local start through the same state as platform commands."""
+    from autofusex.client.local_session import start
+    from autofusex.client.artifacts import atomic
+    started = start(manager, dump=dump)
+    runs = started.get('run_ids') or [started['run_id']]
+    identity = str(uuid.uuid4())
+    atomic(manager.store.home / 'daemon-control.json',
+           dict(request_id=identity, state='running'))
+    manager.store.put('session_control', dict(request_id=identity, run_ids=runs,
+                      state='starting', status='running'))
+    return started
 
 
 def reconcile(manager):

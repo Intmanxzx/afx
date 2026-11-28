@@ -59,6 +59,57 @@ def test_stopped_client_does_not_claim(tmp_path, monkeypatch):
     spawn.assert_not_called()
 
 
+@pytest.mark.parametrize('already_running', [False, True])
+def test_local_start_after_platform_stop_restores_retest_runner(tmp_path, monkeypatch, already_running):
+    from autofusex.client.daemon import Manager
+    from autofusex.client import local_session
+    from autofusex.client.session_control import reconcile
+    from autofusex.client.artifacts import atomic
+    store = Store(tmp_path)
+    atomic(tmp_path/'client.json', dict(mode='managed', platform=dict(retest=True)))
+    atomic(tmp_path/'daemon-control.json', dict(request_id='old-stop', state='stopped'))
+    store.put('session_control', dict(request_id='old-stop', state='stopped', status='succeeded'))
+    with store.connect() as db:
+        db.execute("INSERT INTO environments VALUES ('local','local',?,'ready')",
+                   (json.dumps(dict(python='/execution/bin/python', env={})),))
+        db.execute("INSERT INTO runs VALUES ('run','{}','running',1,NULL)")
+    manager = SimpleNamespace(store=store, processes={'run':object()} if already_running else {}, active=None)
+    def start(m, dump=None):
+        m.processes['run'] = object()
+        return dict(run_ids=['run'], state='running')
+    monkeypatch.setattr(local_session, 'start', start)
+    child = Mock(pid=123)
+    child.poll.return_value = None
+    spawn = Mock(return_value=child)
+    monkeypatch.setattr(retests.subprocess, 'Popen', spawn)
+    retests.tick(manager)
+    spawn.assert_not_called()
+    assert Manager.dispatch(manager, dict(action='start_session'))['run_ids'] == ['run']
+    reconcile(manager)
+    retests.tick(manager)
+    retests.tick(manager)
+    assert store.get('session_control')['state'] == 'running'
+    assert store.get('session_control')['status'] == 'succeeded'
+    assert json.loads((tmp_path/'daemon-control.json').read_text())['state'] == 'running'
+    spawn.assert_called_once()
+
+
+def test_failed_local_start_preserves_stop_command(tmp_path, monkeypatch):
+    from autofusex.client.daemon import Manager
+    from autofusex.client import local_session
+    from autofusex.client.artifacts import atomic
+    store = Store(tmp_path)
+    command = dict(request_id='old-stop', state='stopped')
+    atomic(tmp_path/'daemon-control.json', command)
+    manager = SimpleNamespace(store=store, processes={})
+    def fail(*args, **kwargs):
+        raise ValueError('invalid configuration')
+    monkeypatch.setattr(local_session, 'start', fail)
+    with pytest.raises(ValueError, match='invalid configuration'):
+        Manager.dispatch(manager, dict(action='start_session'))
+    assert json.loads((tmp_path/'daemon-control.json').read_text()) == command
+
+
 def test_claim_journal_resumes_without_claiming_again(tmp_path):
     underlying = Mock()
     underlying.call.return_value = {'tasks':[{'task_id':7},{'task_id':8}]}
