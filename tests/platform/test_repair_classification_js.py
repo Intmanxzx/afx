@@ -36,8 +36,8 @@ const subway = () => el('div', {});
 ''' + core[core.index('export const STAGE_LABEL'):core.index('// Offer current')].replace('export ', '')
     script += widgets[widgets.index('export function statusChip'):].replace('export ', '')
     script += repair[repair.index('function issueClassification'):repair.index('function subway')]
-    script += repair[repair.index('export async function issueDrawer'):repair.index('function caseList')].replace('export ', '')
-    script += repair[repair.index('function caseList'):]
+    script += repair[repair.index('export async function issueDrawer'):repair.index('function evidenceVerdict')].replace('export ', '')
+    script += repair[repair.index('function evidenceVerdict'):]
     script += r'''
 const frontend = {function_status:'ascgraph_fail', fail_stage:'af_fronted'};
 const compile = {function_status:'compile_fail', fail_stage:'mlir'};
@@ -55,22 +55,30 @@ const table = caseList([
   {case_key:'two', backend:'af-mlir', npu_arch:'910b'}
 ], 'current');
 assert.deepEqual(table.children[0].children[0].children.map(text),
-  ['用例','芯片','后端','当前结果']);
+  ['用例','芯片','后端','最新执行结果']);
 const rows = table.children[1].children;
 assert.equal(rows[0].children.length, 4);
 assert.equal(text(rows[0].children[3]), text(statusChip(compile)));
 assert.equal(text(rows[1].children[3]), text(statusChip(runtime)));
-assert.equal(text(rows[2].children[3]), '—');
+assert.equal(text(rows[2].children[3]), '暂无结果');
 const history = caseList([{case_key:'one', backend:'af-mlir', npu_arch:'910b',
   head_function_status:'compile_fail', head_fail_stage:'mlir', function_status:'pass',
   run_kind:'verify', result:'pass', current_issue_id:'F2'}]);
 const evidence = history.children[1].children[0].children;
-assert.equal(evidence.length, 8);
-assert.equal(text(evidence[3]), text(statusChip(compile)));
-assert.equal(text(evidence[4]), 'F2');
-assert.equal(text(evidence[5]), '候选包验证');
-assert.equal(text(evidence[6]), text(statusChip({function_status:'pass'})));
-assert.equal(text(evidence[7]), 'pass');
+assert.equal(evidence.length, 5);
+assert.equal(text(evidence[3]), text(statusChip(compile)) + '当前问题 F2');
+assert.equal(text(evidence[4]), '查看历史候选包验证功能通过当时对本问题的结论：通过');
+for (const [result, expected] of [['pass','通过'],['fail','失败'],['skip','跳过'],['invalid','无效'],[null,'未记录']]) {
+  assert.equal(text(evidenceVerdict({result})), expected);
+}
+const mixed = caseList([
+  {case_key:'passed-now', head_function_status:'pass', head_accuracy_status:'pass', result:'fail', ...compile},
+  {case_key:'accuracy-now', head_function_status:'pass', head_accuracy_status:'fail', result:'fail', ...compile}
+]).children[1].children;
+assert.equal(text(mixed[0].children[3]), '通过无当前关联问题');
+assert.equal(text(mixed[1].children[3]), '精度失败无当前关联问题');
+assert.equal(mixed[0].children[4].children[0].tag, 'details');
+assert.equal(mixed[0].children[4].children[0].attrs.open, undefined);
 for (const [dimension, expected, cls] of [['function','构图失败 · AF前端','bad'],
     ['accuracy','精度失败','warn'], ['performance','性能问题','bad']]) {
   const cell = issueCell({...fixture, dimension});
