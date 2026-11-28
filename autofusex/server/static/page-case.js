@@ -113,7 +113,10 @@ function renderExecution(d, shape, requestedDimension = null) {
     return magnitude !== 0 && (magnitude < 0.001 || magnitude >= 10000)
       ? rounded.toExponential().replace("e+", "e") : String(rounded);
   };
-  const patternText = value => ({none:"无错误", all:"全部错误", contiguous:"连续区间", periodic:"周期性间隔", scattered:"零散分布"}[value] || value || "—");
+  const patternText = (value, metrics) => {
+    if (metrics && Number(metrics.mismatches || 0) === 0) return "—";
+    return ({none:"无错误", all:"全部错误", contiguous:"连续区间", periodic:"周期性间隔", scattered:"零散分布"}[value] || value || "—");
+  };
   const ratioTone = value => value == null ? "" : value === 0 ? "accuracy-ok" : value < 0.01 ? "accuracy-low" : value < 0.1 ? "accuracy-medium" : "accuracy-high";
   const errorTone = m => m.tolerance_unbounded ? "accuracy-high" : m.tolerance_ratio_max == null ? "" : m.tolerance_ratio_max <= 1 ? "accuracy-ok" : m.tolerance_ratio_max <= 10 ? "accuracy-low" : m.tolerance_ratio_max <= 100 ? "accuracy-medium" : "accuracy-high";
   const missingMetric = (column, m) => {
@@ -122,10 +125,16 @@ function renderExecution(d, shape, requestedDimension = null) {
   };
   const cellTone = (column, value, m) => {
     if (value == null) return "";
+    if (column >= 5 && column <= 7 && typeof value === "string" && value.includes(" / ")) {
+      const [actual, reference] = value.split(" / ").map(Number);
+      return actual === reference ? "accuracy-ok" : "accuracy-high";
+    }
     if (column === 3) return ["通过", "一致"].includes(value) ? "accuracy-ok" : ["失败", "不一致", "runtime_fail", "compile_fail", "timeout", "fail"].includes(value) ? "accuracy-high" : "";
     if (column === 6 || column === 7) return ratioTone(m.mismatch_ratio);
-    if ((column >= 8 && column <= 11) || column === 14) return errorTone(m);
-    if (column >= 15 && column <= 16) return value === 0 ? "accuracy-ok" : "accuracy-high";
+    if ((column >= 8 && column <= 12) || column === 13) return errorTone(m);
+    if (column === 14) return value === 0 ? "accuracy-ok" : "accuracy-high";
+    if (column === 15) return Number(m.mismatches || 0) === 0 ? "accuracy-ok" : "accuracy-high";
+    if (column === 16) return Number(m.mismatches || 0) === 0 ? "accuracy-ok" : "";
     const evidence = m.nonfinite_evidence;
     if (evidence && [20, 22, 24].includes(column)) {
       const key = {20:"nan", 22:"pos_inf", 24:"neg_inf"}[column];
@@ -165,10 +174,22 @@ function renderExecution(d, shape, requestedDimension = null) {
     index:x.shape_index, output:"汇总", result:x.function_status !== "pass" ? "未比较" : isReference ? "参考" : x.accuracy_status || "—",
     m:{max_abs:x.max_abs_err, max_rel:x.max_rel_err}, run:x});
   if (rows.length && issueDimension !== "function" && issueDimension !== "performance") {
-    const finiteHeaders = ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "错误连续段数", "空间形态", "有限值元素", "有限值失败"];
-    const nonfiniteHeaders = ["比较双方", "Shape", "输出", "对比结果", "NaN 失败元素", "Inf 失败元素", "含非有限值元素", "被测侧 NaN", "参考侧 NaN", "被测侧 +Inf", "参考侧 +Inf", "被测侧 −Inf", "参考侧 −Inf", "同位置同类型", "位置或类型不同", "仅被测侧非有限", "仅参考侧非有限"];
-    const finiteValues = m => [m.dtype, m.shape == null ? null : JSON.stringify(m.shape), String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"), m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"), m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol, m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max, m.error_runs, patternText(m.spatial_pattern), m.finite_pairs, m.finite_mismatches];
-    const nonfiniteValues = m => [m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.nonfinite_evidence?.actual.nan, m.nonfinite_evidence?.reference.nan, m.nonfinite_evidence?.actual.pos_inf, m.nonfinite_evidence?.reference.pos_inf, m.nonfinite_evidence?.actual.neg_inf, m.nonfinite_evidence?.reference.neg_inf, m.nonfinite_evidence?.aligned, m.nonfinite_evidence?.different, m.nonfinite_evidence?.actual_only, m.nonfinite_evidence?.reference_only];
+    const finiteHeaders = ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "错误连续段数", "空间形态"];
+    const detailHeaders = ["比较双方", "Shape", "输出", "对比结果", "有限值错误元素", "NaN数量（被测/标杆）", "+Inf数量（被测/标杆）", "−Inf数量（被测/标杆）"];
+    const finiteValues = m => [m.dtype, m.shape == null ? null : JSON.stringify(m.shape), String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"), m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"), m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol, m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max, m.error_runs, patternText(m.spatial_pattern, m)];
+    const categoryText = (failed, total) => `${failed ?? 0}/${total ?? 0}`;
+    const unionCount = (e, key) => {
+      const actual = Number(e?.actual?.[key] || 0), reference = Number(e?.reference?.[key] || 0), aligned = Number(e?.aligned?.[key] || 0);
+      return actual + reference - aligned;
+    };
+    const detailValues = m => {
+      const e = m.nonfinite_evidence;
+      const nanTotal = e ? unionCount(e, "nan") : Number(m.nan_mismatches || 0);
+      const infTotal = e ? unionCount(e, "pos_inf") + unionCount(e, "neg_inf") : Number(m.inf_mismatches || 0);
+      const sideCount = key => e ? Number(e.actual?.[key] || 0) + " / " + Number(e.reference?.[key] || 0) : null;
+      return [categoryText(m.finite_mismatches, m.finite_pairs),
+        sideCount("nan"), sideCount("pos_inf"), sideCount("neg_inf")];
+    };
     const makeTable = (headers, values, title) => {
       const body = rows.map(({relation,index,output,result,m}) => {
         const vals = values(m);
@@ -179,7 +200,7 @@ function renderExecution(d, shape, requestedDimension = null) {
       });
       return el("section", {class:"accuracy-table"}, el("h4", {}, title), el("div", {class:"table-wrap"}, el("table", {class:"grid"}, el("thead", {}, el("tr", {}, headers.map(t => el("th", {}, t)))), el("tbody", {}, body))));
     };
-    out.push(el("h3", {}, "精度对比"), makeTable(finiteHeaders, finiteValues, "有限值误差"), makeTable(nonfiniteHeaders, nonfiniteValues, "非有限值统计"));
+    out.push(el("h3", {}, "精度对比"), makeTable(finiteHeaders, finiteValues, "统计总览"), makeTable(detailHeaders, detailValues, "统计细分"));
   }
   if (issueDimension !== "accuracy" && issueDimension !== "performance") out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)

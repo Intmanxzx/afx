@@ -118,6 +118,7 @@ svg text { fill: var(--muted); font-size: 11px; }
 
 /* tables */
 .table-wrap { overflow-x: auto; }
+.execution-detail-toggle { margin-top: 20px; }
 .users-table td { white-space: nowrap; }
 table.users-table td { vertical-align: middle; }
 .users-table .user-name { font-weight: 600; white-space: normal; overflow-wrap: anywhere; min-width: 100px; }
