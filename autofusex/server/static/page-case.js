@@ -28,6 +28,7 @@ PAGES.case = async (root, params) => {
   let executions = history.executions, cursor = history.next_cursor;
   const shapes = (spec.shape_variants || []).length;
   let shape = Number(params.get("shape") || (shapes ? 0 : -1));
+  const issueDimension = params.get("dimension") || null;
   const command = replayCommand(c.case_key, executions);
   const copy = el("button", { onclick: () => navigator.clipboard && navigator.clipboard.writeText(command).then(() => { copy.textContent = "已复制"; }) }, "复制");
   root.append(el("button", { class: "back-btn", "aria-label": "返回上一页",
@@ -73,7 +74,7 @@ PAGES.case = async (root, params) => {
     if (!uuid) { execBox.replaceChildren(el("div", { class: "empty" }, "暂无执行记录")); return; }
     currentExec = uuid;
     execBox.replaceChildren(el("div", { class: "empty" }, "加载中…"));
-    try { execBox.replaceChildren(...renderExecution(await api("/api/executions/" + encodeURIComponent(uuid)), shape)); }
+    try { execBox.replaceChildren(...renderExecution(await api("/api/executions/" + encodeURIComponent(uuid)), shape, issueDimension)); }
     catch (err) { execBox.replaceChildren(errorBox(err)); }
   };
   // history
@@ -104,7 +105,7 @@ function tensorText(shapes = {}, weights = [], types = {}) {
   return entries.map((t, i) => "x" + (i + 1) + "[" + [...(t.shape || []), DTYPE_SHORT[t.dtype] || t.dtype || "?"].join(",") + "]").join(", ") || "—";
 }
 
-function renderExecution(d, shape) {
+function renderExecution(d, shape, requestedDimension = null) {
   const metricText = value => {
     if (!Number.isFinite(value)) return String(value);
     const rounded = Number(value.toPrecision(3));
@@ -140,6 +141,8 @@ function renderExecution(d, shape) {
   const evidence = detail.accuracy_evidence || diagnostics.accuracy_evidence || {};
   const comparisons = evidence.comparisons || [];
   const refText = d.accuracy_ref === "eager-npu" ? "EagerNPU" : d.accuracy_ref === "cpu" ? "CPU" : "—";
+  const issueDimension = requestedDimension || d.issue_dimension || d.issue?.dimension ||
+    (d.function_status !== "pass" ? "function" : d.accuracy_status === "fail" ? "accuracy" : null);
   const out = [el("h2", {}, `执行详情 · ${label(d.backend)}`, " ", statusChip(d), el("span", { class: "muted small" }, ` · ${d.user_name || d.user_id} · ${d.client_name || ""} · ${time(d.created_at)}`))];
   const classification = detail.accuracy_classification;
   if (classification) out.push(el("p", {class:"muted small"},
@@ -161,38 +164,40 @@ function renderExecution(d, shape) {
     relation:refText === "—" ? "未比较" : label(d.backend) + " 与 " + refText,
     index:x.shape_index, output:"汇总", result:x.function_status !== "pass" ? "未比较" : isReference ? "参考" : x.accuracy_status || "—",
     m:{max_abs:x.max_abs_err, max_rel:x.max_rel_err}, run:x});
-  if (rows.length) {
-    const finiteHeaders = ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "错误连续段数", "空间形态", "有限值元素", "有限值失败"];
-    const nonfiniteHeaders = ["比较双方", "Shape", "输出", "对比结果", "NaN 失败元素", "Inf 失败元素", "含非有限值元素", "被测侧 NaN", "参考侧 NaN", "被测侧 +Inf", "参考侧 +Inf", "被测侧 −Inf", "参考侧 −Inf", "同位置同类型", "位置或类型不同", "仅被测侧非有限", "仅参考侧非有限"];
-    const finiteValues = m => [m.dtype, m.shape == null ? null : JSON.stringify(m.shape), String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"), m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"), m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol, m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max, m.error_runs, patternText(m.spatial_pattern), m.finite_pairs, m.finite_mismatches];
-    const nonfiniteValues = m => [m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.nonfinite_evidence?.actual.nan, m.nonfinite_evidence?.reference.nan, m.nonfinite_evidence?.actual.pos_inf, m.nonfinite_evidence?.reference.pos_inf, m.nonfinite_evidence?.actual.neg_inf, m.nonfinite_evidence?.reference.neg_inf, m.nonfinite_evidence?.aligned, m.nonfinite_evidence?.different, m.nonfinite_evidence?.actual_only, m.nonfinite_evidence?.reference_only];
-    const makeTable = (headers, values, title) => {
-      const body = rows.map(({relation,index,output,result,m}) => {
-        const vals = values(m);
-        const cells = [relation, "S" + index, output, result, ...vals].map((v, column) =>
-          el("td", {class:cellTone(column, v, m), title:v == null ? "未记录或不适用" : String(v), style:{whiteSpace:"nowrap"}},
-            v == null ? "—" : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v));
-        return el("tr", {}, cells);
-      });
-      return el("section", {class:"accuracy-table"}, el("h4", {}, title), el("div", {class:"table-wrap"}, el("table", {class:"grid"}, el("thead", {}, el("tr", {}, headers.map(t => el("th", {}, t)))), el("tbody", {}, body))));
-    };
-    out.push(el("h3", {}, "精度对比"), el("p", {class:"muted small"}, "有限值误差与非有限值异常分开统计。"), makeTable(finiteHeaders, finiteValues, "有限值误差"), makeTable(nonfiniteHeaders, nonfiniteValues, "非有限值统计"));
-  }
-  out.push(el("h3", {}, "错误日志"), diagnostics.error_log
+  if (rows.length && issueDimension !== "function" && issueDimension !== "performance") out.push(el("h3", {}, "精度对比"),
+    el("p", {class:"muted small"}, "被测侧是“比较双方”左侧后端，参考侧是右侧后端。双方数量不同的被测侧单元格及位置/类型差异标红；数量相等不代表位置相同。S0、S1 表示本次执行的输入 Shape 组；每组下分别列出汇总和各输出指标。误差仅统计可比较的有限值，NaN / Inf 另列。绿色误差仅表示有限值部分符合容差，不代表整个输出通过；超容差倍数按 ≤10、≤100、>100 逐级加深红色。错误比例按 <1%、<10%、≥10% 加深红色，任一错误仍判失败。误差列颜色依据该输出最大超容差倍数，未记录时不着色。"),
+    el("div", {class:"table-wrap"}, el("table", {class:"grid"},
+      el("thead", {}, el("tr", {}, ["比较双方", "Shape", "输出", "对比结果", "数据类型", "输出形状", "错误元素", "错误比例", "最大绝对误差", "最大相对误差", "平均绝对误差", "RMSE", "绝对容差", "相对容差", "最大超容差倍数", "NaN 失败元素", "Inf 失败元素", "含非有限值元素", "错误连续段数", "空间形态", "被测侧 NaN", "参考侧 NaN", "被测侧 +Inf", "参考侧 +Inf", "被测侧 −Inf", "参考侧 −Inf", "同位置同类型", "位置或类型不同", "仅被测侧非有限", "仅参考侧非有限", "有限值元素", "有限值失败"].map(t => el("th", {}, t)))),
+      el("tbody", {}, rows.map(({relation,index,output,result,m,run}) => el("tr", {}, [
+        relation, "S" + index, output, result, m.dtype,
+        m.shape == null ? null : JSON.stringify(m.shape),
+        String(m.mismatches ?? "—") + "/" + String(m.elements ?? "—"),
+        m.mismatch_ratio == null ? null : (m.mismatch_ratio > 0 && m.mismatch_ratio < 0.0001 ? "<0.01%" : m.mismatch_ratio < 1 && m.mismatch_ratio > 0.9999 ? ">99.99%" : Number((100*m.mismatch_ratio).toFixed(2)) + "%"),
+        m.max_abs, m.max_rel, m.mean_abs, m.rmse, m.atol, m.rtol,
+        m.tolerance_unbounded ? "无界" : m.tolerance_ratio_max,
+        m.nan_mismatches, m.inf_mismatches, m.nonfinite, m.error_runs, patternText(m.spatial_pattern), m.nonfinite_evidence?.actual.nan, m.nonfinite_evidence?.reference.nan,
+        m.nonfinite_evidence?.actual.pos_inf, m.nonfinite_evidence?.reference.pos_inf,
+        m.nonfinite_evidence?.actual.neg_inf, m.nonfinite_evidence?.reference.neg_inf,
+        m.nonfinite_evidence?.aligned, m.nonfinite_evidence?.different,
+        m.nonfinite_evidence?.actual_only, m.nonfinite_evidence?.reference_only,
+        m.finite_pairs, m.finite_mismatches
+        ].map((v, column) => el("td", { class: cellTone(column, v, m), title: v == null ? (missingMetric(column, m) === "无有限值" ? "没有双方均为有限值的元素，无法计算数值误差；请查看 NaN / Inf 失败元素" : "未记录或不适用") : String(v), style: { whiteSpace: "nowrap" } },
+        v == null ? (column >= 20 ? "未记录" : missingMetric(column, m)) : column >= 8 && column <= 14 && typeof v === "number" ? metricText(v) : v))))))));
+  if (issueDimension !== "accuracy" && issueDimension !== "performance") out.push(el("h3", {}, "错误日志"), diagnostics.error_log
     ? el("pre", { class: "log" }, diagnostics.error_log)
     : el("div", { class: "muted" }, "未保存错误日志"));
   const graphs = (diagnostics.ascir_graphs || []).filter(g => g.shape_index === shape);
-  out.push(el("h3", {}, "ASCIR 表达的图结构"), el("div", { class: "muted small" }, "编译时实际生成的 ASCIR 构图代码（Schedule 之前）。"),
+  if (issueDimension !== "accuracy" && issueDimension !== "performance") out.push(el("h3", {}, "ASCIR 表达的图结构"), el("div", { class: "muted small" }, "编译时实际生成的 ASCIR 构图代码（Schedule 之前）。"),
     el("pre", { class: "log" }, graphs.map(g => g.source).join("\n\n") || "未采集当前 Shape 的 ASCIR 构图代码（旧客户端、编译缓存命中或未进入 AF 构图）。错误日志不足以还原完整图结构。"));
-  // provenance
+  // provenance and runtime telemetry are opt-in to keep the default view compact.
   const env = (detail.contexts || {}).environment || {};
   const envRows = [["用户", d.user_name || d.user_id], ["节点", d.client_name], ["芯片", archLabel(d.npu_arch || env.device_model)], ["CANN", d.env.cann || env.cann], ["Torch", d.env.torch || env.torch],
     ["Torch NPU", d.env.torch_npu || env.torch_npu], ["后端版本", d.env.backend_version], ["Autofuse commit", env.autofuse_commit], ["Autofuse binary", env.autofuse_binary],
     ["Triton", env.triton], ["Python", d.env.python || env.python], ["AutofuseX", d.env.afx || env.package_version], ["NNSmith", d.env.nnsmith], ["OS", d.env.os],
     ["CPU 架构", d.env.cpu_arch || env.machine], ["GCC", d.env.gcc]].filter(([, v]) => v);
-  out.push(el("h3", {}, "运行环境"), el("div", { class: "kv" }, envRows.flat().map(v => el("div", { class: "mono small" }, v))));
+  const detailExtra = el("div", { class: "execution-detail-extra", hidden: true }, el("h3", {}, "运行环境"), el("div", { class: "kv" }, envRows.flat().map(v => el("div", { class: "mono small" }, v))));
   // Performance measurements are separate from accuracy evidence.
-  if ((d.shapes || []).some(x => x.kernel_ns != null || x.e2e_ns != null)) out.push(
+  if (issueDimension === "performance" && (d.shapes || []).some(x => x.kernel_ns != null || x.e2e_ns != null)) detailExtra.append(
     el("h3", {}, "性能耗时"), el("table", {class:"grid"},
       el("thead", {}, el("tr", {}, ["Shape", "Kernel", "E2E"].map(t => el("th", {}, t)))),
       el("tbody", {}, d.shapes.map(x => el("tr", {}, el("td", {}, "S" + x.shape_index),
@@ -202,11 +207,11 @@ function renderExecution(d, shape) {
   try { telemetry = JSON.parse(((detail.contexts || {}).execution || {}).telemetry || "{}"); } catch { telemetry = {}; }
   const timeRows = [...Object.entries(telemetry.stages || {}).map(([k, v]) => [stageName(k), v]),
     ...Object.entries(telemetry.shapes || {}).flatMap(([i, m]) => Object.entries(m).map(([k, v]) => [`S${i} ${stageName(k)}`, v]))];
-  out.push(el("h3", {}, "用例执行耗时"), el("div", { class: "muted small" }, `本次运行 ${detail.shape_count ?? d.shapes.length} 个 Shape 的计时。执行总计包含能力检查、准备和这些 Shape；生成耗时单独记录。下列指标不能逐项相加。`),
+  detailExtra.append(el("h3", {}, "用例执行耗时"), el("div", { class: "muted small" }, `本次运行 ${detail.shape_count ?? d.shapes.length} 个 Shape 的计时。执行总计包含能力检查、准备和这些 Shape；生成耗时单独记录。下列指标不能逐项相加。`),
     timeRows.length ? el("table", { class: "grid" }, el("tbody", {}, timeRows.map(([k, v]) => el("tr", {}, el("td", {}, k), el("td", {}, (v / 1e9).toFixed(1) + " s"))))) : el("div", { class: "muted" }, "未采集本次运行计时"));
   const fs = detail.stage_timeline || [];
   if (fs.length) {
-    out.push(el("h3", {}, "阶段时间线"), el("div", { class: "table-wrap" }, el("table", { class: "grid" },
+    detailExtra.append(el("h3", {}, "阶段时间线"), el("div", { class: "table-wrap" }, el("table", { class: "grid" },
       el("thead", {}, el("tr", {}, ["泳道 / 阶段", "状态", "相对接纳时间", "依赖等待", "资源等待", "运行", "worker / 冷暖"].map(t => el("th", {}, t)))),
       el("tbody", {}, fs.map(f => { const begin = f.started ?? f.dispatched, end = f.finished; return el("tr", {}, el("td", {}, stageLabel(f)), el("td", {}, f.state),
         el("td", {}, begin == null ? "未采集" : secs(begin - f.admitted)), el("td", {}, f.ready == null ? "未采集" : secs(f.ready - f.admitted)),
@@ -223,9 +228,11 @@ function renderExecution(d, shape) {
         lanes.append(el("div", { class: "stage-lane" }, el("span", {}, stageLabel(f)), track));
       }
       lanes.append(el("div", { class: "muted small" }, "灰：依赖等待 · 黄：资源等待 · 绿：运行 · 红：失败；共享生成/参考不摊分为单 Shape。"));
-      out.push(lanes);
+      detailExtra.append(lanes);
     }
   }
+  const detailButton = el("button", { type: "button", onclick: () => { detailButton.hidden = true; detailExtra.hidden = false; } }, "查看详细执行信息");
+  out.push(el("div", { class: "execution-detail-toggle" }, detailButton), detailExtra);
   const life = detail.lifecycle || [];
   out.push(el("div", { class: "muted small", "data-tooltip": life.map(e => e.event + " " + e.wall_time).join(" → ") },
     "生命周期（UTC）：" + (life.map(e => e.event + " " + String(e.wall_time || "").slice(11, 23)).join(" → ") || "未采集") + "。端到端延迟：" + (secs(detail.end_to_end_ns) || "未采集")));
