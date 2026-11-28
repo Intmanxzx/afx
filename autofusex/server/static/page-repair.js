@@ -16,6 +16,18 @@ function issueClassification(issue) {
   return classifications.length ? el("span", {}, classifications.map(statusChip))
     : el("span", { class: "chip gray" }, issue.current_case_count === 0 ? "无当前关联" : "未知");
 }
+function accuracyReason(issue) {
+  const raw = issue.category || issue.primary_category || "";
+  const parts = raw.split("·").map(value => value.trim());
+  if (parts.length < 5) return raw;
+  const [primary, anomaly, severity, ratio, pattern, ...features] = parts;
+  const anomalies = {finite:"有限值", nan:"NaN", inf:"Inf", "nan+inf":"NaN+Inf", unknown:"未知数值"};
+  const patterns = {none:"无", all:"全量", contiguous:"连续", periodic:"周期", scattered:"离散"};
+  const compact = value => ({nonfinite:"非有限值", unknown:"未知"}[value] || value.replaceAll("<=", "≤").replaceAll("-", "–"));
+  return [primary, anomalies[anomaly] || anomaly, `超容差:${compact(severity)}`,
+    `错误比例:${compact(ratio)}`, `错误形态:${patterns[pattern] || pattern}`,
+    features.filter(Boolean).length ? `特征:${features.filter(Boolean).join("、")}` : ""].filter(Boolean).join("/");
+}
 function treatmentChip(issue) {
   return el("span", { class: "chip priority-" + issue.treatment }, new Map(TREATMENTS).get(issue.treatment));
 }
@@ -25,7 +37,7 @@ function similarLink(issue) {
   } }, "与问题 " + issue.similar_to + " 相似") : null;
 }
 function issueCell(issue) {
-  const reason = issue.dimension === "function" ? issue.log_summary || "" : issue.category || "";
+  const reason = issue.dimension === "function" ? issue.log_summary || "" : issue.dimension === "accuracy" ? accuracyReason(issue) : issue.category || "";
   return el("td", { class: "issue-cell" },
     el("a", { href: "#", class: "issue-summary-link", "aria-label": `查看问题 ${issue.issue_id} 详情`,
       onclick: e => { e.preventDefault(); issueDrawer(issue.issue_id); } },
@@ -106,6 +118,7 @@ export async function issueDrawer(issueId) {
       ["修复版本", issue.fix_version || "—"], ["代码链接", issue.fix_ref ? el("a", { href: issue.fix_ref, target: "_blank", rel: "noopener noreferrer" }, issue.fix_ref) : "—"],
       ["知识", issue.knowledge_id ? el("a", { href: "#", onclick: e => { e.preventDefault(); knowledgeDrawer(issue.knowledge_id); } }, issue.knowledge_id) : "—"],
       ["首次出现", time(issue.first_seen_at)]].flat().map(v => el("div", {}, v))),
+    issue.dimension === "accuracy" ? el("p", {class:"small"}, accuracyReason(issue)) : null,
     issue.log_summary ? el("pre", { class: "log" }, issue.log_summary) : null,
     isAdmin() ? el("div", {class:"toolbar"}, "处理标签", select(TREATMENTS, issue.treatment, async treatment => {
       try { await api('/api/admin/issues/' + issueId + '/treatment', {method:"POST",body:{request_key:rkey(),treatment}}); await issueDrawer(issueId); }
