@@ -153,6 +153,11 @@ def synchronize(manager, client):
         pending_uploads=pending_uploads(store),
         runtime=runtime,
     )
+    from autofusex.client import workload_control
+    heartbeat['workload_states'] = workload_control.states(store)
+    retest_child = getattr(manager, '_retest_process', None)
+    if retest_child is not None and retest_child.poll() is None:
+        heartbeat['daemon_request_id'] = None
     beat=api.call('POST','/api/client/heartbeat',heartbeat, attempts=1)
     effective=api.call('GET','/api/config/me',attempts=1)
     config = effective['config']
@@ -166,6 +171,11 @@ def synchronize(manager, client):
         state = beat['daemon_state']
         atomic(control_path, {'state': state, 'request_id': beat.get('daemon_request_id')})
         store.put('shutdown_when_idle', False)
+        # Legacy lifecycle commands and upgrades still stop all execution.
+        if state == 'stopped':
+            workload_control.receive(store, dict(retest=dict(state='stopped', request_id=beat.get('daemon_request_id'))))
+    else:
+        workload_control.receive(store, beat.get('workload_controls', {}))
     from autofusex.client.source_jobs import synchronize as source_jobs
     source_jobs(manager, api, identity[:128])
     with store.connect() as db:

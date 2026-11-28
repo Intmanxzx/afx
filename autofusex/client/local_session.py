@@ -28,7 +28,7 @@ def _local_manifest(existing=None):
     return manifest
 
 
-def start(manager, dump=None):
+def start(manager, dump=None, fuzz_only=False):
     store=manager.store
     spec=load(store.home/'task.json')
     if dump is not None:
@@ -48,12 +48,18 @@ def start(manager, dump=None):
             manifest = _local_manifest()
         with store.connect() as db:
             db.execute("INSERT OR REPLACE INTO environments VALUES (?,?,?,'ready')",('local','local',canonical(manifest)))
-    if manager.processes:
+    processes = manager.processes
+    if fuzz_only:
+        with store.connect() as db:
+            processes = {run: process for run, process in manager.processes.items()
+                         if (row := db.execute('SELECT spec FROM runs WHERE id=?', (run,)).fetchone())
+                         and json.loads(row['spec']).get('spec', {}).get('kind') == 'fuzz_task'}
+    if processes:
         if dump is not None:
             with store.connect() as db:
                 current = [json.loads(row['spec'])['spec']['execution'].get('dump',False) for row in db.execute("SELECT spec FROM runs WHERE state IN ('running','preparing','paused','pausing')")]
             if any(value != dump for value in current):
                 raise ValueError('dump mode differs from active task; use afx restart --dump')
-        return dict(state='running',run_ids=list(manager.processes))
+        return dict(state='running',run_ids=list(processes))
     from autofusex.client.tasks import start as start_task
     return start_task(store,spec,'local-start:'+str(uuid.uuid4()),manager.processes)

@@ -90,23 +90,39 @@ PAGES.ops = async (root, params) => {
 function clientControls(client, latestVersion) {
   const fresh = client.online && client.daemon_state_at && Date.now() - client.daemon_state_at < 300000;
   const state = { running: "运行中", stopped: "已停止" }[client.daemon_state];
-  const status = el("span", { class: "chip " + (fresh && client.daemon_state === "running" ? "ok" : "gray"),
+  let status = el("span", { class: "chip " + (fresh && client.daemon_state === "running" ? "ok" : "gray"),
     "data-tooltip": client.daemon_state_at ? "状态上报时间：" + time(client.daemon_state_at) : "等待客户端上报任务状态" },
     state ? (fresh ? state : "上次状态：" + state) : "状态未上报");
+  if (client.workload_states?.fuzz && client.workload_states?.retest) {
+    const labels = { running: "已开启", stopped: "已停止", stopping: "停止中", error: "异常" };
+    status = el("span", {style: {display: "inline-flex", gap: "4px"}},
+      ...[["fuzz", "Fuzz"], ["retest", "复测"]].map(([name, label]) => {
+        const value = client.workload_states[name].state;
+        return el("span", {class: "chip " + (fresh && value === "running" ? "ok" : "gray")},
+          `${fresh ? "" : "上次状态："}${label}：${labels[value] || "未知"}`);
+      }));
+  }
   if (!me || !(isAdmin() || client.mine)) return status;
   const actions = el("div", { style: { display: "flex", gap: "4px", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } });
-  for (const [state, text] of [["running", "启动"], ["stopped", "停止"], ["restart", "重启"]]) {
-    actions.append(el("button", { class: "mini-btn", onclick: async event => {
+  const supported = !!client.workload_states?.fuzz && !!client.workload_states?.retest;
+  for (const [workload, label] of [["fuzz", "fuzz"], ["retest", "复测"]]) {
+    const pending = client.workload_controls?.[workload];
+    const actual = client.workload_states?.[workload]?.state;
+    const running = (pending?.state || actual || client.daemon_state) === "running";
+    const state = running ? "stopped" : "running";
+    actions.append(el("button", { class: "mini-btn", disabled: !supported || !!client.target_afx_version || actual === "stopping",
+      "data-tooltip": !supported ? "客户端需升级后才能独立控制 Fuzz 和复测" : pending ? "指令已下发，等待客户端确认" : "", onclick: async event => {
       const button = event.currentTarget;
       button.disabled = true;
       try {
-        await api("/api/clients/daemon", { method: "POST", body: { request_key: rkey(), client_id: client.client_id, state } });
+        await api("/api/clients/daemon", { method: "POST", body: { request_key: rkey(), client_id: client.client_id, workload, state } });
         render();
       } catch (err) { button.disabled = false; alert(err.message); }
-    } }, text));
+    } }, (running ? "停" : "启动") + label));
   }
-  if (isAdmin() && !client.online) actions.append(el("button", { class: "danger mini-btn", onclick: async () => { if (!confirm(`删除离线客户端 ${client.display_name || client.client_id}？`)) return; try { await api(`/api/admin/clients/${client.client_id}`, { method: "DELETE" }); render(); } catch (err) { alert(err.message); } } }, "删除"));
-  if (isAdmin() && latestVersion && client.afx_version !== latestVersion && !client.target_afx_version && !client.update_status?.phase) actions.append(el("button", { class: "mini-btn", onclick: async event => {
+  const canUpgrade = isAdmin() && latestVersion && client.afx_version !== latestVersion && !client.target_afx_version;
+  actions.append(el("button", { class: "mini-btn", disabled: !canUpgrade,
+    "data-tooltip": client.target_afx_version ? "正在升级" : !isAdmin() ? "仅管理员可升级" : !latestVersion ? "等待获取最新版本" : client.afx_version === latestVersion ? "已是最新版本" : "", onclick: async event => {
     const button = event.currentTarget;
     if (!confirm(`将客户端 ${client.display_name || client.client_id} 停止后升级到 ${latestVersion}，继续吗？`)) return;
     button.disabled = true;
@@ -115,7 +131,8 @@ function clientControls(client, latestVersion) {
   } }, "升级"));
   const pending = { running: "启动中（等待回执）", stopped: "停止中（等待回执）", restart: "重启中（等待回执）" }[client.target_daemon_state];
   const statuses = el("div", { style: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap", width: "max-content" } },
-    status, pending ? el("span", { class: "chip info" }, pending) : null,
+    status, ...Object.entries(client.workload_controls || {}).map(([name, command]) =>
+      el("span", {class: "chip info"}, `${name === "fuzz" ? "Fuzz" : "复测"}${command.state === "running" ? "启动" : "停止"}中（等待回执）`)), pending ? el("span", { class: "chip info" }, pending) : null,
     client.target_afx_version && client.update_status?.phase === "stop_timeout" ? el("span", { class: "chip danger" }, "停止失败") : null,
     client.target_afx_version && client.update_status?.phase === "upgrade_timeout" ? el("span", { class: "chip danger" }, "升级失败") : null);
   return el("div", {}, statuses, actions);

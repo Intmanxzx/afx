@@ -156,6 +156,22 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
                 if phase or started is not None:
                     safe.update(phase=phase, started_at=started)
             conn.execute('UPDATE clients SET update_status=? WHERE client_id=?', (json.dumps(safe), client_id))
+        workload_states = body.get('workload_states')
+        if workload_states is not None:
+            if not isinstance(workload_states, dict) or any(
+                    name not in {'fuzz', 'retest'} or not isinstance(value, dict)
+                    or value.get('state') not in {'running', 'stopped', 'stopping', 'error'}
+                    for name, value in workload_states.items()):
+                raise IssueError('invalid', 'invalid workload states')
+            conn.execute('UPDATE clients SET workload_states=? WHERE client_id=?',
+                         (json.dumps(workload_states), client_id))
+        controls_row = conn.execute('SELECT workload_controls FROM clients WHERE client_id=?', (client_id,)).fetchone()
+        workload_controls = json.loads(controls_row[0] or '{}')
+        for name, value in (workload_states or {}).items():
+            pending = workload_controls.get(name)
+            if pending and value.get('request_id') == pending['request_id'] and value['state'] == pending['state']:
+                del workload_controls[name]
+        conn.execute('UPDATE clients SET workload_controls=? WHERE client_id=?', (json.dumps(workload_controls), client_id))
         row = conn.execute("SELECT target_afx_version, afx_version, update_request_id, target_daemon_state, daemon_request_id, daemon_state FROM clients WHERE client_id=?",
                            (client_id,)).fetchone()
         target = row["target_afx_version"]
@@ -193,6 +209,7 @@ def heartbeat(store: Store, principal: Principal, body: dict) -> dict:
             "update_request_id": row["update_request_id"] if target else None,
             "daemon_state": daemon_target,
             "daemon_request_id": daemon_request if daemon_target else None,
+            "workload_controls": workload_controls,
             "server_time": now, "windows_accepted": accepted}
 
 
@@ -222,7 +239,7 @@ def request_update(store: Store, principal: Principal, body: dict):
             daemon_request = str(uuid.uuid4())
             count += conn.execute(
                 "UPDATE clients SET target_afx_version=?, update_request_id=?, update_status=?, "
-                "target_daemon_state='stopped', daemon_request_id=? WHERE client_id=? AND deleted_at IS NULL",
+                "target_daemon_state='stopped', daemon_request_id=?, workload_controls='{}' WHERE client_id=? AND deleted_at IS NULL",
                 (version, request_id, json.dumps({'state': 'queued', 'version': version, 'phase': 'stopping', 'started_at': now_ms()}), daemon_request, client_id)).rowcount
         conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)",
                      (now_ms(), principal.user_id, "client.update_requested", f"{ids} -> {version}"))
@@ -235,12 +252,26 @@ def request_daemon_state(store: Store, principal: Principal, body: dict):
     client_id, state = body.get("client_id"), body.get("state")
     if not isinstance(client_id, int) or isinstance(client_id, bool) or state not in {"running", "stopped", "restart"}:
         raise IssueError("invalid", "client_id and state are required")
+    workload = body.get('workload')
+    if workload is not None and (workload not in {'fuzz', 'retest'} or state == 'restart'):
+        raise IssueError('invalid', 'invalid workload control')
     def action(conn):
-        row = conn.execute("SELECT user_id FROM clients WHERE client_id=? AND deleted_at IS NULL", (client_id,)).fetchone()
+        row = conn.execute("SELECT user_id, workload_states, workload_controls, target_afx_version FROM clients WHERE client_id=? AND deleted_at IS NULL", (client_id,)).fetchone()
         if row is None: raise IssueError("not_found", "client not found", 404)
         if principal.role != "admin" and row["user_id"] != principal.user_id:
             raise IssueError("forbidden", "client is owned by another user", 403)
         request_id = str(uuid.uuid4())
+        if workload:
+            if not row['workload_states']:
+                raise IssueError('conflict', '客户端需升级后才能独立控制 Fuzz 和复测', 409)
+            if row['target_afx_version']:
+                raise IssueError('conflict', '客户端正在升级', 409)
+            controls = json.loads(row['workload_controls'] or '{}')
+            controls[workload] = dict(state=state, request_id=request_id)
+            conn.execute('UPDATE clients SET workload_controls=? WHERE client_id=?', (json.dumps(controls), client_id))
+            conn.execute('INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)',
+                         (now_ms(), principal.user_id, 'client.workload_requested', f'client {client_id} {workload} -> {state}'))
+            return dict(client_id=client_id, workload=workload, state=state, request_id=request_id)
         conn.execute("UPDATE clients SET target_daemon_state=?, daemon_request_id=? WHERE client_id=?", (state, request_id, client_id))
         conn.execute("INSERT INTO audit_log(at, actor, action, detail) VALUES(?,?,?,?)", (now_ms(), principal.user_id, "client.daemon_requested", f"client {client_id} -> {state}"))
         return {"client_id": client_id, "state": state, "request_id": request_id}
@@ -290,11 +321,13 @@ def summary(store: Store, principal: Principal | None = None, scope: str = "mine
     clients = []
     for row in conn.execute(
             "SELECT client_id, user_id, machine_id, client_home, display_name, hostname, npu_arch, afx_version, backend_versions, "
-            "target_afx_version, update_status, target_daemon_state, daemon_request_id, daemon_state, daemon_state_at, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
+            "workload_controls, workload_states, target_afx_version, update_status, target_daemon_state, daemon_request_id, daemon_state, daemon_state_at, last_heartbeat_at, last_seen_at, busy, pending_uploads, runtime, runtime_at, devices "
             "FROM clients WHERE deleted_at IS NULL "
             # Keep dashboard rows in registration order as heartbeats and status change.
             "ORDER BY client_id ASC"):
         item = dict(row)
+        for key in ('workload_controls', 'workload_states'):
+            item[key] = json.loads(item[key] or '{}')
         item["update_status"] = json.loads(item["update_status"]) if item["update_status"] else {"state":"idle"}
         item["backend_versions"] = json.loads(item["backend_versions"]) if item["backend_versions"] else {}
         mine = see_all or (viewer is not None and item["user_id"] == viewer)
