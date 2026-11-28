@@ -134,12 +134,12 @@ function roundTaskDetail(task) {
   if (destination) return el("a", {href:"#", onclick:e => {
     e.preventDefault(); issueDrawer(destination[1]);
   }}, "转至问题 " + destination[1]);
+  if (task.function_status) return statusChip(task);
   const [status, accuracy] = detail.split("/");
-  const labels = {gen_fail:"构图失败", ascgraph_fail:"构图失败", build_fail:"构图失败",
-    compile_fail:"编译失败", runtime_fail:"运行失败", timeout:"超时", unsupported:"不支持"};
-  const text = labels[status] ? labels[status] + (accuracy === "fail" ? " · 精度失败" : "")
-    : status === "pass" && accuracy === "fail" ? "精度失败" : detail;
-  return el("span", {class:"muted", title:detail || null}, text || "—");
+  if (["gen_fail", "ascgraph_fail", "build_fail", "compile_fail", "runtime_fail", "timeout", "unsupported", "pass"].includes(status)) {
+    return statusChip({backend:task.backend, function_status:status, accuracy_status:accuracy === "fail" ? "fail" : null});
+  }
+  return el("span", {class:"muted", title:detail || null}, detail || "—");
 }
 function roundPanel(issueId, round) {
   const tasks = el("div", {class:"round-tasks", hidden:true});
