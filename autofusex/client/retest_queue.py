@@ -50,7 +50,7 @@ def submit(home, task):
         tasks.append((seed, execution, evaluation, identity))
     if not tasks:
         raise ValueError('retest has no executable backend')
-    saved = dict(lease_id=task['lease_id'], queue=str(ledger.path), database=binding['database'],
+    saved = dict(lease_id=task['lease_id'], queue=str(ledger.path), database=binding['database'], evidence_version=1,
                  task_ids=[t[3] for t in tasks], devices=ex['devices'],
                  specifications=[(str(t[0]), asdict(t[1]), asdict(t[2]), t[3]) for t in tasks])
     atomic(record, saved)
@@ -98,7 +98,7 @@ def _synchronize(client, home):
         'request_key': 'claim-' + str(uuid.uuid4()),
         'machine_id': env.get('installation_id') or __import__('socket').gethostname(),
         'npu_arch': env.get('device_model') or 'unknown',
-        'installed': installed, 'limit': len(client.devices)})['tasks']
+        'installed': installed, 'coverage_environment': env, 'limit': len(client.devices)})['tasks']
     finished = 0
     for task in tasks:
         if task['case_source'] != 'nnsmith':
@@ -113,10 +113,16 @@ def _synchronize(client, home):
         rows = [ledger.get(identity) for identity in saved['task_ids']]
         if all(row['state'] in {'completed', 'cancelled'} for row in rows) and any(row['state'] == 'cancelled' for row in rows):
             reason = '; '.join(sorted({row['reason'] or 'cancelled' for row in rows if row['state'] == 'cancelled'}))
+            evidence = skipped_evidence(saved)
+            # The async fact writer commits after the ledger cancellation.
+            if reason == 'no_autofuse_coverage' and saved.get('evidence_version') == 1 and not evidence:
+                continue
+            observed_environment = next((e['environment'] for e in evidence if e.get('environment')), env)
             client.api.call('POST', f"/api/client/retests/{task['task_id']}/complete", {
                 'request_key': f"terminal-{task['task_id']}-{task['lease_id'][:8]}",
                 'lease_id': task['lease_id'], 'exec_uuids': [], 'installed': installed,
-                'terminal_reason': reason[:500]})
+                'terminal_reason': reason[:500], 'coverage_environment': observed_environment,
+                'coverage_evidence': evidence})
             saved['delivered'] = True
             atomic(retest_directory(home) / ('task-' + str(task['task_id']) + '.json'), saved)
             finished += 1
@@ -152,7 +158,8 @@ def _synchronize(client, home):
             continue
         client.api.call('POST', f"/api/client/retests/{task['task_id']}/complete", {
             'request_key': f"complete-{task['task_id']}-{task['lease_id'][:8]}",
-            'lease_id': task['lease_id'], 'exec_uuids': uploaded, 'installed': installed})
+            'lease_id': task['lease_id'], 'exec_uuids': uploaded, 'installed': installed,
+            'coverage_environment': env})
         saved['delivered'] = True
         atomic(Path(home) / 'retest' / ('task-' + str(task['task_id']) + '.json'), saved)
         finished += 1
@@ -162,3 +169,21 @@ def _synchronize(client, home):
 def reject_changed_task(client, task, installed):
     from autofusex.client.platform_transport import Client
     return Client._reject_changed_task(client, task, installed)
+
+
+def skipped_evidence(saved):
+    """Find audit facts by task identity, never by seed or newest result."""
+    import sqlite3
+    from contextlib import closing
+    database = saved.get('database')
+    if not database:
+        return []
+    with closing(sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='skipped_cases_v1'").fetchone():
+            return []
+        result = []
+        for (payload,) in db.execute('SELECT payload FROM skipped_cases_v1 ORDER BY rowid DESC LIMIT 2048'):
+            value = json.loads(payload)
+            if any(t.get('task_id') in saved['task_ids'] for t in value.get('tasks', [])):
+                result.extend(value.get('evidence', []))
+        return result[:8]

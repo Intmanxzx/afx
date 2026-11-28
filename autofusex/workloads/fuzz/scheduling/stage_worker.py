@@ -178,6 +178,10 @@ def perform(job, device_transition=None):
                                            'codegen_succeeded': coverage.codegen_succeeded,
                                            'events': coverage.events}
         result['execution']['diagnostics'] = json.dumps(diagnostic)
+        if no_coverage:
+            from autofusex.execution.environment import collect
+            result['coverage_evidence'] = {'backend': config.backend, 'environment': collect(),
+                'autofuse_coverage': diagnostic['autofuse_coverage'], 'error': log()}
     return {'result': result, 'outputs': artifact, 'shape_starts': starts, 'device_memory_bytes': device_memory,
             'persistent_runtime': persistent_runtime,
             'case_skipped': (kind == 'reference' and result['status'] in {'error', 'unsupported'}) or no_coverage,

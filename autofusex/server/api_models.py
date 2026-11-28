@@ -84,12 +84,15 @@ class ClaimRetests(RequestKey):
     npu_arch: str = Field(min_length=1, max_length=32)
     installed: dict[str, Installed]
     limit: int = Field(default=5, ge=1, le=20)
+    coverage_environment: Optional[dict[str, Any]] = None
 
 
 class CompleteRetest(Lease):
     installed: dict[str, Installed]
     exec_uuids: list[str]
     terminal_reason: Optional[str] = Field(default=None, max_length=500)
+    coverage_environment: Optional[dict[str, Any]] = None
+    coverage_evidence: Optional[list[dict[str, Any]]] = None
 
 
 class ManualRetest(RequestKey):

@@ -124,3 +124,24 @@ def test_changed_during_execution_is_terminal_without_result_upload(monkeypatch)
     body = client.api.call.call_args.args[2]
     assert body['exec_uuids'] == [] and body['installed'] == new
     assert body['terminal_reason'] == 'environment_changed'
+
+
+def test_noaf_receipt_waits_for_audit_commit(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from autofusex.client import retest_queue, platform_transport, daemon
+    task = dict(task_id=205, lease_id='lease', case_source='nnsmith')
+    saved = dict(queue=str(tmp_path/'tasks.sqlite'), task_ids=['local'], evidence_version=1)
+    api = Mock(); api.call.return_value = {'tasks': [task]}
+    client = SimpleNamespace(api=api, devices=['npu:0'], environment=lambda: {}, identity=lambda: {})
+    monkeypatch.setattr(platform_transport, 'fresh_installed', lambda: {'af-mlir': {'version':'1','sha256':'a'*64}})
+    monkeypatch.setattr(daemon, 'request', lambda *a: saved)
+    ledger = Mock(); ledger.get.return_value = dict(state='cancelled', reason='no_autofuse_coverage')
+    monkeypatch.setattr(retest_queue, 'TaskLedger', lambda _: ledger)
+    assert retest_queue._synchronize(client, tmp_path) == 0
+    assert api.call.call_count == 1
+    assert not saved.get('delivered')
+    observed = {'torch_npu': 'worker-build'}
+    monkeypatch.setattr(retest_queue, 'skipped_evidence', lambda _: [{'environment': observed}])
+    assert retest_queue._synchronize(client, tmp_path) == 1
+    assert api.call.call_args.args[2]['coverage_environment'] == observed

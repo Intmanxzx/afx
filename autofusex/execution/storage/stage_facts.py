@@ -35,6 +35,18 @@ def publish(conn,kind,identity,payload):
         conn.execute('INSERT INTO fact_outbox_v1(kind,identity,payload) VALUES (?,?,?)',(kind,identity,json.dumps(payload,sort_keys=True,separators=(',',':'))))
 
 
+def skip_evidence(stage, sessions):
+    from autofusex.execution.failure_details import redact
+    result = stage.output['result']
+    if result.get('coverage_evidence'):
+        return result['coverage_evidence']
+    diagnostics = json.loads(result.get('execution', {}).get('diagnostics') or '{}')
+    return {'backend': result.get('backend'),
+            'autofuse_coverage': diagnostics.get('autofuse_coverage', {}),
+            'error': redact(str(diagnostics.get('coverage_log') or diagnostics.get('error') or result.get('error_summary') or ''))[-8000:],
+            'environment': diagnostics.get('coverage_environment', {})}
+
+
 def save_case(database,case,sessions,window_id,start,pool):
     saved=[t for t in case.tasks if json.loads(t['execution'])['save_results']]
     if not saved:return
@@ -44,6 +56,10 @@ def save_case(database,case,sessions,window_id,start,pool):
         if case.skip_reason and case.skip_finalized:
             from autofusex.execution.failure_details import redact
             payload = {'version': 1, 'admitted': case.admitted,
+                       'tasks': [{'task_id': t.get('id'), 'attempt_id': t['attempt_id'],
+                                  'backend': json.loads(t['execution'])['backend']} for t in saved],
+                       'evidence': [skip_evidence(s, sessions) for s in case.stages.values()
+                                    if s.output and 'result' in s.output],
                        'stages': [{'kind': s.kind.value, 'state': s.state,
                                    'started': s.facts.get('started'), 'finished': s.facts.get('finished'),
                                    'error': redact(str(s.facts.get('error', '')))[-1600:]}
