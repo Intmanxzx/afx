@@ -181,10 +181,19 @@ class TorchAdapter:
     def _close(self, actual, reference):
         from autofusex.execution.compare import resolve_tolerances
         actual, reference = actual.detach().cpu(), reference.detach().cpu()
-        if not actual.is_floating_point():
+        if not actual.is_floating_point() and not actual.is_complex():
             return actual == reference
         rtol, atol, _ = resolve_tolerances(reference.dtype, actual.dtype)
         # Evaluate tolerance arithmetic without rounding it to the output dtype.
+        if actual.is_complex():
+            # Compare real and imaginary components with the same dtype tolerance.
+            # torch.isclose's complex magnitude semantics otherwise diverge from
+            # the component-wise diagnostics produced by accuracy.summarize.
+            real = self.torch.isclose(actual.real.to(self.torch.float64), reference.real.to(self.torch.float64),
+                                      rtol=rtol, atol=atol, equal_nan=False)
+            imag = self.torch.isclose(actual.imag.to(self.torch.float64), reference.imag.to(self.torch.float64),
+                                      rtol=rtol, atol=atol, equal_nan=False)
+            return real & imag
         return self.torch.isclose(actual.to(self.torch.float64), reference.to(self.torch.float64),
                                   rtol=rtol, atol=atol, equal_nan=False)
 

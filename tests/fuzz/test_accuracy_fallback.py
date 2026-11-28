@@ -127,6 +127,19 @@ def test_accuracy_nonfinite_and_strict_single_failure():
     assert not adapter.compare((target,), (reference,))
 
 
+def test_complex_accuracy_uses_tolerance_for_pass_fail():
+    import torch
+    from autofusex.workloads.fuzz.torch_backend import TorchAdapter
+    from autofusex.contracts.execution import ExecutionConfig
+    adapter = TorchAdapter(ExecutionConfig('cpu', 'cpu', 1))
+    adapter.torch = torch
+    reference = torch.tensor([1 + 2j, 3 - 4j], dtype=torch.complex64)
+    actual = reference.clone()
+    actual[0] += 1e-6 + 1e-6j
+    assert bool(adapter._close(actual, reference).all())
+    assert adapter.outputs_equal((actual,), (reference,))
+
+
 def test_accuracy_evidence_survives_local_record_and_upload_mapping(tmp_path):
     from dataclasses import asdict
     from autofusex.execution.storage import ResultRepository
