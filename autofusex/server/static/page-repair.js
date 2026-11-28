@@ -136,9 +136,9 @@ function caseList(cases, mode = "evidence") {
     el("tbody", {}, cases.map(c => el("tr", {},
       el("td", {}, el("a", { href: "#", class: "mono small", onclick: e => { e.preventDefault(); openCase(c.case_key); } }, c.case_key)),
       el("td", {}, archLabel(c.npu_arch)), el("td", {}, label(c.backend)),
-      el("td", {}, el("div", {class:"issue-case-status"}, currentStatus(c)), current ? null :
-        el("div", {class:"muted small issue-case-meta"}, c.current_issue_id ? el("a", {href:"#", onclick:e => {
-          e.preventDefault(); issueDrawer(c.current_issue_id); }}, "当前问题 " + c.current_issue_id) : "无当前关联问题")),
+      el("td", {}, el("div", {class:"issue-case-status"}, currentStatus(c)), !current && c.current_issue_id ?
+        el("div", {class:"muted small issue-case-meta"}, el("a", {href:"#", onclick:e => {
+          e.preventDefault(); issueDrawer(c.current_issue_id); }}, "当前问题 " + c.current_issue_id)) : null),
       ...(current ? [] : [el("td", {}, el("details", {},
         el("summary", {}, "查看历史"),
         el("div", {class:"muted small issue-case-meta"}, source(c)),

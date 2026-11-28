@@ -75,8 +75,10 @@ const mixed = caseList([
   {case_key:'passed-now', head_function_status:'pass', head_accuracy_status:'pass', result:'fail', ...compile},
   {case_key:'accuracy-now', head_function_status:'pass', head_accuracy_status:'fail', result:'fail', ...compile}
 ]).children[1].children;
-assert.equal(text(mixed[0].children[3]), '通过无当前关联问题');
-assert.equal(text(mixed[1].children[3]), '精度失败无当前关联问题');
+assert.equal(text(mixed[0].children[3]), '通过');
+assert.equal(text(mixed[1].children[3]), '精度失败');
+assert.equal(mixed[0].children[3].children.length, 1);
+assert.equal(mixed[1].children[3].children.length, 1);
 assert.equal(mixed[0].children[4].children[0].tag, 'details');
 assert.equal(mixed[0].children[4].children[0].attrs.open, undefined);
 for (const [dimension, expected, cls] of [['function','构图失败 · AF前端','bad'],
